@@ -1,0 +1,3 @@
+# Reviewed false positives (fingerprints). Add entries only after checking the line is not a secret.
+# 2026-11-03: prose "treatment/discharge" in PM-JAY claim-flow notes, not a key.
+research_notes/India hospital SaaS stack research/erp_billing_claims.md:generic-api-key:165

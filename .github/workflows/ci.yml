@@ -1,0 +1,24 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  checks:
+    name: Repo checks (pre-commit)
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v7.0.1
+      - uses: actions/setup-python@v7.1.0
+        with:
+          python-version: "3.14"
+      - name: Install pre-commit
+        run: pip install pre-commit==4.7.0
+      - name: Run all hooks
+        run: pre-commit run --all-files --show-diff-on-failure
