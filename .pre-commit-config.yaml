@@ -1,4 +1,6 @@
 # Versions pinned 2026-11-03 (see docs/VERSIONS.md). Update with: pre-commit autoupdate
+# Upstream CARE code is never reformatted by our hooks (ADR-006).
+exclude: '^apps/(backend|frontend)/'
 repos:
   - repo: https://github.com/pre-commit/pre-commit-hooks
     rev: v6.0.0
