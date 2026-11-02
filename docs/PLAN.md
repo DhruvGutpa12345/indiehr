@@ -209,7 +209,7 @@ Task IDs are `P<phase>-T<n>`. Each task is sized for **one sitting (≈1–3 hou
 | P0-T1 ✅ | Record decisions | Turn your answers to QUESTIONS.md into ADR-000 to ADR-005; update this plan | ADRs written, plan v1.0 | Opus / medium |
 | P0-T2 | Workstation setup | Guide you to add your user to the `docker` group; upgrade Docker 29.x + Compose v5; install uv, pnpm, gh, pre-commit; verify | `docker run hello-world` works without sudo; versions logged | Sonnet / low |
 | P0-T3 | Repo bootstrap | `git init`, private GitHub repo, monorepo layout (`apps/`, `plugins/`, `deploy/`, `docs/`), licence and NOTICE files (MIT attribution for CARE), .editorconfig, pre-commit, CLAUDE.md refresh | First commit pushed; CI "hello" green | Sonnet / medium |
-| P0-T4 | Upstream fork strategy | Fork `ohcnetwork/care` and `care_fe` into the org; pin commit SHAs; scripted upstream-sync; record versions | `make sync-upstream` dry-run works | Sonnet / medium |
+| P0-T4 ✅ | Upstream fork strategy | Fork `ohcnetwork/care` and `care_fe` into the org; pin commit SHAs; scripted upstream-sync; record versions | `make sync-upstream` dry-run works | Sonnet / medium |
 | P0-T5 | **Spike: run CARE locally** | Bring up CARE backend + frontend + Postgres + Redis with Compose; load sample data; create test users (admin, doctor, nurse, billing, pharmacist) | **You** log in at a localhost URL and click through OPD, IPD, lab, pharmacy, billing | Opus / medium |
 | ~~P0-T6~~ | ~~Spike: Marley + ERPNext~~ — **dropped** (Q-A1 decided). ERPNext is set up in P2-T17b instead. | — | — | — |
 | P0-T7 | Gap analysis | Map every blueprint module to: exists in CARE / needs extension / build new / defer; estimate | `docs/GAP_ANALYSIS.md` approved | Opus / high |

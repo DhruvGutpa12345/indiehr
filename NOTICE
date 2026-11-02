@@ -4,4 +4,4 @@ Their licences are reproduced or referenced below and in docs/LICENSES.md.
 - CARE (Open Healthcare Network), https://github.com/ohcnetwork/care
   and https://github.com/ohcnetwork/care_fe — MIT License.
   The full MIT licence text and copyright notices are kept in
-  apps/backend/LICENSE and apps/frontend/LICENSE once forked (P0-T4).
+  apps/backend/LICENSE and apps/frontend/LICENSE (imported 2026-11-03, see upstream.lock).

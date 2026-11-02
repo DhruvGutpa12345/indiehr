@@ -41,7 +41,7 @@ Pin-Priority: 990
 EOF
 
 apt-get update
-apt-get install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin gh
+apt-get install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin gh make build-essential
 systemctl enable --now docker
 
 echo

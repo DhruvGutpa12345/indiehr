@@ -31,3 +31,12 @@ Setup script: [deploy/dev/setup-workstation-root.sh](../deploy/dev/setup-worksta
 | actions/checkout | v7.0.1 | 2026-11-03 |
 | actions/setup-python | v7.1.0 | 2026-11-03 |
 | CI runner | ubuntu-24.04, Python 3.14 | 2026-11-03 |
+
+## Upstream CARE — P0-T4
+
+| App | Upstream | Commit | Date | Checked |
+|---|---|---|---|---|
+| Backend | ohcnetwork/care `develop` | 67a46185eb98 | 2026-11-01 | 2026-11-03 |
+| Frontend | ohcnetwork/care_fe `develop` | 57205b897804 | 2026-11-02 | 2026-11-03 |
+
+Last GitHub Releases are v3.0.0 (backend, 2025-02-12) and v3.0.32 (frontend, 2025-12-23), so we pin `develop` commits. Source of truth: `upstream.lock`.

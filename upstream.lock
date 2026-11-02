@@ -1,0 +1,11 @@
+# Pinned upstream commits (ADR-006). Updated only by scripts/sync-upstream.sh.
+backend.prefix=apps/backend
+backend.repo=https://github.com/ohcnetwork/care.git
+backend.branch=develop
+backend.sha=67a46185eb98ee4b79b38ecee84d8a69d173306e
+backend.date=2026-11-01
+frontend.prefix=apps/frontend
+frontend.repo=https://github.com/ohcnetwork/care_fe.git
+frontend.branch=develop
+frontend.sha=57205b8978045d67b0299c1bd7c2d03fe640d945
+frontend.date=2026-11-02

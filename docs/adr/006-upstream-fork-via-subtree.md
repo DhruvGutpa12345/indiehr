@@ -19,7 +19,7 @@
    - `apps/frontend` ← `https://github.com/ohcnetwork/care_fe` (branch `develop`)
 
    Squashing keeps upstream history out of our repo. Only one snapshot commit is added per import or update.
-2. **Pins:** the exact upstream commit for each app is recorded in [`upstream.lock`](../upstream.lock), which is machine-readable, and explained in [UPSTREAM.md](../UPSTREAM.md).
+2. **Pins:** the exact upstream commit for each app is recorded in [`upstream.lock`](../../upstream.lock), which is machine-readable, and explained in [UPSTREAM.md](../UPSTREAM.md).
 3. **Updates** go through `scripts/sync-upstream.sh`, or `make sync-upstream`:
    - `--dry-run` shows how many commits and files changed upstream, and which of our patched files upstream also touched (conflict risk). It changes nothing.
    - A real run does a `git subtree pull --squash` (a 3-way merge that keeps our edits), updates `upstream.lock`, and commits.

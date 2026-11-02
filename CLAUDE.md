@@ -24,7 +24,13 @@ Further reading:
 - **gitleaks false positives:** add the exact fingerprint to `.gitleaksignore` with a dated comment. Never disable the hook.
 - **sudo:** commands that need sudo must be run by the user in Ubuntu's own terminal (Ctrl+Alt+T). The app's terminal and `!` prompt have "no new privileges" set.
 - **uv / pre-commit:** live in `~/.local/bin`. Prepend it to PATH in non-login shells.
-- App build/test commands arrive with the CARE fork (P0-T4/P0-T5). Do not invent them before then.
+- **Upstream CARE** lives in `apps/backend` (ohcnetwork/care) and `apps/frontend` (ohcnetwork/care_fe) as squashed git subtrees, pinned in `upstream.lock` (ADR-006, `docs/UPSTREAM.md`).
+  - Check for upstream changes (read-only): `scripts/sync-upstream.sh all --dry-run`, or `make sync-upstream-check`.
+  - Merge upstream changes: `scripts/sync-upstream.sh <backend|frontend|all> [sha]`. It needs a clean tree and commits by itself.
+  - Any edit inside `apps/` must be logged in `docs/UPSTREAM_PATCHES.md`. Prefer `plugins/ihr_*`.
+  - Upstream ships its own `CLAUDE.md`/`AGENTS.md` inside `apps/frontend`. They apply when working there.
+- `make` is not installed until the user re-runs the sudo setup script (it now includes `make` and `build-essential`).
+- App build/test commands arrive with P0-T5 (running CARE). Do not invent them before then.
 - **Git:**
   - commit straight to `main`, with the task ID in each message;
   - repo-local identity is `DhruvGutpa12345` with the GitHub noreply email;
