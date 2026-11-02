@@ -212,7 +212,7 @@ Task IDs are `P<phase>-T<n>`. Each task is sized for **one sitting (≈1–3 hou
 | P0-T4 ✅ | Upstream fork strategy | Fork `ohcnetwork/care` and `care_fe` into the org; pin commit SHAs; scripted upstream-sync; record versions | `make sync-upstream` dry-run works | Sonnet / medium |
 | P0-T5 | **Spike: run CARE locally** | Bring up CARE backend + frontend + Postgres + Redis with Compose; load sample data; create test users (admin, doctor, nurse, billing, pharmacist) | **You** log in at a localhost URL and click through OPD, IPD, lab, pharmacy, billing | Opus / medium |
 | ~~P0-T6~~ | ~~Spike: Marley + ERPNext~~ — **dropped** (Q-A1 decided). ERPNext is set up in P2-T17b instead. | — | — | — |
-| P0-T7 | Gap analysis | Map every blueprint module to: exists in CARE / needs extension / build new / defer; estimate | `docs/GAP_ANALYSIS.md` approved | Opus / high |
+| P0-T7 ✅ | Gap analysis | Map every blueprint module to: exists in CARE / needs extension / build new / defer; estimate | `docs/GAP_ANALYSIS.md` approved | Opus / high |
 | P0-T8 | CI pipeline | GitHub Actions: lint (ruff, eslint), unit tests, build images, Trivy scan, Playwright smoke | Green pipeline on PR | Sonnet / medium |
 
 ### Phase 1 — Platform core (tenancy, identity, staging)
@@ -228,8 +228,12 @@ Task IDs are `P<phase>-T<n>`. Each task is sized for **one sitting (≈1–3 hou
 | P1-T7 | i18n + Indian locale: English + Hindi first, INR formatting (₹1,00,000), DD-MM-YYYY, IST, Indian address (state → district → PIN) | UI toggles language; PIN lookup works | Sonnet / medium |
 | P1-T8 | Staging server: India-region VM, Traefik + Let's Encrypt, Compose deploy from CI, backups (pgBackRest), NTP to NIC/NPL, 180-day logs | **One-click staging URL** with test logins | Sonnet / high |
 | P1-T9 | Observability: Prometheus + Grafana + Loki, uptime alerts to you (email/WhatsApp) | Dashboard URL | Sonnet / medium |
+| P1-T10 | **Terminology service** (from the gap analysis): CARE calls an external SNOMED server over plain HTTP by default. Replace it with our own in India: curated SNOMED + ICD-10 + drug lookup, and/or self-hosted Snowstorm 11 (Q-F1b) | Diagnosis/drug search works with no external calls | Opus / high |
+| P1-T11 | Seed Indian hospital roles: Receptionist, Cashier, Lab Tech, Radiologist, TPA Desk, MRD, Store Keeper, Owner | Each role sees only its screens (tests) | Sonnet / medium |
 
 ### Phase 2 — MVP hospital workflows (sellable to a 10–100 bed hospital)
+
+> Scope and size of each task were adjusted after [GAP_ANALYSIS.md](GAP_ANALYSIS.md) §6. That file is the reference for what CARE already provides.
 
 | ID | Task | Key India specifics | Effort |
 |---|---|---|---|

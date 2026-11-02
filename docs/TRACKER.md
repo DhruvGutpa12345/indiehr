@@ -11,8 +11,8 @@
 Detailed task definitions: [PLAN.md](PLAN.md) §6. Open questions: [QUESTIONS.md](QUESTIONS.md).
 
 **Current phase:** P0 Foundations
-**Next task:** P0-T7 (gap analysis: blueprint ↔ CARE, read from code) or P0-T8 (CI pipeline). P0-T5 waits for the 32 GB RAM upgrade.
-**Recommended model for next task:** Opus · **high** for P0-T7, or Sonnet · **medium** for P0-T8
+**Next task:** P0-T8 (CI pipeline). P0-T5 waits for the 32 GB RAM upgrade.
+**Recommended model for next task:** Sonnet · **medium** for P0-T8
 
 ---
 
@@ -25,6 +25,7 @@ Detailed task definitions: [PLAN.md](PLAN.md) §6. Open questions: [QUESTIONS.md
 | 2026-11-02 | R-2 | Consolidated research report | `reports/India hospital SaaS stack research.md` |
 | 2026-11-02 | R-3 | Master plan v0.1, question list, tracker, CLAUDE.md | `docs/` |
 | 2026-11-02 | R-4 | Workstation audit: 6.7 GB RAM, no GPU, Docker 26.1.3 without group access | PLAN.md §4 |
+| 2026-11-03 | P0-T7 | Gap analysis from CARE code: 28 MVP areas (7 use, 15 extend, 6 build) + 17 later modules; tenancy-readiness check (no raw SQL); 6 upstream risks; plan rescoped (+P1-T10 terminology, +P1-T11 roles) | docs/GAP_ANALYSIS.md |
 | 2026-11-03 | P0-T4 | CARE backend @67a46185eb98 and frontend @57205b897804 imported as squashed subtrees (ADR-006); `upstream.lock`, `scripts/sync-upstream.sh` (dry-run + real sync rehearsed in a scratch repo: conflict-risk warning, 3-way merge, lock update all OK) | apps/, docs/UPSTREAM.md |
 | 2026-11-03 | P0-T3 | git repo on `main`, private GitHub repo, monorepo layout, proprietary LICENSE + NOTICE, pre-commit (gitleaks, actionlint), CI workflow | github.com/DhruvGutpa12345/indiehr |
 | 2026-11-03 | P0-T2 | Docker 29.9.2, Compose 5.7.0, gh 2.103.3, uv 0.13.6, pnpm 12.16.1, pre-commit 4.7.0 installed; hello-world OK | docs/VERSIONS.md, deploy/dev/setup-workstation-root.sh |
@@ -37,8 +38,8 @@ Detailed task definitions: [PLAN.md](PLAN.md) §6. Open questions: [QUESTIONS.md
 | Phase | Name | Status | Tasks done |
 |---|---|---|---|
 | — | Research and planning | 🟡 | 5/5 |
-| P0 | Foundations and decisions | 🔵 | 4/7 (T6 dropped) |
-| P1 | Platform core (tenancy, identity, staging) | ⬜ | 0/9 |
+| P0 | Foundations and decisions | 🔵 | 5/7 (T6 dropped) |
+| P1 | Platform core (tenancy, identity, staging) | ⬜ | 0/11 |
 | P2 | MVP hospital workflows | ⬜ | 0/20 |
 | P3 | ABDM and national rails | ⬜ | 0/12 |
 | P4 | Compliance and security | ⬜ | 0/7 |
@@ -58,7 +59,7 @@ Detailed task definitions: [PLAN.md](PLAN.md) §6. Open questions: [QUESTIONS.md
 - 🟡 P0-T4 Upstream fork strategy (CARE backend + frontend, pinned SHAs)
 - ⬜ P0-T5 Spike: run CARE locally with test users ← **first thing you'll click** (blocked: needs 32 GB RAM)
 - ❌ P0-T6 Spike: Marley + ERPNext v16 (dropped — Q-A1 decided)
-- ⬜ P0-T7 Gap analysis blueprint ↔ CARE
+- 🟡 P0-T7 Gap analysis blueprint ↔ CARE
 - ⬜ P0-T8 CI pipeline
 
 ### P1 — Platform core
@@ -72,6 +73,8 @@ Detailed task definitions: [PLAN.md](PLAN.md) §6. Open questions: [QUESTIONS.md
 - ⬜ P1-T7 i18n + Indian locale
 - ⬜ P1-T8 Staging server + one-click URLs
 - ⬜ P1-T9 Observability
+- ⬜ P1-T10 Terminology service (SNOMED/ICD-10, no external calls)
+- ⬜ P1-T11 Indian hospital roles
 
 ### P2 — MVP workflows
 

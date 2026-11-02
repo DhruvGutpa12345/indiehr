@@ -25,6 +25,9 @@
 | Q-G1/G3 | **Synthetic test users + screenshots + URL** | As planned |
 | Q-G2 | **Commit directly to main** | No PR workflow |
 
+**New from the gap analysis (needed before P1-T10):**
+- **Q-F1b — terminology service:** (A) self-host Snowstorm + SNOMED CT India, (B) a lightweight curated SNOMED/ICD-10 service, or (C ⭐) B now and A later. See GAP_ANALYSIS.md §7.
+
 **Still open (non-blocking):**
 - Q-A5 product name/domain
 - Q-B2 pilots
