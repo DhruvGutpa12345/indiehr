@@ -24,28 +24,20 @@
 | Q-F3 | **Own curated drug list** for MVP | P2-T5 |
 | Q-G1/G3 | **Synthetic test users + screenshots + URL** | As planned |
 | Q-G2 | **Commit directly to main** | No PR workflow |
+| Q-F1b | **Curated SNOMED/ICD-10 service now; full Snowstorm later** (2026-11-03) | P1-T10 builds the curated service |
+| Q-F1 | **Yes:** prepare the SNOMED CT India affiliate licence application in the company's name; ICD-10 for diagnosis coding | Checklist added to P1-T10 |
+| Q-A5 | **Keep "IndieHR"** as the working name | Final brand later |
+| Q-B5 | **Top specialties after MVP: OT + WHO checklist, ICU, Maternity** | Phase 6 order |
+| Q-C2 | **Payroll/HR later via ERPNext** (HRMS + India Payroll) | Phase 6 ERPNext back office |
+| Q-C3 | **e-Invoice later** (via ERPNext India Compliance) | Not in MVP |
+| Q-C5 | **SaaS billing gateway: decide later** | Before P9-T1 |
+| Q-E5 | **Kubernetes at about 10 hospitals** | As in ADR-003 |
+| Q-B2 / Q-F5 | **No pilots yet**; build standard Excel import templates | P9-T2 |
+| Q-F4 | **The product owner reviews clinical content** | Clinical templates are sent to you for review |
+| Q-E6 / Q-D2 / Q-D3 | **Email alerts to you**; auditor shortlist and legal templates when those phases arrive | P1-T9, P3-T11, P4-T6 |
+| Q-G4 | **`/goal` and `/advisor` = second-opinion reviews:** an independent Opus agent reviews each finished phase against the plan | Working agreement §5 |
 
-**New from the gap analysis (needed before P1-T10):**
-- **Q-F1b — terminology service:** (A) self-host Snowstorm + SNOMED CT India, (B) a lightweight curated SNOMED/ICD-10 service, or (C ⭐) B now and A later. See GAP_ANALYSIS.md §7.
-
-**Still open (non-blocking):**
-- Q-A5 product name/domain
-- Q-B2 pilots
-- Q-B4 MVP module list
-- Q-B5 top-3 specialties
-- Q-C2 payroll
-- Q-C3 e-invoice
-- Q-C5 SaaS billing
-- Q-D2 security auditor
-- Q-D3 lawyer
-- Q-E5 Kubernetes timing
-- Q-E6 alert channel
-- Q-F1 SNOMED licence
-- Q-F4 clinical advisor
-- Q-F5 data migration
-- Q-G4 `/goal` `/advisor`
-
-Q-F2 is moot while AI is deferred.
+**Still open:** Q-B4 (final MVP module list: assumed as in PLAN.md Phase 2) and Q-B6/B7 (pricing, timeline). Q-F2 is moot while AI is deferred.
 
 ---
 

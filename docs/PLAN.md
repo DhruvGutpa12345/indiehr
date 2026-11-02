@@ -194,7 +194,9 @@ Task **P0-T5** runs both CARE and Marley locally for a hands-on comparison befor
 6. **Latest versions only.** Each task re-checks the current stable version of what it installs, pins it, and records it in `docs/VERSIONS.md`.
 7. **ADRs.** Every significant decision gets a short Architecture Decision Record (ADR) in `docs/adr/`.
 8. **No real patient data** anywhere outside production. Seed data is synthetic, with Indian names, addresses and phone numbers in reserved test ranges.
-9. **Git:** commit directly to `main`, with one or more commits per task, each message referencing the task ID (e.g. `P0-T3: ...`). There is no pull-request step (ADR-000).
+9. **Phase reviews (`/goal`, `/advisor`):** when a phase is finished, an independent Opus agent reviews it against this plan, the ADRs and the product goal, then reports gaps before the next phase starts.
+10. **Clinical review:** clinical templates (OPD, discharge summary, nursing charts) go to the product owner for review before they are marked done.
+11. **Git:** commit directly to `main`, with one or more commits per task, each message referencing the task ID (e.g. `P0-T3: ...`). There is no pull-request step (ADR-000).
 
 ---
 
@@ -228,7 +230,7 @@ Task IDs are `P<phase>-T<n>`. Each task is sized for **one sitting (≈1–3 hou
 | P1-T7 | i18n + Indian locale: English + Hindi first, INR formatting (₹1,00,000), DD-MM-YYYY, IST, Indian address (state → district → PIN) | UI toggles language; PIN lookup works | Sonnet / medium |
 | P1-T8 | Staging server: India-region VM, Traefik + Let's Encrypt, Compose deploy from CI, backups (pgBackRest), NTP to NIC/NPL, 180-day logs | **One-click staging URL** with test logins | Sonnet / high |
 | P1-T9 | Observability: Prometheus + Grafana + Loki, uptime alerts to you (email/WhatsApp) | Dashboard URL | Sonnet / medium |
-| P1-T10 | **Terminology service** (from the gap analysis): CARE calls an external SNOMED server over plain HTTP by default. Replace it with our own in India: curated SNOMED + ICD-10 + drug lookup, and/or self-hosted Snowstorm 11 (Q-F1b) | Diagnosis/drug search works with no external calls | Opus / high |
+| P1-T10 | **Terminology service** (from the gap analysis): CARE calls an external SNOMED server over plain HTTP by default. **Decided (Q-F1b): a curated SNOMED + ICD-10 + drug lookup service now**, served in the FHIR-style form CARE expects; self-hosted Snowstorm later. Includes the SNOMED CT India affiliate licence checklist for you to submit | Diagnosis/drug search works with no external calls | Opus / high |
 | P1-T11 | Seed Indian hospital roles: Receptionist, Cashier, Lab Tech, Radiologist, TPA Desk, MRD, Store Keeper, Owner | Each role sees only its screens (tests) | Sonnet / medium |
 
 ### Phase 2 — MVP hospital workflows (sellable to a 10–100 bed hospital)
@@ -300,7 +302,9 @@ Task IDs are `P<phase>-T<n>`. Each task is sized for **one sitting (≈1–3 hou
 | P5-T7 | Delta checks + critical-value alerts | Opus / medium |
 | P5-T8 | (Optional) OpenELIS 3.3 integration for standalone large labs | Opus / high |
 
-### Phase 6 — Specialty and enterprise modules (order set by customer demand)
+### Phase 6 — Specialty and enterprise modules
+
+**Priority order (Q-B5):** 1. OT + WHO checklist · 2. ICU · 3. Maternity · then the rest by customer demand.
 
 Each module listed below is roughly 2–4 tasks:
 

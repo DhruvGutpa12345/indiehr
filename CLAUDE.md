@@ -51,6 +51,8 @@ Further reading:
   - a 3–5 step click-script.
 - **Effort advice:** end **every reply** with the recommended **model + effort level** for the next task (e.g. "Next: P0-T2 — Sonnet, low"). The guide is in PLAN.md §5.
 - **Versions:** use only the latest stable versions compatible with the stack. Re-check current releases before installing anything, pin exact versions, and record them in `docs/VERSIONS.md`.
+- **Phase reviews:** at the end of each phase, run an independent Opus review agent against PLAN.md, the ADRs and the goal (the user's `/goal` and `/advisor`).
+- **Clinical content** goes to the user for review (they review it themselves).
 - **Subagents:** use them sized to the job:
   - Haiku or Sonnet for lookups and boilerplate;
   - Opus for architecture, security, tenancy, ABDM crypto and billing maths.
