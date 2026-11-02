@@ -1,0 +1,281 @@
+import { cn } from "@/lib/utils";
+import * as React from "react";
+
+import { RESULTS_PER_PAGE_LIMIT } from "@/common/constants";
+import { CardListSkeleton } from "@/components/Common/SkeletonLoading";
+import TagBadge from "@/components/Tags/TagBadge";
+import { Button } from "@/components/ui/button";
+import { Card, CardContent } from "@/components/ui/card";
+import {
+  Drawer,
+  DrawerContent,
+  DrawerHeader,
+  DrawerTitle,
+  DrawerTrigger,
+} from "@/components/ui/drawer";
+import type { PrescriptionList } from "@/types/emr/prescription/prescription";
+import prescriptionApi from "@/types/emr/prescription/prescriptionApi";
+import { TagConfig } from "@/types/emr/tagConfig/tagConfig";
+import query from "@/Utils/request/query";
+import { formatDateTime, formatName } from "@/Utils/utils";
+import { useInfiniteQuery } from "@tanstack/react-query";
+import { ChevronDown, ReceiptTextIcon } from "lucide-react";
+import { useTranslation } from "react-i18next";
+import { useOnInView } from "react-intersection-observer";
+
+function PrescriptionTags({ tags }: { tags?: TagConfig[] }) {
+  if (!tags || tags.length === 0) return null;
+
+  return (
+    <div className="flex flex-wrap gap-1 mt-1">
+      {tags.map((tag) => (
+        <TagBadge
+          key={tag.id}
+          tag={tag}
+          hierarchyDisplay
+          variant="teal"
+          className="text-xs pb-1 rounded-sm"
+        />
+      ))}
+    </div>
+  );
+}
+
+interface PrescriptionListSelectorProps {
+  patientId: string;
+  encounterId: string;
+  facilityId?: string;
+  selectedPrescriptionId?: string;
+  onSelectPrescription: (prescription: PrescriptionList | undefined) => void;
+}
+
+export default function PrescriptionListSelector({
+  patientId,
+  encounterId,
+  facilityId,
+  selectedPrescriptionId,
+  onSelectPrescription,
+}: PrescriptionListSelectorProps) {
+  const { t } = useTranslation();
+  const [openDrawer, setOpenDrawer] = React.useState(false);
+
+  const { data, isLoading, fetchNextPage, hasNextPage, isFetchingNextPage } =
+    useInfiniteQuery({
+      queryKey: ["infinite-prescriptions", patientId, encounterId, facilityId],
+      queryFn: async ({ pageParam = 0, signal }) => {
+        const response = await query(prescriptionApi.list, {
+          pathParams: { patientId },
+          queryParams: {
+            encounter: encounterId,
+            facility: facilityId,
+            limit: String(RESULTS_PER_PAGE_LIMIT),
+            offset: String(pageParam),
+          },
+        })({
+          signal,
+        });
+        return response;
+      },
+      initialPageParam: 0,
+      getNextPageParam: (lastPage, allPages) => {
+        const currentOffset = allPages.length * RESULTS_PER_PAGE_LIMIT;
+        return currentOffset < lastPage.count ? currentOffset : null;
+      },
+    });
+
+  const prescriptions = data?.pages.flatMap((page) => page.results) ?? [];
+
+  const loadMoreRef = useOnInView<HTMLDivElement>((inView) => {
+    if (inView && hasNextPage && !isFetchingNextPage) {
+      fetchNextPage();
+    }
+  });
+
+  const handleSelectPrescription = React.useCallback(
+    (prescription: PrescriptionList | undefined) => {
+      onSelectPrescription(prescription);
+      setOpenDrawer(false);
+    },
+    [onSelectPrescription],
+  );
+
+  if (isLoading) {
+    return (
+      <div className="space-y-3 w-60">
+        <CardListSkeleton count={7} />
+      </div>
+    );
+  }
+
+  const selectedPrescription = selectedPrescriptionId
+    ? prescriptions.find((pres) => pres.id === selectedPrescriptionId)
+    : undefined;
+
+  const isAllSelected = selectedPrescriptionId === undefined;
+
+  return (
+    <>
+      <div className="hidden lg:block h-full overflow-y-auto pr-1">
+        <PrescriptionListComponent
+          prescriptions={prescriptions}
+          selectedPrescriptionId={selectedPrescriptionId}
+          onSelectPrescription={onSelectPrescription}
+          loadMoreRef={loadMoreRef}
+          isFetchingNextPage={isFetchingNextPage}
+        />
+      </div>
+      <div className="lg:hidden">
+        <Drawer open={openDrawer} onOpenChange={setOpenDrawer}>
+          <DrawerTrigger asChild>
+            {isAllSelected ? (
+              <Button
+                variant="outline"
+                className="w-full flex justify-between items-center py-6"
+              >
+                <div className="flex gap-3">
+                  <ReceiptTextIcon className="size-5 text-primary-600" />
+                  <div className="flex flex-col -mt-1 text-left">
+                    <span className="text-sm font-medium whitespace-nowrap">
+                      {t("all_prescriptions")}
+                    </span>
+                    <span className="text-sm font-medium text-gray-700 whitespace-nowrap">
+                      {t("view_all_medications")}
+                    </span>
+                  </div>
+                </div>
+                <ChevronDown className="size-5 text-gray-500 shrink-0 ml-2" />
+              </Button>
+            ) : selectedPrescription ? (
+              <Button
+                variant="outline"
+                className="w-full flex justify-between items-center py-2 h-auto"
+              >
+                <div className="flex gap-3">
+                  <ReceiptTextIcon className="size-5 text-primary-600" />
+                  <div className="flex flex-col -mt-1 text-left">
+                    <span className="text-sm font-medium whitespace-nowrap">
+                      {formatDateTime(
+                        selectedPrescription.created_date,
+                        "DD/MM/YYYY hh:mm A",
+                      )}
+                    </span>
+
+                    <span className="text-sm font-medium text-gray-700 whitespace-nowrap">
+                      {t("prescribed_by")}:{" "}
+                      {formatName(selectedPrescription.prescribed_by)}
+                    </span>
+                    <PrescriptionTags tags={selectedPrescription.tags} />
+                  </div>
+                </div>
+                <ChevronDown className="size-5 text-gray-500 shrink-0 ml-2" />
+              </Button>
+            ) : (
+              <Button variant="outline" className="w-full">
+                {t("select_prescription")}
+              </Button>
+            )}
+          </DrawerTrigger>
+
+          <DrawerContent className="max-h-[85vh]">
+            <DrawerHeader>
+              <DrawerTitle>{t("prescription")}</DrawerTitle>
+            </DrawerHeader>
+            <div className="overflow-y-auto pr-2">
+              <PrescriptionListComponent
+                prescriptions={prescriptions}
+                loadMoreRef={loadMoreRef}
+                isFetchingNextPage={isFetchingNextPage}
+                selectedPrescriptionId={selectedPrescriptionId}
+                onSelectPrescription={handleSelectPrescription}
+              />
+            </div>
+          </DrawerContent>
+        </Drawer>
+      </div>
+    </>
+  );
+}
+interface PrescriptionListItem {
+  id: string | undefined;
+  title: string;
+  subtitle: string;
+  tags?: TagConfig[];
+}
+
+function PrescriptionListComponent({
+  prescriptions,
+  selectedPrescriptionId,
+  onSelectPrescription,
+  isFetchingNextPage,
+  loadMoreRef,
+}: {
+  prescriptions: PrescriptionList[];
+  selectedPrescriptionId: string | undefined;
+  onSelectPrescription: (prescription: PrescriptionList | undefined) => void;
+  isFetchingNextPage: boolean;
+  loadMoreRef: React.Ref<HTMLDivElement>;
+}) {
+  const { t } = useTranslation();
+
+  const items: PrescriptionListItem[] = [
+    {
+      id: undefined,
+      title: t("all_prescriptions"),
+      subtitle: t("view_all_medications"),
+    },
+    ...prescriptions.map((p) => ({
+      id: p.id,
+      title: formatDateTime(p.created_date, "DD/MM/YYYY hh:mm A"),
+      subtitle: `${t("prescribed_by")}: ${formatName(p.prescribed_by)}`,
+      tags: p.tags,
+    })),
+  ];
+
+  return (
+    <div className="space-y-2 p-2">
+      {items.map((item, i) => {
+        const isSelected = selectedPrescriptionId === item.id;
+
+        return (
+          <Card
+            key={item.id ?? "all"}
+            className={cn(
+              "rounded-md relative cursor-pointer transition-colors w-full",
+              isSelected
+                ? "bg-white border-primary-600 shadow-md"
+                : "bg-gray-100 hover:bg-gray-100 shadow-none",
+            )}
+            onClick={() =>
+              onSelectPrescription(prescriptions.find((p) => p.id === item.id))
+            }
+            ref={i === items.length - 1 ? loadMoreRef : undefined}
+          >
+            {isSelected && (
+              <div className="absolute right-0 h-8 w-1 bg-primary-600 rounded-l inset-y-1/2 -translate-y-1/2" />
+            )}
+            <CardContent className="flex flex-col px-4 py-3 gap-2">
+              <div className="flex gap-3">
+                <ReceiptTextIcon
+                  className={cn(
+                    "size-5",
+                    isSelected ? "text-primary-600" : "text-gray-500",
+                  )}
+                />
+                <div className="flex flex-col -mt-1">
+                  <span className="text-sm font-medium whitespace-nowrap">
+                    {item.title}
+                  </span>
+                  <span className="text-sm font-medium text-gray-700 whitespace-nowrap">
+                    {item.subtitle}
+                  </span>
+                  <PrescriptionTags tags={item.tags} />
+                </div>
+              </div>
+            </CardContent>
+          </Card>
+        );
+      })}
+      {isFetchingNextPage && <CardListSkeleton count={5} />}
+    </div>
+  );
+}

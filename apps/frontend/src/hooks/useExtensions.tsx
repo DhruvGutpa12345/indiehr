@@ -1,0 +1,620 @@
+import React, {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
+import { FieldValues, Path, UseFormReturn } from "react-hook-form";
+import { z } from "zod";
+
+import {
+  ComputedFieldContext,
+  evaluateComputedField,
+} from "@/Utils/schema/computedField";
+import {
+  createExtensionValidationSchema,
+  extractSchemaInfo,
+} from "@/Utils/schema/extensionSchema";
+import {
+  ExtensionContext,
+  ExtensionFieldMetadata,
+  JSONSchema2020,
+} from "@/Utils/schema/types";
+
+import { ExtensionFields } from "@/components/Extensions/ExtensionFields";
+
+import useExtensionSchemas, {
+  ExtensionSchemaType,
+  ExtensionWithSchema,
+} from "@/hooks/useExtensionSchemas";
+import { ExtensionEntityType } from "@/types/extensions/extensions";
+
+// ============================================================================
+// Types
+// ============================================================================
+
+/** Namespaced extension data structure: { name: { field: value } } */
+export type NamespacedExtensionData = Record<string, Record<string, unknown>>;
+
+/** Field metadata with extension name for display/iteration */
+export interface ExtensionFieldWithName extends ExtensionFieldMetadata {
+  extensionName: string;
+}
+
+/** Processed extension info for forms */
+export interface ProcessedExtension {
+  config: ExtensionWithSchema["config"];
+  schema: JSONSchema2020 | undefined;
+  defaults: Record<string, unknown>;
+  fieldMetadata: ExtensionFieldMetadata[];
+  conditionalRules: ReturnType<typeof extractSchemaInfo>["conditionalRules"];
+}
+
+// ============================================================================
+// Reading Extension Data
+// ============================================================================
+
+/**
+ * Evaluate a computed extension field using a FHIRPath expression.
+ */
+export function computeExtensionValue(
+  field: { name: string; uiMetadata?: Record<string, unknown> },
+  context: ComputedFieldContext,
+): unknown {
+  const expression = field.uiMetadata?.expression as string | undefined;
+  if (!expression) return undefined;
+
+  try {
+    return evaluateComputedField(context, expression);
+  } catch (e) {
+    console.error(`Failed to evaluate computed field "${field.name}":`, e);
+    return undefined;
+  }
+}
+
+/**
+ * Get a value from namespaced extension data.
+ * For computed fields (uiControl === "computed"), evaluates the FHIRPath expression instead.
+ *
+ * @example
+ * const value = getExtensionValue(delivery.extensions, field);
+ * const value = getExtensionValue(delivery.extensions, field, context);
+ */
+export function getExtensionValue(
+  extensions: NamespacedExtensionData | undefined,
+  field: ExtensionFieldWithName,
+  context?: ComputedFieldContext,
+): unknown {
+  if (field.uiControl === "computed") {
+    return computeExtensionValue(field, context ?? {});
+  }
+
+  return extensions?.[field.extensionName]?.[field.name];
+}
+
+/** Field metadata flattened across extensions; optionally filtered to a host `context`. */
+export function getExtensionFieldsWithName(
+  extensions: ExtensionWithSchema[],
+  context?: ExtensionContext,
+): ExtensionFieldWithName[] {
+  return extensions
+    .filter(({ schema }) => schema !== undefined)
+    .flatMap(({ config, schema }) => {
+      const { fieldMetadata } = extractSchemaInfo(schema, context);
+      return fieldMetadata.map((field) => ({
+        ...field,
+        extensionName: config.name,
+      }));
+    });
+}
+
+// ============================================================================
+// Processing Extensions for Forms
+// ============================================================================
+
+/** Process extensions, optionally filtering by host `context`. */
+export function processExtensions(
+  extensions: ExtensionWithSchema[],
+  context?: ExtensionContext,
+): ProcessedExtension[] {
+  return extensions
+    .filter(({ schema }) => schema !== undefined)
+    .map(({ config, schema }) => ({
+      config,
+      schema,
+      ...extractSchemaInfo(schema, context),
+    }));
+}
+
+/**
+ * Build namespaced defaults: { name: { field: defaultValue } }
+ */
+export function buildNamespacedDefaults(
+  processedExtensions: ProcessedExtension[],
+): NamespacedExtensionData {
+  return processedExtensions.reduce((acc, { config, defaults }) => {
+    if (Object.keys(defaults).length > 0) {
+      acc[config.name] = defaults;
+    }
+    return acc;
+  }, {} as NamespacedExtensionData);
+}
+
+/** Get extension props from a single schema, optionally filtered by host `context`. */
+export function getExtensionProps(
+  schema: JSONSchema2020 | undefined,
+  context?: ExtensionContext,
+) {
+  const { defaults, fieldMetadata, conditionalRules } = extractSchemaInfo(
+    schema,
+    context,
+  );
+  const validation = createExtensionValidationSchema(
+    fieldMetadata,
+    conditionalRules,
+  );
+
+  return {
+    defaults,
+    validation,
+    fieldMetadata,
+    conditionalRules,
+    hasFields: fieldMetadata.length > 0,
+  };
+}
+
+/**
+ * Creates a namespaced validation schema for name-keyed extension data.
+ * Structure: { name: { field: value } }
+ * Returns a permissive type to be compatible with API response types.
+ */
+function createNamespacedValidationSchema(
+  processedExtensions: ProcessedExtension[],
+): z.ZodType<Record<string, unknown>, Record<string, unknown>> {
+  // Build a schema for each extension's fields
+  const extensionSchemas: Record<
+    string,
+    z.ZodType<Record<string, unknown>, Record<string, unknown>>
+  > = {};
+
+  for (const {
+    config,
+    fieldMetadata,
+    conditionalRules,
+  } of processedExtensions) {
+    if (fieldMetadata.length > 0) {
+      extensionSchemas[config.name] = createExtensionValidationSchema(
+        fieldMetadata,
+        conditionalRules,
+      );
+    }
+  }
+
+  // If no extensions have fields, return a simple record schema
+  if (Object.keys(extensionSchemas).length === 0) {
+    return z.record(z.string(), z.unknown());
+  }
+
+  // Create a schema that validates each extension's data independently
+  return z.record(z.string(), z.unknown()).superRefine((data, ctx) => {
+    if (!data || typeof data !== "object") return;
+
+    for (const [extName, extSchema] of Object.entries(extensionSchemas)) {
+      const extData = (data as Record<string, unknown>)[extName];
+      if (extData && typeof extData === "object") {
+        const result = extSchema.safeParse(extData);
+        if (!result.success) {
+          for (const issue of result.error.issues) {
+            ctx.addIssue({
+              ...issue,
+              path: [extName, ...issue.path],
+            });
+          }
+        }
+      }
+    }
+  });
+}
+
+/** Combined extension props (defaults namespaced by extension name); optionally filtered by host `context`. */
+export function getCombinedExtensionProps(
+  extensions: ExtensionWithSchema[],
+  context?: ExtensionContext,
+) {
+  const processedExtensions = processExtensions(extensions, context);
+  const namespacedDefaults = buildNamespacedDefaults(processedExtensions);
+
+  // Combine all field metadata and conditional rules
+  const allFieldMetadata = processedExtensions.flatMap(
+    ({ fieldMetadata }) => fieldMetadata,
+  );
+  const allConditionalRules = processedExtensions.flatMap(
+    ({ conditionalRules }) => conditionalRules,
+  );
+
+  // Create namespaced validation schema
+  const validation = createNamespacedValidationSchema(processedExtensions);
+
+  return {
+    defaults: namespacedDefaults,
+    validation,
+    fieldMetadata: allFieldMetadata,
+    conditionalRules: allConditionalRules,
+    hasFields: allFieldMetadata.length > 0,
+    processedExtensions,
+  };
+}
+
+// ============================================================================
+// Placement (x-ui.placement)
+// ============================================================================
+
+/** Form field flattened across extensions, with its extension's conditional rules. */
+export interface ExtensionFormField extends ExtensionFieldWithName {
+  conditionalRules: ProcessedExtension["conditionalRules"];
+}
+
+/** Flatten processed extensions into fields that keep their extension name and conditional rules. */
+export function getExtensionFormFields(
+  processedExtensions: ProcessedExtension[],
+): ExtensionFormField[] {
+  return processedExtensions.flatMap(
+    ({ config, fieldMetadata, conditionalRules }) =>
+      fieldMetadata.map((field) => ({
+        ...field,
+        extensionName: config.name,
+        conditionalRules,
+      })),
+  );
+}
+
+/** Extension fields grouped by the host anchor they render after. */
+export interface AnchoredExtensionFields<T, A extends string> {
+  /** Fields to render right after the core element named `anchor`. */
+  at: (anchor: A) => T[];
+  /** Fields for the host's default extension block. */
+  trailing: T[];
+  /** Hidden/const fields: kept in form state, never given a visible slot. */
+  hidden: T[];
+}
+
+/**
+ * Group fields by `x-ui.placement.after` for a host that renders `anchors`.
+ * Fields without placement, or anchored to an element the host doesn't render,
+ * go to `trailing`. `aliases` lets an anchor share another anchor's slot.
+ */
+export function groupFieldsByAnchor<
+  T extends ExtensionFieldMetadata,
+  A extends string,
+>(
+  fields: T[],
+  anchors: readonly A[],
+  aliases: Partial<Record<string, A>> = {},
+): AnchoredExtensionFields<T, A> {
+  const rendered = new Set<string>(anchors);
+  const byAnchor = new Map<string, T[]>();
+  const trailing: T[] = [];
+  const hidden: T[] = [];
+
+  for (const field of fields) {
+    if (field.isConst || field.type === "hidden") {
+      hidden.push(field);
+      continue;
+    }
+    const after = field.uiPlacement?.after;
+    const anchor = after && (aliases[after] ?? after);
+    if (anchor && rendered.has(anchor)) {
+      byAnchor.set(anchor, [...(byAnchor.get(anchor) ?? []), field]);
+    } else {
+      trailing.push(field);
+    }
+  }
+
+  return { at: (anchor) => byAnchor.get(anchor) ?? [], trailing, hidden };
+}
+
+// ============================================================================
+// Hook: useExtensions (for single schema)
+// ============================================================================
+
+interface UseExtensionsOptions<TForm extends FieldValues> {
+  schema: JSONSchema2020 | undefined;
+  form: UseFormReturn<TForm>;
+  /** Optional host slot. If set, fields blacklisted for it via `x-ui.render_blacklist` are filtered out. */
+  context?: ExtensionContext;
+  existingData?: Record<string, unknown>;
+  basePath?: string;
+}
+
+interface UseExtensionsReturn {
+  fields: React.ReactElement | null;
+  hasFields: boolean;
+  defaults: Record<string, unknown>;
+  prepareForSubmit: (
+    extensions: Record<string, unknown> | undefined,
+  ) => Record<string, unknown>;
+}
+
+/**
+ * @public
+ */
+export function useExtensions<TForm extends FieldValues>({
+  schema,
+  form,
+  context,
+  existingData,
+  basePath = "extensions",
+}: UseExtensionsOptions<TForm>): UseExtensionsReturn {
+  const { defaults, fieldMetadata, conditionalRules } = useMemo(
+    () => extractSchemaInfo(schema, context),
+    [schema, context],
+  );
+
+  useEffect(() => {
+    if (Object.keys(defaults).length === 0 && !existingData) return;
+
+    const currentExtensions =
+      (form.getValues(basePath as Path<TForm>) as Record<string, unknown>) ||
+      {};
+
+    const merged = {
+      ...defaults,
+      ...(existingData || {}),
+      ...currentExtensions,
+    };
+
+    form.setValue(basePath as Path<TForm>, merged as TForm[keyof TForm]);
+  }, [defaults, existingData, form, basePath]);
+
+  const prepareForSubmit = useCallback(
+    (extensions: Record<string, unknown> | undefined) => {
+      const merged = { ...defaults, ...extensions };
+      return Object.fromEntries(
+        Object.entries(merged).filter(([, value]) => value !== undefined),
+      );
+    },
+    [defaults],
+  );
+
+  const fields = useMemo(() => {
+    if (fieldMetadata.length === 0) return null;
+
+    return (
+      <ExtensionFields
+        fieldMetadata={fieldMetadata}
+        control={form.control}
+        setValue={form.setValue}
+        conditionalRules={conditionalRules}
+        basePath={basePath}
+      />
+    );
+  }, [fieldMetadata, conditionalRules, form.control, form.setValue, basePath]);
+
+  return {
+    fields,
+    hasFields: fieldMetadata.length > 0,
+    defaults,
+    prepareForSubmit,
+  };
+}
+
+// ============================================================================
+// Zod Schema Helper
+// ============================================================================
+/**
+ * @public
+ */
+export function withExtensions<T extends z.ZodObject<z.ZodRawShape>>(
+  baseSchema: T,
+  extensionSchema: JSONSchema2020 | undefined,
+  context?: ExtensionContext,
+): z.ZodObject<
+  T["shape"] & {
+    extensions: z.ZodOptional<
+      z.ZodType<Record<string, unknown>, Record<string, unknown>>
+    >;
+  }
+> {
+  const { validation } = getExtensionProps(extensionSchema, context);
+  return baseSchema.extend({
+    extensions: validation.optional(),
+  }) as z.ZodObject<
+    T["shape"] & {
+      extensions: z.ZodOptional<
+        z.ZodType<Record<string, unknown>, Record<string, unknown>>
+      >;
+    }
+  >;
+}
+
+// ============================================================================
+// Hook: useEntityExtensions (fetches from API, handles multiple extensions)
+// ============================================================================
+
+interface UseEntityExtensionsOptions<TForm extends FieldValues> {
+  entityType: ExtensionEntityType;
+  schemaType?: ExtensionSchemaType;
+  /** If context(optional) is passed, fields without it in `x-ui.contexts` are filtered out. */
+  context?: ExtensionContext;
+  form: UseFormReturn<TForm>;
+  existingData?: NamespacedExtensionData;
+  basePath?: string;
+}
+
+interface UseEntityExtensionsReturn {
+  /** Rendered extension fields (name-namespaced) */
+  fields: React.ReactElement | null;
+  /** Whether there are any extension fields */
+  hasFields: boolean;
+  /** Namespaced defaults: { name: { field: value } } */
+  defaults: NamespacedExtensionData;
+  /** Prepare form data for API submission */
+  prepareForSubmit: (
+    extensions: NamespacedExtensionData | undefined,
+  ) => NamespacedExtensionData;
+  /** Loading state */
+  isLoading: boolean;
+  /** All processed extensions with schema info */
+  processedExtensions: ProcessedExtension[];
+}
+
+export function useEntityExtensions<TForm extends FieldValues>({
+  entityType,
+  schemaType = "write",
+  context,
+  form,
+  existingData,
+  basePath = "extensions",
+}: UseEntityExtensionsOptions<TForm>): UseEntityExtensionsReturn {
+  const { getExtensions, isLoading } = useExtensionSchemas();
+
+  // Use state to store stable processed extensions - only update when data actually changes
+  const [stableExtensions, setStableExtensions] = useState<
+    ProcessedExtension[]
+  >([]);
+  const prevExtensionsKeyRef = useRef<string>("");
+
+  // Track if we've initialized form to prevent infinite loops
+  const hasInitializedFormRef = useRef(false);
+  const prevExistingDataRef = useRef<string>("");
+
+  // Update stable extensions only when underlying data changes
+  useEffect(() => {
+    const allExtensions = getExtensions(entityType, schemaType);
+    const extensionsKey = JSON.stringify({
+      context,
+      configs: allExtensions.map(({ config }) => ({
+        owner: config.owner,
+        name: config.name,
+        version: config.version,
+      })),
+    });
+
+    if (extensionsKey !== prevExtensionsKeyRef.current) {
+      prevExtensionsKeyRef.current = extensionsKey;
+      setStableExtensions(processExtensions(allExtensions, context));
+    }
+  }, [getExtensions, entityType, schemaType, context]);
+
+  // Build namespaced defaults from stable extensions
+  const namespacedDefaults = useMemo(
+    () => buildNamespacedDefaults(stableExtensions),
+    [stableExtensions],
+  );
+
+  // Apply defaults and existing data to form (only once per unique data)
+  useEffect(() => {
+    const existingKey = JSON.stringify(existingData || {});
+    const hasDefaults = Object.keys(namespacedDefaults).length > 0;
+
+    // Skip if no data to apply
+    if (!hasDefaults && !existingData) {
+      return;
+    }
+
+    // Skip if already initialized and existing data hasn't changed
+    if (
+      hasInitializedFormRef.current &&
+      existingKey === prevExistingDataRef.current
+    ) {
+      return;
+    }
+
+    // Deep merge by extension name
+    const merged: NamespacedExtensionData = {};
+    const allNames = new Set([
+      ...Object.keys(namespacedDefaults),
+      ...Object.keys(existingData || {}),
+    ]);
+
+    for (const extName of allNames) {
+      merged[extName] = {
+        ...(namespacedDefaults[extName] || {}),
+        ...(existingData?.[extName] || {}),
+      };
+    }
+
+    // Update refs before setting value
+    prevExistingDataRef.current = existingKey;
+    hasInitializedFormRef.current = true;
+
+    form.setValue(basePath as Path<TForm>, merged as TForm[keyof TForm]);
+  }, [namespacedDefaults, existingData, form, basePath]);
+
+  // Prepare data for submission
+  const prepareForSubmit = useCallback(
+    (
+      extensions: NamespacedExtensionData | undefined,
+    ): NamespacedExtensionData => {
+      const result: NamespacedExtensionData = {};
+
+      const allNames = new Set([
+        ...Object.keys(namespacedDefaults),
+        ...Object.keys(extensions || {}),
+      ]);
+
+      for (const extName of allNames) {
+        const extDefaults = namespacedDefaults[extName] || {};
+        const extValues = extensions?.[extName] || {};
+        const merged = { ...extDefaults, ...extValues };
+
+        // Filter out undefined values
+        const filtered = Object.fromEntries(
+          Object.entries(merged).filter(([, value]) => value !== undefined),
+        );
+
+        if (Object.keys(filtered).length > 0) {
+          result[extName] = filtered;
+        }
+      }
+
+      return result;
+    },
+    [namespacedDefaults],
+  );
+
+  // Render fields for each extension with name-namespaced basePath
+  // Use stableExtensions which only changes when data actually changes
+  const fields = useMemo(() => {
+    const extensionsWithFields = stableExtensions.filter(
+      ({ fieldMetadata }) => fieldMetadata.length > 0,
+    );
+
+    if (extensionsWithFields.length === 0) return null;
+
+    return (
+      <>
+        {extensionsWithFields.map(
+          ({ config, fieldMetadata, conditionalRules }) => (
+            <ExtensionFields
+              key={config.name}
+              fieldMetadata={fieldMetadata}
+              control={form.control}
+              setValue={form.setValue}
+              conditionalRules={conditionalRules}
+              basePath={`${basePath}.${config.name}`}
+            />
+          ),
+        )}
+      </>
+    );
+  }, [stableExtensions, form.control, form.setValue, basePath]);
+
+  return {
+    fields,
+    hasFields: stableExtensions.some(
+      ({ fieldMetadata }) => fieldMetadata.length > 0,
+    ),
+    defaults: namespacedDefaults,
+    prepareForSubmit,
+    isLoading,
+    processedExtensions: stableExtensions,
+  };
+}
+
+// ============================================================================
+// Exports
+// ============================================================================
+
+export { ExtensionEntityType, useExtensionSchemas };
