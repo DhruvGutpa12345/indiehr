@@ -1,0 +1,40 @@
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "lib": ["ES2022", "DOM", "DOM.Iterable"],
+    "allowJs": true,
+    "skipLibCheck": true,
+    "esModuleInterop": true,
+    "allowSyntheticDefaultImports": true,
+    "strict": true,
+    "forceConsistentCasingInFileNames": true,
+    "noFallthroughCasesInSwitch": true,
+    "module": "ESNext",
+    // "bundler" resolution (recommended for Vite) reads package `exports` maps,
+    // which Vite 8 and other modern deps require. `baseUrl` remains deprecated in
+    // TS 6 but still functions; silence that one warning via ignoreDeprecations.
+    "moduleResolution": "bundler",
+    "ignoreDeprecations": "6.0",
+    "resolveJsonModule": true,
+    "isolatedModules": true,
+    "noEmit": true,
+    "jsx": "react-jsx",
+    "types": ["vite/client", "vite-plugin-pwa/client"],
+    "baseUrl": ".",
+    "paths": {
+      "@/*": ["./src/*"],
+      "@core/*": ["src/*"],
+      "@careConfig": ["./care.config.ts"]
+    },
+    "typeRoots": ["./node_modules/@types", "./src/remote-modules.d.ts"]
+  },
+  "include": [
+    "src/**/*.ts",
+    "src/**/*.tsx",
+    "src/**/*.d.ts",
+    "care.config.ts",
+    "scripts/**/*.ts",
+    "playwright.config.ts",
+    "plugins/**/*.ts"
+  ]
+}
