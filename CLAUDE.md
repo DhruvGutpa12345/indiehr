@@ -25,6 +25,7 @@ Further reading:
   - Backend: ruff 0.14.8 (upstream config), dev image build, `make checkmigration`, `make load-fixtures`, `make test` (about 12 min).
   - Frontend: Node from `.node-version` (24), `npm ci`, typecheck, lint, unit tests, build (about 4 min).
   - Frontend image: `deploy/docker/frontend.Dockerfile` (non-root nginx on 8080), built from `apps/frontend/build` and smoke-tested in CI. The backend uses upstream `docker/prod.Dockerfile` (already non-root).
+  - Web app builds source `deploy/frontend.env` (our settings, never OHC's `apps/frontend/.env`) and must pass `scripts/check-bundle-egress.sh <build-dir>`. New external hosts need a reviewed entry in `deploy/frontend-egress-allow.txt`. The nginx image enforces a CSP whose API/storage origins come from `CSP_API_ORIGIN` / `CSP_STORAGE_ORIGIN`.
   - Trivy: **fails on fixable HIGH/CRITICAL vulnerabilities and Dockerfile misconfigurations**. Exceptions must be path-scoped with a reason in `.trivyignore.yaml`.
 - **gitleaks false positives:** add the exact fingerprint to `.gitleaksignore` with a dated comment. Never disable the hook.
 - **sudo:** commands that need sudo must be run by the user in Ubuntu's own terminal (Ctrl+Alt+T). The app's terminal and `!` prompt have "no new privileges" set.
