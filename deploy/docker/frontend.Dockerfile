@@ -7,7 +7,9 @@
 FROM nginxinc/nginx-unprivileged:1.30.6-alpine
 
 COPY --chown=nginx:nginx . /usr/share/nginx/html
-COPY --from=config frontend-nginx.conf /etc/nginx/conf.d/default.conf
+COPY --from=config frontend-nginx.conf.template /etc/nginx/templates/default.conf.template
+# Allowed API/storage origins for the CSP; set per deployment at `docker run -e ...`.
+ENV CSP_API_ORIGIN="" CSP_STORAGE_ORIGIN=""
 
 USER nginx
 EXPOSE 8080

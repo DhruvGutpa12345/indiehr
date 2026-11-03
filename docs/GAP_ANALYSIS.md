@@ -150,6 +150,11 @@
 - **(B) Lightweight curated service.** Postgres tables of the SNOMED/ICD-10 subsets used in Indian OPD/IPD, served through the same FHIR-style lookup CARE expects. Cheap, but less complete.
 - **(C) Both.** (B) for dev/staging and small tenants now, (A) later. ⭐ Recommended.
 
+## 7b. Known gaps from the egress lockdown (P0-T10)
+
+- **Facility map** (facility form): map tiles and address search use OpenStreetMap servers; the enforced CSP blocks them, so the map is blank and address search fails. Decide later: self-hosted tiles, an Indian provider, or manual lat/long only.
+- **reCAPTCHA** after failed logins is off (no site key). Brute-force protection must come from Keycloak (P1-T3).
+
 ## 8. To verify once CARE runs (P0-T5)
 
 - Walk-in vs. appointment priority in token queues.

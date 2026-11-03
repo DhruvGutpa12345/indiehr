@@ -1,8 +1,13 @@
-import { IDetectedBarcode, Scanner } from "@yudiel/react-qr-scanner";
+import {
+  IDetectedBarcode,
+  Scanner,
+  setZXingModuleOverrides,
+} from "@yudiel/react-qr-scanner";
 import { Camera, QrCode, X } from "lucide-react";
 import { useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { toast } from "sonner";
+import zxingReaderWasmUrl from "zxing-wasm/reader/zxing_reader.wasm?url";
 
 import { Button } from "@/components/ui/button";
 import {
@@ -13,6 +18,12 @@ import {
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Separator } from "@/components/ui/separator";
+
+// IndieHR: load the barcode engine from our own bundle, not a public CDN
+setZXingModuleOverrides({
+  locateFile: (path, prefix) =>
+    path.endsWith(".wasm") ? zxingReaderWasmUrl : prefix + path,
+});
 
 interface GenericQRScanDialogProps {
   open: boolean;

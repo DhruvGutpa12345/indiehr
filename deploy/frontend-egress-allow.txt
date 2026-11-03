@@ -1,0 +1,57 @@
+# Hosts allowed to appear in the built web app (P0-T10). Format: host  # reason
+# scripts/check-bundle-egress.sh fails on any other host, and ALWAYS fails on the
+# hard-denied hosts listed in the script (OHC Sentry/CDN/API/SBOM).
+# Runtime calls to any host not in the CSP connect-src are blocked by the browser anyway.
+#
+# Code-system identifiers (FHIR/terminology URIs; never fetched)
+loinc.org                 # LOINC code system URI
+unitsofmeasure.org        # UCUM code system URI
+terminology.hl7.org       # HL7 code system URIs
+snomed.info               # SNOMED CT code system URI
+ohc.network               # CARE code-system URIs (system.care.ohc.network, ohc.network/codes/...) + footer link
+example.org               # placeholder in docs/strings
+example.com               # placeholder in docs/strings
+foo.bar                   # placeholder in library code
+www.w3.org                # XML/SVG namespaces
+ns.adobe.com              # XMP namespace in PDF library
+www.xfa.org               # XFA namespace in PDF library
+# Plain links shown to users (navigation only, no automatic requests)
+wa.me                     # "open in WhatsApp" links on patient phone numbers (user-initiated)
+github.com                # licence/source links
+opensource.org            # licence links
+www.gnu.org               # licence links
+creativecommons.org       # licence links
+www.apache.org            # licence links
+unlicense.org             # licence links
+www.eclipse.org           # licence links
+joinup.ec.europa.eu       # licence links (EUPL)
+www.digitalpublicgoods.net # footer link
+support.google.com        # help link
+www.npmjs.com             # licence page links
+pypi.org                  # licence page links
+lexical.dev               # editor library error-doc links
+reactflow.dev             # library error-doc links
+react.dev                 # library error-doc links
+reactjs.org               # library error-doc links
+redux.js.org              # library error-doc links
+redux-toolkit.js.org      # library error-doc links
+tailwindcss.com           # library comment links
+docs.sentry.io            # string inside the (now unconfigured) Sentry SDK
+pigeon-maps.js.org        # map library attribution link
+purecatamphetamine.github.io # phone-number library docs link
+bit.ly                    # library docs link
+www.robotstxt.org         # robots.txt comment
+# Dormant library defaults: present in code, never called by our config; blocked by CSP if ever used
+cdn.jsdelivr.net          # browser-image-compression worker default (disabled: useWebWorker:false)
+fastly.jsdelivr.net       # zxing-wasm default (overridden: engine served from our bundle)
+cdnjs.cloudflare.com      # jsPDF 'pdfobjectnewwindow' output mode (not used)
+www.google.com            # react-google-recaptcha script (only with a site key; ours is empty)
+www.recaptcha.net         # react-google-recaptcha alternate host (same)
+tile.openstreetmap.org    # facility map tiles: BLOCKED by CSP (known gap, see GAP_ANALYSIS)
+nominatim.openstreetmap.org # facility address search: BLOCKED by CSP (known gap)
+www.openstreetmap.org     # map attribution link
+blueoakcouncil.org        # licence links
+www.mozilla.org           # licence/docs links
+fb.me                     # React error-doc short links
+json-schema.org           # JSON Schema $schema identifiers (never fetched)
+jspdf.default.namespaceuri # placeholder namespace string in jsPDF (not a real host)

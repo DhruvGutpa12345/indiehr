@@ -65,18 +65,6 @@ export const AuthHero = () => {
       <div className="mb-6 flex items-center">
         <div className="max-w-lg text-xs md:text-sm">
           <div className="mb-2 ml-1 flex items-center gap-4">
-            <a
-              href="https://www.digitalpublicgoods.net/r/care"
-              rel="noopener noreferrer"
-              target="_blank"
-            >
-              <img
-                src="https://cdn.ohc.network/dpg-logo.svg"
-                className="h-12"
-                alt="Logo of Digital Public Goods Alliance"
-              />
-            </a>
-            <div className="ml-2 h-8 w-px rounded-full bg-white/50" />
             <a href={urls.ohcn} rel="noopener noreferrer" target="_blank">
               <img
                 src="/images/ohc_logo_light.svg"

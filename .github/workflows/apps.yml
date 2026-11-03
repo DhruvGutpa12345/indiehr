@@ -39,6 +39,8 @@ jobs:
             frontend:
               - 'apps/frontend/**'
               - 'deploy/docker/frontend*'
+              - 'deploy/frontend*'
+              - 'scripts/check-bundle-egress.sh'
               - '.github/workflows/apps.yml'
 
   backend:
@@ -123,8 +125,14 @@ jobs:
       - name: Unit tests
         run: npm run test:unit
 
-      - name: Production build
-        run: npm run build
+      - name: Production build (IndieHR settings, not OHC defaults)
+        run: |
+          set -a; . ../../deploy/frontend.env; set +a
+          REACT_CARE_API_URL=http://localhost:9000 npm run build
+
+      - name: Egress check (no unreviewed external hosts in bundle)
+        working-directory: .
+        run: scripts/check-bundle-egress.sh apps/frontend/build
 
       - uses: docker/setup-buildx-action@v4.4.1
 
@@ -139,12 +147,13 @@ jobs:
       - name: Smoke test frontend image
         working-directory: .
         run: |
-          docker run -d --name fe -p 8080:8080 indiehr-frontend:ci
+          docker run -d --name fe -p 8080:8080 -e CSP_API_ORIGIN=http://localhost:9000 indiehr-frontend:ci
           sleep 3
           test "$(docker exec fe id -u)" != "0"
           curl -fsS http://127.0.0.1:8080/ | grep -qi "<html"
           curl -fsS -o /dev/null http://127.0.0.1:8080/patients
           curl -fsSI http://127.0.0.1:8080/ | grep -qi "x-content-type-options: nosniff"
+          curl -fsSI http://127.0.0.1:8080/ | grep -i "^content-security-policy:" | grep -q "connect-src 'self' http://localhost:9000"
           docker rm -f fe
 
   security:

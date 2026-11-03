@@ -1,0 +1,32 @@
+# Based on apps/frontend/nginx/nginx.conf (upstream CARE), adapted for IndieHR:
+# non-root port 8080; OHC-specific asset hosts removed; CSP ENFORCED (P0-T10).
+# Rendered at container start by the image's envsubst step:
+#   CSP_API_ORIGIN      e.g. https://api.example.in   (the CARE API)
+#   CSP_STORAGE_ORIGIN  e.g. https://files.example.in (pre-signed file URLs)
+server {
+  listen 8080;
+  root /usr/share/nginx/html;
+
+  server_tokens off;
+
+  add_header Strict-Transport-Security "max-age=31536000; includeSubDomains" always;
+  add_header X-Frame-Options "SAMEORIGIN" always;
+  add_header X-Content-Type-Options "nosniff" always;
+  add_header Referrer-Policy "strict-origin-when-cross-origin" always;
+  add_header Permissions-Policy "geolocation=(self), microphone=(self)" always;
+  add_header Content-Security-Policy "default-src 'self'; script-src 'self' 'wasm-unsafe-eval'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: ${CSP_STORAGE_ORIGIN}; font-src 'self' data:; connect-src 'self' ${CSP_API_ORIGIN} ${CSP_STORAGE_ORIGIN}; media-src 'self' blob: ${CSP_STORAGE_ORIGIN}; worker-src 'self' blob:; frame-src 'self' blob: ${CSP_STORAGE_ORIGIN}; manifest-src 'self'; object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'self'" always;
+
+  include mime.types;
+  types {
+    text/javascript js mjs;
+  }
+
+  location = /index.html {
+    expires 6h;
+  }
+
+  location / {
+    expires 7d;
+    try_files $uri $uri/ /index.html;
+  }
+}

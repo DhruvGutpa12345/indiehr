@@ -139,6 +139,8 @@ export default function useFileUpload(
           const options = {
             initialQuality: 0.6,
             alwaysKeepResolution: true,
+            // IndieHR: the worker build loads its script from a public CDN
+            useWebWorker: false,
           };
           imageCompression(file, options).then((compressedFile: File) => {
             setFiles((prev) =>

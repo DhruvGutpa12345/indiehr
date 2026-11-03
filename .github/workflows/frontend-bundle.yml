@@ -33,26 +33,17 @@ jobs:
 
       - run: npm ci
 
-      - name: Build bundle
-        env:
-          REACT_CARE_API_URL: ${{ inputs.api_url }}
-          REACT_APP_TITLE: "IndieHR (dev)"
-          REACT_ENABLED_APPS: ""
-          REACT_RECAPTCHA_SITE_KEY: ""
-          REACT_PUBLIC_URL: "http://localhost:8080"
-          REACT_APP_COVER_IMAGE: "http://localhost:8080/images/care_logo.svg"
-          REACT_APP_COVER_IMAGE_ALT: "http://localhost:8080/images/care_logo.svg"
-          REACT_SBOM_BASE_URL: "http://localhost:8080/sbom"
-          REACT_APP_STORE_INDEX_URL: ""
-          REACT_ALLOWED_LOCALES: "en,hi"
-        run: npm run build
-
-      - name: Check API URL is baked in and OHC's API is not
+      - name: Build bundle (IndieHR settings, not OHC defaults)
         env:
           API_URL: ${{ inputs.api_url }}
         run: |
+          set -a; . ../../deploy/frontend.env; set +a
+          REACT_APP_TITLE="IndieHR (dev)" REACT_CARE_API_URL="$API_URL" npm run build
           grep -rqF "$API_URL" build/ || { echo "API URL not found in bundle"; exit 1; }
-          if grep -rqF "careapi.ohc.network" build/; then echo "OHC API URL still present"; exit 1; fi
+
+      - name: Egress check (no unreviewed external hosts in bundle)
+        working-directory: .
+        run: scripts/check-bundle-egress.sh apps/frontend/build
 
       - uses: actions/upload-artifact@v7.0.2
         with:

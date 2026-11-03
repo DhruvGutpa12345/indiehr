@@ -25,10 +25,13 @@ case "${1:-}" in
     # Serve a pre-built bundle (from CI artifact) unpacked into deploy/dev/frontend-build
     BUILD="$ROOT/deploy/dev/frontend-build"
     test -f "$BUILD/index.html" || { echo "No bundle in $BUILD (see docs/LOCAL_DEV.md)"; exit 1; }
+    "$ROOT/scripts/check-bundle-egress.sh" "$BUILD"
     docker buildx build -q --load -f "$ROOT/deploy/docker/frontend.Dockerfile" \
       --build-context config="$ROOT/deploy/docker" -t "$FE_IMAGE" "$BUILD" >/dev/null
     docker rm -f indiehr-frontend >/dev/null 2>&1 || true
-    docker run -d --name indiehr-frontend -p 127.0.0.1:8080:8080 --memory 64m "$FE_IMAGE" >/dev/null
+    docker run -d --name indiehr-frontend -p 127.0.0.1:8080:8080 --memory 64m \
+      -e CSP_API_ORIGIN=http://localhost:9000 -e CSP_STORAGE_ORIGIN=http://localhost:9100 \
+      "$FE_IMAGE" >/dev/null
     echo "Web app: http://localhost:8080"
     ;;
   *) sed -n '3p' "$0"; exit 1 ;;

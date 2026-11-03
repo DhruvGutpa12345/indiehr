@@ -43,7 +43,8 @@ The overrides live in `deploy/dev/care-local.override.yaml`; CARE's files are un
 | Every port bound to `127.0.0.1` (upstream: all interfaces) | The database (password `postgres`), API and storage were reachable from the LAN |
 | `SNOWSTORM_DEPLOYMENT_URL` points to a dead local address | Upstream default sends clinical search text to a third-party IP over HTTP. Diagnosis/drug search will not work until P1-T10 |
 | One Celery process (`--pool=solo`), no auto-reload, memory caps | Upstream starts one worker per CPU core |
-| Web app served by our non-root nginx image from a CI-built bundle | No local Node build (needs ~4 GB); OHC URLs removed from the bundle |
+| Web app served by our non-root nginx image from a CI-built bundle | No local Node build (needs ~4 GB) |
+| Bundle built with `deploy/frontend.env` and checked by `scripts/check-bundle-egress.sh`; enforced CSP allows only `localhost:9000` (API) and `localhost:9100` (files) | No third-party calls (P0-T10). Facility map and address search are blocked on purpose |
 | Test-user passwords replaced | CARE's fixture passwords are public in its source |
 
 ## Ports

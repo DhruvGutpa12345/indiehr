@@ -52,7 +52,7 @@ const resolveApiUrl = (): string => {
 
 const careConfig = {
   apiUrl: resolveApiUrl(),
-  sbomBaseUrl: env.REACT_SBOM_BASE_URL || "https://sbom.ohc.network",
+  sbomBaseUrl: env.REACT_SBOM_BASE_URL || "",
   urls: {
     github: env.REACT_GITHUB_URL || "https://github.com/ohcnetwork",
     ohcn: env.REACT_OHCN_URL || "https://ohc.network?ref=care",
@@ -95,9 +95,7 @@ const careConfig = {
 
   // Plugins related configs...
   sentry: {
-    dsn:
-      env.REACT_SENTRY_DSN ||
-      "https://8801155bd0b848a09de9ebf6f387ebc8@sentry.io/5183632",
+    dsn: env.REACT_SENTRY_DSN || "",
     environment: env.REACT_SENTRY_ENVIRONMENT || "staging",
   },
 
