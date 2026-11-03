@@ -215,7 +215,8 @@ Task IDs are `P<phase>-T<n>`. Each task is sized for **one sitting (≈1–3 hou
 | P0-T5 | **Spike: run CARE locally** | Bring up CARE backend + frontend + Postgres + Redis with Compose; load sample data; create test users (admin, doctor, nurse, billing, pharmacist) | **You** log in at a localhost URL and click through OPD, IPD, lab, pharmacy, billing | Opus / medium |
 | ~~P0-T6~~ | ~~Spike: Marley + ERPNext~~ — **dropped** (Q-A1 decided). ERPNext is set up in P2-T17b instead. | — | — | — |
 | P0-T7 ✅ | Gap analysis | Map every blueprint module to: exists in CARE / needs extension / build new / defer; estimate | `docs/GAP_ANALYSIS.md` approved | Opus / high |
-| P0-T8 | CI pipeline | GitHub Actions: lint (ruff, eslint), unit tests, build images, Trivy scan, Playwright smoke | Green pipeline on PR | Sonnet / medium |
+| P0-T8 ✅ | CI pipeline | GitHub Actions: lint (ruff, eslint), unit tests, build images, Trivy scan, Playwright smoke | Green pipeline on PR | Sonnet / medium |
+| P0-T9 | Security bumps found by CI | Raise PyJWT → 2.14.0, Pillow → 13.0.0, Authlib → 1.9.0, Brotli → 1.2.1, certifi → 2026.10.18 (backend `Pipfile`/`Pipfile.lock`), DOMPurify → 3.4.17 (frontend lock); log in UPSTREAM_PATCHES.md; full backend + frontend CI | Trivy gate green, all tests pass | Opus / medium |
 
 ### Phase 1 — Platform core (tenancy, identity, staging)
 

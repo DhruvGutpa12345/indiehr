@@ -11,8 +11,8 @@
 Detailed task definitions: [PLAN.md](PLAN.md) §6. Open questions: [QUESTIONS.md](QUESTIONS.md).
 
 **Current phase:** P0 Foundations
-**Next task:** P0-T8 (CI pipeline). P0-T5 waits for the 32 GB RAM upgrade.
-**Recommended model for next task:** Sonnet · **medium** for P0-T8
+**Next task:** P0-T9 (security bumps so the Trivy gate passes). P0-T5 waits for the 32 GB RAM upgrade.
+**Recommended model for next task:** Opus · **medium** for P0-T9 (security-sensitive, major Pillow bump)
 
 ---
 
@@ -25,6 +25,7 @@ Detailed task definitions: [PLAN.md](PLAN.md) §6. Open questions: [QUESTIONS.md
 | 2026-11-02 | R-2 | Consolidated research report | `reports/India hospital SaaS stack research.md` |
 | 2026-11-02 | R-3 | Master plan v0.1, question list, tracker, CLAUDE.md | `docs/` |
 | 2026-11-02 | R-4 | Workstation audit: 6.7 GB RAM, no GPU, Docker 26.1.3 without group access | PLAN.md §4 |
+| 2026-11-03 | P0-T8 | Apps CI: backend full upstream test suite passes (12 min); frontend typecheck/lint/unit/build pass (4 min); Trivy gate fails on 10 fixable CRITICAL vulns in upstream locks: PyJWT 2.12.0 (auth bypass), Pillow 12.2.0, Authlib 1.6.12, Brotli 1.2.0, certifi, DOMPurify 3.4.12 | Run 41571634449 |
 | 2026-11-03 | Q&A 2 | Remaining questions answered: curated terminology now, SNOMED licence prep, OT/ICU/Maternity first, payroll + e-invoice later via ERPNext, phase-end second-opinion reviews, product owner reviews clinical content | QUESTIONS.md |
 | 2026-11-03 | P0-T7 | Gap analysis from CARE code: 28 MVP areas (7 use, 15 extend, 6 build) + 17 later modules; tenancy-readiness check (no raw SQL); 6 upstream risks; plan rescoped (+P1-T10 terminology, +P1-T11 roles) | docs/GAP_ANALYSIS.md |
 | 2026-11-03 | P0-T4 | CARE backend @67a46185eb98 and frontend @57205b897804 imported as squashed subtrees (ADR-006); `upstream.lock`, `scripts/sync-upstream.sh` (dry-run + real sync rehearsed in a scratch repo: conflict-risk warning, 3-way merge, lock update all OK) | apps/, docs/UPSTREAM.md |
@@ -39,7 +40,7 @@ Detailed task definitions: [PLAN.md](PLAN.md) §6. Open questions: [QUESTIONS.md
 | Phase | Name | Status | Tasks done |
 |---|---|---|---|
 | — | Research and planning | 🟡 | 5/5 |
-| P0 | Foundations and decisions | 🔵 | 5/7 (T6 dropped) |
+| P0 | Foundations and decisions | 🔵 | 6/8 (T6 dropped) |
 | P1 | Platform core (tenancy, identity, staging) | ⬜ | 0/11 |
 | P2 | MVP hospital workflows | ⬜ | 0/20 |
 | P3 | ABDM and national rails | ⬜ | 0/12 |
@@ -61,7 +62,8 @@ Detailed task definitions: [PLAN.md](PLAN.md) §6. Open questions: [QUESTIONS.md
 - ⬜ P0-T5 Spike: run CARE locally with test users ← **first thing you'll click** (blocked: needs 32 GB RAM)
 - ❌ P0-T6 Spike: Marley + ERPNext v16 (dropped — Q-A1 decided)
 - 🟡 P0-T7 Gap analysis blueprint ↔ CARE
-- ⬜ P0-T8 CI pipeline
+- 🟡 P0-T8 CI pipeline: backend ✅ (12 min), frontend ✅ (4 min), Trivy ❌ (gate correctly fails: 10 fixable CRITICAL vulns upstream)
+- ⬜ P0-T9 Security bumps of upstream dependencies (PyJWT, Pillow, Authlib, Brotli, certifi, DOMPurify) → Trivy green
 
 ### P1 — Platform core
 

@@ -40,3 +40,13 @@ Setup script: [deploy/dev/setup-workstation-root.sh](../deploy/dev/setup-worksta
 | Frontend | ohcnetwork/care_fe `develop` | 57205b897804 | 2026-11-02 | 2026-11-03 |
 
 Last GitHub Releases are v3.0.0 (backend, 2025-02-12) and v3.0.32 (frontend, 2025-12-23), so we pin `develop` commits. Source of truth: `upstream.lock`.
+
+## CI actions — P0-T8
+
+| Item | Version | Checked |
+|---|---|---|
+| actions/setup-node | v7.1.0 (Node from `apps/frontend/.node-version` = 24) | 2026-11-03 |
+| docker/setup-buildx-action | v4.4.1 | 2026-11-03 |
+| dorny/paths-filter | v4.0.3 | 2026-11-03 |
+| aquasecurity/trivy-action | v0.36.0 | 2026-11-03 |
+| ruff (backend lint, matches upstream) | 0.14.8 | 2026-11-03 |
