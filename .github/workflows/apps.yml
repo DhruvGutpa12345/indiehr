@@ -11,6 +11,11 @@ on:
   schedule:
     - cron: "30 21 * * 0" # Sundays 03:00 IST
   workflow_dispatch:
+    inputs:
+      postgres_image:
+        description: "Run backend tests on this Postgres image instead of upstream's (e.g. postgres:18.6-alpine)"
+        required: false
+        default: ""
 
 permissions:
   contents: read
@@ -76,8 +81,20 @@ jobs:
             --cache-to type=gha,mode=max,scope=backend \
             --load .
 
+      - name: Use a different Postgres image (manual runs only)
+        if: github.event_name == 'workflow_dispatch' && inputs.postgres_image != ''
+        env:
+          PG_IMAGE: ${{ inputs.postgres_image }}
+        run: |
+          printf 'services:\n  db:\n    image: %s\n' "$PG_IMAGE" > docker-compose.override.ci.yaml
+          sed -i "s|docker_config_file := 'docker-compose.local.yaml'|docker_config_file := 'docker-compose.local.yaml' -f docker-compose.override.ci.yaml|" Makefile
+          echo "Postgres image for this run: $PG_IMAGE"
+
       - name: Start services
         run: make up || (docker compose -f docker-compose.yaml -f docker-compose.local.yaml logs && exit 1)
+
+      - name: Report Postgres version
+        run: docker compose exec -T db psql -U postgres -tAc "select version()"
 
       - name: Check for missing migrations
         run: make checkmigration
