@@ -216,7 +216,7 @@ Task IDs are `P<phase>-T<n>`. Each task is sized for **one sitting (≈1–3 hou
 | ~~P0-T6~~ | ~~Spike: Marley + ERPNext~~ — **dropped** (Q-A1 decided). ERPNext is set up in P2-T17b instead. | — | — | — |
 | P0-T7 ✅ | Gap analysis | Map every blueprint module to: exists in CARE / needs extension / build new / defer; estimate | `docs/GAP_ANALYSIS.md` approved | Opus / high |
 | P0-T8 ✅ | CI pipeline | GitHub Actions: lint (ruff, eslint), unit tests, build images, Trivy scan, Playwright smoke | Green pipeline on PR | Sonnet / medium |
-| P0-T9 | Security bumps found by CI | Raise PyJWT → 2.14.0, Pillow → 13.0.0, Authlib → 1.9.0, Brotli → 1.2.1, certifi → 2026.10.18 (backend `Pipfile`/`Pipfile.lock`), DOMPurify → 3.4.17 (frontend lock); log in UPSTREAM_PATCHES.md; full backend + frontend CI | Trivy gate green, all tests pass | Opus / medium |
+| P0-T9 ✅ | Security bumps found by CI | Raise PyJWT → 2.14.0, Pillow → 13.0.0, Authlib → 1.9.0, Brotli → 1.2.1, certifi → 2026.10.18 (backend `Pipfile`/`Pipfile.lock`), DOMPurify → 3.4.17 (frontend lock); log in UPSTREAM_PATCHES.md; full backend + frontend CI | Trivy gate green, all tests pass | Opus / medium |
 
 ### Phase 1 — Platform core (tenancy, identity, staging)
 
@@ -233,6 +233,7 @@ Task IDs are `P<phase>-T<n>`. Each task is sized for **one sitting (≈1–3 hou
 | P1-T9 | Observability: Prometheus + Grafana + Loki, uptime alerts to you (email/WhatsApp) | Dashboard URL | Sonnet / medium |
 | P1-T10 | **Terminology service** (from the gap analysis): CARE calls an external SNOMED server over plain HTTP by default. **Decided (Q-F1b): a curated SNOMED + ICD-10 + drug lookup service now**, served in the FHIR-style form CARE expects; self-hosted Snowstorm later. Includes the SNOMED CT India affiliate licence checklist for you to submit | Diagnosis/drug search works with no external calls | Opus / high |
 | P1-T11 | Seed Indian hospital roles: Receptionist, Cashier, Lab Tech, Radiologist, TPA Desk, MRD, Store Keeper, Owner | Each role sees only its screens (tests) | Sonnet / medium |
+| P1-T12 | Hardening before staging: fix the 29 fixable HIGH dependency vulnerabilities Trivy reports (22 backend, 7 frontend); run containers as a non-root user; `--no-install-recommends`; then make Trivy fail on fixable HIGH too | Trivy gate at HIGH is green | Opus / medium |
 
 ### Phase 2 — MVP hospital workflows (sellable to a 10–100 bed hospital)
 
