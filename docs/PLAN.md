@@ -30,6 +30,8 @@ That difference drives most of the changes below.
 | [ADR-003](adr/003-hosting-and-environments.md) | Hosting: local → single India-region VM staging → k3s later; cloud provider chosen before P1-T8 |
 | [ADR-004](adr/004-accounting-tally-and-erpnext.md) | Accounting: accounting outbox → Tally XML export **and** ERPNext v16 connector |
 | [ADR-005](adr/005-ai-deferred.md) | AI: deferred; deterministic clinical rules only |
+| [ADR-006](adr/006-upstream-fork-via-subtree.md) | CARE imported as squashed git subtrees in our private repo, pinned in `upstream.lock` |
+| [ADR-007](adr/007-blueprint-items-deferred.md) | Blueprint items deferred or dropped, with the reason and when to revisit |
 
 ### 1.1 Who we sell to first (decided — ADR-000)
 
@@ -122,7 +124,7 @@ Hand the **accounting** books off either to **Tally export** (what Indian hospit
 
 If you prefer to reach a billing-heavy MVP fastest and accept weaker clinical depth, Option C is the alternative.
 
-Task **P0-T5** runs both CARE and Marley locally for a hands-on comparison before we commit, so you can click through both.
+_Decided: Option B (ADR-001). The planned CARE-vs-Marley spike (P0-T6) was dropped; CARE alone ran in P0-T5._
 
 ### 3.1 Target architecture (Option B)
 
@@ -166,13 +168,13 @@ Task **P0-T5** runs both CARE and Marley locally for a hands-on comparison befor
 
 | Item | Found | Needed |
 |---|---|---|
-| RAM | **6.7 GB total, ~1 GB free** (Firefox + Claude use most of it) | **Upgrading to 32 GB (decided)**. P0-T5 waits for it |
+| RAM | **6.7 GB total, ~1 GB free** (Firefox + Claude use most of it) | Upgrade to 32 GB decided (not yet installed). CARE runs anyway in a ~600 MB low-memory setup (P0-T5); the web app is built on GitHub |
 | CPU | i3-12100, 8 threads | OK |
 | GPU | Intel UHD 730 (none usable) | Self-hosted LLM/ASR impossible locally → use Bedrock India / API, or a GPU VM later |
 | Disk | 394 GB free | OK |
-| Docker | 26.1.3, Compose v2.27. ✅ The user is now in the `docker` group (verified 2026-11-03) | Upgrade to Docker 29.x / Compose v5.x (P0-T2) |
-| Missing tools | uv, pnpm, gh, kubectl, helm, Java | Install as needed per task |
-| Git | Folder is not a repo; GitHub MCP connection failed | `git init` + private GitHub repo (Q-E3) |
+| Docker | ✅ Docker 29.9.2 / Compose 5.7.0; user in the `docker` group (P0-T2) | — |
+| Tools | ✅ uv, pnpm, gh, pre-commit installed (P0-T2); kubectl, helm, Java not yet | Install as needed per task |
+| Git | ✅ Private repo github.com/DhruvGutpa12345/indiehr (P0-T3); `gh` CLI logged in | — |
 
 ---
 
@@ -202,7 +204,7 @@ Task **P0-T5** runs both CARE and Marley locally for a hands-on comparison befor
 
 ## 6. Phased roadmap
 
-Task IDs are `P<phase>-T<n>`. Each task is sized for **one sitting (≈1–3 hours of agent work)**. **Effort** = suggested model / effort for that task.
+Task IDs are `P<phase>-T<n>`. Each task is sized for **one sitting (≈1–3 hours of agent work)**. **Effort** = suggested model / effort for that task. A ✅ here means the work is done; whether you have approved it is shown in [TRACKER.md](TRACKER.md) (🟡 = awaiting your review).
 
 ### Phase 0 — Foundations and decisions
 
@@ -211,11 +213,11 @@ Task IDs are `P<phase>-T<n>`. Each task is sized for **one sitting (≈1–3 hou
 | P0-T1 ✅ | Record decisions | Turn your answers to QUESTIONS.md into ADR-000 to ADR-005; update this plan | ADRs written, plan v1.0 | Opus / medium |
 | P0-T2 | Workstation setup | Guide you to add your user to the `docker` group; upgrade Docker 29.x + Compose v5; install uv, pnpm, gh, pre-commit; verify | `docker run hello-world` works without sudo; versions logged | Sonnet / low |
 | P0-T3 | Repo bootstrap | `git init`, private GitHub repo, monorepo layout (`apps/`, `plugins/`, `deploy/`, `docs/`), licence and NOTICE files (MIT attribution for CARE), .editorconfig, pre-commit, CLAUDE.md refresh | First commit pushed; CI "hello" green | Sonnet / medium |
-| P0-T4 ✅ | Upstream fork strategy | Fork `ohcnetwork/care` and `care_fe` into the org; pin commit SHAs; scripted upstream-sync; record versions | `make sync-upstream` dry-run works | Sonnet / medium |
+| P0-T4 ✅ | Upstream fork strategy | Import `ohcnetwork/care` and `care_fe` as squashed git subtrees (ADR-006; a GitHub fork would be public); pin commit SHAs; scripted upstream-sync; record versions | `scripts/sync-upstream.sh all --dry-run` works | Sonnet / medium |
 | P0-T5 ✅ | **Spike: run CARE locally** | Bring up CARE backend + frontend + Postgres + Redis with Compose; load sample data; create test users (admin, doctor, nurse, billing, pharmacist) | **You** log in at a localhost URL and click through OPD, IPD, lab, pharmacy, billing | Opus / medium |
 | ~~P0-T6~~ | ~~Spike: Marley + ERPNext~~ — **dropped** (Q-A1 decided). ERPNext is set up in P2-T17b instead. | — | — | — |
 | P0-T7 ✅ | Gap analysis | Map every blueprint module to: exists in CARE / needs extension / build new / defer; estimate | `docs/GAP_ANALYSIS.md` approved | Opus / high |
-| P0-T8 ✅ | CI pipeline | GitHub Actions: lint (ruff, eslint), unit tests, build images, Trivy scan, Playwright smoke | Green pipeline on PR | Sonnet / medium |
+| P0-T8 ✅ | CI pipeline | GitHub Actions: lint (ruff, eslint), CARE backend test suite, frontend typecheck/unit tests/build, image builds, Trivy scan. **Playwright end-to-end not yet** (needs the full stack in CI; planned with P2-T19) | Green pipeline on every push to `main` (no PRs, ADR-000) | Sonnet / medium |
 | P0-T9 ✅ | Security bumps found by CI | Raise PyJWT → 2.14.0, Pillow → 13.0.0, Authlib → 1.9.0, Brotli → 1.2.1, certifi → 2026.10.18 (backend `Pipfile`/`Pipfile.lock`), DOMPurify → 3.4.17 (frontend lock); log in UPSTREAM_PATCHES.md; full backend + frontend CI | Trivy gate green, all tests pass | Opus / medium |
 | P0-T10 ✅ | **Egress lockdown** (review R0-01, R0-02 — High) | Patch CARE so Sentry is off unless our own DSN is set; remove OHC CDN logo, reCAPTCHA and OpenStreetMap defaults; CI check that fails the bundle build on `sentry.io`, `ohc.network`, `google.com/recaptcha`, `openstreetmap`; enforce (not report-only) CSP with `connect-src` limited to our API | Bundle contains no third-party hosts; browser shows CSP enforced | Opus / medium |
 | P0-T11 ✅ | **Close P0-T5 properly** (R0-05, R0-11) | `care-dev.sh seed` rotates passwords and writes `TEST_USERS.md`; add Cashier/Billing and Pharmacist test users; rebuild image when the lock file changes; run GAP_ANALYSIS §8 checks (invoice numbering, FEFO, reference ranges, date formats) and record results; Postgres 18 compatibility check; owner click-through script | Fresh `seed` gives working logins with no public passwords; §8 results recorded | Sonnet / medium |
@@ -227,13 +229,13 @@ Task IDs are `P<phase>-T<n>`. Each task is sized for **one sitting (≈1–3 hou
 | ID | Task | Done when | Effort |
 |---|---|---|---|
 | P1-T0 | **Tenancy design spike** (review R0-03, R0-21 — High): map every CARE Django app/model to SHARED (public schema) or TENANT; list every foreign key crossing that line (e.g. `User`→`Facility`/`Organization`); decide the user model; ABDM HIP-ID→tenant routing; amend ADR-002 | ADR-002 amendment approved by you | Opus / high |
-| P1-T1 | ADR-002 + prototype: tenancy (schema-per-tenant via django-tenants **vs** DB-per-tenant **vs** Postgres row-level security), incl. migration strategy and a backup/restore-per-tenant test | Two tenants on one deployment provably cannot read each other's data (automated test) | Opus / high |
+| P1-T1 | Tenancy prototype per the P1-T0 design (schema-per-tenant is decided in ADR-002; here: django-tenants **vs** a thin `search_path` middleware), incl. migration strategy and a backup/restore-per-tenant test | Two tenants on one deployment provably cannot read each other's data (automated test) | Opus / high |
 | P1-T2 | Tenant routing by subdomain (`<hospital>.app.<domain>`), tenant middleware, per-tenant settings (logo, GSTIN, address, letterhead) | Two demo hospitals with separate branding | Opus / medium |
 | P1-T3 | Keycloak 26.8: realm, Organizations = tenants, roles (doctor, nurse, billing, pharmacist, lab tech, admin, MRD, superadmin), MFA/TOTP for admins, password policy | Login via Keycloak for both tenants; role claims in token | Opus / medium |
 | P1-T4 | Wire CARE auth to OIDC (Keycloak), map roles → CARE permissions; decide token storage (JWT is in `localStorage` today — review R0-20) | SSO works; logout; session timeout | Opus / high |
 | P1-T5 | Super-admin console: create tenant → provision schema, Keycloak org, seed masters, first admin user | New hospital live in < 5 min from a form | Opus / medium |
 | P1-T6 | Audit trail: append-only log of every create/read/update/delete on patient data (who, when, from where, purpose); tamper-evident hash chain | Audit viewer + tests | Opus / high |
-| P1-T7 | i18n + Indian locale: English + Hindi first, INR formatting (₹1,00,000), DD-MM-YYYY, IST, Indian address (state → district → PIN) | UI toggles language; PIN lookup works | Sonnet / medium |
+| P1-T7 | i18n + Indian locale (**split into batches when started:** about 6,000 Hindi strings, machine draft + your review; clinical terms need clinical review): English + Hindi first, INR formatting (₹1,00,000), DD-MM-YYYY, IST, Indian address (state → district → PIN) | UI toggles language; PIN lookup works | Sonnet / medium |
 | P1-T8 | Staging server (+ secure settings that refuse to start without secret key, JWKS, allowed hosts — review R0-09): India-region VM, Traefik + Let's Encrypt, Compose deploy from CI, backups (pgBackRest), NTP to NIC/NPL, 180-day logs | **One-click staging URL** with test logins | Sonnet / high |
 | P1-T9 | Observability: Prometheus + Grafana + Loki, uptime alerts to you (email/WhatsApp) | Dashboard URL | Sonnet / medium |
 | P1-T10 | **Terminology service** (from the gap analysis): CARE calls an external SNOMED server over plain HTTP by default. **Decided (Q-F1b): a curated SNOMED + ICD-10 + drug lookup service now**, served in the FHIR-style form CARE expects; self-hosted Snowstorm later. Includes the SNOMED CT India affiliate licence checklist for you to submit | Diagnosis/drug search works with no external calls | Opus / high |
@@ -295,7 +297,7 @@ Task IDs are `P<phase>-T<n>`. Each task is sized for **one sitting (≈1–3 hou
 | P4-T4 | Encryption at rest (Postgres disk + backups), TLS 1.3 everywhere, secrets management | Opus / high |
 | P4-T5 | Role-based access by care team ("break-the-glass" with reason and audit) | Opus / high |
 | P4-T6 | Legal pack **(you + lawyer)**: SaaS terms, Data Processing Agreement (we act as processor for the hospital), privacy policy; I draft templates | Opus / medium |
-| P4-T7 | Disaster recovery (DR): automated restore test, second-region replica, recovery time/point targets (RTO/RPO) documented | Sonnet / high |
+| P4-T7 | **(Gate: before the first pilot with real data — ADR-007)** Disaster recovery (DR): automated restore test, second-region replica, recovery time/point targets (RTO/RPO) documented | Sonnet / high |
 
 ### Phase 5 — Diagnostics depth
 
@@ -385,7 +387,7 @@ Kept for reference. Nothing here is built until you re-approve it.
 |---|---|
 | CARE upstream changes or goes quiet | Pin commits; our code lives in plugins; sync monthly; we can sustain the fork (MIT) |
 | ABDM certification timelines | Start the sandbox paperwork early (P3-T1 can run during Phase 2) |
-| 6.7 GB dev machine | RAM upgrade or a cloud dev VM (Q-E1) before P0-T5 |
+| 6.7 GB dev machine | Low-memory CARE setup works (P0-T5); RAM upgrade still recommended before heavy Phase 1–2 work |
 | Regulatory drift (DPDP May 2027, CDSCO, NABH 2nd-edition Digital Health draft) | `docs/COMPLIANCE.md` register reviewed quarterly |
 | AGPL components | Use unmodified; call over network APIs; keep a licence register (`docs/LICENSES.md`) |
 | Drug-interaction data licensing | Licensed vendor or curated in-house list (Q-F3) |

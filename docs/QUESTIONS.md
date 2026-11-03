@@ -13,11 +13,11 @@
 | Q-B3 | **English + Hindi** | P1-T7 |
 | Q-B6/B7 | Ask later; per-bed pricing as working assumption | — |
 | Q-C1 | **Both Tally export and ERPNext v16 connector from the start** | P2-T17 grows into two tasks; ERPNext needs MariaDB 11.8, so it runs as a separate stack |
-| Q-C4 | **Full PM-JAY / NHCX integration early** | P3-T11/T12 move right after ABDM M1–M3 |
+| Q-C4 | **Full PM-JAY / NHCX integration early** | NHCX and PM-JAY are now P3-T9/P3-T10, right after ABDM M1–M3 |
 | Q-D1 | **Registered Pvt Ltd/LLP with GSTIN exists** | ABDM sandbox paperwork (P3-T1) can start during Phase 2 |
 | Q-D4/D5 | **India-only data; masked Aadhaar + ABHA only** | As planned |
 | Q-D6 | **No AI for now** | Phase 7 deferred ⏸ |
-| Q-E1 | **Upgrade RAM to 32 GB** | P0-T5 (CARE spike) waits for the upgrade |
+| Q-E1 | **Upgrade RAM to 32 GB** | Not yet installed; P0-T5 ran in a low-memory setup instead |
 | Q-E2 | **Done** — user in docker group, verified after restart | P0-T2 only needs the Docker upgrade |
 | Q-E3 | **Private GitHub repo** | GitHub connector needs reconnecting, or `gh auth login` |
 | Q-E4 | **Cloud: decide later** (before P1-T8) | Local-only until staging |

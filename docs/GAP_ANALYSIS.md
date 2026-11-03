@@ -2,7 +2,7 @@
 
 - **Task:** P0-T7 · **Date:** 2026-11-03
 - **Code examined:** `apps/backend` @ `67a46185eb98` and `apps/frontend` @ `57205b897804` (see `upstream.lock`)
-- **Method:** three read-only code surveys (backend clinical; billing/inventory/plugins/infra; frontend), with key claims spot-checked by hand (`grep` evidence noted below). Nothing was run, because CARE needs the 32 GB RAM upgrade (P0-T5). Items marked **(verify in P0-T5)** were inferred from code and must be confirmed in the running app.
+- **Method:** three read-only code surveys (backend clinical; billing/inventory/plugins/infra; frontend), with key claims spot-checked by hand (`grep` evidence noted below). Nothing was run at first; the items marked **(verify in P0-T5)** were later checked in P0-T11 — results in §8.
 
 **Legend:**
 - ✅ **Use** — usable as-is or with configuration only
@@ -138,7 +138,7 @@
 | P2-T9 shrinks to S (template engine exists) | Gap #16 |
 
 **Rough MVP size after the gap analysis:**
-- Phase 1: 11 tasks.
+- Phase 1: 14 tasks (P1-T0 to P1-T14, after the Phase 0 review).
 - Phase 2: about 26 tasks (several large ones are split into sub-tasks when started).
 - Phase 3 to NHCX/PM-JAY: 10 tasks.
 

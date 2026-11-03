@@ -28,4 +28,4 @@
 ## Consequences
 
 - No cloud spend until P1-T8. Until then the user tests on `localhost` URLs.
-- Until the RAM upgrade, only lightweight tasks run locally: P0-T1 to P0-T4, P0-T7 and P0-T8. P0-T5 (running CARE) is blocked.
+- Until the RAM upgrade, CARE runs locally in a low-memory setup (about 600 MB; `scripts/care-dev.sh`) and the web app is built on GitHub (P0-T5).

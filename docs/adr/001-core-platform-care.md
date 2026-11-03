@@ -6,6 +6,8 @@
 
 ## Context
 
+> **Amended by [ADR-006](006-upstream-fork-via-subtree.md):** "fork" here means our own copy of CARE kept as squashed git subtrees inside our private repo, not a GitHub fork.
+
 We compared four clinical cores (PLAN.md §3; research note `clinical_core.md`).
 
 | Option | Tenancy fit | Licence | Weight | Verdict |
