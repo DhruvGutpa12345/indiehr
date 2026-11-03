@@ -1,0 +1,158 @@
+name: Apps CI
+
+# Lints, tests and scans the CARE backend/frontend (apps/) and our plugins.
+# Heavy jobs run only when their files change, plus weekly and on demand,
+# to stay within the private-repo Actions minute budget.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  schedule:
+    - cron: "30 21 * * 0" # Sundays 03:00 IST
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: apps-ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  changes:
+    name: Detect changed areas
+    runs-on: ubuntu-24.04
+    outputs:
+      backend: ${{ steps.filter.outputs.backend }}
+      frontend: ${{ steps.filter.outputs.frontend }}
+    steps:
+      - uses: actions/checkout@v7.0.1
+      - uses: dorny/paths-filter@v4.0.3
+        id: filter
+        with:
+          filters: |
+            backend:
+              - 'apps/backend/**'
+              - 'plugins/**'
+              - '.github/workflows/apps.yml'
+            frontend:
+              - 'apps/frontend/**'
+              - '.github/workflows/apps.yml'
+
+  backend:
+    name: Backend (ruff, migrations, fixtures, tests)
+    needs: changes
+    if: needs.changes.outputs.backend == 'true' || github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    defaults:
+      run:
+        working-directory: apps/backend
+    steps:
+      - uses: actions/checkout@v7.0.1
+
+      - uses: actions/setup-python@v7.1.0
+        with:
+          python-version: "3.13"
+
+      - name: Ruff lint and format check (upstream config)
+        run: |
+          pip install ruff==0.14.8
+          ruff check .
+          ruff format --check .
+
+      - uses: docker/setup-buildx-action@v4.4.1
+
+      - name: Build dev image
+        run: |
+          docker buildx build \
+            --file docker/dev.Dockerfile \
+            --tag care_local \
+            --cache-from type=gha,scope=backend \
+            --cache-to type=gha,mode=max,scope=backend \
+            --load .
+
+      - name: Start services
+        run: make up || (docker compose -f docker-compose.yaml -f docker-compose.local.yaml logs && exit 1)
+
+      - name: Check for missing migrations
+        run: make checkmigration
+
+      - name: Validate fixtures load
+        run: make load-fixtures
+
+      - name: Run test suite
+        run: make test
+
+      - name: Service logs on failure
+        if: failure()
+        run: docker compose -f docker-compose.yaml -f docker-compose.local.yaml logs --tail=200
+
+  frontend:
+    name: Frontend (typecheck, lint, unit tests, build)
+    needs: changes
+    if: needs.changes.outputs.frontend == 'true' || github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 40
+    defaults:
+      run:
+        working-directory: apps/frontend
+    steps:
+      - uses: actions/checkout@v7.0.1
+
+      - uses: actions/setup-node@v7.1.0
+        with:
+          node-version-file: apps/frontend/.node-version
+          cache: npm
+          cache-dependency-path: apps/frontend/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Generate supported browsers
+        run: npm run supported-browsers
+
+      - name: Type check
+        run: npm run typecheck
+
+      - name: Lint
+        run: npm run lint -- --quiet
+
+      - name: Unit tests
+        run: npm run test:unit
+
+      - name: Production build
+        run: npm run build
+
+  security:
+    name: Security scan (Trivy)
+    needs: changes
+    if: needs.changes.outputs.backend == 'true' || needs.changes.outputs.frontend == 'true' || github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v7.0.1
+
+      - name: Scan dependencies and IaC (report all)
+        uses: aquasecurity/trivy-action@v0.36.0
+        with:
+          scan-type: fs
+          scan-ref: .
+          scanners: vuln,secret,misconfig
+          severity: CRITICAL,HIGH
+          ignore-unfixed: true
+          exit-code: "0"
+          format: table
+
+      - name: Fail on fixable CRITICAL vulnerabilities
+        uses: aquasecurity/trivy-action@v0.36.0
+        with:
+          scan-type: fs
+          scan-ref: .
+          scanners: vuln
+          severity: CRITICAL
+          ignore-unfixed: true
+          exit-code: "1"
+          format: table
+          skip-setup-trivy: true
