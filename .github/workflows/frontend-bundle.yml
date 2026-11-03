@@ -40,9 +40,9 @@ jobs:
           REACT_ENABLED_APPS: ""
           REACT_RECAPTCHA_SITE_KEY: ""
           REACT_PUBLIC_URL: "http://localhost:8080"
-          REACT_APP_COVER_IMAGE: ""
-          REACT_APP_COVER_IMAGE_ALT: ""
-          REACT_SBOM_BASE_URL: ""
+          REACT_APP_COVER_IMAGE: "http://localhost:8080/images/care_logo.svg"
+          REACT_APP_COVER_IMAGE_ALT: "http://localhost:8080/images/care_logo.svg"
+          REACT_SBOM_BASE_URL: "http://localhost:8080/sbom"
           REACT_APP_STORE_INDEX_URL: ""
           REACT_ALLOWED_LOCALES: "en,hi"
         run: npm run build
