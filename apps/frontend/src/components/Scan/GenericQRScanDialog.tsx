@@ -21,7 +21,7 @@ import { Separator } from "@/components/ui/separator";
 
 // IndieHR: load the barcode engine from our own bundle, not a public CDN
 setZXingModuleOverrides({
-  locateFile: (path, prefix) =>
+  locateFile: (path: string, prefix: string) =>
     path.endsWith(".wasm") ? zxingReaderWasmUrl : prefix + path,
 });
 
