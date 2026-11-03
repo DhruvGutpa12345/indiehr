@@ -11,8 +11,8 @@
 Detailed task definitions: [PLAN.md](PLAN.md) §6. Open questions: [QUESTIONS.md](QUESTIONS.md).
 
 **Current phase:** P0 Foundations
-**Next task:** P1-T0 (tenancy design spike) — or P0-T11/T12/T13 first. Review: docs/reviews/phase-0-review.md
-**Recommended model for next task:** Opus · **high** for P1-T0; Sonnet · **medium** for P0-T11/T12/T13
+**Next task:** your click-through (docs/CLICK_THROUGH.md, ~20 min), then P1-T0 (tenancy design) or P0-T12/T13. Review: docs/reviews/phase-0-review.md
+**Recommended model for next task:** Opus · **high** for P1-T0; Sonnet · **medium** for P0-T12/T13
 
 ---
 
@@ -25,6 +25,7 @@ Detailed task definitions: [PLAN.md](PLAN.md) §6. Open questions: [QUESTIONS.md
 | 2026-11-02 | R-2 | Consolidated research report | `reports/India hospital SaaS stack research.md` |
 | 2026-11-02 | R-3 | Master plan v0.1, question list, tracker, CLAUDE.md | `docs/` |
 | 2026-11-02 | R-4 | Workstation audit: 6.7 GB RAM, no GPU, Docker 26.1.3 without group access | PLAN.md §4 |
+| 2026-11-03 | P0-T11 | `care-dev.sh seed` / `reset-passwords`: adds care-pharmacist + care-billing, rotates all 12 passwords, writes TEST_USERS.md (verified: 4 roles log in + open facility; old password 401). `up` rebuilds the image when the lock file changes. GAP §8 verified: token queue FIFO (no priority); age/sex lab ranges automatic; **invoice numbering not GST-safe** (count()+1, no unique, calendar year) → P2-T6; FEFO UI-only, API accepts expired stock → P2-T12; discharge template fixture-only → P2-T9; dates DD/MM/YYYY. Billing 400 = expected 'no account yet'. **Postgres 18.6: all 2,005 backend tests pass.** Click-through written, all links checked | GAP_ANALYSIS §8, run 41614579309 |
 | 2026-11-03 | P0-T10 | Egress lockdown: 5 CARE frontend patches (OHC Sentry init + default DSN, SBOM default, OHC CDN badge, CDN image-compression worker, CDN QR engine); `deploy/frontend.env`; `scripts/check-bundle-egress.sh` + reviewed allowlist (fails on OHC Sentry/CDN/API/SBOM and any unreviewed host); CSP **enforced** via nginx template (API/storage origins at runtime). Verified: old bundle fails the check (3 denied hosts), new passes (45 hosts reviewed), OHC Sentry key absent; browser test with fresh tab — 0 CSP violations across encounters, patient encounter, plots, medicines. CI green. Known gaps: facility map blocked; reCAPTCHA off | Runs 41611564311, 41612150150 |
 | 2026-11-03 | Q&A 3 | Review questions answered: minimal logged CARE model edits OK; customer discovery before Phase 2 (P1-T14); no outage kit (accepted risk); stop other services on dev PC | QUESTIONS.md |
 | 2026-11-03 | Review | Phase 0 independent Opus review: grade B−, 21 findings (2 High: OHC Sentry hard-coded in frontend; CARE `User` model blocks schema-per-tenant as designed). Verified the High items myself. Found and fixed: P0-T5 commit had silently failed (check-yaml rejected Compose `!override`); now committed as 8eeaea81e. New tasks P0-T10..T13, P1-T0 | docs/reviews/phase-0-review.md |
@@ -46,7 +47,7 @@ Detailed task definitions: [PLAN.md](PLAN.md) §6. Open questions: [QUESTIONS.md
 | Phase | Name | Status | Tasks done |
 |---|---|---|---|
 | — | Research and planning | 🟡 | 5/5 |
-| P0 | Foundations and decisions | 🔵 | 9/12 — Phase 0 review (B−) added P0-T10..T13 |
+| P0 | Foundations and decisions | 🔵 | 10/12 — Phase 0 review (B−) added P0-T10..T13 |
 | P1 | Platform core (tenancy, identity, staging) | 🔵 | 1/14 |
 | P2 | MVP hospital workflows | ⬜ | 0/20 |
 | P3 | ABDM and national rails | ⬜ | 0/12 |
@@ -70,7 +71,7 @@ Detailed task definitions: [PLAN.md](PLAN.md) §6. Open questions: [QUESTIONS.md
 - 🟡 P0-T7 Gap analysis blueprint ↔ CARE
 - 🟡 P0-T8 CI pipeline: backend ✅, frontend ✅, Trivy ✅ (after P0-T9)
 - 🟡 P0-T10 Egress lockdown: OHC Sentry/CDN/reCAPTCHA/OSM off, bundle deny-list in CI, enforced CSP (review High)
-- ⬜ P0-T11 Close P0-T5: scripted password rotation, billing + pharmacist users, GAP §8 checks, Postgres 18 check (+ investigate `account/default_account` 400 seen on encounter page)
+- 🟡 P0-T11 Close P0-T5: scripted password rotation, billing + pharmacist users, GAP §8 checks, Postgres 18 check, billing 400 explained — **your click-through pending** (docs/CLICK_THROUGH.md)
 - ⬜ P0-T12 CI hardening: SHA-pinned actions, real secret scanning, production image scan, shellcheck
 - ⬜ P0-T13 Docs + versions sync, ADR-007 deferred blueprint items
 - 🟡 P0-T9 Security bumps of upstream dependencies (PyJWT, Pillow, Authlib, Brotli, certifi, DOMPurify) → Trivy green ✅
@@ -201,7 +202,8 @@ Detailed task definitions: [PLAN.md](PLAN.md) §6. Open questions: [QUESTIONS.md
 | What | Where |
 |---|---|
 | Web app (local) | http://localhost:8080 — start with `scripts/care-dev.sh up` then `scripts/care-dev.sh frontend` |
-| Usernames | `care-doctor`, `care-nurse`, `care-staff`, `care-fac-admin`, `care-admin`, `admin` (superuser) |
-| Password | in `deploy/seed/TEST_USERS.md` (git-ignored, generated 2026-11-03) |
+| Usernames | `care-doctor`, `care-nurse`, `care-pharmacist`, `care-billing`, `care-staff`, `care-fac-admin`, `care-admin`, `admin` (superuser) |
+| Password | in `deploy/seed/TEST_USERS.md` (git-ignored); new one any time: `scripts/care-dev.sh reset-passwords` |
+| Guided tour | docs/CLICK_THROUGH.md |
 | Demo patients | e.g. Nakul Chadha (+91 79642 54593), Madhavi Narayanan (+91 88323 75901) — synthetic |
 | How it runs | docs/LOCAL_DEV.md |

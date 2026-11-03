@@ -21,7 +21,7 @@
    - incident-report runbook targets 6 hours.
 3. **Ingress:** Traefik (ingress-nginx was retired in March 2026).
 4. **Object storage:** S3 in an Indian region, or SeaweedFS. Not MinIO, which is unmaintained.
-5. **Postgres:** the latest major version supported by CARE (18.x if CARE supports it; checked in P0-T5).
+5. **Postgres:** 18.x — verified 2026-11-03: CARE's full suite (2,005 tests) passes on 18.6. Mount data at `/var/lib/postgresql` (18+ image layout).
 6. **Secrets:** never in git. A `.env` file locally; a secret manager on staging and production (chosen in P4-T4).
 7. **Versions:** pinned exactly and recorded in `docs/VERSIONS.md`.
 

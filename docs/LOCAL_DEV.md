@@ -6,13 +6,14 @@ This setup fits the current **6.7 GB** dev machine. The whole backend uses about
 
 ```bash
 scripts/care-dev.sh up          # build image if missing, start db/redis/storage/api/worker
-scripts/care-dev.sh seed        # first time only: CARE demo data (facility, users, patients)
+scripts/care-dev.sh seed        # first time only: CARE demo data + our test users (writes deploy/seed/TEST_USERS.md)
 scripts/care-dev.sh frontend    # serve the web app bundle on http://localhost:8080
 ```
 
 Then open **http://localhost:8080** and log in with a user from `deploy/seed/TEST_USERS.md` (git-ignored; created by P0-T5).
 
-> After `seed`, the demo users have CARE's **public** default passwords. Reset them as described in P0-T5 (see TRACKER) before use.
+> `seed` replaces CARE's public fixture passwords with a generated one. Lost it? `scripts/care-dev.sh reset-passwords` makes a new one.
+> Guided tour of the app: [CLICK_THROUGH.md](CLICK_THROUGH.md).
 
 ## Stop or inspect
 
@@ -55,4 +56,5 @@ The overrides live in `deploy/dev/care-local.override.yaml`; CARE's files are un
 | http://localhost:9000/api/v1/ | API |
 | http://localhost:9000/admin/ | Django admin (superuser `admin`) |
 | http://localhost:9001 | File storage console |
+| http://localhost:9100 | File storage S3 API (pre-signed file URLs) |
 | localhost:5433 / 6380 | Postgres / Redis |

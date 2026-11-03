@@ -70,3 +70,10 @@ Last GitHub Releases are v3.0.0 (backend, 2025-02-12) and v3.0.32 (frontend, 202
 | object storage (upstream compose) | pgsty/silo:latest (unpinned upstream; replace per ADR-003 before staging) | 2026-11-03 |
 | backend dev image `care_local` | built from apps/backend @ upstream.lock, 1.07 GB | 2026-11-03 |
 | actions/upload-artifact | v7.0.2 | 2026-11-03 |
+
+## Postgres compatibility — P0-T11
+
+| Item | Version | Result | Checked |
+|---|---|---|---|
+| postgres (staging/production target) | 18.6-alpine | CARE suite 2,005/2,005 pass | 2026-11-03 |
+| postgres (local dev, upstream compose) | 17-alpine | unchanged for now | 2026-11-03 |
