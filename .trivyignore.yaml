@@ -1,0 +1,18 @@
+# Reviewed Trivy exceptions (P1-T12). Each entry is scoped to a path and says why.
+misconfigurations:
+  - id: DS-0002
+    paths:
+      - "apps/backend/docker/dev.Dockerfile"
+    statement: >-
+      Upstream CARE dev/CI image only (volume-mounted source, make targets exec as root).
+      Never deployed. Production uses apps/backend/docker/prod.Dockerfile, which runs as user 'django'.
+  - id: DS-0002
+    paths:
+      - "apps/frontend/Dockerfile"
+    statement: >-
+      Upstream CARE frontend image, not used by IndieHR. We deploy deploy/docker/frontend.Dockerfile
+      (nginx-unprivileged, non-root, port 8080).
+  - id: DS-0029
+    paths:
+      - "apps/frontend/Dockerfile"
+    statement: Same unused upstream image as above.

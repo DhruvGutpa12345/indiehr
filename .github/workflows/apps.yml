@@ -38,6 +38,7 @@ jobs:
               - '.github/workflows/apps.yml'
             frontend:
               - 'apps/frontend/**'
+              - 'deploy/docker/frontend*'
               - '.github/workflows/apps.yml'
 
   backend:
@@ -125,6 +126,27 @@ jobs:
       - name: Production build
         run: npm run build
 
+      - uses: docker/setup-buildx-action@v4.4.1
+
+      - name: Build hardened frontend image (non-root nginx)
+        working-directory: .
+        run: |
+          docker buildx build --load \
+            -f deploy/docker/frontend.Dockerfile \
+            --build-context config=deploy/docker \
+            -t indiehr-frontend:ci apps/frontend
+
+      - name: Smoke test frontend image
+        working-directory: .
+        run: |
+          docker run -d --name fe -p 8080:8080 indiehr-frontend:ci
+          sleep 3
+          test "$(docker exec fe id -u)" != "0"
+          curl -fsS http://127.0.0.1:8080/ | grep -qi "<html"
+          curl -fsS -o /dev/null http://127.0.0.1:8080/patients
+          curl -fsSI http://127.0.0.1:8080/ | grep -qi "x-content-type-options: nosniff"
+          docker rm -f fe
+
   security:
     name: Security scan (Trivy)
     needs: changes
@@ -144,15 +166,17 @@ jobs:
           ignore-unfixed: true
           exit-code: "0"
           format: table
+          trivyignores: .trivyignore.yaml
 
-      - name: Fail on fixable CRITICAL vulnerabilities
+      - name: Fail on fixable HIGH/CRITICAL vulnerabilities or misconfigurations
         uses: aquasecurity/trivy-action@v0.36.0
         with:
           scan-type: fs
           scan-ref: .
-          scanners: vuln
-          severity: CRITICAL
+          scanners: vuln,misconfig
+          severity: CRITICAL,HIGH
           ignore-unfixed: true
+          trivyignores: .trivyignore.yaml
           exit-code: "1"
           format: table
           skip-setup-trivy: true
