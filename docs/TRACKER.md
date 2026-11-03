@@ -11,8 +11,8 @@
 Detailed task definitions: [PLAN.md](PLAN.md) §6. Open questions: [QUESTIONS.md](QUESTIONS.md).
 
 **Current phase:** P0 Foundations
-**Next task:** Phase 0 second-opinion review (independent Opus agent), then P1-T1 (tenancy prototype).
-**Recommended model for next task:** Opus · **high** for the Phase 0 review and P1-T1
+**Next task:** P0-T10 (egress lockdown), then P1-T0 (tenancy design spike). Review: docs/reviews/phase-0-review.md
+**Recommended model for next task:** Opus · **medium** for P0-T10; Opus · **high** for P1-T0
 
 ---
 
@@ -25,6 +25,7 @@ Detailed task definitions: [PLAN.md](PLAN.md) §6. Open questions: [QUESTIONS.md
 | 2026-11-02 | R-2 | Consolidated research report | `reports/India hospital SaaS stack research.md` |
 | 2026-11-02 | R-3 | Master plan v0.1, question list, tracker, CLAUDE.md | `docs/` |
 | 2026-11-02 | R-4 | Workstation audit: 6.7 GB RAM, no GPU, Docker 26.1.3 without group access | PLAN.md §4 |
+| 2026-11-03 | Review | Phase 0 independent Opus review: grade B−, 21 findings (2 High: OHC Sentry hard-coded in frontend; CARE `User` model blocks schema-per-tenant as designed). Verified the High items myself. Found and fixed: P0-T5 commit had silently failed (check-yaml rejected Compose `!override`); now committed as 8eeaea81e. New tasks P0-T10..T13, P1-T0 | docs/reviews/phase-0-review.md |
 | 2026-11-03 | P0-T5 | CARE running locally on 6.7 GB: backend stack ~550 MB (one Celery process, memory caps), all ports bound to 127.0.0.1, terminology calls blocked, fixture passwords replaced; web bundle built on GitHub (new `Frontend bundle` workflow, OHC URLs removed) and served by our non-root nginx image. Verified: API login 200 (old public password 401), browser login as doctor, facility + patient search pages, **all browser requests to localhost only** | docs/LOCAL_DEV.md, scripts/care-dev.sh |
 | 2026-11-03 | P1-T12 | Fixed all 29 fixable HIGH vulns (Django 6.0.8, DRF 3.18.2, Authlib 1.9.1, urllib3 2.8.0, aiohttp 3.14.4, cryptography 50.0.0, sqlparse 0.6.0; vite 8.3.5 + 4 npm pkgs). DRF 3.18 broke CARE (CoreAPI removed) → patched 2 filter files. New non-root frontend image `deploy/docker/frontend.Dockerfile` (nginx-unprivileged 1.30.6, uid 101). Trivy gate raised to HIGH + misconfig with scoped exceptions. CI green: backend 11 min, frontend + image smoke 5 min | Run 41583635960 |
 | 2026-11-03 | P0-T9 | Security bumps: PyJWT 2.14.0, Pillow 13.0.0, Authlib 1.9.0, Brotli 1.2.1, certifi 2026.10.18, DOMPurify 3.4.17. Local Trivy 0.76.1: 0 CRITICAL. CI all green: backend full suite 11 min, frontend 4 min, Trivy pass. Remaining: 29 fixable HIGH + root Docker images → P1-T12 | Run 41580332662, docs/UPSTREAM_PATCHES.md |
@@ -43,8 +44,8 @@ Detailed task definitions: [PLAN.md](PLAN.md) §6. Open questions: [QUESTIONS.md
 | Phase | Name | Status | Tasks done |
 |---|---|---|---|
 | — | Research and planning | 🟡 | 5/5 |
-| P0 | Foundations and decisions | 🟡 | 8/8 (T6 dropped) — awaiting your review + Phase 0 second-opinion review |
-| P1 | Platform core (tenancy, identity, staging) | 🔵 | 1/12 |
+| P0 | Foundations and decisions | 🔵 | 8/12 — Phase 0 review (B−) added P0-T10..T13 |
+| P1 | Platform core (tenancy, identity, staging) | 🔵 | 1/13 |
 | P2 | MVP hospital workflows | ⬜ | 0/20 |
 | P3 | ABDM and national rails | ⬜ | 0/12 |
 | P4 | Compliance and security | ⬜ | 0/7 |
@@ -66,10 +67,15 @@ Detailed task definitions: [PLAN.md](PLAN.md) §6. Open questions: [QUESTIONS.md
 - ❌ P0-T6 Spike: Marley + ERPNext v16 (dropped — Q-A1 decided)
 - 🟡 P0-T7 Gap analysis blueprint ↔ CARE
 - 🟡 P0-T8 CI pipeline: backend ✅, frontend ✅, Trivy ✅ (after P0-T9)
+- ⬜ P0-T10 Egress lockdown: OHC Sentry/CDN/reCAPTCHA/OSM off, bundle deny-list in CI, enforced CSP (review High)
+- ⬜ P0-T11 Close P0-T5: scripted password rotation, billing + pharmacist users, GAP §8 checks, Postgres 18 check
+- ⬜ P0-T12 CI hardening: SHA-pinned actions, real secret scanning, production image scan, shellcheck
+- ⬜ P0-T13 Docs + versions sync, ADR-007 deferred blueprint items
 - 🟡 P0-T9 Security bumps of upstream dependencies (PyJWT, Pillow, Authlib, Brotli, certifi, DOMPurify) → Trivy green ✅
 
 ### P1 — Platform core
 
+- ⬜ P1-T0 Tenancy design spike: shared vs tenant model map, user model, ADR-002 amendment (review High)
 - ⬜ P1-T1 Tenancy ADR + isolation prototype
 - ⬜ P1-T2 Subdomain tenant routing + branding
 - ⬜ P1-T3 Keycloak 26.8 (Organizations, roles, MFA)

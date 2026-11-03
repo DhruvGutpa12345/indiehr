@@ -37,6 +37,12 @@
 | Q-E6 / Q-D2 / Q-D3 | **Email alerts to you**; auditor shortlist and legal templates when those phases arrive | P1-T9, P3-T11, P4-T6 |
 | Q-G4 | **`/goal` and `/advisor` = second-opinion reviews:** an independent Opus agent reviews each finished phase against the plan | Working agreement §5 |
 
+**New from the Phase 0 review (please answer):**
+- **Q-S1 — Upstream model patches:** the tenancy design may need small edits to CARE's own models (e.g. how `User` links to facilities). ADR-001 says "keep upstream untouched where possible". Acceptable if each patch is logged and minimal? ⭐ yes
+- **Q-S2 — Customer discovery:** add a task to talk to 5–10 target hospitals and aim for one pilot letter of intent before Phase 2? (No pilots yet; DHIS incentive window ran Apr–Sep 2026 and its extension is unknown.) ⭐ yes
+- **Q-S3 — Downtime kit:** with online-only (ADR-000), plan printable fallback forms + back-entry for outages? ⭐ yes, in Phase 2
+- **Q-S4 — Other services on your PC:** MariaDB (3306), Nextcloud 27 (end-of-life; 10081/10443), Syncthing and Samba listen on all network interfaces and use RAM. Not IndieHR's, but they share the machine holding your GitHub login. Bind to localhost or stop them? (your call)
+
 **Still open:** Q-B4 (final MVP module list: assumed as in PLAN.md Phase 2) and Q-B6/B7 (pricing, timeline). Q-F2 is moot while AI is deferred.
 
 ---
