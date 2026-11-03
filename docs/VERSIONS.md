@@ -77,3 +77,18 @@ Last GitHub Releases are v3.0.0 (backend, 2025-02-12) and v3.0.32 (frontend, 202
 |---|---|---|---|
 | postgres (staging/production target) | 18.6-alpine | CARE suite 2,005/2,005 pass | 2026-11-03 |
 | postgres (local dev, upstream compose) | 17-alpine | unchanged for now | 2026-11-03 |
+
+## CI hardening — P0-T12
+
+| Item | Version / pin | Checked |
+|---|---|---|
+| actions/checkout | v7.0.1 @ 3d3c42e5aac5ba805825da76410c181273ba90b1 | 2026-11-04 |
+| actions/setup-python | v7.1.0 @ 6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 | 2026-11-04 |
+| actions/setup-node | v7.1.0 @ 949feb2413d6458794dcd2491c4babbbce0c15c1 | 2026-11-04 |
+| actions/upload-artifact | v7.0.2 @ cf430e030ddbb5b0abf93d22962f4752f3646cd9 | 2026-11-04 |
+| docker/setup-buildx-action | v4.4.1 @ f87e5991a6d7451dcb8d9637bfbc97413f497069 | 2026-11-04 |
+| dorny/paths-filter | v4.0.3 @ ceb8a2b8f2d89434be7ff52d3de7ec3738c5cc9d | 2026-11-04 |
+| aquasecurity/trivy-action | v0.36.0 @ ed142fd0673e97e23eac54620cfb913e5ce36c25 | 2026-11-04 |
+| gitleaks (CI image) | v8.30.1 @ sha256:c00b6bd0aeb3071cbcb79009cb16a60dd9e0a7c60e2be9ab65d25e6bc8abbb7f | 2026-11-04 |
+| shellcheck (pre-commit) | v0.11.0 | 2026-11-04 |
+| python base (backend image) | 3.13.18-slim-bookworm | 2026-11-04 |
