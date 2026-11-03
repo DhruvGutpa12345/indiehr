@@ -155,12 +155,17 @@
 - **Facility map** (facility form): map tiles and address search use OpenStreetMap servers; the enforced CSP blocks them, so the map is blank and address search fails. Decide later: self-hosted tiles, an Indian provider, or manual lat/long only.
 - **reCAPTCHA** after failed logins is off (no site key). Brute-force protection must come from Keycloak (P1-T3).
 
-## 8. To verify once CARE runs (P0-T5)
+## 8. Verified behaviours (P0-T11, 2026-11-03)
 
-- Walk-in vs. appointment priority in token queues.
-- Age/sex reference ranges in lab definitions.
-- Whether invoice numbers are sequential and gap-free.
-- FEFO behaviour on dispense.
-- Discharge-summary template output.
-- Date formats.
-- Page depth of each frontend module.
+Checked by reading CARE's code (file:line evidence in the P0-T11 notes) and, where possible, in the running app.
+
+| # | Question | Verdict | What it means for us | Task |
+|---|---|---|---|---|
+| 1 | Walk-in vs appointment priority in OPD token queues | **No.** "Next token" is first-come-first-served within a queue (`token_queue.py:213-244`); categories have no priority field | Add priority categories (emergency, senior citizen, follow-up) and ordering rules | P2-T3 |
+| 2 | Lab reference ranges by age/sex | **Yes, automatic.** `ObservationDefinition.qualified_ranges` with conditions on patient age/gender; interpretation computed on entry (`compute_observation_interpretation.py`) | Use as-is; load Indian reference ranges into test definitions | P2-T13 |
+| 3 | Invoice numbers sequential and gap-free (GST) | **No.** Number = facility invoice `count()` inside a single global Redis lock; `Invoice.number` has no unique constraint; calendar-year, not financial-year; no 16-character limit (`default_expression_evaluator.py:7-21`, `invoice.py:31`) | **Must fix before any real billing:** our own per-facility, per-financial-year, per-series counter (DB row lock), unique constraint, ≤16 chars, cancelled numbers never reused | P2-T6 (Opus/high) |
+| 4 | FEFO on dispense; expired stock blocked | **Partly.** The UI auto-picks earliest-expiry lots and hides expired ones; the **API does not reject expired stock** | Add a server-side expiry check on dispense | P2-T12 |
+| 5 | Discharge summary template | **Partly.** A "Treatment Summary" discharge template exists only as fixture data (`data/template_fixtures.json`); not guaranteed in production | Ship our own NRCeS-aligned default template per tenant | P2-T9 |
+| 6 | Date formats | **Mostly Indian already:** DD/MM/YYYY and 12-hour time, hard-coded (`src/Utils/utils.ts:15-17`); a second helper uses `MMM DD, YYYY` | Acceptable; unify on DD-MM-YYYY during i18n | P1-T7 |
+| 7 | `account/default_account` 400 on encounter page | **Expected:** the page asks for the patient's billing account; CARE answers 400 "No account found" when none exists yet (`account.py:166-169`) | Not a bug. Only Facility Admin/Admin can create billing accounts | P1-T11 roles |
+| 8 | Postgres 18 | See TRACKER (P0-T11 CI run) | — | — |

@@ -86,7 +86,9 @@ jobs:
         env:
           PG_IMAGE: ${{ inputs.postgres_image }}
         run: |
-          printf 'services:\n  db:\n    image: %s\n' "$PG_IMAGE" > docker-compose.override.ci.yaml
+          # Postgres 18+ images keep data under /var/lib/postgresql (not .../data)
+          printf 'services:\n  db:\n    image: %s\n    volumes: !override\n      - pg-ci-data:/var/lib/postgresql\nvolumes:\n  pg-ci-data: {}\n' "$PG_IMAGE" > docker-compose.override.ci.yaml
+          cat docker-compose.override.ci.yaml
           sed -i "s|docker_config_file := 'docker-compose.local.yaml'|docker_config_file := 'docker-compose.local.yaml' -f docker-compose.override.ci.yaml|" Makefile
           echo "Postgres image for this run: $PG_IMAGE"
 
