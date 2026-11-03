@@ -92,3 +92,6 @@ Last GitHub Releases are v3.0.0 (backend, 2025-02-12) and v3.0.32 (frontend, 202
 | gitleaks (CI image) | v8.30.1 @ sha256:c00b6bd0aeb3071cbcb79009cb16a60dd9e0a7c60e2be9ab65d25e6bc8abbb7f | 2026-11-04 |
 | shellcheck (pre-commit) | v0.11.0 | 2026-11-04 |
 | python base (backend image) | 3.13.18-slim-bookworm | 2026-11-04 |
+| aquasecurity/setup-trivy (used inside trivy-action) | v0.2.6 @ 3fb12ec12f41e471780db15c232d5dd185dcb514 | 2026-11-04 |
+
+**GitHub repo setting:** `allowed_actions=selected`, `github_owned_allowed=true`, `verified_allowed=false`, `sha_pinning_required=true`; allow-list = the four third-party SHAs above (buildx, paths-filter, trivy-action, setup-trivy).

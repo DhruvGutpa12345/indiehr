@@ -22,6 +22,7 @@ Further reading:
 
 - `pre-commit run --all-files`: all repo checks. Hooks: whitespace/EOF fixes, YAML (syntax-only, allows Compose tags)/JSON/TOML checks, large-file guard, private-key detection, **gitleaks** (staged files), **actionlint**, **shellcheck**. CI (`.github/workflows/ci.yml`) runs the same on every push, plus a **gitleaks scan of the full git history** (image pinned by digest).
 - **GitHub Actions are pinned to commit SHAs** with the version in a comment (`uses: owner/action@<40-char sha> # vX.Y.Z`). When bumping, resolve the tag to its SHA and check it is on the action's default branch.
+- **Repo setting (2026-11-04, owner-approved):** Actions are restricted to GitHub-owned actions plus an allow-list of exact third-party commits, and full-SHA pinning is required. A bumped or new third-party action (including ones it uses internally, e.g. trivy-action → setup-trivy) will be **blocked** until its new SHA is added. Allow-list: `gh api repos/DhruvGutpa12345/indiehr/actions/permissions/selected-actions`; update it with `gh api -X PUT …/selected-actions --input <json>` (owner approval needed — it is a repo setting). Current list: docs/VERSIONS.md.
 - **Apps CI** (`.github/workflows/apps.yml`): runs when `apps/` or `plugins/` change, weekly (Sun 03:00 IST) and via `gh workflow run "Apps CI"`.
   - Backend: ruff 0.14.8 (upstream config), dev image build, `make checkmigration`, `make load-fixtures`, `make test` (about 12 min).
   - Frontend: Node from `.node-version` (24), `npm ci`, typecheck, lint, unit tests, build (about 4 min).
