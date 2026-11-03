@@ -239,6 +239,7 @@ Task IDs are `P<phase>-T<n>`. Each task is sized for **one sitting (≈1–3 hou
 | P1-T10 | **Terminology service** (from the gap analysis): CARE calls an external SNOMED server over plain HTTP by default. **Decided (Q-F1b): a curated SNOMED + ICD-10 + drug lookup service now**, served in the FHIR-style form CARE expects; self-hosted Snowstorm later. Includes the SNOMED CT India affiliate licence checklist for you to submit | Diagnosis/drug search works with no external calls | Opus / high |
 | P1-T11 | Seed Indian hospital roles: Receptionist, Cashier, Lab Tech, Radiologist, TPA Desk, MRD, Store Keeper, Owner | Each role sees only its screens (tests) | Sonnet / medium |
 | P1-T12 ✅ | Hardening before staging: fix the 29 fixable HIGH dependency vulnerabilities Trivy reports (22 backend, 7 frontend); run containers as a non-root user; `--no-install-recommends`; then make Trivy fail on fixable HIGH too | Trivy gate at HIGH is green | Opus / medium |
+| P1-T14 | **Customer discovery** (Q-S2): interview guide, one-page pitch (English + Hindi), pilot letter-of-intent template, a simple tracker for 5–10 target hospitals; **you** hold the conversations; findings feed the Phase 2 scope | At least 5 interviews logged; go/no-go on Phase 2 scope with you | Opus / medium |
 
 ### Phase 2 — MVP hospital workflows (sellable to a 10–100 bed hospital)
 

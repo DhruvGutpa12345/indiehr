@@ -25,6 +25,7 @@ Detailed task definitions: [PLAN.md](PLAN.md) §6. Open questions: [QUESTIONS.md
 | 2026-11-02 | R-2 | Consolidated research report | `reports/India hospital SaaS stack research.md` |
 | 2026-11-02 | R-3 | Master plan v0.1, question list, tracker, CLAUDE.md | `docs/` |
 | 2026-11-02 | R-4 | Workstation audit: 6.7 GB RAM, no GPU, Docker 26.1.3 without group access | PLAN.md §4 |
+| 2026-11-03 | Q&A 3 | Review questions answered: minimal logged CARE model edits OK; customer discovery before Phase 2 (P1-T14); no outage kit (accepted risk); stop other services on dev PC | QUESTIONS.md |
 | 2026-11-03 | Review | Phase 0 independent Opus review: grade B−, 21 findings (2 High: OHC Sentry hard-coded in frontend; CARE `User` model blocks schema-per-tenant as designed). Verified the High items myself. Found and fixed: P0-T5 commit had silently failed (check-yaml rejected Compose `!override`); now committed as 8eeaea81e. New tasks P0-T10..T13, P1-T0 | docs/reviews/phase-0-review.md |
 | 2026-11-03 | P0-T5 | CARE running locally on 6.7 GB: backend stack ~550 MB (one Celery process, memory caps), all ports bound to 127.0.0.1, terminology calls blocked, fixture passwords replaced; web bundle built on GitHub (new `Frontend bundle` workflow, OHC URLs removed) and served by our non-root nginx image. Verified: API login 200 (old public password 401), browser login as doctor, facility + patient search pages, **all browser requests to localhost only** | docs/LOCAL_DEV.md, scripts/care-dev.sh |
 | 2026-11-03 | P1-T12 | Fixed all 29 fixable HIGH vulns (Django 6.0.8, DRF 3.18.2, Authlib 1.9.1, urllib3 2.8.0, aiohttp 3.14.4, cryptography 50.0.0, sqlparse 0.6.0; vite 8.3.5 + 4 npm pkgs). DRF 3.18 broke CARE (CoreAPI removed) → patched 2 filter files. New non-root frontend image `deploy/docker/frontend.Dockerfile` (nginx-unprivileged 1.30.6, uid 101). Trivy gate raised to HIGH + misconfig with scoped exceptions. CI green: backend 11 min, frontend + image smoke 5 min | Run 41583635960 |
@@ -45,7 +46,7 @@ Detailed task definitions: [PLAN.md](PLAN.md) §6. Open questions: [QUESTIONS.md
 |---|---|---|---|
 | — | Research and planning | 🟡 | 5/5 |
 | P0 | Foundations and decisions | 🔵 | 8/12 — Phase 0 review (B−) added P0-T10..T13 |
-| P1 | Platform core (tenancy, identity, staging) | 🔵 | 1/13 |
+| P1 | Platform core (tenancy, identity, staging) | 🔵 | 1/14 |
 | P2 | MVP hospital workflows | ⬜ | 0/20 |
 | P3 | ABDM and national rails | ⬜ | 0/12 |
 | P4 | Compliance and security | ⬜ | 0/7 |
@@ -87,6 +88,7 @@ Detailed task definitions: [PLAN.md](PLAN.md) §6. Open questions: [QUESTIONS.md
 - ⬜ P1-T9 Observability
 - ⬜ P1-T10 Terminology service (SNOMED/ICD-10, no external calls)
 - ⬜ P1-T11 Indian hospital roles
+- ⬜ P1-T14 Customer discovery: 5–10 hospital interviews, pilot LOI (before Phase 2)
 - 🟡 P1-T12 Hardening before staging: fix 29 fixable HIGH dependency vulns (22 backend, 7 frontend) + non-root Docker images
 
 ### P2 — MVP workflows

@@ -42,3 +42,4 @@ The blueprint describes a fully self-hosted, on-premises platform for one tertia
 
 - Phase 2 and the PM-JAY work decide success. Phase 6 waits until 1–3 pilot hospitals are live.
 - Online-only keeps the architecture simple. Hospitals need a reliable connection; we recommend a 4G failover router at onboarding.
+- **Accepted risk (Q-S3, 2026-11-03):** no paper/offline outage kit. About half of target buyers cite poor internet or power as a barrier; revisit after pilots.
