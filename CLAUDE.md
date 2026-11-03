@@ -24,7 +24,8 @@ Further reading:
 - **Apps CI** (`.github/workflows/apps.yml`): runs when `apps/` or `plugins/` change, weekly (Sun 03:00 IST) and via `gh workflow run "Apps CI"`.
   - Backend: ruff 0.14.8 (upstream config), dev image build, `make checkmigration`, `make load-fixtures`, `make test` (about 12 min).
   - Frontend: Node from `.node-version` (24), `npm ci`, typecheck, lint, unit tests, build (about 4 min).
-  - Trivy: reports CRITICAL/HIGH and **fails on fixable CRITICAL**.
+  - Frontend image: `deploy/docker/frontend.Dockerfile` (non-root nginx on 8080), built from `apps/frontend/build` and smoke-tested in CI. The backend uses upstream `docker/prod.Dockerfile` (already non-root).
+  - Trivy: **fails on fixable HIGH/CRITICAL vulnerabilities and Dockerfile misconfigurations**. Exceptions must be path-scoped with a reason in `.trivyignore.yaml`.
 - **gitleaks false positives:** add the exact fingerprint to `.gitleaksignore` with a dated comment. Never disable the hook.
 - **sudo:** commands that need sudo must be run by the user in Ubuntu's own terminal (Ctrl+Alt+T). The app's terminal and `!` prompt have "no new privileges" set.
 - **uv / pre-commit:** live in `~/.local/bin`. Prepend it to PATH in non-login shells.

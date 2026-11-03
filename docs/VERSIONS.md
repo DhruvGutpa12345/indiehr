@@ -50,3 +50,13 @@ Last GitHub Releases are v3.0.0 (backend, 2025-02-12) and v3.0.32 (frontend, 202
 | dorny/paths-filter | v4.0.3 | 2026-11-03 |
 | aquasecurity/trivy-action | v0.36.0 | 2026-11-03 |
 | ruff (backend lint, matches upstream) | 0.14.8 | 2026-11-03 |
+
+## Hardening — P1-T12
+
+| Item | Version | Checked |
+|---|---|---|
+| nginxinc/nginx-unprivileged (frontend image) | 1.30.6-alpine | 2026-11-03 |
+| Trivy (local CLI image) | 0.76.1 | 2026-11-03 |
+| Django (security bump) | 6.0.8 | 2026-11-03 |
+| djangorestframework | 3.18.2 | 2026-11-03 |
+| vite | 8.3.5 | 2026-11-03 |
