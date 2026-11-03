@@ -9,6 +9,8 @@ repos:
         exclude: '\.md$'
       - id: end-of-file-fixer
       - id: check-yaml
+        # syntax-only: allows Docker Compose tags such as !override
+        args: ['--unsafe']
       - id: check-json
       - id: check-toml
       - id: check-merge-conflict

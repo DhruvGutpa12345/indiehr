@@ -34,3 +34,4 @@ test-results/
 *.dump
 *.sql.gz
 backups/
+deploy/dev/frontend-build/

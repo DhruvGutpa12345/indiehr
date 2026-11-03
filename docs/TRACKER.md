@@ -11,8 +11,8 @@
 Detailed task definitions: [PLAN.md](PLAN.md) §6. Open questions: [QUESTIONS.md](QUESTIONS.md).
 
 **Current phase:** P0 Foundations
-**Next task:** P0-T5 (run CARE locally) once the 32 GB RAM is installed, then the Phase 0 review.
-**Recommended model for next task:** Opus · **medium** for P0-T5
+**Next task:** Phase 0 second-opinion review (independent Opus agent), then P1-T1 (tenancy prototype).
+**Recommended model for next task:** Opus · **high** for the Phase 0 review and P1-T1
 
 ---
 
@@ -25,6 +25,7 @@ Detailed task definitions: [PLAN.md](PLAN.md) §6. Open questions: [QUESTIONS.md
 | 2026-11-02 | R-2 | Consolidated research report | `reports/India hospital SaaS stack research.md` |
 | 2026-11-02 | R-3 | Master plan v0.1, question list, tracker, CLAUDE.md | `docs/` |
 | 2026-11-02 | R-4 | Workstation audit: 6.7 GB RAM, no GPU, Docker 26.1.3 without group access | PLAN.md §4 |
+| 2026-11-03 | P0-T5 | CARE running locally on 6.7 GB: backend stack ~550 MB (one Celery process, memory caps), all ports bound to 127.0.0.1, terminology calls blocked, fixture passwords replaced; web bundle built on GitHub (new `Frontend bundle` workflow, OHC URLs removed) and served by our non-root nginx image. Verified: API login 200 (old public password 401), browser login as doctor, facility + patient search pages, **all browser requests to localhost only** | docs/LOCAL_DEV.md, scripts/care-dev.sh |
 | 2026-11-03 | P1-T12 | Fixed all 29 fixable HIGH vulns (Django 6.0.8, DRF 3.18.2, Authlib 1.9.1, urllib3 2.8.0, aiohttp 3.14.4, cryptography 50.0.0, sqlparse 0.6.0; vite 8.3.5 + 4 npm pkgs). DRF 3.18 broke CARE (CoreAPI removed) → patched 2 filter files. New non-root frontend image `deploy/docker/frontend.Dockerfile` (nginx-unprivileged 1.30.6, uid 101). Trivy gate raised to HIGH + misconfig with scoped exceptions. CI green: backend 11 min, frontend + image smoke 5 min | Run 41583635960 |
 | 2026-11-03 | P0-T9 | Security bumps: PyJWT 2.14.0, Pillow 13.0.0, Authlib 1.9.0, Brotli 1.2.1, certifi 2026.10.18, DOMPurify 3.4.17. Local Trivy 0.76.1: 0 CRITICAL. CI all green: backend full suite 11 min, frontend 4 min, Trivy pass. Remaining: 29 fixable HIGH + root Docker images → P1-T12 | Run 41580332662, docs/UPSTREAM_PATCHES.md |
 | 2026-11-03 | P0-T8 | Apps CI: backend full upstream test suite passes (12 min); frontend typecheck/lint/unit/build pass (4 min); Trivy gate fails on 10 fixable CRITICAL vulns in upstream locks: PyJWT 2.12.0 (auth bypass), Pillow 12.2.0, Authlib 1.6.12, Brotli 1.2.0, certifi, DOMPurify 3.4.12 | Run 41571634449 |
@@ -42,7 +43,7 @@ Detailed task definitions: [PLAN.md](PLAN.md) §6. Open questions: [QUESTIONS.md
 | Phase | Name | Status | Tasks done |
 |---|---|---|---|
 | — | Research and planning | 🟡 | 5/5 |
-| P0 | Foundations and decisions | 🔵 | 7/8 (T6 dropped; only P0-T5 left — needs RAM) |
+| P0 | Foundations and decisions | 🟡 | 8/8 (T6 dropped) — awaiting your review + Phase 0 second-opinion review |
 | P1 | Platform core (tenancy, identity, staging) | 🔵 | 1/12 |
 | P2 | MVP hospital workflows | ⬜ | 0/20 |
 | P3 | ABDM and national rails | ⬜ | 0/12 |
@@ -61,7 +62,7 @@ Detailed task definitions: [PLAN.md](PLAN.md) §6. Open questions: [QUESTIONS.md
 - 🟡 P0-T2 Workstation setup (docker group, Docker 29 / Compose v5, uv, pnpm, gh)
 - 🟡 P0-T3 Repo bootstrap (git, GitHub, monorepo layout, licence/NOTICE)
 - 🟡 P0-T4 Upstream fork strategy (CARE backend + frontend, pinned SHAs)
-- ⬜ P0-T5 Spike: run CARE locally with test users ← **first thing you'll click** (blocked: needs 32 GB RAM)
+- 🟡 P0-T5 Run CARE locally with test users (done on 6.7 GB: backend ~550 MB, web app bundle built on GitHub)
 - ❌ P0-T6 Spike: Marley + ERPNext v16 (dropped — Q-A1 decided)
 - 🟡 P0-T7 Gap analysis blueprint ↔ CARE
 - 🟡 P0-T8 CI pipeline: backend ✅, frontend ✅, Trivy ✅ (after P0-T9)
@@ -188,4 +189,10 @@ Detailed task definitions: [PLAN.md](PLAN.md) §6. Open questions: [QUESTIONS.md
 
 ## Test credentials and one-click URLs
 
-_None yet. They will appear here, and in `deploy/seed/TEST_USERS.md`, from P0-T5 onward._
+| What | Where |
+|---|---|
+| Web app (local) | http://localhost:8080 — start with `scripts/care-dev.sh up` then `scripts/care-dev.sh frontend` |
+| Usernames | `care-doctor`, `care-nurse`, `care-staff`, `care-fac-admin`, `care-admin`, `admin` (superuser) |
+| Password | in `deploy/seed/TEST_USERS.md` (git-ignored, generated 2026-11-03) |
+| Demo patients | e.g. Nakul Chadha (+91 79642 54593), Madhavi Narayanan (+91 88323 75901) — synthetic |
+| How it runs | docs/LOCAL_DEV.md |

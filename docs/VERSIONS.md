@@ -60,3 +60,13 @@ Last GitHub Releases are v3.0.0 (backend, 2025-02-12) and v3.0.32 (frontend, 202
 | Django (security bump) | 6.0.8 | 2026-11-03 |
 | djangorestframework | 3.18.2 | 2026-11-03 |
 | vite | 8.3.5 | 2026-11-03 |
+
+## Local CARE stack — P0-T5
+
+| Item | Version | Checked |
+|---|---|---|
+| postgres (upstream compose) | 17-alpine | 2026-11-03 |
+| redis (upstream compose) | 8-alpine | 2026-11-03 |
+| object storage (upstream compose) | pgsty/silo:latest (unpinned upstream; replace per ADR-003 before staging) | 2026-11-03 |
+| backend dev image `care_local` | built from apps/backend @ upstream.lock, 1.07 GB | 2026-11-03 |
+| actions/upload-artifact | v7.0.2 | 2026-11-03 |
