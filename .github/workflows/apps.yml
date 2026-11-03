@@ -42,6 +42,7 @@ jobs:
             backend:
               - 'apps/backend/**'
               - 'plugins/**'
+              - 'deploy/docker/backend.Dockerfile'
               - '.github/workflows/apps.yml'
             frontend:
               - 'apps/frontend/**'
@@ -213,7 +214,7 @@ jobs:
           skip-setup-trivy: true
 
   backend-image:
-    name: Backend production image (build + Trivy image scan)
+    name: Backend production image (build, smoke, Trivy image scan)
     needs: changes
     if: needs.changes.outputs.backend == 'true' || github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-24.04
@@ -223,12 +224,17 @@ jobs:
 
       - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
 
-      - name: Build production image (upstream prod.Dockerfile)
+      - name: Build production image (deploy/docker/backend.Dockerfile)
         run: |
           docker buildx build --load \
             --cache-from type=gha,scope=backend-prod \
             --cache-to type=gha,mode=max,scope=backend-prod \
-            -f apps/backend/docker/prod.Dockerfile -t indiehr-backend:ci apps/backend
+            -f deploy/docker/backend.Dockerfile -t indiehr-backend:ci apps/backend
+
+      - name: Smoke test (app imports work, pip removed)
+        run: |
+          docker run --rm indiehr-backend:ci python -c "import django, celery, rest_framework; print('django', django.get_version())"
+          if docker run --rm indiehr-backend:ci python -m pip --version; then echo "pip should not be in the image"; exit 1; fi
 
       - name: Runs as non-root
         run: |
