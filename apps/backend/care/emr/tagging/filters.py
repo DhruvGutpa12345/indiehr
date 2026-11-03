@@ -1,34 +1,11 @@
 from uuid import UUID
 
-from rest_framework.compat import coreapi, coreschema
 from rest_framework.filters import BaseFilterBackend
 
 from care.emr.tagging.base import SingleFacilityTagManager
 
 
 class TagFilter(BaseFilterBackend):
-    def get_schema_fields(self, view):
-        return [
-            coreapi.Field(
-                name="tags",
-                required=False,
-                location="query",
-                schema=coreschema.String(
-                    title="Tags Filter",
-                    description="Filter by tags",
-                ),
-            ),
-            coreapi.Field(
-                name="tags_behavior",
-                required=False,
-                location="query",
-                schema=coreschema.String(
-                    title="Tags Filter Behavior",
-                    description="Either `all` or `any`",
-                ),
-            ),
-        ]
-
     def get_schema_operation_parameters(self, view):
         return [
             {

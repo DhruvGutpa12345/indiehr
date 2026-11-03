@@ -134,7 +134,7 @@ jobs:
           docker buildx build --load \
             -f deploy/docker/frontend.Dockerfile \
             --build-context config=deploy/docker \
-            -t indiehr-frontend:ci apps/frontend
+            -t indiehr-frontend:ci apps/frontend/build
 
       - name: Smoke test frontend image
         working-directory: .

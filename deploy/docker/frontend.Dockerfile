@@ -1,10 +1,12 @@
 # IndieHR web frontend image (P1-T12). Hardened replacement for apps/frontend/Dockerfile:
 # - runs as a non-root user (nginx-unprivileged, port 8080)
 # - serves a pre-built bundle: build first with `npm ci && npm run build` in apps/frontend
-# Build: docker build -f deploy/docker/frontend.Dockerfile -t indiehr-frontend apps/frontend
+# Build (context is the built bundle, so apps/frontend/.dockerignore does not apply):
+#   docker buildx build -f deploy/docker/frontend.Dockerfile --build-context config=deploy/docker \
+#     -t indiehr-frontend apps/frontend/build
 FROM nginxinc/nginx-unprivileged:1.30.6-alpine
 
-COPY --chown=nginx:nginx build /usr/share/nginx/html
+COPY --chown=nginx:nginx . /usr/share/nginx/html
 COPY --from=config frontend-nginx.conf /etc/nginx/conf.d/default.conf
 
 USER nginx

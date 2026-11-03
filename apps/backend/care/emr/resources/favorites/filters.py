@@ -1,5 +1,4 @@
 from django.core.cache import cache
-from rest_framework.compat import coreapi, coreschema
 from rest_framework.filters import BaseFilterBackend
 
 from care.emr.models.favorites import (
@@ -12,19 +11,6 @@ from care.utils.shortcuts import get_object_or_404
 
 
 class FavoritesFilter(BaseFilterBackend):
-    def get_schema_fields(self, view):
-        return [
-            coreapi.Field(
-                name="favorite_list",
-                required=False,
-                location="query",
-                schema=coreschema.String(
-                    title="Favorite List",
-                    description="Filter by favorite list",
-                ),
-            ),
-        ]
-
     def get_schema_operation_parameters(self, view):
         return [
             {
