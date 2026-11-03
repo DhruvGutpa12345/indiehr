@@ -57,8 +57,8 @@ Last GitHub Releases are v3.0.0 (backend, 2025-02-12) and v3.0.32 (frontend, 202
 |---|---|---|
 | nginxinc/nginx-unprivileged (frontend image) | 1.30.6-alpine | 2026-11-03 |
 | Trivy (local CLI image) | 0.76.1 | 2026-11-03 |
-| Django (security bump) | 6.0.8 | 2026-11-03 |
-| djangorestframework | 3.18.2 | 2026-11-03 |
+| Django (security bump) | 6.0.8 → **6.1.2** (P0-T13) | 2026-11-04 |
+| djangorestframework | 3.18.2 → **3.18.3** (P0-T13) | 2026-11-04 |
 | vite | 8.3.5 | 2026-11-03 |
 
 ## Local CARE stack — P0-T5
@@ -95,3 +95,7 @@ Last GitHub Releases are v3.0.0 (backend, 2025-02-12) and v3.0.32 (frontend, 202
 | aquasecurity/setup-trivy (used inside trivy-action) | v0.2.6 @ 3fb12ec12f41e471780db15c232d5dd185dcb514 | 2026-11-04 |
 
 **GitHub repo setting:** `allowed_actions=selected`, `github_owned_allowed=true`, `verified_allowed=false`, `sha_pinning_required=true`; allow-list = the four third-party SHAs above (buildx, paths-filter, trivy-action, setup-trivy).
+
+## Latest versions — P0-T13
+
+Backend lock fully re-resolved on 2026-11-04 (latest compatible for every package). Key pins: Django 6.1.2, DRF 3.18.3, PyJWT 2.15.1, cryptography 50.0.2, Authlib 1.9.3, aiohttp 3.14.5, sqlparse 0.6.1, certifi 2026.10.23. Packages still behind are pinned by CARE upstream's `Pipfile`; see the weekly **Outdated dependencies report** job in Apps CI (`scripts/outdated-report.py`).
