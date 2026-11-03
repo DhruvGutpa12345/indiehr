@@ -14,11 +14,24 @@ jobs:
     name: Repo checks (pre-commit)
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v7.0.1
-      - uses: actions/setup-python@v7.1.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
         with:
           python-version: "3.14"
       - name: Install pre-commit
         run: pip install pre-commit==4.7.0
       - name: Run all hooks
         run: pre-commit run --all-files --show-diff-on-failure
+
+  secrets:
+    name: Secret scan (gitleaks, full history)
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+      - name: gitleaks over every commit (reviewed false positives in .gitleaksignore)
+        run: |
+          docker run --rm -v "$PWD":/repo -w /repo --entrypoint sh \
+            ghcr.io/gitleaks/gitleaks@sha256:c00b6bd0aeb3071cbcb79009cb16a60dd9e0a7c60e2be9ab65d25e6bc8abbb7f \
+            -c 'git config --global --add safe.directory /repo && gitleaks git --redact --no-banner --no-color .'

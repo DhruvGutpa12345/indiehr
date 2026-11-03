@@ -8,6 +8,7 @@ if [[ $EUID -ne 0 ]]; then
   exit 1
 fi
 
+# shellcheck source=/dev/null
 CODENAME="$(. /etc/os-release && echo "$VERSION_CODENAME")"
 install -m 0755 -d /etc/apt/keyrings
 

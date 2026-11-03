@@ -1,3 +1,15 @@
 # Reviewed false positives (fingerprints). Add entries only after checking the line is not a secret.
 # 2026-11-03: prose "treatment/discharge" in PM-JAY claim-flow notes, not a key.
 research_notes/India hospital SaaS stack research/erp_billing_claims.md:generic-api-key:165
+
+# 2026-11-03 (P0-T12): full-history scan of main; upstream CARE subtree squash commits, reviewed false positives
+# public reCAPTCHA *site* key in upstream CARE frontend .env (public by design; overridden by deploy/frontend.env)
+93b8f2f4914fa08a5a03e204daf10d22b6a896ff:.env:generic-api-key:9
+# keyboard shortcut definition, not a secret
+93b8f2f4914fa08a5a03e204daf10d22b6a896ff:src/config/keyboardShortcuts.json:generic-api-key:7
+# commented example DJANGO_SECRET_KEY in upstream .env.example (never used; prod settings must refuse defaults, P1-T8)
+d912d634f01af5b1adfc2bef8dcae8cdd72e3c48:.env.example:generic-api-key:70
+# field name 'ventilator_fio2' in a migration
+d912d634f01af5b1adfc2bef8dcae8cdd72e3c48:care/facility/migrations/0448_rename_ventilator_fi02_dailyround_ventilator_fio2.py:generic-api-key:23
+# field name 'ventilator_fio2' in a migration
+d912d634f01af5b1adfc2bef8dcae8cdd72e3c48:care/facility/migrations/0448_rename_ventilator_fi02_dailyround_ventilator_fio2.py:generic-api-key:52
