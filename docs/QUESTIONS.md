@@ -39,9 +39,19 @@
 | Q-S2 | **Yes:** customer discovery before Phase 2 (5–10 hospitals, aim for one pilot LOI) | New task P1-T14 |
 | Q-S3 | **No outage kit**; rely on the hospital's backup internet | Accepted risk (49% of buyers cite poor internet); revisit after pilots |
 | Q-S4 | **Stop** the non-IndieHR services on the dev PC (user runs the steps) | Instructions given 2026-11-03 |
+| Q-T0 | **Tenant = legal entity (GSTIN holder)**; one tenant may have several facilities/branches (2026-11-06, owner accepted defaults) | Hospital model represents the entity; ABDM routes and switcher point to a facility within a tenant |
+| Q-T1 | **Short announced maintenance window** (~02:00 IST) for upgrades | TENANCY_DESIGN §7.2 |
+| Q-T2 | **Separate staff record per tenant** for multi-hospital doctors | §4 |
+| Q-T3 | **Presigned URLs** for logos/covers/avatars | §6.8, logged patch |
+| Q-T4 | **One Keycloak client per tenant** | §4.3, created at onboarding |
+| Q-T5 | **No in-tenant superuser** for v1 | Hospital-wide forms come from packs |
+| Q-T6 | **Cell cap 100 tenants** initially | Revisit after P1-T1c numbers |
+| Q-T7 | **Support access = break-glass only** | §4.9 |
+| Q-T8 | **No inter-hospital referral in v1** (works between facilities of one tenant) | Redesign on ABDM later |
+| Q-T9 | **Clear cached data at logout** (frontend patch) | §6.9 |
+| Q-T10 | **Packs auto-update unedited rows**; edited rows need admin OK | §5 |
+| Q-T11 | **Domain decided at P1-T8** (staging) | — |
 | Q-G4 | **`/goal` and `/advisor` = second-opinion reviews:** an independent Opus agent reviews each finished phase against the plan | Working agreement §5 |
-
-**New from P1-T0 (tenancy design) — needed before P1-T1:** Q-T0…Q-T11 in [TENANCY_DESIGN.md §12](TENANCY_DESIGN.md#12-questions-for-you-needed-before-p1-t1). Most important: **Q-T0 — is a tenant one hospital, or one legal entity (GSTIN holder, possibly several branches)?**
 
 **Still open:** Q-B4 (final MVP module list: assumed as in PLAN.md Phase 2) and Q-B6/B7 (pricing, timeline). Q-F2 is moot while AI is deferred.
 

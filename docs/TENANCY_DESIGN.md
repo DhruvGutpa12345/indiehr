@@ -1,6 +1,6 @@
 # Tenancy design: how each hospital's data is kept separate (P1-T0)
 
-- **Status:** Proposed. Needs your approval (§12) before P1-T1 builds anything.
+- **Status:** **Accepted** 2026-11-06. The owner approved the design and accepted every §12 recommendation (answers recorded in QUESTIONS.md).
 - **Date:** 2026-11-06
 - **Amends:** [ADR-002](adr/002-tenancy-schema-per-hospital.md), see "Amendment 1" there.
 - **How it was made:** an orchestrated review over CARE's actual code, run as one workflow of 17 agents:

@@ -47,7 +47,7 @@ A "dedicated" option (its own database or own cluster) for large hospitals. The 
 
 ---
 
-## Amendment 1 (2026-11-06, P1-T0) — status: Proposed, awaiting owner approval
+## Amendment 1 (2026-11-06, P1-T0) — status: **Accepted** (owner, 2026-11-06)
 
 Full design and evidence: [TENANCY_DESIGN.md](../TENANCY_DESIGN.md), [reviews/p1-t0/](../reviews/p1-t0/).
 
@@ -65,4 +65,4 @@ The schema-per-tenant decision stands. The P1-T0 code review changes **what live
 9. **Machine accounts** (analyzer bridge, integrations) keep DRF `TokenAuthentication`, restricted to `is_service_account` users. They are tenant-local because the token table is per schema, and they are created only by a platform command.
 10. **Platform operators** use a separate Keycloak realm (`indiehr-ops`); support access to patient data is break-glass only.
 
-Open questions Q-T0 to Q-T11 (TENANCY_DESIGN.md §12) must be answered before P1-T1. The most important is **Q-T0: is a tenant one hospital or one legal entity?**
+Questions Q-T0 to Q-T11 were answered with the recommended defaults (QUESTIONS.md). In particular **a tenant is a legal entity (GSTIN holder) that may run several facilities**.
