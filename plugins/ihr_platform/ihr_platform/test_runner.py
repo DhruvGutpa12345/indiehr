@@ -8,16 +8,23 @@ Parallel runs are not supported yet: Django clones the test database before we c
 tenant schema, so ``--parallel`` is forced to 1.
 """
 
-from django.db import connection
+import weakref
+
+from django.db import connection, connections
 from django.db.backends.signals import connection_created
 from django.test.runner import DiscoverRunner
 
 TEST_SCHEMA = "h_testhosp01"
 TEST_DOMAINS = ("testserver", "localhost", "127.0.0.1")
+_initialised_connections = weakref.WeakSet()
 
 
 def _point_new_connection_at_test_tenant(sender, connection, **kwargs):
-    if connection.alias == "default" and connection.schema_name != TEST_SCHEMA:
+    # Only connection objects we have never seen (e.g. one per worker thread) start in the test
+    # tenant. A reconnect of a known connection keeps whatever schema the code chose, so
+    # schema_context("public") etc. are respected.
+    if connection.alias == "default" and connection not in _initialised_connections:
+        _initialised_connections.add(connection)
         connection.set_schema(TEST_SCHEMA)
 
 
@@ -47,6 +54,7 @@ class TenantTestRunner(DiscoverRunner):
             Domain.objects.get_or_create(domain=domain, defaults={"tenant": tenant})
 
         connection.set_tenant(tenant)
+        _initialised_connections.add(connections["default"])
         connection_created.connect(_point_new_connection_at_test_tenant)
         return old_config
 
