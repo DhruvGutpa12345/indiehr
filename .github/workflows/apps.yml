@@ -43,6 +43,7 @@ jobs:
               - 'apps/backend/**'
               - 'plugins/**'
               - 'deploy/docker/backend.Dockerfile'
+              - 'deploy/ci/**'
               - '.github/workflows/apps.yml'
             frontend:
               - 'apps/frontend/**'
@@ -117,6 +118,51 @@ jobs:
       - name: Service logs on failure
         if: failure()
         run: docker compose -f docker-compose.yaml -f docker-compose.local.yaml logs --tail=200
+
+  backend-tenant:
+    name: Backend in tenant mode (CARE suite inside a tenant schema)
+    needs: changes
+    if: needs.changes.outputs.backend == 'true' || github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    defaults:
+      run:
+        working-directory: apps/backend
+    env:
+      COMPOSE: docker compose -f docker-compose.yaml -f docker-compose.local.yaml -f ../../deploy/ci/tenancy.override.yaml
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+
+      - name: Build dev image
+        run: |
+          docker buildx build \
+            --file docker/dev.Dockerfile \
+            --tag care_local \
+            --cache-from type=gha,scope=backend \
+            --load .
+
+      - name: Start services (with ihr_platform mounted)
+        run: $COMPOSE up -d --wait || ($COMPOSE logs && exit 1)
+
+      - name: CARE suite + ihr_platform tests inside a tenant schema
+        run: |
+          set +e
+          $COMPOSE exec -T backend python manage.py test --settings=ihr_platform.settings.test --noinput -v 2 ihr_platform . > tenant-tests.log 2>&1
+          status=$?
+          grep -vE "\.\.\. ok$" tenant-tests.log | tail -400
+          exit $status
+
+      - name: Summary
+        if: always()
+        run: |
+          grep -E "^Ran [0-9]+ tests|^OK|^FAILED|Tenant mode" tenant-tests.log || true
+          grep -E "^(ERROR|FAIL):" tenant-tests.log | sort | uniq -c | sort -rn | head -40 || true
+
+      - name: Service logs on failure
+        if: failure()
+        run: $COMPOSE logs --tail=200
 
   frontend:
     name: Frontend (typecheck, lint, unit tests, build)

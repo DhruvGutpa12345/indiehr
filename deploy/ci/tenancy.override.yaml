@@ -1,0 +1,13 @@
+# CI: make ihr_platform importable in the CARE backend container so the suite can run
+# in tenant mode (python manage.py test --settings=ihr_platform.settings.test). P1-T1a.
+services:
+  backend:
+    volumes:
+      - ../../plugins:/ihr/plugins:ro
+    environment:
+      PYTHONPATH: "/ihr/plugins/ihr_platform"
+  celery:
+    volumes:
+      - ../../plugins:/ihr/plugins:ro
+    environment:
+      PYTHONPATH: "/ihr/plugins/ihr_platform"

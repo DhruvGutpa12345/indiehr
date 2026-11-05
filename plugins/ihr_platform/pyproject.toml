@@ -1,0 +1,9 @@
+[project]
+name = "ihr-platform"
+version = "0.1.0"
+description = "IndieHR platform layer for CARE: multi-tenancy (schema per tenant), tenant registry, settings overlay"
+requires-python = "==3.13.*"
+license = { text = "Proprietary" }
+
+[tool.setuptools.packages.find]
+include = ["ihr_platform*"]

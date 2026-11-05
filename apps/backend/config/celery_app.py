@@ -2,6 +2,10 @@ import os
 
 from celery import Celery
 
+# IndieHR (TENANCY_DESIGN.md §6.4): under our tenancy settings, tasks carry the tenant schema.
+if os.environ.get("DJANGO_SETTINGS_MODULE", "").startswith("ihr_platform."):
+    from tenant_schemas_celery.app import CeleryApp as Celery
+
 # set the default Django settings module for the 'celery' program.
 os.environ.setdefault("DJANGO_SETTINGS_MODULE", "config.settings.production")
 
