@@ -230,7 +230,7 @@ P1-T1 is split into sub-tasks. a → b → c must each pass in CI before the nex
 - **nightly:** the full CARE suite in tenant mode plus mutation runs;
 - **release:** the scale run (50/200 schemas) and the restore test.
 
-1. **P1-T1a, library spike:**
+1. **P1-T1a, library spike — ✅ met 2026-11-06** (CI run 42099914452: 2,013/2,013 tests in tenant mode; tenant creation ~68 s locally; 100 tables / 1,077 relations per tenant; tests run serially for now, about 13 min in CI):
    - django-tenants 4.0.1 + tenant-schemas-celery 5.0.0 installed;
    - our settings module, split apps, `pg_trgm` in public;
    - create two tenants by migrate + seed;

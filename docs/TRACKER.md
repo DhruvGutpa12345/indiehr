@@ -11,8 +11,8 @@
 Detailed task definitions: [PLAN.md](PLAN.md) §6. Open questions: [QUESTIONS.md](QUESTIONS.md).
 
 **Current phase:** P0 Foundations
-**Next task:** P1-T1a (tenancy library spike; CARE suite inside a tenant schema). Owner's deep-dive click-through still to come (docs/CLICK_THROUGH.md). Review: docs/reviews/phase-0-review.md
-**Recommended model for next task:** Opus · **high** for P1-T1a
+**Next task:** P1-T1b (isolation suite: API crawl with canaries, Redis keyspace audit, Celery, files, tokens, batch requests, mutation runs). Owner's deep-dive click-through still to come (docs/CLICK_THROUGH.md). Review: docs/reviews/phase-0-review.md
+**Recommended model for next task:** Opus · **high** for P1-T1b
 
 ---
 
@@ -25,6 +25,7 @@ Detailed task definitions: [PLAN.md](PLAN.md) §6. Open questions: [QUESTIONS.md
 | 2026-11-02 | R-2 | Consolidated research report | `reports/India hospital SaaS stack research.md` |
 | 2026-11-02 | R-3 | Master plan v0.1, question list, tracker, CLAUDE.md | `docs/` |
 | 2026-11-02 | R-4 | Workstation audit: 6.7 GB RAM, no GPU, Docker 26.1.3 without group access | PLAN.md §4 |
+| 2026-11-06 | P1-T1a | Tenancy works with CARE: `plugins/ihr_platform` (Hospital = legal entity + Domain in public; settings overlay puts every CARE app in the tenant schema; tenant cache keys; pg_trgm in public first; `ihr_create_tenant` = migrate + sync roles/value sets; TenantTestRunner). Upstream patches: Pipfile/lock (django-tenants 4.0.1, tenant-schemas-celery 5.0.0 only) + conditional tenant-aware Celery app. **CI: CARE's 2,005 tests + 8 tenancy tests pass inside a tenant schema (13 min, serial)**; normal-mode suite still green. Local: public holds only 4 allowed tables; tenant creation ~68 s; 100 tables / 1,077 relations per tenant; rows and cache values don't cross tenants. One bug of mine fixed on the way (runner re-pointed reconnects). New: `scripts/care-tenancy.sh`, ruff hook for plugins | Run 42099914452 |
 | 2026-11-06 | Q&A 4 | Tenancy design approved; all Q-T0…Q-T11 defaults accepted: tenant = legal entity (GSTIN holder, may have several facilities), maintenance-window upgrades, per-tenant staff records, presigned URLs, Keycloak client per tenant, no in-tenant superuser, cell cap 100, break-glass support, no inter-hospital referral in v1, logout cache clear, auto pack updates for unedited rows, domain at P1-T8 | QUESTIONS.md |
 | 2026-11-06 | P1-T0 | Tenancy design: 17-agent workflow (6 mappers over 100 CARE models + runtime/frontend/libraries; 3 independent designs; 3 judges; 5 adversarial reviewers — all *sound with fixes*). Decision: every CARE app per tenant schema, `public` = platform registry only, Keycloak = global identity, per-tenant User rows; django-tenants 4.0.1 + tenant-schemas-celery 5.0.0 (verified on PyPI); no template cloning in v1; maintenance-window upgrades; tenant checks in DRF layer. 5 fatal flaws found and fixed in the design. P1-T1 split into a–d with gates. 12 questions for you (Q-T0…Q-T11). Independent completeness check then found 24 of 48 review items missing/misstated + 7 contradictions → all fixed (design v2); new task P4-T8 | docs/TENANCY_DESIGN.md, docs/reviews/p1-t0/ |
 | 2026-11-04 | P0-T13 | Latest versions: Django **6.1.2**, DRF 3.18.3, PyJWT 2.15.1, cryptography 50.0.2, Authlib 1.9.3, aiohttp 3.14.5, sqlparse 0.6.1, certifi 2026.10.23 + full relock of all transitive deps (81 changes; tzdata dropped, IST verified via system zoneinfo). CI: **2,005/2,005 tests pass**, prod image clean. Weekly outdated report (baseline: backend 45/158 behind, frontend 92/132 — mostly CARE upstream's own pins). ADR-007 (blueprint items deferred/dropped; backups/RPO/RTO gated before first pilot). ~15 stale doc statements fixed; 33 doc links OK | Run 41635315688 |
@@ -54,7 +55,7 @@ Detailed task definitions: [PLAN.md](PLAN.md) §6. Open questions: [QUESTIONS.md
 |---|---|---|---|
 | — | Research and planning | 🟡 | 5/5 |
 | P0 | Foundations and decisions | 🟡 | 12/12 — all review follow-ups done; awaiting your review |
-| P1 | Platform core (tenancy, identity, staging) | 🔵 | 2/17 |
+| P1 | Platform core (tenancy, identity, staging) | 🔵 | 3/17 |
 | P2 | MVP hospital workflows | ⬜ | 0/20 |
 | P3 | ABDM and national rails | ⬜ | 0/12 |
 | P4 | Compliance and security | ⬜ | 0/8 |
@@ -85,7 +86,7 @@ Detailed task definitions: [PLAN.md](PLAN.md) §6. Open questions: [QUESTIONS.md
 ### P1 — Platform core
 
 - ✅ P1-T0 Tenancy design → docs/TENANCY_DESIGN.md + ADR-002 Amendment 1 (accepted 2026-11-06; defaults for Q-T0…Q-T11)
-- ⬜ P1-T1a Tenancy library spike; CARE suite in tenant mode
+- 🟡 P1-T1a Tenancy library spike; CARE suite in tenant mode — **2,013/2,013 tests pass inside a tenant schema**
 - ⬜ P1-T1b Isolation suite (+ mutation runs)
 - ⬜ P1-T1c Scale & ops numbers (migrations at 1/50/200 schemas, backup/restore, onboarding)
 - ⬜ P1-T1d Playwright two-subdomain isolation (after P1-T4)

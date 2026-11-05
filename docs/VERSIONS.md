@@ -99,3 +99,11 @@ Last GitHub Releases are v3.0.0 (backend, 2025-02-12) and v3.0.32 (frontend, 202
 ## Latest versions — P0-T13
 
 Backend lock fully re-resolved on 2026-11-04 (latest compatible for every package). Key pins: Django 6.1.2, DRF 3.18.3, PyJWT 2.15.1, cryptography 50.0.2, Authlib 1.9.3, aiohttp 3.14.5, sqlparse 0.6.1, certifi 2026.10.23. Packages still behind are pinned by CARE upstream's `Pipfile`; see the weekly **Outdated dependencies report** job in Apps CI (`scripts/outdated-report.py`).
+
+## Tenancy — P1-T1a
+
+| Item | Version | Checked |
+|---|---|---|
+| django-tenants | 4.0.1 (2026-10-23, security release; declares Django 5.2–6.1) | 2026-11-06 |
+| tenant-schemas-celery | 5.0.0 (2026-08-01; requires celery>=5) | 2026-11-06 |
+| ruff (pre-commit, plugins/) | v0.14.8 (same as CARE's config) | 2026-11-06 |
