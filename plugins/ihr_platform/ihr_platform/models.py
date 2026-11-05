@@ -14,8 +14,17 @@ from django_tenants.models import DomainMixin, TenantMixin
 SCHEMA_NAME_RE = re.compile(r"^h_[a-z0-9]{10}$")
 SLUG_RE = re.compile(r"^[a-z][a-z0-9-]{2,30}$")
 RESERVED_SLUGS = {
-    "www", "api", "app", "auth", "abdm", "console", "admin",
-    "static", "mail", "status", "public",
+    "www",
+    "api",
+    "app",
+    "auth",
+    "abdm",
+    "console",
+    "admin",
+    "static",
+    "mail",
+    "status",
+    "public",
 }
 _ALPHABET = "abcdefghijklmnopqrstuvwxyz0123456789"
 
@@ -45,8 +54,12 @@ class Hospital(TenantMixin):
     auto_drop_schema = False
 
     def clean(self):
-        if self.schema_name != "public" and not SCHEMA_NAME_RE.match(self.schema_name or ""):
-            raise ValidationError({"schema_name": "Must match h_ + 10 lowercase letters/digits."})
+        if self.schema_name != "public" and not SCHEMA_NAME_RE.match(
+            self.schema_name or ""
+        ):
+            raise ValidationError(
+                {"schema_name": "Must match h_ + 10 lowercase letters/digits."}
+            )
         if self.schema_name != "public" and (
             not SLUG_RE.match(self.slug or "") or self.slug in RESERVED_SLUGS
         ):

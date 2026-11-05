@@ -31,3 +31,13 @@ repos:
     rev: v0.11.0
     hooks:
       - id: shellcheck
+  # Our own Python (plugins/), linted with CARE's ruff config so both codebases share one style.
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: v0.14.8
+    hooks:
+      - id: ruff-check
+        files: ^plugins/
+        args: ["--config", "apps/backend/pyproject.toml"]
+      - id: ruff-format
+        files: ^plugins/
+        args: ["--config", "apps/backend/pyproject.toml"]

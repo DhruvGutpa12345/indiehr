@@ -1,12 +1,12 @@
 """P1-T1a structural and isolation smoke tests. The full isolation suite is P1-T1b."""
 
+from care.users.models import User
 from django.conf import settings
 from django.core.cache import cache
 from django.db import connection
 from django.test import SimpleTestCase
 from django_tenants.utils import schema_context
 
-from care.users.models import User
 from ihr_platform.models import Domain, Hospital
 from ihr_platform.test_runner import TEST_SCHEMA
 
@@ -40,7 +40,9 @@ class TenancyBasicsTests(SimpleTestCase):
             if cls.second is None:
                 cls.second = Hospital(slug="second-test", name="Second Test Hospital")
                 cls.second.save()
-            Domain.objects.get_or_create(domain=SECOND_DOMAIN, defaults={"tenant": cls.second})
+            Domain.objects.get_or_create(
+                domain=SECOND_DOMAIN, defaults={"tenant": cls.second}
+            )
 
     @classmethod
     def tearDownClass(cls):
@@ -59,11 +61,18 @@ class TenancyBasicsTests(SimpleTestCase):
 
     def test_public_schema_holds_no_care_tables(self):
         unexpected = _tables_in("public") - PUBLIC_TABLE_ALLOW_LIST
-        self.assertFalse(unexpected, f"Unexpected tables in public: {sorted(unexpected)}")
+        self.assertFalse(
+            unexpected, f"Unexpected tables in public: {sorted(unexpected)}"
+        )
 
     def test_tenant_schema_holds_care_tables(self):
         tables = _tables_in(TEST_SCHEMA)
-        for table in ("users_user", "emr_patient", "facility_facility", "auth_permission"):
+        for table in (
+            "users_user",
+            "emr_patient",
+            "facility_facility",
+            "auth_permission",
+        ):
             self.assertIn(table, tables)
 
     def test_no_app_is_both_shared_and_tenant_except_contenttypes(self):

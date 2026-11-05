@@ -18,7 +18,9 @@ def apply_tenancy(settings):
     # Every CARE app (and Django auth/sessions/sites/admin/authtoken) lives in the tenant schema.
     settings["SHARED_APPS"] = list(SHARED_APPS)
     settings["TENANT_APPS"] = care_apps
-    settings["INSTALLED_APPS"] = SHARED_APPS + [a for a in care_apps if a not in SHARED_APPS]
+    settings["INSTALLED_APPS"] = SHARED_APPS + [
+        a for a in care_apps if a not in SHARED_APPS
+    ]
 
     settings["DATABASES"]["default"]["ENGINE"] = "django_tenants.postgresql_backend"
     settings["DATABASE_ROUTERS"] = ("django_tenants.routers.TenantSyncRouter",)
@@ -29,7 +31,10 @@ def apply_tenancy(settings):
     settings["SHOW_PUBLIC_IF_NO_TENANT_FOUND"] = False
 
     middleware = [m for m in settings["MIDDLEWARE"] if "TenantMainMiddleware" not in m]
-    settings["MIDDLEWARE"] = ["django_tenants.middleware.main.TenantMainMiddleware", *middleware]
+    settings["MIDDLEWARE"] = [
+        "django_tenants.middleware.main.TenantMainMiddleware",
+        *middleware,
+    ]
 
     for cache in settings["CACHES"].values():
         cache["KEY_FUNCTION"] = "django_tenants.cache.make_key"

@@ -16,16 +16,24 @@ class Command(BaseCommand):
     def add_arguments(self, parser):
         parser.add_argument("--slug", help="Subdomain label, e.g. sunrise")
         parser.add_argument("--name", help="Display name of the legal entity")
-        parser.add_argument("--domain", action="append", default=[], help="Host name; repeatable")
         parser.add_argument(
-            "--public", action="store_true", help="Create the platform (public schema) tenant instead"
+            "--domain", action="append", default=[], help="Host name; repeatable"
+        )
+        parser.add_argument(
+            "--public",
+            action="store_true",
+            help="Create the platform (public schema) tenant instead",
         )
 
     def handle(self, *args, **options):
         if options["public"]:
             hospital, _ = Hospital.objects.get_or_create(
                 schema_name="public",
-                defaults={"slug": "public", "name": "IndieHR platform", "status": Hospital.Status.ACTIVE},
+                defaults={
+                    "slug": "public",
+                    "name": "IndieHR platform",
+                    "status": Hospital.Status.ACTIVE,
+                },
             )
             self._add_domains(hospital, options["domain"])
             self.stdout.write(self.style.SUCCESS(f"public tenant ready: {hospital}"))
