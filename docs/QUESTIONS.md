@@ -41,6 +41,8 @@
 | Q-S4 | **Stop** the non-IndieHR services on the dev PC (user runs the steps) | Instructions given 2026-11-03 |
 | Q-G4 | **`/goal` and `/advisor` = second-opinion reviews:** an independent Opus agent reviews each finished phase against the plan | Working agreement §5 |
 
+**New from P1-T0 (tenancy design) — needed before P1-T1:** Q-T0…Q-T11 in [TENANCY_DESIGN.md §12](TENANCY_DESIGN.md#12-questions-for-you-needed-before-p1-t1). Most important: **Q-T0 — is a tenant one hospital, or one legal entity (GSTIN holder, possibly several branches)?**
+
 **Still open:** Q-B4 (final MVP module list: assumed as in PLAN.md Phase 2) and Q-B6/B7 (pricing, timeline). Q-F2 is moot while AI is deferred.
 
 ---

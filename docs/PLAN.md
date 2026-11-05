@@ -228,8 +228,11 @@ Task IDs are `P<phase>-T<n>`. Each task is sized for **one sitting (≈1–3 hou
 
 | ID | Task | Done when | Effort |
 |---|---|---|---|
-| P1-T0 | **Tenancy design spike** (review R0-03, R0-21 — High): map every CARE Django app/model to SHARED (public schema) or TENANT; list every foreign key crossing that line (e.g. `User`→`Facility`/`Organization`); decide the user model; ABDM HIP-ID→tenant routing; amend ADR-002 | ADR-002 amendment approved by you | Opus / high |
-| P1-T1 | Tenancy prototype per the P1-T0 design (schema-per-tenant is decided in ADR-002; here: django-tenants **vs** a thin `search_path` middleware), incl. migration strategy and a backup/restore-per-tenant test | Two tenants on one deployment provably cannot read each other's data (automated test) | Opus / high |
+| P1-T0 ✅ | **Tenancy design spike** (review R0-03, R0-21): 17-agent mapping/design/verification workflow → [TENANCY_DESIGN.md](TENANCY_DESIGN.md) + ADR-002 Amendment 1 (proposed) | Your approval of the design and answers to Q-T0…Q-T11 | Opus / high |
+| P1-T1a | Tenancy library spike: django-tenants 4.0.1 + tenant-schemas-celery 5.0.0 (relock), our settings module, split public/tenant apps, `pg_trgm` in public, create two tenants by migrate + seed, **CARE's 2,005 tests pass inside a tenant schema** (TENANCY_DESIGN §11.1) | Full suite green in tenant mode in CI | Opus / high |
+| P1-T1b | Isolation suite: structural checks, API crawl with canaries (cross-tenant and anonymous), Redis keyspace audit, Celery, file keys, token checks, batch requests, **mutation runs must fail** (§11.2) | Suite green; each mutation run red | Opus / high |
+| P1-T1c | Scale and operations: migration time and catalogue size at 1/50/200 schemas, per-tenant backup/restore round trip, onboarding time (§11.3) → set the cell cap | Numbers recorded; cap decided with you | Opus / medium |
+| P1-T1d | Playwright on two `*.localhost` subdomains: token isolation, logout clean-up, switcher (§11.4; needs P1-T4 login) | Green | Sonnet / medium |
 | P1-T2 | Tenant routing by subdomain (`<hospital>.app.<domain>`), tenant middleware, per-tenant settings (logo, GSTIN, address, letterhead) | Two demo hospitals with separate branding | Opus / medium |
 | P1-T3 | Keycloak 26.8: realm, Organizations = tenants, roles (doctor, nurse, billing, pharmacist, lab tech, admin, MRD, superadmin), MFA/TOTP for admins, password policy | Login via Keycloak for both tenants; role claims in token | Opus / medium |
 | P1-T4 | Wire CARE auth to OIDC (Keycloak), map roles → CARE permissions; decide token storage (JWT is in `localStorage` today — review R0-20) | SSO works; logout; session timeout | Opus / high |
@@ -298,6 +301,7 @@ Task IDs are `P<phase>-T<n>`. Each task is sized for **one sitting (≈1–3 hou
 | P4-T5 | Role-based access by care team ("break-the-glass" with reason and audit) | Opus / high |
 | P4-T6 | Legal pack **(you + lawyer)**: SaaS terms, Data Processing Agreement (we act as processor for the hospital), privacy policy; I draft templates | Opus / medium |
 | P4-T7 | **(Gate: before the first pilot with real data — ADR-007)** Disaster recovery (DR): automated restore test, second-region replica, recovery time/point targets (RTO/RPO) documented | Sonnet / high |
+| P4-T8 | Per-tenant database role switched with `SET ROLE` alongside the schema, so a SQL-level escape in one hospital cannot read another (TENANCY_DESIGN §6.10) | Opus / high |
 
 ### Phase 5 — Diagnostics depth
 

@@ -1,0 +1,3514 @@
+{
+ "models": [
+  {
+   "model": "BaseModel (abstract)",
+   "app": "utils (no app; abstract)",
+   "file": "care/utils/models/base.py:15-32",
+   "proposed_scope": "either",
+   "scope_reason": "Abstract base for almost every CARE model. Adds external_id UUID, created/modified dates and a soft-delete flag. Its scope comes from each concrete subclass.",
+   "fks_out": [],
+   "global_unique_or_cache": "external_id unique=True (line 16) is unique per schema only once tables are split. uuid4 makes a cross-tenant collision negligible, but code that looks up rows by external_id must run in the right schema. delete() is a soft delete (lines 30-32), while queryset .delete() is a hard delete.",
+   "notes": "BaseManager hides deleted rows (lines 9-12)."
+  },
+  {
+   "model": "BaseFlag (abstract)",
+   "app": "utils (no app; abstract)",
+   "file": "care/utils/models/base.py:38-92",
+   "proposed_scope": "either",
+   "scope_reason": "Abstract feature-flag base. Its scope follows the entity it flags (User or Facility).",
+   "fks_out": [],
+   "global_unique_or_cache": "Redis keys are built from the entity's integer PK (lines 51-56, 74-91), e.g. facility_flag_cache:{id}:{flag}. Integer PKs repeat across tenant schemas, so the keys collide in a shared Redis unless they carry a tenant prefix. 1-day TTL (line 35).",
+   "notes": "Flag names are checked against an in-process FlagRegistry (line 69)."
+  },
+  {
+   "model": "EMRBaseModel (abstract)",
+   "app": "emr (abstract)",
+   "file": "care/emr/models/base.py:8-29",
+   "proposed_scope": "either",
+   "scope_reason": "Abstract base for all EMR models. Adds history/meta JSON and created_by/updated_by. Its scope follows the subclass.",
+   "fks_out": [
+    {
+     "field": "created_by",
+     "target": "users.User",
+     "nullable": true,
+     "kind": "ForeignKey SET_NULL (inherited by every EMR model)"
+    },
+    {
+     "field": "updated_by",
+     "target": "users.User",
+     "nullable": true,
+     "kind": "ForeignKey SET_NULL (inherited by every EMR model)"
+    }
+   ],
+   "global_unique_or_cache": "related_name is %(app_label)s_%(class)s_created_by/updated_by (lines 17, 25).",
+   "notes": "Every tenant EMR table gets two FKs to users.User. That is fine (tenant to shared) if User sits in public."
+  },
+  {
+   "model": "SlugBaseModel (abstract)",
+   "app": "emr (abstract)",
+   "file": "care/emr/models/base.py:32-64",
+   "proposed_scope": "either",
+   "scope_reason": "Abstract base for slug-addressed masters, defined here but with concrete subclasses elsewhere. Slugs are facility-scoped ('f-<facility uuid>-slug') or instance-scoped ('i-slug').",
+   "fks_out": [],
+   "global_unique_or_cache": "An 'instance' scope (lines 43-49, 60-63) means the whole CARE deployment. Under schema-per-tenant, 'i-' slugs become per-tenant in tenant schemas, but stay platform-global in any subclass kept in public.",
+   "notes": "Subclasses outside this file set need their own review."
+  },
+  {
+   "model": "OrganizationCommonBase (abstract)",
+   "app": "emr (abstract)",
+   "file": "care/emr/models/organization.py:10-99",
+   "proposed_scope": "either",
+   "scope_reason": "Abstract tree base shared by Organization and FacilityOrganization.",
+   "fks_out": [
+    {
+     "field": "root_org",
+     "target": "self (concrete subclass)",
+     "nullable": true,
+     "kind": "ForeignKey CASCADE"
+    },
+    {
+     "field": "parent",
+     "target": "self (concrete subclass)",
+     "nullable": true,
+     "kind": "ForeignKey CASCADE"
+    }
+   ],
+   "global_unique_or_cache": "Denormalised caches: level_cache, parent_cache (an array of ancestor integer PKs, line 24) and cached_parent_json with a 15-day expiry (lines 26-27, 43-64). Uniqueness of (name, level, root_org) is checked only in application code (validate_uniqueness, lines 76-99); there is no DB constraint.",
+   "notes": "parent_cache holds integer IDs that are not FK-enforced. They point to the wrong rows if trees are copied between schemas without remapping IDs."
+  },
+  {
+   "model": "Skill",
+   "app": "users",
+   "file": "care/users/models.py:74-79",
+   "proposed_scope": "either",
+   "scope_reason": "A small reference master of skill names. One copy could be shared, or each hospital could keep its own list.",
+   "fks_out": [],
+   "global_unique_or_cache": "name unique=True (line 75).",
+   "notes": ""
+  },
+  {
+   "model": "UserSkill",
+   "app": "users",
+   "file": "care/users/models.py:82-93",
+   "proposed_scope": "either",
+   "scope_reason": "Through table for User.skills. Put it in public if skills are an attribute of the person, or in the tenant schema if skills are recorded per hospital. It must sit next to User for the M2M to work.",
+   "fks_out": [
+    {
+     "field": "user",
+     "target": "users.User",
+     "nullable": true,
+     "kind": "ForeignKey CASCADE (through table of User.skills)"
+    },
+    {
+     "field": "skill",
+     "target": "users.Skill",
+     "nullable": true,
+     "kind": "ForeignKey CASCADE"
+    }
+   ],
+   "global_unique_or_cache": "Partial unique constraint (skill, user) WHERE deleted=false (lines 87-92).",
+   "notes": "If User is shared and UserSkill is per tenant, User.skills (an M2M declared on a shared model) cannot be used as a normal M2M."
+  },
+  {
+   "model": "User",
+   "app": "users",
+   "file": "care/users/models.py:96-230",
+   "proposed_scope": "shared",
+   "scope_reason": "ADR-002 gives each person one global login (Keycloak), and a doctor can work at two hospitals, so identity must be a single copy in public. Several fields are really per-hospital, though: user_type, home_facility, weekly_working_hours, cached_role_orgs and arguably preferences.",
+   "fks_out": [
+    {
+     "field": "created_by",
+     "target": "users.User",
+     "nullable": true,
+     "kind": "ForeignKey self SET_NULL"
+    },
+    {
+     "field": "geo_organization",
+     "target": "emr.Organization",
+     "nullable": true,
+     "kind": "ForeignKey SET_NULL (shared to possibly-tenant)"
+    },
+    {
+     "field": "home_facility",
+     "target": "facility.Facility",
+     "nullable": true,
+     "kind": "ForeignKey PROTECT (shared to tenant: BLOCKER)"
+    },
+    {
+     "field": "skills",
+     "target": "users.Skill",
+     "nullable": true,
+     "kind": "ManyToMany through users.UserSkill"
+    },
+    {
+     "field": "groups",
+     "target": "auth.Group",
+     "nullable": true,
+     "kind": "ManyToMany (inherited from AbstractUser/PermissionsMixin)"
+    },
+    {
+     "field": "user_permissions",
+     "target": "auth.Permission",
+     "nullable": true,
+     "kind": "ManyToMany (inherited from AbstractUser/PermissionsMixin)"
+    }
+   ],
+   "global_unique_or_cache": "username unique (lines 99-106) and external_id unique (line 97). cached_role_orgs JSON (line 184) caches OrganizationUser rows (lines 192-200) as one per-user value with no tenant dimension. Flag cache keys user_flag_cache:{user_id} (lines 21-23). is_superuser (from AbstractUser) is global.",
+   "notes": "The local password, totp_secret and mfa_settings (lines 177-178) duplicate what Keycloak should own. home_facility is referenced only in the model and migrations, not in app code (grep), so it can be dropped or moved with little impact. Managers hide deleted users (lines 30-36)."
+  },
+  {
+   "model": "PlugConfig",
+   "app": "users",
+   "file": "care/users/models.py:233-238",
+   "proposed_scope": "shared",
+   "scope_reason": "Platform plugin configuration exposed at /api/v1/plug_config (config/api_router.py:118). Plugins are deployed per cluster. If a tenant ever needs its own plugin settings, add a tenant-level override rather than moving this table.",
+   "fks_out": [],
+   "global_unique_or_cache": "slug unique=True (line 234).",
+   "notes": "A plain models.Model, so it has no soft delete or external_id."
+  },
+  {
+   "model": "UserFlag",
+   "app": "users",
+   "file": "care/users/models.py:241-268",
+   "proposed_scope": "either",
+   "scope_reason": "Its scope follows User, so it is shared by default. If a flag enables a feature for one hospital only, it needs to be per tenant.",
+   "fks_out": [
+    {
+     "field": "user",
+     "target": "users.User",
+     "nullable": false,
+     "kind": "ForeignKey CASCADE"
+    }
+   ],
+   "global_unique_or_cache": "Partial unique (user, flag) WHERE deleted=false (lines 254-260). Redis keys user_flag_cache:{user_id}:{flag} and user_all_flags_cache:{user_id} (lines 244-245) are safe if User is shared, but collide if UserFlag is moved per tenant without a tenant prefix.",
+   "notes": ""
+  },
+  {
+   "model": "PermissionModel",
+   "app": "security",
+   "file": "care/security/models/permission.py:6-18",
+   "proposed_scope": "either",
+   "scope_reason": "The permission list is defined in code and synced by sync_permissions_roles, so it is identical for every hospital. That makes it a natural shared table. Copying it per tenant is also cheap, and it avoids FKs from tenant tables to rows in public that the sync command hard-deletes.",
+   "fks_out": [],
+   "global_unique_or_cache": "slug unique=True (line 12). The sync command hard-deletes rows with queryset .delete() (care/security/management/commands/sync_permissions_roles.py:24-34).",
+   "notes": "temp_deleted is used as a sync marker."
+  },
+  {
+   "model": "RoleModel",
+   "app": "security",
+   "file": "care/security/models/role.py:15-89",
+   "proposed_scope": "tenant",
+   "scope_reason": "System roles are the same everywhere, but hospital admins can create custom roles (is_system=False, lines 25-27). Those must not leak to, or collide with, other hospitals. Membership tables in tenant schemas (OrganizationUser, FacilityOrganizationUser, PatientUser) FK into this table. Treat it as 'either' if custom roles are banned.",
+   "fks_out": [],
+   "global_unique_or_cache": "Partial unique on name WHERE deleted=false (lines 32-39). Facility.save does RoleModel.objects.get_or_create(name=FACILITY_ADMIN_ROLE.name) (care/facility/models/facility.py:257). Redis keys role_permissions:{id} and role_permissions_cache:{id} use the integer PK with a 7-day TTL (lines 10-12, 45, 66). They collide across schemas if the table is per tenant.",
+   "notes": "sync_permissions_roles must run in every tenant schema if this table is per tenant."
+  },
+  {
+   "model": "RolePermission",
+   "app": "security",
+   "file": "care/security/models/role.py:92-115",
+   "proposed_scope": "either",
+   "scope_reason": "Join table between roles and permissions. It must sit in the same schema as RoleModel, or in a tenant schema if RoleModel is per tenant.",
+   "fks_out": [
+    {
+     "field": "role",
+     "target": "security.RoleModel",
+     "nullable": false,
+     "kind": "ForeignKey CASCADE"
+    },
+    {
+     "field": "permission",
+     "target": "security.PermissionModel",
+     "nullable": false,
+     "kind": "ForeignKey CASCADE"
+    }
+   ],
+   "global_unique_or_cache": "post_save/post_delete signals clear the role_permissions:{role_id} Redis keys (lines 106-115). Integer role_id keys need a tenant prefix.",
+   "notes": "No unique constraint on (role, permission)."
+  },
+  {
+   "model": "RoleAssociation",
+   "app": "security",
+   "file": "care/security/models/permission_association.py:8-22",
+   "proposed_scope": "tenant",
+   "scope_reason": "Grants a role to a user within a context, which is hospital-specific. It appears unused: grep finds no references outside its definition.",
+   "fks_out": [
+    {
+     "field": "user",
+     "target": "users.User",
+     "nullable": false,
+     "kind": "ForeignKey CASCADE"
+    },
+    {
+     "field": "role",
+     "target": "security.RoleModel",
+     "nullable": false,
+     "kind": "ForeignKey CASCADE"
+    },
+    {
+     "field": "context + context_id",
+     "target": "generic (any model, by string context + BigInteger id)",
+     "nullable": false,
+     "kind": "generic soft-reference, not FK-enforced (lines 15-16)"
+    }
+   ],
+   "global_unique_or_cache": "",
+   "notes": "context_id is an integer PK reference, which is only meaningful inside one schema."
+  },
+  {
+   "model": "FacilityOrganization",
+   "app": "emr",
+   "file": "care/emr/models/organization.py:102-103",
+   "proposed_scope": "tenant",
+   "scope_reason": "Departments and teams inside one facility (hospital).",
+   "fks_out": [
+    {
+     "field": "facility",
+     "target": "facility.Facility",
+     "nullable": false,
+     "kind": "ForeignKey CASCADE"
+    },
+    {
+     "field": "root_org",
+     "target": "emr.FacilityOrganization",
+     "nullable": true,
+     "kind": "ForeignKey self CASCADE"
+    },
+    {
+     "field": "parent",
+     "target": "emr.FacilityOrganization",
+     "nullable": true,
+     "kind": "ForeignKey self CASCADE"
+    },
+    {
+     "field": "created_by / updated_by",
+     "target": "users.User",
+     "nullable": true,
+     "kind": "ForeignKey SET_NULL (from EMRBaseModel)"
+    }
+   ],
+   "global_unique_or_cache": "parent_cache integer array and cached_parent_json (inherited).",
+   "notes": "Facility.internal_organization_cache stores these IDs."
+  },
+  {
+   "model": "Organization",
+   "app": "emr",
+   "file": "care/emr/models/organization.py:106-107",
+   "proposed_scope": "either",
+   "scope_reason": "One table holds several org_types (care/emr/resources/organization/spec.py:10-14). 'govt' is the India geography hierarchy (state/district/LSG, loaded by load_govt_organization_csv) and is a natural shared reference. 'team', 'role' and 'product_supplier' are hospital-specific and belong per tenant. A single scope does not fit the table cleanly.",
+   "fks_out": [
+    {
+     "field": "root_org",
+     "target": "emr.Organization",
+     "nullable": true,
+     "kind": "ForeignKey self CASCADE"
+    },
+    {
+     "field": "parent",
+     "target": "emr.Organization",
+     "nullable": true,
+     "kind": "ForeignKey self CASCADE"
+    },
+    {
+     "field": "managing_organizations",
+     "target": "emr.Organization (ids)",
+     "nullable": false,
+     "kind": "ArrayField[int] soft-reference, not FK-enforced (line 107)"
+    },
+    {
+     "field": "created_by / updated_by",
+     "target": "users.User",
+     "nullable": true,
+     "kind": "ForeignKey SET_NULL (from EMRBaseModel)"
+    }
+   ],
+   "global_unique_or_cache": "Name uniqueness per (root_org, level) is checked only in app code (lines 76-99). parent_cache, level_cache and cached_parent_json are inherited.",
+   "notes": "Referenced by User.geo_organization, Facility.geo_organization, Patient.geo_organization, PatientOrganization.organization and OrganizationUser.organization."
+  },
+  {
+   "model": "OrganizationUser",
+   "app": "emr",
+   "file": "care/emr/models/organization.py:110-146",
+   "proposed_scope": "tenant",
+   "scope_reason": "A user's membership and role in an (instance-level) organization is per hospital, e.g. a doctor's role at hospital A versus hospital B.",
+   "fks_out": [
+    {
+     "field": "organization",
+     "target": "emr.Organization",
+     "nullable": false,
+     "kind": "ForeignKey CASCADE"
+    },
+    {
+     "field": "user",
+     "target": "users.User",
+     "nullable": false,
+     "kind": "ForeignKey CASCADE"
+    },
+    {
+     "field": "role",
+     "target": "security.RoleModel",
+     "nullable": false,
+     "kind": "ForeignKey CASCADE"
+    },
+    {
+     "field": "created_by / updated_by",
+     "target": "users.User",
+     "nullable": true,
+     "kind": "ForeignKey SET_NULL (from EMRBaseModel)"
+    }
+   ],
+   "global_unique_or_cache": "save() resets the shared User.cached_role_orgs (lines 123-129). get_cached_role_orgs builds the cache from this table in whatever schema is active (lines 131-146).",
+   "notes": "No unique constraint on (organization, user)."
+  },
+  {
+   "model": "FacilityOrganizationUser",
+   "app": "emr",
+   "file": "care/emr/models/organization.py:149-156",
+   "proposed_scope": "tenant",
+   "scope_reason": "Staff membership and role within a facility's departments. This is the main per-hospital membership table.",
+   "fks_out": [
+    {
+     "field": "organization",
+     "target": "emr.FacilityOrganization",
+     "nullable": false,
+     "kind": "ForeignKey CASCADE"
+    },
+    {
+     "field": "user",
+     "target": "users.User",
+     "nullable": false,
+     "kind": "ForeignKey CASCADE"
+    },
+    {
+     "field": "role",
+     "target": "security.RoleModel",
+     "nullable": false,
+     "kind": "ForeignKey CASCADE"
+    },
+    {
+     "field": "created_by / updated_by",
+     "target": "users.User",
+     "nullable": true,
+     "kind": "ForeignKey SET_NULL (from EMRBaseModel)"
+    }
+   ],
+   "global_unique_or_cache": "",
+   "notes": "A natural source for a 'which tenants does this user belong to' index in public."
+  },
+  {
+   "model": "Facility",
+   "app": "facility",
+   "file": "care/facility/models/facility.py:153-262",
+   "proposed_scope": "tenant",
+   "scope_reason": "The hospital itself. One tenant is one hospital, which may have one or a few facilities. A separate platform tenant registry (Client/Domain) is needed in public; it is not part of CARE.",
+   "fks_out": [
+    {
+     "field": "geo_organization",
+     "target": "emr.Organization",
+     "nullable": true,
+     "kind": "ForeignKey SET_NULL"
+    },
+    {
+     "field": "default_internal_organization",
+     "target": "emr.FacilityOrganization",
+     "nullable": true,
+     "kind": "ForeignKey SET_NULL"
+    },
+    {
+     "field": "created_by",
+     "target": "users.User",
+     "nullable": true,
+     "kind": "ForeignKey SET_NULL"
+    },
+    {
+     "field": "geo_organization_cache",
+     "target": "emr.Organization (ids)",
+     "nullable": false,
+     "kind": "ArrayField[int] soft-reference (line 176)"
+    },
+    {
+     "field": "internal_organization_cache",
+     "target": "emr.FacilityOrganization (ids)",
+     "nullable": false,
+     "kind": "ArrayField[int] soft-reference (line 185)"
+    }
+   ],
+   "global_unique_or_cache": "Only external_id is unique. save() creates a root FacilityOrganization, a FacilityOrganizationUser for created_by and get_or_create on RoleModel by name (lines 241-259). sync_cache rebuilds the integer arrays (lines 219-239).",
+   "notes": "is_public (line 199) means discoverable across the whole deployment, which has no meaning per tenant."
+  },
+  {
+   "model": "FacilityFlag",
+   "app": "facility",
+   "file": "care/facility/models/facility_flag.py:11-40",
+   "proposed_scope": "tenant",
+   "scope_reason": "Feature flags for one facility.",
+   "fks_out": [
+    {
+     "field": "facility",
+     "target": "facility.Facility",
+     "nullable": false,
+     "kind": "ForeignKey CASCADE"
+    }
+   ],
+   "global_unique_or_cache": "Partial unique (facility, flag) WHERE deleted=false (lines 26-32). Redis keys facility_flag_cache:{facility_id}:{flag} and facility_all_flags_cache:{facility_id} (lines 16-17) use integer IDs, so the facility with id=1 in every tenant shares one cache entry.",
+   "notes": ""
+  },
+  {
+   "model": "MobileOTP",
+   "app": "facility",
+   "file": "care/facility/models/patient.py:8-28",
+   "proposed_scope": "either",
+   "scope_reason": "Phone-OTP login records for the patient-facing flow (care/emr/api/otp_viewsets/login.py:16). Keeping them per tenant ties an OTP to the hospital subdomain that issued it. Sharing them would let one OTP or session reach patients at all hospitals. Lean tenant.",
+   "fks_out": [],
+   "global_unique_or_cache": "Partial indexes on phone_number (lines 17-27).",
+   "notes": "A Celery cleanup task hard-deletes old rows (care/emr/tasks/cleanup_expired_otps.py:20). It must run per schema if this table is per tenant."
+  },
+  {
+   "model": "Patient",
+   "app": "emr",
+   "file": "care/emr/models/patient.py:16-135",
+   "proposed_scope": "tenant",
+   "scope_reason": "Core clinical PHI (personal health information). It must be isolated per hospital.",
+   "fks_out": [
+    {
+     "field": "geo_organization",
+     "target": "emr.Organization",
+     "nullable": true,
+     "kind": "ForeignKey SET_NULL"
+    },
+    {
+     "field": "created_by / updated_by",
+     "target": "users.User",
+     "nullable": true,
+     "kind": "ForeignKey SET_NULL (from EMRBaseModel)"
+    },
+    {
+     "field": "organization_cache",
+     "target": "emr.Organization (ids)",
+     "nullable": false,
+     "kind": "ArrayField[int] soft-reference (line 42)"
+    },
+    {
+     "field": "users_cache",
+     "target": "users.User (ids)",
+     "nullable": false,
+     "kind": "ArrayField[int] soft-reference (line 44)"
+    },
+    {
+     "field": "instance_tags",
+     "target": "tag config ids",
+     "nullable": false,
+     "kind": "ArrayField[int] soft-reference (line 49)"
+    },
+    {
+     "field": "facility_identifiers / facility_tags",
+     "target": "facility.Facility (id as JSON key)",
+     "nullable": true,
+     "kind": "JSON soft-reference keyed by facility id (lines 47, 50)"
+    },
+    {
+     "field": "instance_identifiers",
+     "target": "emr.PatientIdentifierConfig (external_id in JSON)",
+     "nullable": true,
+     "kind": "JSON soft-reference (lines 46, 108-114)"
+    }
+   ],
+   "global_unique_or_cache": "save() saves twice and rebuilds organization_cache and users_cache (lines 126-132). 'instance' identifiers and tags become tenant-wide.",
+   "notes": "Upstream bug at line 95: rebuild_organization_cache appends patient_organization.id (the PatientOrganization PK) instead of the organization id. This can corrupt organization-based access checks."
+  },
+  {
+   "model": "PatientOrganization",
+   "app": "emr",
+   "file": "care/emr/models/patient.py:138-145",
+   "proposed_scope": "tenant",
+   "scope_reason": "Links a patient to an organization. It holds patient data, so it is per hospital.",
+   "fks_out": [
+    {
+     "field": "patient",
+     "target": "emr.Patient",
+     "nullable": false,
+     "kind": "ForeignKey CASCADE"
+    },
+    {
+     "field": "organization",
+     "target": "emr.Organization",
+     "nullable": false,
+     "kind": "ForeignKey CASCADE"
+    },
+    {
+     "field": "created_by / updated_by",
+     "target": "users.User",
+     "nullable": true,
+     "kind": "ForeignKey SET_NULL (from EMRBaseModel)"
+    }
+   ],
+   "global_unique_or_cache": "save() calls patient.save() to rebuild the caches.",
+   "notes": ""
+  },
+  {
+   "model": "PatientUser",
+   "app": "emr",
+   "file": "care/emr/models/patient.py:148-159",
+   "proposed_scope": "tenant",
+   "scope_reason": "Grants a user access to a patient, per hospital.",
+   "fks_out": [
+    {
+     "field": "user",
+     "target": "users.User",
+     "nullable": false,
+     "kind": "ForeignKey CASCADE"
+    },
+    {
+     "field": "patient",
+     "target": "emr.Patient",
+     "nullable": false,
+     "kind": "ForeignKey CASCADE"
+    },
+    {
+     "field": "role",
+     "target": "security.RoleModel",
+     "nullable": false,
+     "kind": "ForeignKey PROTECT"
+    },
+    {
+     "field": "created_by / updated_by",
+     "target": "users.User",
+     "nullable": true,
+     "kind": "ForeignKey SET_NULL (from EMRBaseModel)"
+    }
+   ],
+   "global_unique_or_cache": "save() calls patient.save().",
+   "notes": "Its role FK is PROTECT. A hard delete of the role by sync_permissions_roles fails if any PatientUser still references it."
+  },
+  {
+   "model": "PatientIdentifierConfig",
+   "app": "emr",
+   "file": "care/emr/models/patient.py:162-167",
+   "proposed_scope": "tenant",
+   "scope_reason": "Identifier schemes (MRN/UHID formats etc.). Rows with facility=NULL are 'instance-level' and become tenant-wide under schema-per-tenant. A platform-wide ABHA identifier config could be seeded into each tenant instead.",
+   "fks_out": [
+    {
+     "field": "facility",
+     "target": "facility.Facility",
+     "nullable": true,
+     "kind": "ForeignKey CASCADE"
+    },
+    {
+     "field": "created_by / updated_by",
+     "target": "users.User",
+     "nullable": true,
+     "kind": "ForeignKey SET_NULL (from EMRBaseModel)"
+    }
+   ],
+   "global_unique_or_cache": "Cached in process-level class dicts by PatientIdentifierConfigCache (lines 179-205), and in Redis via model_from_cache keyed by integer id (lines 214-218, 228-232).",
+   "notes": ""
+  },
+  {
+   "model": "PatientIdentifier",
+   "app": "emr",
+   "file": "care/emr/models/patient.py:170-176",
+   "proposed_scope": "tenant",
+   "scope_reason": "Patient identifier values (UHID, ABHA number etc.). This is PHI.",
+   "fks_out": [
+    {
+     "field": "facility",
+     "target": "facility.Facility",
+     "nullable": true,
+     "kind": "ForeignKey CASCADE"
+    },
+    {
+     "field": "patient",
+     "target": "emr.Patient",
+     "nullable": false,
+     "kind": "ForeignKey CASCADE"
+    },
+    {
+     "field": "config",
+     "target": "emr.PatientIdentifierConfig",
+     "nullable": false,
+     "kind": "ForeignKey CASCADE"
+    },
+    {
+     "field": "created_by / updated_by",
+     "target": "users.User",
+     "nullable": true,
+     "kind": "ForeignKey SET_NULL (from EMRBaseModel)"
+    }
+   ],
+   "global_unique_or_cache": "value is indexed but not unique (line 176).",
+   "notes": "Cross-hospital patient matching (the same ABHA at two hospitals) needs a separate design, e.g. a public index of hashed ABHA numbers, because each tenant holds its own copy."
+  },
+  {
+   "model": "PatientIdentifierConfigCache (not a Django model)",
+   "app": "emr",
+   "file": "care/emr/models/patient.py:179-233",
+   "proposed_scope": "either",
+   "scope_reason": "A plain Python class with class-level mutable caches (configs, instance_configs, facility_configs). It is not a table, but it is process-global state.",
+   "fks_out": [],
+   "global_unique_or_cache": "configs = {} is a process-wide dict keyed by config id/external_id (lines 186-198). It survives across requests for different tenants in the same worker, and invalidation only reaches the current process (lines 200-205).",
+   "notes": "UUID keys make cross-tenant collisions unlikely, but the dict grows without limit and is not isolated by tenant."
+  },
+  {
+   "model": "BaseModel (abstract)",
+   "app": "(none - care.utils, abstract)",
+   "file": "apps/backend/care/utils/models/base.py:15-32",
+   "proposed_scope": "either",
+   "scope_reason": "Abstract mixin, not a table. Every concrete model below inherits external_id/created_date/modified_date/deleted and the soft-delete manager.",
+   "fks_out": [],
+   "global_unique_or_cache": "external_id = UUIDField(default=uuid4, unique=True) (base.py:16): unique only within one schema once split. UUID4 makes collisions negligible, but an external_id alone no longer identifies a tenant. objects = BaseManager filters deleted=False (base.py:9-12,25), and delete() soft-deletes (base.py:30-32).",
+   "notes": "There are no FKs. BaseFlag (base.py:38-57) also clears Redis keys built from entity_id. It is out of scope here but has the same cache-key-prefix concern as favorites."
+  },
+  {
+   "model": "EMRBaseModel (abstract)",
+   "app": "emr (abstract)",
+   "file": "apps/backend/care/emr/models/base.py:8-29",
+   "proposed_scope": "either",
+   "scope_reason": "Abstract base. It adds history/meta JSON and created_by/updated_by FKs to users.User, which every concrete EMR model inherits.",
+   "fks_out": [
+    {
+     "field": "created_by",
+     "target": "users.User",
+     "nullable": true,
+     "kind": "FK SET_NULL, related_name '%(app_label)s_%(class)s_created_by'"
+    },
+    {
+     "field": "updated_by",
+     "target": "users.User",
+     "nullable": true,
+     "kind": "FK SET_NULL, related_name '%(app_label)s_%(class)s_updated_by'"
+    }
+   ],
+   "global_unique_or_cache": "None of its own. The reverse accessors on User (e.g. user.emr_observation_created_by) only see the current schema's rows.",
+   "notes": "If users.User is shared (public), every tenant table has FKs into public. django-tenants allows this, but Django's deletion collector only walks the current schema."
+  },
+  {
+   "model": "SlugBaseModel (abstract)",
+   "app": "emr (abstract)",
+   "file": "apps/backend/care/emr/models/base.py:32-64",
+   "proposed_scope": "either",
+   "scope_reason": "Abstract base for definition masters (ObservationDefinition, SpecimenDefinition, ActivityDefinition, Template). FACILITY_SCOPED=True. The stored slug is 'f-<facility external_id>-<slug>' for facility rows or 'i-<slug>' for instance-wide rows (base.py:39-49).",
+   "fks_out": [],
+   "global_unique_or_cache": "There is no DB unique constraint on slug. Uniqueness is checked only in the viewsets (e.g. care/emr/api/viewsets/observation_definition.py:70-90 and care/emr/api/viewsets/report/template.py:120-138 raise 'Slug already exists.'), which is race-prone. After a split, 'i-' instance slugs become per-tenant namespaces.",
+   "notes": "parse_slug() takes the facility UUID from slug[2:38] (base.py:51-64)."
+  },
+  {
+   "model": "Encounter",
+   "app": "emr",
+   "file": "apps/backend/care/emr/models/encounter.py:8-63",
+   "proposed_scope": "tenant",
+   "scope_reason": "Patient visit or admission at one hospital facility: core clinical data.",
+   "fks_out": [
+    {
+     "field": "patient",
+     "target": "emr.Patient",
+     "nullable": false,
+     "kind": "FK CASCADE"
+    },
+    {
+     "field": "facility",
+     "target": "facility.Facility",
+     "nullable": false,
+     "kind": "FK PROTECT"
+    },
+    {
+     "field": "appointment",
+     "target": "emr.TokenBooking",
+     "nullable": true,
+     "kind": "FK SET_NULL (care/emr/models/scheduling/booking.py)"
+    },
+    {
+     "field": "current_location",
+     "target": "emr.FacilityLocation",
+     "nullable": true,
+     "kind": "FK SET_NULL (cached field, encounter.py:29-31)"
+    },
+    {
+     "field": "care_team_users",
+     "target": "users.User",
+     "nullable": false,
+     "kind": "soft ref: ArrayField(int) of User ids built from care_team JSON (encounter.py:22-24,56-58)"
+    },
+    {
+     "field": "facility_organization_cache",
+     "target": "emr.FacilityOrganization",
+     "nullable": false,
+     "kind": "soft ref: ArrayField(int) of org ids plus parent_cache (encounter.py:27,39-54)"
+    },
+    {
+     "field": "tags",
+     "target": "emr.TagConfig",
+     "nullable": false,
+     "kind": "soft ref: ArrayField(int) (encounter.py:35)"
+    },
+    {
+     "field": "created_by/updated_by",
+     "target": "users.User",
+     "nullable": true,
+     "kind": "FK SET_NULL inherited (base.py:11-26)"
+    }
+   ],
+   "global_unique_or_cache": "Denormalised caches: care_team_users and facility_organization_cache (integer PKs, valid only inside one schema). save() always calls sync_organization_cache(), which does a second save (encounter.py:60-63) and reads facility.default_internal_organization_id (encounter.py:51).",
+   "notes": "care_team JSON holds user_id ints that point to shared users. Those ids stay valid across schemas only if users.User is shared."
+  },
+  {
+   "model": "EncounterOrganization",
+   "app": "emr",
+   "file": "apps/backend/care/emr/models/encounter.py:66-74",
+   "proposed_scope": "tenant",
+   "scope_reason": "Links an encounter to the hospital's internal organisations for access control.",
+   "fks_out": [
+    {
+     "field": "encounter",
+     "target": "emr.Encounter",
+     "nullable": false,
+     "kind": "FK CASCADE"
+    },
+    {
+     "field": "organization",
+     "target": "emr.FacilityOrganization",
+     "nullable": false,
+     "kind": "FK CASCADE"
+    },
+    {
+     "field": "created_by/updated_by",
+     "target": "users.User",
+     "nullable": true,
+     "kind": "FK SET_NULL inherited"
+    }
+   ],
+   "global_unique_or_cache": "save() re-syncs Encounter.facility_organization_cache (encounter.py:72-74).",
+   "notes": ""
+  },
+  {
+   "model": "Observation",
+   "app": "emr",
+   "file": "apps/backend/care/emr/models/observation.py:6-58",
+   "proposed_scope": "tenant",
+   "scope_reason": "Patient clinical measurement or result.",
+   "fks_out": [
+    {
+     "field": "patient",
+     "target": "emr.Patient",
+     "nullable": false,
+     "kind": "FK CASCADE"
+    },
+    {
+     "field": "encounter",
+     "target": "emr.Encounter",
+     "nullable": false,
+     "kind": "FK CASCADE"
+    },
+    {
+     "field": "data_entered_by",
+     "target": "users.User",
+     "nullable": true,
+     "kind": "FK CASCADE (observation.py:17-24): deleting a user hard-cascades clinical rows in the current schema only"
+    },
+    {
+     "field": "questionnaire_response",
+     "target": "emr.QuestionnaireResponse",
+     "nullable": true,
+     "kind": "FK CASCADE"
+    },
+    {
+     "field": "diagnostic_report",
+     "target": "emr.DiagnosticReport",
+     "nullable": true,
+     "kind": "FK CASCADE"
+    },
+    {
+     "field": "observation_definition",
+     "target": "emr.ObservationDefinition",
+     "nullable": true,
+     "kind": "FK CASCADE: tenant to (tenant or shared) definition"
+    },
+    {
+     "field": "subject_id (+subject_type)",
+     "target": "emr.Patient / emr.Encounter (by external_id)",
+     "nullable": false,
+     "kind": "generic soft ref: UUIDField (observation.py:12-13)"
+    },
+    {
+     "field": "parent",
+     "target": "emr.Observation (external_id)",
+     "nullable": true,
+     "kind": "soft ref: UUIDField (observation.py:36)"
+    },
+    {
+     "field": "created_by/updated_by",
+     "target": "users.User",
+     "nullable": true,
+     "kind": "FK SET_NULL inherited"
+    }
+   ],
+   "global_unique_or_cache": "None.",
+   "notes": "performer is JSON. If ObservationDefinition were shared, its CASCADE would reach into every tenant schema. Django's collector cannot do that, and the DB FK would block or error."
+  },
+  {
+   "model": "ObservationDefinition",
+   "app": "emr",
+   "file": "apps/backend/care/emr/models/observation_definition.py:6-27",
+   "proposed_scope": "either",
+   "scope_reason": "A lab or vitals catalogue master. Rows are either facility-specific (facility set) or instance-wide (facility NULL, superuser-only, observation_definition viewset:99). A standard catalogue could be shared, but the facility FK into a tenant model and the CASCADE from Observation favour per-tenant copies seeded from a platform master.",
+   "fks_out": [
+    {
+     "field": "facility",
+     "target": "facility.Facility",
+     "nullable": true,
+     "kind": "FK PROTECT (observation_definition.py:7-13). If this model were shared, this would be a shared-to-tenant FK, which is a blocker"
+    },
+    {
+     "field": "created_by/updated_by",
+     "target": "users.User",
+     "nullable": true,
+     "kind": "FK SET_NULL inherited"
+    }
+   ],
+   "global_unique_or_cache": "Slug uniqueness is enforced in app code only, over calculated 'f-'/'i-' slugs (viewsets/observation_definition.py:70-90). Lists with no facility return facility__isnull=True rows (viewsets/observation_definition.py:151).",
+   "notes": "SlugBaseModel. code, permitted_unit and qualified_ranges are JSON (value-set codings, no FK)."
+  },
+  {
+   "model": "Condition",
+   "app": "emr",
+   "file": "apps/backend/care/emr/models/condition.py:6-20",
+   "proposed_scope": "tenant",
+   "scope_reason": "Patient diagnosis or problem.",
+   "fks_out": [
+    {
+     "field": "patient",
+     "target": "emr.Patient",
+     "nullable": false,
+     "kind": "FK CASCADE"
+    },
+    {
+     "field": "encounter",
+     "target": "emr.Encounter",
+     "nullable": true,
+     "kind": "FK CASCADE"
+    },
+    {
+     "field": "created_by/updated_by",
+     "target": "users.User",
+     "nullable": true,
+     "kind": "FK SET_NULL inherited"
+    }
+   ],
+   "global_unique_or_cache": "None.",
+   "notes": ""
+  },
+  {
+   "model": "AllergyIntolerance",
+   "app": "emr",
+   "file": "apps/backend/care/emr/models/allergy_intolerance.py:6-21",
+   "proposed_scope": "tenant",
+   "scope_reason": "Patient allergy record.",
+   "fks_out": [
+    {
+     "field": "patient",
+     "target": "emr.Patient",
+     "nullable": false,
+     "kind": "FK CASCADE"
+    },
+    {
+     "field": "encounter",
+     "target": "emr.Encounter",
+     "nullable": false,
+     "kind": "FK CASCADE"
+    },
+    {
+     "field": "copied_from",
+     "target": "emr.AllergyIntolerance (id)",
+     "nullable": true,
+     "kind": "soft self-ref: BigIntegerField (allergy_intolerance.py:18-20; used at viewsets/allergy_intolerance.py:94-99)"
+    },
+    {
+     "field": "created_by/updated_by",
+     "target": "users.User",
+     "nullable": true,
+     "kind": "FK SET_NULL inherited"
+    }
+   ],
+   "global_unique_or_cache": "None.",
+   "notes": "copied_from holds a per-schema integer PK."
+  },
+  {
+   "model": "DiagnosticReport",
+   "app": "emr",
+   "file": "apps/backend/care/emr/models/diagnostic_report.py:6-21",
+   "proposed_scope": "tenant",
+   "scope_reason": "Patient lab or imaging report.",
+   "fks_out": [
+    {
+     "field": "facility",
+     "target": "facility.Facility",
+     "nullable": true,
+     "kind": "FK PROTECT"
+    },
+    {
+     "field": "patient",
+     "target": "emr.Patient",
+     "nullable": false,
+     "kind": "FK CASCADE"
+    },
+    {
+     "field": "encounter",
+     "target": "emr.Encounter",
+     "nullable": false,
+     "kind": "FK CASCADE"
+    },
+    {
+     "field": "service_request",
+     "target": "emr.ServiceRequest",
+     "nullable": false,
+     "kind": "FK CASCADE"
+    },
+    {
+     "field": "created_by/updated_by",
+     "target": "users.User",
+     "nullable": true,
+     "kind": "FK SET_NULL inherited"
+    }
+   ],
+   "global_unique_or_cache": "None.",
+   "notes": ""
+  },
+  {
+   "model": "Specimen",
+   "app": "emr",
+   "file": "apps/backend/care/emr/models/specimen.py:6-32",
+   "proposed_scope": "tenant",
+   "scope_reason": "A physical patient sample at one hospital lab.",
+   "fks_out": [
+    {
+     "field": "facility",
+     "target": "facility.Facility",
+     "nullable": true,
+     "kind": "FK PROTECT"
+    },
+    {
+     "field": "patient",
+     "target": "emr.Patient",
+     "nullable": false,
+     "kind": "FK CASCADE"
+    },
+    {
+     "field": "encounter",
+     "target": "emr.Encounter",
+     "nullable": true,
+     "kind": "FK CASCADE"
+    },
+    {
+     "field": "service_request",
+     "target": "emr.ServiceRequest",
+     "nullable": true,
+     "kind": "FK CASCADE"
+    },
+    {
+     "field": "specimen_definition",
+     "target": "emr.SpecimenDefinition",
+     "nullable": true,
+     "kind": "FK CASCADE"
+    },
+    {
+     "field": "created_by/updated_by",
+     "target": "users.User",
+     "nullable": true,
+     "kind": "FK SET_NULL inherited"
+    }
+   ],
+   "global_unique_or_cache": "accession_identifier is indexed but not unique (specimen.py:15). Per-hospital accession numbering fits per schema.",
+   "notes": ""
+  },
+  {
+   "model": "SpecimenDefinition",
+   "app": "emr",
+   "file": "apps/backend/care/emr/models/specimen_definition.py:6-23",
+   "proposed_scope": "either",
+   "scope_reason": "Specimen catalogue master, with facility-specific or instance-wide rows. Same trade-off as ObservationDefinition.",
+   "fks_out": [
+    {
+     "field": "facility",
+     "target": "facility.Facility",
+     "nullable": true,
+     "kind": "FK PROTECT (specimen_definition.py:7-13). A shared-to-tenant blocker if this model were shared"
+    },
+    {
+     "field": "created_by/updated_by",
+     "target": "users.User",
+     "nullable": true,
+     "kind": "FK SET_NULL inherited"
+    }
+   ],
+   "global_unique_or_cache": "Slug uniqueness is enforced in app code (viewsets/specimen_definition.py:62-77).",
+   "notes": "SlugBaseModel. ActivityDefinition.specimen_requirements points at its integer ids."
+  },
+  {
+   "model": "ServiceRequest",
+   "app": "emr",
+   "file": "apps/backend/care/emr/models/service_request.py:7-46",
+   "proposed_scope": "tenant",
+   "scope_reason": "A clinical order (lab, imaging, procedure) for a patient at a facility.",
+   "fks_out": [
+    {
+     "field": "facility",
+     "target": "facility.Facility",
+     "nullable": false,
+     "kind": "FK PROTECT"
+    },
+    {
+     "field": "patient",
+     "target": "emr.Patient",
+     "nullable": false,
+     "kind": "FK CASCADE"
+    },
+    {
+     "field": "encounter",
+     "target": "emr.Encounter",
+     "nullable": true,
+     "kind": "FK CASCADE"
+    },
+    {
+     "field": "healthcare_service",
+     "target": "emr.HealthcareService",
+     "nullable": true,
+     "kind": "FK PROTECT"
+    },
+    {
+     "field": "activity_definition",
+     "target": "emr.ActivityDefinition",
+     "nullable": true,
+     "kind": "FK PROTECT"
+    },
+    {
+     "field": "requester",
+     "target": "users.User",
+     "nullable": true,
+     "kind": "FK CASCADE (service_request.py:39-45): user deletion cascades orders"
+    },
+    {
+     "field": "locations",
+     "target": "emr.FacilityLocation",
+     "nullable": false,
+     "kind": "soft ref: ArrayField(int) (service_request.py:20)"
+    },
+    {
+     "field": "tags",
+     "target": "emr.TagConfig",
+     "nullable": false,
+     "kind": "soft ref: ArrayField(int) (service_request.py:46)"
+    },
+    {
+     "field": "created_by/updated_by",
+     "target": "users.User",
+     "nullable": true,
+     "kind": "FK SET_NULL inherited"
+    }
+   ],
+   "global_unique_or_cache": "None.",
+   "notes": "The field name 'occurance' is an upstream typo."
+  },
+  {
+   "model": "ActivityDefinition",
+   "app": "emr",
+   "file": "apps/backend/care/emr/models/activity_definition.py:7-39",
+   "proposed_scope": "tenant",
+   "scope_reason": "The facility FK is NOT NULL (activity_definition.py:8), so it is always hospital-specific. It is that hospital's orderable-service catalogue, with charge items and locations.",
+   "fks_out": [
+    {
+     "field": "facility",
+     "target": "facility.Facility",
+     "nullable": false,
+     "kind": "FK PROTECT"
+    },
+    {
+     "field": "healthcare_service",
+     "target": "emr.HealthcareService",
+     "nullable": true,
+     "kind": "FK PROTECT"
+    },
+    {
+     "field": "category",
+     "target": "emr.ResourceCategory",
+     "nullable": true,
+     "kind": "FK PROTECT"
+    },
+    {
+     "field": "specimen_requirements",
+     "target": "emr.SpecimenDefinition",
+     "nullable": false,
+     "kind": "soft ref: ArrayField(int) (activity_definition.py:20)"
+    },
+    {
+     "field": "observation_result_requirements",
+     "target": "emr.ObservationDefinition",
+     "nullable": false,
+     "kind": "soft ref: ArrayField(int) (activity_definition.py:21)"
+    },
+    {
+     "field": "charge_item_definitions",
+     "target": "emr.ChargeItemDefinition",
+     "nullable": false,
+     "kind": "soft ref: ArrayField(int) (activity_definition.py:24)"
+    },
+    {
+     "field": "locations",
+     "target": "emr.FacilityLocation",
+     "nullable": false,
+     "kind": "soft ref: ArrayField(int) (activity_definition.py:22)"
+    },
+    {
+     "field": "tags",
+     "target": "emr.TagConfig",
+     "nullable": false,
+     "kind": "soft ref: ArrayField(int) (activity_definition.py:33)"
+    },
+    {
+     "field": "created_by/updated_by",
+     "target": "users.User",
+     "nullable": true,
+     "kind": "FK SET_NULL inherited"
+    }
+   ],
+   "global_unique_or_cache": "Slug uniqueness is in app code. Requirements are resolved by slug plus same facility (viewsets/activity_definition.py:91,106,136). The 'latest' flag versions rows (activity_definition.py:23).",
+   "notes": "The integer arrays reference definition PKs. If SpecimenDefinition or ObservationDefinition were shared while this model is tenant, the arrays would mix id spaces without integrity checks."
+  },
+  {
+   "model": "Questionnaire",
+   "app": "emr",
+   "file": "apps/backend/care/emr/models/questionnaire.py:10-44",
+   "proposed_scope": "tenant",
+   "scope_reason": "Upstream has no facility FK and makes questionnaires instance-wide. Access is gated through QuestionnaireFacilityOrganization, which points into tenant FacilityOrganization, and through internal_organization_cache (tenant ids). Hospitals author their own forms. Making it shared would need FKs from shared rows into tenant ones. So keep it per-tenant, and seed or sync standard forms from a platform master. ('either' only if the FacilityOrganization link is redesigned.)",
+   "fks_out": [
+    {
+     "field": "organization_cache",
+     "target": "emr.Organization",
+     "nullable": false,
+     "kind": "soft ref: ArrayField(int) (questionnaire.py:19)"
+    },
+    {
+     "field": "internal_organization_cache",
+     "target": "emr.FacilityOrganization",
+     "nullable": false,
+     "kind": "soft ref: ArrayField(int) (questionnaire.py:20)"
+    },
+    {
+     "field": "questions[].answer_value_set",
+     "target": "emr.ValueSet (slug)",
+     "nullable": true,
+     "kind": "soft ref by slug inside JSON (validated at care/emr/resources/questionnaire/spec.py:154-159)"
+    },
+    {
+     "field": "created_by/updated_by",
+     "target": "users.User",
+     "nullable": true,
+     "kind": "FK SET_NULL inherited"
+    }
+   ],
+   "global_unique_or_cache": "slug unique=True globally (questionnaire.py:12; migration 0001_initial.py:470). After a split it is unique per schema only. Spec validation checks slug uniqueness (resources/questionnaire/spec.py:199-206). _questions_by_id_cache is per instance only, so it is safe (questionnaire.py:22-44). Update and delete are is_superuser-only (viewsets/questionnaire.py:63-69).",
+   "notes": "InternalQuestionnaireRegistry is a class-level dict of code-defined system questionnaires (registries/system_questionnaire/system_questionnaire.py:6-11). It is the same for all tenants, so it is safe."
+  },
+  {
+   "model": "FormSubmission",
+   "app": "emr",
+   "file": "apps/backend/care/emr/models/questionnaire.py:47-54",
+   "proposed_scope": "tenant",
+   "scope_reason": "A patient form submission.",
+   "fks_out": [
+    {
+     "field": "questionnaire",
+     "target": "emr.Questionnaire",
+     "nullable": false,
+     "kind": "FK CASCADE"
+    },
+    {
+     "field": "patient",
+     "target": "emr.Patient",
+     "nullable": false,
+     "kind": "FK CASCADE"
+    },
+    {
+     "field": "encounter",
+     "target": "emr.Encounter",
+     "nullable": true,
+     "kind": "FK CASCADE"
+    },
+    {
+     "field": "created_by/updated_by",
+     "target": "users.User",
+     "nullable": true,
+     "kind": "FK SET_NULL inherited"
+    }
+   ],
+   "global_unique_or_cache": "None.",
+   "notes": ""
+  },
+  {
+   "model": "QuestionnaireResponse",
+   "app": "emr",
+   "file": "apps/backend/care/emr/models/questionnaire.py:57-96",
+   "proposed_scope": "tenant",
+   "scope_reason": "Patient answers.",
+   "fks_out": [
+    {
+     "field": "questionnaire",
+     "target": "emr.Questionnaire",
+     "nullable": true,
+     "kind": "FK CASCADE: tenant to tenant (if Questionnaire were shared, deleting a shared form would cascade across schemas)"
+    },
+    {
+     "field": "patient",
+     "target": "emr.Patient",
+     "nullable": false,
+     "kind": "FK CASCADE"
+    },
+    {
+     "field": "encounter",
+     "target": "emr.Encounter",
+     "nullable": true,
+     "kind": "FK CASCADE"
+    },
+    {
+     "field": "form_submission",
+     "target": "emr.FormSubmission",
+     "nullable": true,
+     "kind": "FK CASCADE"
+    },
+    {
+     "field": "subject_id",
+     "target": "emr.Patient / emr.Encounter (external_id)",
+     "nullable": false,
+     "kind": "generic soft ref UUID (questionnaire.py:61)"
+    },
+    {
+     "field": "created_by/updated_by",
+     "target": "users.User",
+     "nullable": true,
+     "kind": "FK SET_NULL inherited"
+    }
+   ],
+   "global_unique_or_cache": "render_responses() reads the current questionnaire definition (questionnaire.py:75-96), so edits to a shared form would change how past responses render.",
+   "notes": ""
+  },
+  {
+   "model": "QuestionnaireOrganization",
+   "app": "emr",
+   "file": "apps/backend/care/emr/models/questionnaire.py:99-118",
+   "proposed_scope": "tenant",
+   "scope_reason": "A per-hospital access grant from a questionnaire to a (role or govt) Organization.",
+   "fks_out": [
+    {
+     "field": "questionnaire",
+     "target": "emr.Questionnaire",
+     "nullable": false,
+     "kind": "FK CASCADE"
+    },
+    {
+     "field": "organization",
+     "target": "emr.Organization",
+     "nullable": false,
+     "kind": "FK CASCADE: tenant to (shared?) Organization"
+    },
+    {
+     "field": "created_by/updated_by",
+     "target": "users.User",
+     "nullable": true,
+     "kind": "FK SET_NULL inherited"
+    }
+   ],
+   "global_unique_or_cache": "save() rewrites Questionnaire.organization_cache with Organization ids and parent_cache (questionnaire.py:104-118).",
+   "notes": "If Organization is shared (geo/role hierarchy), the integer ids in the cache come from public. That is consistent only if Organization stays one copy."
+  },
+  {
+   "model": "QuestionnaireFacilityOrganization",
+   "app": "emr",
+   "file": "apps/backend/care/emr/models/questionnaire.py:121-142",
+   "proposed_scope": "tenant",
+   "scope_reason": "Links a questionnaire to a hospital's internal FacilityOrganization.",
+   "fks_out": [
+    {
+     "field": "questionnaire",
+     "target": "emr.Questionnaire",
+     "nullable": false,
+     "kind": "FK CASCADE"
+    },
+    {
+     "field": "organization",
+     "target": "emr.FacilityOrganization",
+     "nullable": false,
+     "kind": "FK CASCADE: into tenant model (blocks a shared Questionnaire unless this table is tenant)"
+    },
+    {
+     "field": "created_by/updated_by",
+     "target": "users.User",
+     "nullable": true,
+     "kind": "FK SET_NULL inherited"
+    }
+   ],
+   "global_unique_or_cache": "save() rewrites Questionnaire.internal_organization_cache (questionnaire.py:126-142).",
+   "notes": "Even if this link table is tenant, a shared Questionnaire could not store per-tenant internal_organization_cache values on one row."
+  },
+  {
+   "model": "QuestionnaireResponseTemplate",
+   "app": "emr",
+   "file": "apps/backend/care/emr/models/questionnaire.py:145-157",
+   "proposed_scope": "tenant",
+   "scope_reason": "Saved answer templates per facility and per user.",
+   "fks_out": [
+    {
+     "field": "facility",
+     "target": "facility.Facility",
+     "nullable": true,
+     "kind": "FK CASCADE"
+    },
+    {
+     "field": "questionnaire",
+     "target": "emr.Questionnaire",
+     "nullable": true,
+     "kind": "FK CASCADE"
+    },
+    {
+     "field": "facility_organizations",
+     "target": "emr.FacilityOrganization",
+     "nullable": false,
+     "kind": "soft ref: ArrayField(int) (questionnaire.py:155)"
+    },
+    {
+     "field": "users",
+     "target": "users.User",
+     "nullable": false,
+     "kind": "soft ref: ArrayField(int) (questionnaire.py:156)"
+    },
+    {
+     "field": "template_data.medication_request[].requested_product",
+     "target": "emr.ProductKnowledge (slug)",
+     "nullable": true,
+     "kind": "soft ref by slug in JSON (resources/questionnaire_response_template/spec.py:24-33)"
+    },
+    {
+     "field": "template_data...activity_definition slug",
+     "target": "emr.ActivityDefinition (slug)",
+     "nullable": true,
+     "kind": "soft ref by slug in JSON (resources/questionnaire_response_template/spec.py:36-46)"
+    },
+    {
+     "field": "created_by/updated_by",
+     "target": "users.User",
+     "nullable": true,
+     "kind": "FK SET_NULL inherited"
+    }
+   ],
+   "global_unique_or_cache": "None.",
+   "notes": "The slug lookups do not filter by facility, which is fine within one schema."
+  },
+  {
+   "model": "NoteThread",
+   "app": "emr",
+   "file": "apps/backend/care/emr/models/notes.py:6-12",
+   "proposed_scope": "tenant",
+   "scope_reason": "Clinical discussion about a patient.",
+   "fks_out": [
+    {
+     "field": "patient",
+     "target": "emr.Patient",
+     "nullable": false,
+     "kind": "FK CASCADE"
+    },
+    {
+     "field": "encounter",
+     "target": "emr.Encounter",
+     "nullable": true,
+     "kind": "FK CASCADE"
+    },
+    {
+     "field": "created_by/updated_by",
+     "target": "users.User",
+     "nullable": true,
+     "kind": "FK SET_NULL inherited"
+    }
+   ],
+   "global_unique_or_cache": "None.",
+   "notes": ""
+  },
+  {
+   "model": "NoteMessage",
+   "app": "emr",
+   "file": "apps/backend/care/emr/models/notes.py:15-18",
+   "proposed_scope": "tenant",
+   "scope_reason": "A message in a patient note thread.",
+   "fks_out": [
+    {
+     "field": "thread",
+     "target": "emr.NoteThread",
+     "nullable": false,
+     "kind": "FK CASCADE"
+    },
+    {
+     "field": "created_by/updated_by",
+     "target": "users.User",
+     "nullable": true,
+     "kind": "FK SET_NULL inherited"
+    }
+   ],
+   "global_unique_or_cache": "None.",
+   "notes": ""
+  },
+  {
+   "model": "Consent",
+   "app": "emr",
+   "file": "apps/backend/care/emr/models/consent.py:6-16",
+   "proposed_scope": "tenant",
+   "scope_reason": "Patient consent for an encounter (also DPDP-relevant).",
+   "fks_out": [
+    {
+     "field": "encounter",
+     "target": "emr.Encounter",
+     "nullable": false,
+     "kind": "FK CASCADE related_name='consents'"
+    },
+    {
+     "field": "created_by/updated_by",
+     "target": "users.User",
+     "nullable": true,
+     "kind": "FK SET_NULL inherited"
+    }
+   ],
+   "global_unique_or_cache": "None.",
+   "notes": "File attachments are linked via FileUpload.associating_id with file_type='consent'."
+  },
+  {
+   "model": "MedicationRequestPrescription",
+   "app": "emr",
+   "file": "apps/backend/care/emr/models/medication_request.py:9-28",
+   "proposed_scope": "tenant",
+   "scope_reason": "Prescription header for an encounter.",
+   "fks_out": [
+    {
+     "field": "encounter",
+     "target": "emr.Encounter",
+     "nullable": false,
+     "kind": "FK CASCADE"
+    },
+    {
+     "field": "patient",
+     "target": "emr.Patient",
+     "nullable": false,
+     "kind": "FK CASCADE"
+    },
+    {
+     "field": "prescribed_by",
+     "target": "users.User",
+     "nullable": true,
+     "kind": "FK CASCADE (medication_request.py:14-16): user deletion cascades prescriptions"
+    },
+    {
+     "field": "tags",
+     "target": "emr.TagConfig",
+     "nullable": false,
+     "kind": "soft ref: ArrayField(int) (medication_request.py:20)"
+    },
+    {
+     "field": "created_by/updated_by",
+     "target": "users.User",
+     "nullable": true,
+     "kind": "FK SET_NULL inherited"
+    }
+   ],
+   "global_unique_or_cache": "UniqueConstraint(alternate_identifier, encounter) 'unique_alternate_identifier_encounter' (medication_request.py:22-28). Unaffected by per-schema scoping.",
+   "notes": ""
+  },
+  {
+   "model": "MedicationRequest",
+   "app": "emr",
+   "file": "apps/backend/care/emr/models/medication_request.py:31-64",
+   "proposed_scope": "tenant",
+   "scope_reason": "Medication order for a patient.",
+   "fks_out": [
+    {
+     "field": "patient",
+     "target": "emr.Patient",
+     "nullable": false,
+     "kind": "FK CASCADE"
+    },
+    {
+     "field": "encounter",
+     "target": "emr.Encounter",
+     "nullable": false,
+     "kind": "FK CASCADE"
+    },
+    {
+     "field": "requester",
+     "target": "users.User",
+     "nullable": true,
+     "kind": "FK SET_NULL"
+    },
+    {
+     "field": "requested_product",
+     "target": "emr.ProductKnowledge",
+     "nullable": true,
+     "kind": "FK SET_NULL: ProductKnowledge also has instance-wide (facility NULL) rows (viewsets/inventory/product_knowledge.py:176,193)"
+    },
+    {
+     "field": "prescription",
+     "target": "emr.MedicationRequestPrescription",
+     "nullable": true,
+     "kind": "FK SET_NULL"
+    },
+    {
+     "field": "created_by/updated_by",
+     "target": "users.User",
+     "nullable": true,
+     "kind": "FK SET_NULL inherited"
+    }
+   ],
+   "global_unique_or_cache": "None.",
+   "notes": "medication is a JSON coding (no FK)."
+  },
+  {
+   "model": "MedicationAdministration",
+   "app": "emr",
+   "file": "apps/backend/care/emr/models/medication_administration.py:8-29",
+   "proposed_scope": "tenant",
+   "scope_reason": "Nursing record of a medication given.",
+   "fks_out": [
+    {
+     "field": "patient",
+     "target": "emr.Patient",
+     "nullable": false,
+     "kind": "FK CASCADE"
+    },
+    {
+     "field": "encounter",
+     "target": "emr.Encounter",
+     "nullable": true,
+     "kind": "FK CASCADE"
+    },
+    {
+     "field": "request",
+     "target": "emr.MedicationRequest",
+     "nullable": true,
+     "kind": "FK CASCADE"
+    },
+    {
+     "field": "administered_product",
+     "target": "emr.ProductKnowledge",
+     "nullable": true,
+     "kind": "FK CASCADE: if ProductKnowledge were shared, deleting it would cascade into tenant clinical rows"
+    },
+    {
+     "field": "created_by/updated_by",
+     "target": "users.User",
+     "nullable": true,
+     "kind": "FK SET_NULL inherited"
+    }
+   ],
+   "global_unique_or_cache": "None.",
+   "notes": "occurrence_period_start default=datetime.now is naive (medication_administration.py:21). An IST/timezone check is needed."
+  },
+  {
+   "model": "MedicationDispense",
+   "app": "emr",
+   "file": "apps/backend/care/emr/models/medication_dispense.py:9-37",
+   "proposed_scope": "tenant",
+   "scope_reason": "Pharmacy dispense: stock and billing.",
+   "fks_out": [
+    {
+     "field": "encounter",
+     "target": "emr.Encounter",
+     "nullable": false,
+     "kind": "FK CASCADE"
+    },
+    {
+     "field": "patient",
+     "target": "emr.Patient",
+     "nullable": false,
+     "kind": "FK CASCADE"
+    },
+    {
+     "field": "location",
+     "target": "emr.FacilityLocation",
+     "nullable": false,
+     "kind": "FK CASCADE"
+    },
+    {
+     "field": "authorizing_request",
+     "target": "emr.MedicationRequest",
+     "nullable": true,
+     "kind": "FK SET_NULL"
+    },
+    {
+     "field": "item",
+     "target": "emr.InventoryItem",
+     "nullable": false,
+     "kind": "FK CASCADE"
+    },
+    {
+     "field": "charge_item",
+     "target": "emr.ChargeItem",
+     "nullable": true,
+     "kind": "FK CASCADE"
+    },
+    {
+     "field": "order",
+     "target": "emr.DispenseOrder",
+     "nullable": true,
+     "kind": "FK CASCADE"
+    },
+    {
+     "field": "created_by/updated_by",
+     "target": "users.User",
+     "nullable": true,
+     "kind": "FK SET_NULL inherited"
+    }
+   ],
+   "global_unique_or_cache": "None.",
+   "notes": "Quantities are DecimalField(20,6)."
+  },
+  {
+   "model": "DispenseOrder",
+   "app": "emr",
+   "file": "apps/backend/care/emr/models/medication_dispense.py:40-56",
+   "proposed_scope": "tenant",
+   "scope_reason": "Pharmacy order at a facility location.",
+   "fks_out": [
+    {
+     "field": "location",
+     "target": "emr.FacilityLocation",
+     "nullable": false,
+     "kind": "FK CASCADE"
+    },
+    {
+     "field": "patient",
+     "target": "emr.Patient",
+     "nullable": false,
+     "kind": "FK CASCADE"
+    },
+    {
+     "field": "facility",
+     "target": "facility.Facility",
+     "nullable": false,
+     "kind": "FK CASCADE"
+    },
+    {
+     "field": "tags",
+     "target": "emr.TagConfig",
+     "nullable": false,
+     "kind": "soft ref: ArrayField(int) (medication_dispense.py:45)"
+    },
+    {
+     "field": "created_by/updated_by",
+     "target": "users.User",
+     "nullable": true,
+     "kind": "FK SET_NULL inherited"
+    }
+   ],
+   "global_unique_or_cache": "UniqueConstraint(alternate_identifier, patient, location) 'unique_alternate_identifier_encounter_location' (medication_dispense.py:50-56). Fine per schema.",
+   "notes": ""
+  },
+  {
+   "model": "MedicationStatement",
+   "app": "emr",
+   "file": "apps/backend/care/emr/models/medication_statement.py:6-15",
+   "proposed_scope": "tenant",
+   "scope_reason": "Patient-reported medication history.",
+   "fks_out": [
+    {
+     "field": "patient",
+     "target": "emr.Patient",
+     "nullable": false,
+     "kind": "FK CASCADE"
+    },
+    {
+     "field": "encounter",
+     "target": "emr.Encounter",
+     "nullable": false,
+     "kind": "FK CASCADE"
+    },
+    {
+     "field": "created_by/updated_by",
+     "target": "users.User",
+     "nullable": true,
+     "kind": "FK SET_NULL inherited"
+    }
+   ],
+   "global_unique_or_cache": "None.",
+   "notes": ""
+  },
+  {
+   "model": "FileUpload",
+   "app": "emr",
+   "file": "apps/backend/care/emr/models/file_upload.py:13-50",
+   "proposed_scope": "tenant",
+   "scope_reason": "Patient and encounter attachments (PHI).",
+   "fks_out": [
+    {
+     "field": "archived_by",
+     "target": "users.User",
+     "nullable": true,
+     "kind": "FK PROTECT (file_upload.py:25-31)"
+    },
+    {
+     "field": "associating_id (+file_type)",
+     "target": "emr.Patient / emr.Encounter / emr.Consent / emr.DiagnosticReport / emr.ServiceRequest (external_id)",
+     "nullable": false,
+     "kind": "generic soft ref: CharField(100) resolved in file_authorizer (care/emr/api/viewsets/file_upload.py:38-92; types at resources/file_upload/spec.py:14-19)"
+    },
+    {
+     "field": "created_by/updated_by",
+     "target": "users.User",
+     "nullable": true,
+     "kind": "FK SET_NULL inherited"
+    }
+   ],
+   "global_unique_or_cache": "Class-level files_manager = S3FilesManager(BucketType.PATIENT) (file_upload.py:33). The object key is f\"{file_type}/{internal_name}\" in one bucket (care/emr/utils/file_manager.py:40,65,77,86,103), with no tenant prefix. internal_name = uuid4 plus a timestamp (file_upload.py:44-49).",
+   "notes": "archived_by PROTECT into shared User means a user referenced in any tenant cannot be deleted. Django would only detect this inside the current schema; the DB FK catches it at commit."
+  },
+  {
+   "model": "MetaArtifact",
+   "app": "emr",
+   "file": "apps/backend/care/emr/models/meta_artifact.py:6-17",
+   "proposed_scope": "tenant",
+   "scope_reason": "Drawings and other artifacts attached to a patient or encounter.",
+   "fks_out": [
+    {
+     "field": "associating_external_id (+associating_type)",
+     "target": "emr.Patient / emr.Encounter (external_id)",
+     "nullable": false,
+     "kind": "generic soft ref: UUIDField (meta_artifact.py:7-8; types at resources/meta_artifact/spec.py:10-12)"
+    },
+    {
+     "field": "created_by/updated_by",
+     "target": "users.User",
+     "nullable": true,
+     "kind": "FK SET_NULL inherited"
+    }
+   ],
+   "global_unique_or_cache": "Index on (associating_type, associating_external_id) (meta_artifact.py:14-17).",
+   "notes": ""
+  },
+  {
+   "model": "UserResourceFavorites",
+   "app": "emr",
+   "file": "apps/backend/care/emr/models/favorites.py:18-54",
+   "proposed_scope": "tenant",
+   "scope_reason": "A user's favourite lists of a hospital's resources (activity definitions, questionnaires, facility orgs, charge item definitions, product knowledge; per viewsets FAVORITE_RESOURCE). The ids point into tenant tables.",
+   "fks_out": [
+    {
+     "field": "user",
+     "target": "users.User",
+     "nullable": true,
+     "kind": "FK CASCADE"
+    },
+    {
+     "field": "facility",
+     "target": "facility.Facility",
+     "nullable": true,
+     "kind": "FK CASCADE"
+    },
+    {
+     "field": "favorites (+resource_type)",
+     "target": "emr.ActivityDefinition / emr.Questionnaire / emr.FacilityOrganization / emr.ChargeItemDefinition / emr.ProductKnowledge (id)",
+     "nullable": false,
+     "kind": "generic soft ref: ArrayField(int) (favorites.py:20-22)"
+    },
+    {
+     "field": "created_by/updated_by",
+     "target": "users.User",
+     "nullable": true,
+     "kind": "FK SET_NULL inherited"
+    }
+   ],
+   "global_unique_or_cache": "Redis cache keys 'user_favorites_lists:{user.id}:{resource_type}:{facility.id|-}' and 'user_favorites_list_object:...:{favorite_list}' (favorites.py:10-15,27-49) use the per-schema integer facility.id and have no tenant prefix. They collide across tenants. The DB has UniqueConstraints on (facility, resource_type, user/location/healthcare_service) (migrations/0034_token_system.py:305-315), but those belong to other token-system models, not this one.",
+   "notes": "The facility=None ('-') key variant is shared across all tenants for the same user."
+  },
+  {
+   "model": "ReportUpload",
+   "app": "emr",
+   "file": "apps/backend/care/emr/models/report/report_upload.py:13-56",
+   "proposed_scope": "tenant",
+   "scope_reason": "A generated patient or encounter report file (PHI).",
+   "fks_out": [
+    {
+     "field": "template",
+     "target": "emr.Template",
+     "nullable": false,
+     "kind": "FK PROTECT"
+    },
+    {
+     "field": "archived_by",
+     "target": "users.User",
+     "nullable": true,
+     "kind": "FK PROTECT"
+    },
+    {
+     "field": "associating_id (+report_type)",
+     "target": "emr.Patient / emr.Encounter (external_id)",
+     "nullable": false,
+     "kind": "generic soft ref: CharField(100) (report_upload.py:18,20; read_report_authorizer at care/emr/api/viewsets/report/report_upload.py:70-77)"
+    },
+    {
+     "field": "created_by/updated_by",
+     "target": "users.User",
+     "nullable": true,
+     "kind": "FK SET_NULL inherited"
+    }
+   ],
+   "global_unique_or_cache": "Class-level files_manager = S3FilesManager(BucketType.REPORT) (report_upload.py:34). The key is '{report_type}/{internal_name}' in a single bucket with no tenant prefix.",
+   "notes": "If Template were shared, PROTECT from tenant rows could not be checked by the Django collector across schemas."
+  },
+  {
+   "model": "Template",
+   "app": "emr",
+   "file": "apps/backend/care/emr/models/report/template.py:6-21",
+   "proposed_scope": "either",
+   "scope_reason": "A report or print template, either facility-specific or instance-wide (facility NULL, superuser-only at viewsets/report/template.py:90,100). Default templates could be one platform copy, but the facility FK into a tenant model and the PROTECT FK from tenant ReportUpload favour per-tenant copies seeded from a platform master.",
+   "fks_out": [
+    {
+     "field": "facility",
+     "target": "facility.Facility",
+     "nullable": true,
+     "kind": "FK PROTECT (template.py:7-12). A shared-to-tenant blocker if this model were shared"
+    },
+    {
+     "field": "created_by/updated_by",
+     "target": "users.User",
+     "nullable": true,
+     "kind": "FK SET_NULL inherited"
+    }
+   ],
+   "global_unique_or_cache": "Slug uniqueness is checked in app code over 'f-'/'i-' slugs (viewsets/report/template.py:120-138). Lists merge Q(facility)|Q(facility__isnull=True) (viewsets/report/template.py:158-161).",
+   "notes": "SlugBaseModel. template_data is text (template source); context defaults to 'encounter_base'."
+  },
+  {
+   "model": "EMRBaseModel (ABSTRACT)",
+   "app": "emr",
+   "file": "care/emr/models/base.py:8-29",
+   "proposed_scope": "either",
+   "scope_reason": "Abstract base inherited by every model below; scope is decided by the concrete subclass. Inherits BaseModel (care/utils/models/base.py:15-32): external_id UUID unique, soft delete.",
+   "fks_out": [
+    {
+     "field": "created_by",
+     "target": "users.User",
+     "nullable": true,
+     "kind": "ForeignKey SET_NULL (base.py:11-18)"
+    },
+    {
+     "field": "updated_by",
+     "target": "users.User",
+     "nullable": true,
+     "kind": "ForeignKey SET_NULL (base.py:19-26)"
+    }
+   ],
+   "global_unique_or_cache": "external_id UUIDField unique=True (utils/models/base.py:16): UUIDs, so globally unique even across schemas. related_name uses %(app_label)s_%(class)s, so every concrete model adds a reverse accessor on the shared User.",
+   "notes": "Every concrete model below inherits created_by/updated_by -> users.User (shared). That gives tenant->shared FKs, which django-tenants allows. The delete-cascade issue is listed under risks. BaseModel.delete() is a soft delete (utils/models/base.py:30-32)."
+  },
+  {
+   "model": "SlugBaseModel (ABSTRACT)",
+   "app": "emr",
+   "file": "care/emr/models/base.py:32-64",
+   "proposed_scope": "either",
+   "scope_reason": "Abstract. FACILITY_SCOPED=True; slugs are stored as 'f-<facility external_id>-<slug>' or instance-wide 'i-<slug>' (base.py:39-49).",
+   "fks_out": [
+    {
+     "field": "created_by",
+     "target": "users.User",
+     "nullable": true,
+     "kind": "ForeignKey (inherited)"
+    },
+    {
+     "field": "updated_by",
+     "target": "users.User",
+     "nullable": true,
+     "kind": "ForeignKey (inherited)"
+    }
+   ],
+   "global_unique_or_cache": "No DB unique constraint on slug in subclasses. The 'i-' instance namespace assumes ONE instance; under schema-per-tenant it becomes a per-tenant namespace.",
+   "notes": "Used by ChargeItemDefinition, ProductKnowledge, ResourceCategory."
+  },
+  {
+   "model": "Account",
+   "app": "emr",
+   "file": "care/emr/models/account.py:7-32",
+   "proposed_scope": "tenant",
+   "scope_reason": "Patient billing account of one facility.",
+   "fks_out": [
+    {
+     "field": "facility",
+     "target": "facility.Facility",
+     "nullable": false,
+     "kind": "ForeignKey PROTECT (:8-11)"
+    },
+    {
+     "field": "patient",
+     "target": "emr.Patient",
+     "nullable": false,
+     "kind": "ForeignKey PROTECT (:17)"
+    },
+    {
+     "field": "primary_encounter",
+     "target": "emr.Encounter",
+     "nullable": true,
+     "kind": "ForeignKey SET_NULL (:30-32)"
+    },
+    {
+     "field": "tags",
+     "target": "emr.TagConfig",
+     "nullable": false,
+     "kind": "soft ref: ArrayField(IntegerField) of TagConfig PKs (:28)"
+    },
+    {
+     "field": "created_by/updated_by",
+     "target": "users.User",
+     "nullable": true,
+     "kind": "ForeignKey (inherited)"
+    }
+   ],
+   "global_unique_or_cache": "Denormalised totals and cached_items JSON (:18-25). Stored in-row, so per-schema is fine.",
+   "notes": ""
+  },
+  {
+   "model": "ChargeItem",
+   "app": "emr",
+   "file": "care/emr/models/charge_item.py:7-56",
+   "proposed_scope": "tenant",
+   "scope_reason": "Patient charge line.",
+   "fks_out": [
+    {
+     "field": "facility",
+     "target": "facility.Facility",
+     "nullable": false,
+     "kind": "ForeignKey PROTECT (:8-11)"
+    },
+    {
+     "field": "patient",
+     "target": "emr.Patient",
+     "nullable": false,
+     "kind": "ForeignKey CASCADE (:14)"
+    },
+    {
+     "field": "encounter",
+     "target": "emr.Encounter",
+     "nullable": true,
+     "kind": "ForeignKey CASCADE (:15-17)"
+    },
+    {
+     "field": "charge_item_definition",
+     "target": "emr.ChargeItemDefinition",
+     "nullable": true,
+     "kind": "ForeignKey CASCADE (:18-20)"
+    },
+    {
+     "field": "account",
+     "target": "emr.Account",
+     "nullable": false,
+     "kind": "ForeignKey CASCADE (:21)"
+    },
+    {
+     "field": "paid_invoice",
+     "target": "emr.Invoice",
+     "nullable": true,
+     "kind": "ForeignKey CASCADE (:40-46)"
+    },
+    {
+     "field": "performer_actor",
+     "target": "users.User",
+     "nullable": true,
+     "kind": "ForeignKey CASCADE (:49-55)"
+    },
+    {
+     "field": "service_resource + service_resource_id",
+     "target": "emr.ServiceRequest | emr.MedicationDispense | emr.TokenBooking(appointment) | emr.FacilityLocationEncounter(bed_association)",
+     "nullable": true,
+     "kind": "generic soft ref: CharField type + CharField id (:34-39); enum in resources/charge_item/spec.py:41-45"
+    },
+    {
+     "field": "tags",
+     "target": "emr.TagConfig",
+     "nullable": false,
+     "kind": "soft ref ArrayField(int) (:48)"
+    },
+    {
+     "field": "created_by/updated_by",
+     "target": "users.User",
+     "nullable": true,
+     "kind": "ForeignKey (inherited)"
+    }
+   ],
+   "global_unique_or_cache": "none",
+   "notes": "performer_actor CASCADE to a shared User: a hard delete of a User would delete billing rows (see risks)."
+  },
+  {
+   "model": "ChargeItemDefinition",
+   "app": "emr",
+   "file": "care/emr/models/charge_item_definition.py:7-28",
+   "proposed_scope": "tenant",
+   "scope_reason": "facility is NOT NULL (:8-11). It is the hospital's own price list.",
+   "fks_out": [
+    {
+     "field": "facility",
+     "target": "facility.Facility",
+     "nullable": false,
+     "kind": "ForeignKey PROTECT (:8-11)"
+    },
+    {
+     "field": "category",
+     "target": "emr.ResourceCategory",
+     "nullable": true,
+     "kind": "ForeignKey PROTECT (:22-27)"
+    },
+    {
+     "field": "tags",
+     "target": "emr.TagConfig",
+     "nullable": false,
+     "kind": "soft ref ArrayField(int) (:20)"
+    },
+    {
+     "field": "created_by/updated_by",
+     "target": "users.User",
+     "nullable": true,
+     "kind": "ForeignKey (inherited)"
+    }
+   ],
+   "global_unique_or_cache": "slug (:15) is stored as 'f-<facility uuid>-x'. No unique constraint.",
+   "notes": "A national master price list (CGHS/PM-JAY) could be seeded per tenant. It can't be a shared table because of the facility FK."
+  },
+  {
+   "model": "Invoice",
+   "app": "emr",
+   "file": "care/emr/models/invoice.py:7-34",
+   "proposed_scope": "tenant",
+   "scope_reason": "Patient invoice.",
+   "fks_out": [
+    {
+     "field": "facility",
+     "target": "facility.Facility",
+     "nullable": false,
+     "kind": "ForeignKey PROTECT (:8-11)"
+    },
+    {
+     "field": "patient",
+     "target": "emr.Patient",
+     "nullable": false,
+     "kind": "ForeignKey PROTECT (:12-15)"
+    },
+    {
+     "field": "account",
+     "target": "emr.Account",
+     "nullable": false,
+     "kind": "ForeignKey PROTECT (:16-19)"
+    },
+    {
+     "field": "charge_items",
+     "target": "emr.ChargeItem",
+     "nullable": false,
+     "kind": "soft ref ArrayField(IntegerField) of ChargeItem PKs (:25) plus a JSON snapshot charge_items_copy (:26)"
+    },
+    {
+     "field": "created_by/updated_by",
+     "target": "users.User",
+     "nullable": true,
+     "kind": "ForeignKey (inherited)"
+    }
+   ],
+   "global_unique_or_cache": "number (:31) has no unique constraint. It comes from FacilityMonetoryConfig.invoice_number_expression. The model has no tags field.",
+   "notes": "Integer soft refs must be remapped if data is ever moved between schemas."
+  },
+  {
+   "model": "PaymentReconciliation",
+   "app": "emr",
+   "file": "care/emr/models/payment_reconciliation.py:6-30",
+   "proposed_scope": "tenant",
+   "scope_reason": "Payment against an account or invoice.",
+   "fks_out": [
+    {
+     "field": "facility",
+     "target": "facility.Facility",
+     "nullable": false,
+     "kind": "ForeignKey PROTECT (:7)"
+    },
+    {
+     "field": "target_invoice",
+     "target": "emr.Invoice",
+     "nullable": true,
+     "kind": "ForeignKey PROTECT (:8-10)"
+    },
+    {
+     "field": "account",
+     "target": "emr.Account",
+     "nullable": false,
+     "kind": "ForeignKey PROTECT (:11)"
+    },
+    {
+     "field": "location",
+     "target": "emr.FacilityLocation",
+     "nullable": true,
+     "kind": "ForeignKey PROTECT (:27-29)"
+    },
+    {
+     "field": "created_by/updated_by",
+     "target": "users.User",
+     "nullable": true,
+     "kind": "ForeignKey (inherited)"
+    }
+   ],
+   "global_unique_or_cache": "none",
+   "notes": ""
+  },
+  {
+   "model": "FacilityMonetoryConfig",
+   "app": "emr",
+   "file": "care/emr/models/facility_config.py:7-78",
+   "proposed_scope": "tenant",
+   "scope_reason": "Discount and invoice-number configuration for one facility.",
+   "fks_out": [
+    {
+     "field": "facility",
+     "target": "facility.Facility",
+     "nullable": false,
+     "kind": "OneToOneField CASCADE unique (:8-10)"
+    },
+    {
+     "field": "created_by/updated_by",
+     "target": "users.User",
+     "nullable": true,
+     "kind": "ForeignKey (inherited)"
+    }
+   ],
+   "global_unique_or_cache": "facility is a OneToOne (unique). Django cache keys are 'facility:{facility_id}:monetory_component' and 'facility:{facility_id}:discount_configuration', built from the INTEGER PK (:33-39, read/written :50-57, :62-72, deleted :76-77). get_monetory_config lazily creates the row (:18-23).",
+   "notes": "Integer facility PKs repeat in every schema, so these cache keys collide across tenants (see risks)."
+  },
+  {
+   "model": "Product",
+   "app": "emr",
+   "file": "care/emr/models/product.py:6-22",
+   "proposed_scope": "tenant",
+   "scope_reason": "A facility's stocked product or batch with a purchase price.",
+   "fks_out": [
+    {
+     "field": "facility",
+     "target": "facility.Facility",
+     "nullable": false,
+     "kind": "ForeignKey PROTECT (:7)"
+    },
+    {
+     "field": "product_knowledge",
+     "target": "emr.ProductKnowledge",
+     "nullable": false,
+     "kind": "ForeignKey PROTECT (:8-10)"
+    },
+    {
+     "field": "charge_item_definition",
+     "target": "emr.ChargeItemDefinition",
+     "nullable": true,
+     "kind": "ForeignKey PROTECT (:11-13)"
+    },
+    {
+     "field": "created_by/updated_by",
+     "target": "users.User",
+     "nullable": true,
+     "kind": "ForeignKey (inherited)"
+    }
+   ],
+   "global_unique_or_cache": "none",
+   "notes": ""
+  },
+  {
+   "model": "ProductKnowledge",
+   "app": "emr",
+   "file": "care/emr/models/product_knowledge.py:6-35",
+   "proposed_scope": "either",
+   "scope_reason": "This is a drug or consumable catalogue entry. A NULL facility (:7-9) means an instance-wide catalogue entry, which the viewset merges with facility rows (api/viewsets/inventory/product_knowledge.py:176,193; slug 'i-' at :82-88). It looks like shared reference data, but it has a FK into ResourceCategory, which is facility-bound (NOT NULL facility). A shared copy cannot hold that FK. Recommendation: tenant, with the instance catalogue seeded and synced into each schema.",
+   "fks_out": [
+    {
+     "field": "facility",
+     "target": "facility.Facility",
+     "nullable": true,
+     "kind": "ForeignKey PROTECT (:7-9)"
+    },
+    {
+     "field": "category",
+     "target": "emr.ResourceCategory",
+     "nullable": true,
+     "kind": "ForeignKey PROTECT (:21-26)"
+    },
+    {
+     "field": "created_by/updated_by",
+     "target": "users.User",
+     "nullable": true,
+     "kind": "ForeignKey (inherited)"
+    }
+   ],
+   "global_unique_or_cache": "names_cache is denormalised in save() (:28-35). slug has no unique constraint.",
+   "notes": "Reverse FKs come from tenant Product (product.py:8) and SupplyRequest (supply_request.py:13). Those are fine with either choice (tenant->shared is allowed)."
+  },
+  {
+   "model": "InventoryItem",
+   "app": "emr",
+   "file": "care/emr/models/inventory_item.py:8-29",
+   "proposed_scope": "tenant",
+   "scope_reason": "Stock on hand at a location.",
+   "fks_out": [
+    {
+     "field": "location",
+     "target": "emr.FacilityLocation",
+     "nullable": false,
+     "kind": "ForeignKey PROTECT (:9-12)"
+    },
+    {
+     "field": "product",
+     "target": "emr.Product",
+     "nullable": false,
+     "kind": "ForeignKey PROTECT (:13-16)"
+    },
+    {
+     "field": "created_by/updated_by",
+     "target": "users.User",
+     "nullable": true,
+     "kind": "ForeignKey (inherited)"
+    }
+   ],
+   "global_unique_or_cache": "Partial UniqueConstraint (product, location) WHERE deleted=False (:22-29). It is per-table, so per-schema is fine.",
+   "notes": ""
+  },
+  {
+   "model": "SupplyRequest",
+   "app": "emr",
+   "file": "care/emr/models/supply_request.py:7-19",
+   "proposed_scope": "tenant",
+   "scope_reason": "Internal or external stock request.",
+   "fks_out": [
+    {
+     "field": "item",
+     "target": "emr.ProductKnowledge",
+     "nullable": false,
+     "kind": "ForeignKey CASCADE (:13)"
+    },
+    {
+     "field": "order",
+     "target": "emr.RequestOrder",
+     "nullable": true,
+     "kind": "ForeignKey CASCADE (:14-19)"
+    },
+    {
+     "field": "created_by/updated_by",
+     "target": "users.User",
+     "nullable": true,
+     "kind": "ForeignKey (inherited)"
+    }
+   ],
+   "global_unique_or_cache": "none",
+   "notes": "CASCADE from ProductKnowledge: if PK were shared and a shared row were deleted, the cascade could not reach tenant schemas."
+  },
+  {
+   "model": "RequestOrder",
+   "app": "emr",
+   "file": "care/emr/models/supply_request.py:22-48",
+   "proposed_scope": "tenant",
+   "scope_reason": "Purchase or transfer order between a facility's locations or from a supplier.",
+   "fks_out": [
+    {
+     "field": "supplier",
+     "target": "emr.Organization",
+     "nullable": true,
+     "kind": "ForeignKey CASCADE (:27-32)"
+    },
+    {
+     "field": "origin",
+     "target": "emr.FacilityLocation",
+     "nullable": true,
+     "kind": "ForeignKey CASCADE (:37-43)"
+    },
+    {
+     "field": "destination",
+     "target": "emr.FacilityLocation",
+     "nullable": false,
+     "kind": "ForeignKey CASCADE (:44-48)"
+    },
+    {
+     "field": "tags",
+     "target": "emr.TagConfig",
+     "nullable": false,
+     "kind": "soft ref ArrayField(int) (:26)"
+    },
+    {
+     "field": "created_by/updated_by",
+     "target": "users.User",
+     "nullable": true,
+     "kind": "ForeignKey (inherited)"
+    }
+   ],
+   "global_unique_or_cache": "none",
+   "notes": "The supplier is an emr.Organization with org_type product_supplier (resources/organization/spec.py:10-14). Its scope depends on the Organization decision."
+  },
+  {
+   "model": "SupplyDelivery",
+   "app": "emr",
+   "file": "care/emr/models/supply_delivery.py:7-36",
+   "proposed_scope": "tenant",
+   "scope_reason": "Stock movement.",
+   "fks_out": [
+    {
+     "field": "supplied_item",
+     "target": "emr.Product",
+     "nullable": true,
+     "kind": "ForeignKey CASCADE (:16-18)"
+    },
+    {
+     "field": "supplied_inventory_item",
+     "target": "emr.InventoryItem",
+     "nullable": true,
+     "kind": "ForeignKey CASCADE (:19-21)"
+    },
+    {
+     "field": "supply_request",
+     "target": "emr.SupplyRequest",
+     "nullable": true,
+     "kind": "ForeignKey CASCADE (:24-26)"
+    },
+    {
+     "field": "order",
+     "target": "emr.DeliveryOrder",
+     "nullable": true,
+     "kind": "ForeignKey CASCADE (:27-32)"
+    },
+    {
+     "field": "created_by/updated_by",
+     "target": "users.User",
+     "nullable": true,
+     "kind": "ForeignKey (inherited)"
+    }
+   ],
+   "global_unique_or_cache": "none",
+   "notes": ""
+  },
+  {
+   "model": "DeliveryOrder",
+   "app": "emr",
+   "file": "care/emr/models/supply_delivery.py:39-65",
+   "proposed_scope": "tenant",
+   "scope_reason": "Goods receipt or dispense order. It can link to a patient invoice.",
+   "fks_out": [
+    {
+     "field": "supplier",
+     "target": "emr.Organization",
+     "nullable": true,
+     "kind": "ForeignKey CASCADE (:44-46)"
+    },
+    {
+     "field": "origin",
+     "target": "emr.FacilityLocation",
+     "nullable": true,
+     "kind": "ForeignKey CASCADE (:47-53)"
+    },
+    {
+     "field": "destination",
+     "target": "emr.FacilityLocation",
+     "nullable": false,
+     "kind": "ForeignKey CASCADE (:54-58)"
+    },
+    {
+     "field": "patient",
+     "target": "emr.Patient",
+     "nullable": true,
+     "kind": "ForeignKey PROTECT (:60-62)"
+    },
+    {
+     "field": "patient_invoice",
+     "target": "emr.Invoice",
+     "nullable": true,
+     "kind": "ForeignKey PROTECT (:63-65)"
+    },
+    {
+     "field": "tags",
+     "target": "emr.TagConfig",
+     "nullable": false,
+     "kind": "soft ref ArrayField(int) (:43)"
+    },
+    {
+     "field": "created_by/updated_by",
+     "target": "users.User",
+     "nullable": true,
+     "kind": "ForeignKey (inherited)"
+    }
+   ],
+   "global_unique_or_cache": "none",
+   "notes": ""
+  },
+  {
+   "model": "HealthcareService",
+   "app": "emr",
+   "file": "care/emr/models/healthcare_service.py:7-29",
+   "proposed_scope": "tenant",
+   "scope_reason": "A department or service of a hospital. facility is nullable (:8-14), but no instance-level (facility__isnull) query path was found in api/viewsets/healthcare_service.py.",
+   "fks_out": [
+    {
+     "field": "facility",
+     "target": "facility.Facility",
+     "nullable": true,
+     "kind": "ForeignKey PROTECT (:8-14)"
+    },
+    {
+     "field": "managing_organization",
+     "target": "emr.FacilityOrganization",
+     "nullable": true,
+     "kind": "ForeignKey PROTECT (:23-29)"
+    },
+    {
+     "field": "locations",
+     "target": "emr.FacilityLocation",
+     "nullable": false,
+     "kind": "soft ref ArrayField(IntegerField) of FacilityLocation PKs (:21)"
+    },
+    {
+     "field": "created_by/updated_by",
+     "target": "users.User",
+     "nullable": true,
+     "kind": "ForeignKey (inherited)"
+    }
+   ],
+   "global_unique_or_cache": "none",
+   "notes": ""
+  },
+  {
+   "model": "FacilityLocation",
+   "app": "emr",
+   "file": "care/emr/models/location.py:12-129",
+   "proposed_scope": "tenant",
+   "scope_reason": "Wards, beds and rooms of a facility.",
+   "fks_out": [
+    {
+     "field": "facility",
+     "target": "facility.Facility",
+     "nullable": false,
+     "kind": "ForeignKey PROTECT (:23)"
+    },
+    {
+     "field": "parent",
+     "target": "emr.FacilityLocation",
+     "nullable": true,
+     "kind": "self ForeignKey SET_NULL (:24-26)"
+    },
+    {
+     "field": "root_location",
+     "target": "emr.FacilityLocation",
+     "nullable": true,
+     "kind": "self ForeignKey CASCADE (:32-34)"
+    },
+    {
+     "field": "current_encounter",
+     "target": "emr.Encounter",
+     "nullable": true,
+     "kind": "ForeignKey SET_NULL (:35-37)"
+    },
+    {
+     "field": "facility_organization_cache",
+     "target": "emr.FacilityOrganization",
+     "nullable": false,
+     "kind": "soft ref ArrayField(int) (:22), rebuilt in sync_organization_cache (:85-102). Uses facility.default_internal_organization_id (:99)."
+    },
+    {
+     "field": "parent_cache",
+     "target": "emr.FacilityLocation",
+     "nullable": false,
+     "kind": "soft ref ArrayField(int) (:29)"
+    },
+    {
+     "field": "tags",
+     "target": "emr.TagConfig",
+     "nullable": false,
+     "kind": "soft ref ArrayField(int) (:39)"
+    },
+    {
+     "field": "created_by/updated_by",
+     "target": "users.User",
+     "nullable": true,
+     "kind": "ForeignKey (inherited)"
+    }
+   ],
+   "global_unique_or_cache": "cached_parent_json has a 15-day in-row expiry (:31, :40-58). Name uniqueness is checked only in app code (validate_uniqueness :60-83), not in the DB. Celery task handle_cascade (:160-168) is called synchronously at :129.",
+   "notes": ""
+  },
+  {
+   "model": "FacilityLocationOrganization",
+   "app": "emr",
+   "file": "care/emr/models/location.py:132-146",
+   "proposed_scope": "tenant",
+   "scope_reason": "Links locations to facility organizations.",
+   "fks_out": [
+    {
+     "field": "location",
+     "target": "emr.FacilityLocation",
+     "nullable": false,
+     "kind": "ForeignKey CASCADE (:137)"
+    },
+    {
+     "field": "organization",
+     "target": "emr.FacilityOrganization",
+     "nullable": false,
+     "kind": "ForeignKey CASCADE (:138-140)"
+    },
+    {
+     "field": "created_by/updated_by",
+     "target": "users.User",
+     "nullable": true,
+     "kind": "ForeignKey (inherited)"
+    }
+   ],
+   "global_unique_or_cache": "save() triggers location.save() and handle_cascade (:142-145).",
+   "notes": ""
+  },
+  {
+   "model": "FacilityLocationEncounter",
+   "app": "emr",
+   "file": "care/emr/models/location.py:148-157",
+   "proposed_scope": "tenant",
+   "scope_reason": "Bed assignment history.",
+   "fks_out": [
+    {
+     "field": "location",
+     "target": "emr.FacilityLocation",
+     "nullable": false,
+     "kind": "ForeignKey CASCADE (:154)"
+    },
+    {
+     "field": "encounter",
+     "target": "emr.Encounter",
+     "nullable": false,
+     "kind": "ForeignKey CASCADE (:155)"
+    },
+    {
+     "field": "created_by/updated_by",
+     "target": "users.User",
+     "nullable": true,
+     "kind": "ForeignKey (inherited)"
+    }
+   ],
+   "global_unique_or_cache": "none",
+   "notes": "Target of the ChargeItem soft ref service_resource='bed_association'."
+  },
+  {
+   "model": "Device",
+   "app": "emr",
+   "file": "care/emr/models/device.py:7-57",
+   "proposed_scope": "tenant",
+   "scope_reason": "Equipment owned by a facility.",
+   "fks_out": [
+    {
+     "field": "facility",
+     "target": "facility.Facility",
+     "nullable": false,
+     "kind": "ForeignKey CASCADE (:26)"
+    },
+    {
+     "field": "managing_organization",
+     "target": "emr.FacilityOrganization",
+     "nullable": true,
+     "kind": "ForeignKey SET_NULL (:27-29)"
+    },
+    {
+     "field": "current_location",
+     "target": "emr.FacilityLocation",
+     "nullable": true,
+     "kind": "ForeignKey SET_NULL (:30-32)"
+    },
+    {
+     "field": "current_encounter",
+     "target": "emr.Encounter",
+     "nullable": true,
+     "kind": "ForeignKey SET_NULL (:33-35)"
+    },
+    {
+     "field": "facility_organization_cache",
+     "target": "emr.FacilityOrganization",
+     "nullable": false,
+     "kind": "soft ref ArrayField(int) (:38), computed in save() (:40-57)"
+    },
+    {
+     "field": "created_by/updated_by",
+     "target": "users.User",
+     "nullable": true,
+     "kind": "ForeignKey (inherited)"
+    }
+   ],
+   "global_unique_or_cache": "none",
+   "notes": ""
+  },
+  {
+   "model": "DeviceEncounterHistory",
+   "app": "emr",
+   "file": "care/emr/models/device.py:60-64",
+   "proposed_scope": "tenant",
+   "scope_reason": "Device usage per encounter.",
+   "fks_out": [
+    {
+     "field": "device",
+     "target": "emr.Device",
+     "nullable": false,
+     "kind": "ForeignKey CASCADE (:61)"
+    },
+    {
+     "field": "encounter",
+     "target": "emr.Encounter",
+     "nullable": false,
+     "kind": "ForeignKey CASCADE (:62)"
+    },
+    {
+     "field": "created_by/updated_by",
+     "target": "users.User",
+     "nullable": true,
+     "kind": "ForeignKey (inherited)"
+    }
+   ],
+   "global_unique_or_cache": "none",
+   "notes": ""
+  },
+  {
+   "model": "DeviceLocationHistory",
+   "app": "emr",
+   "file": "care/emr/models/device.py:67-71",
+   "proposed_scope": "tenant",
+   "scope_reason": "Device location history.",
+   "fks_out": [
+    {
+     "field": "device",
+     "target": "emr.Device",
+     "nullable": false,
+     "kind": "ForeignKey CASCADE (:68)"
+    },
+    {
+     "field": "location",
+     "target": "emr.FacilityLocation",
+     "nullable": false,
+     "kind": "ForeignKey CASCADE (:69)"
+    },
+    {
+     "field": "created_by/updated_by",
+     "target": "users.User",
+     "nullable": true,
+     "kind": "ForeignKey (inherited)"
+    }
+   ],
+   "global_unique_or_cache": "none",
+   "notes": ""
+  },
+  {
+   "model": "DeviceServiceHistory",
+   "app": "emr",
+   "file": "care/emr/models/device.py:74-80",
+   "proposed_scope": "tenant",
+   "scope_reason": "Maintenance log.",
+   "fks_out": [
+    {
+     "field": "device",
+     "target": "emr.Device",
+     "nullable": false,
+     "kind": "ForeignKey PROTECT (:75-77)"
+    },
+    {
+     "field": "created_by/updated_by",
+     "target": "users.User",
+     "nullable": true,
+     "kind": "ForeignKey (inherited)"
+    }
+   ],
+   "global_unique_or_cache": "none",
+   "notes": ""
+  },
+  {
+   "model": "ResourceRequest",
+   "app": "emr",
+   "file": "care/emr/models/resource_request.py:8-55",
+   "proposed_scope": "tenant",
+   "scope_reason": "It holds a patient and is created by the origin hospital. However, it is designed as an INTER-facility request: approving_facility and assigned_facility are other facilities, which would be other tenants.",
+   "fks_out": [
+    {
+     "field": "origin_facility",
+     "target": "facility.Facility",
+     "nullable": false,
+     "kind": "ForeignKey PROTECT (:9-13)"
+    },
+    {
+     "field": "approving_facility",
+     "target": "facility.Facility",
+     "nullable": true,
+     "kind": "ForeignKey SET_NULL (:14-19)"
+    },
+    {
+     "field": "assigned_facility",
+     "target": "facility.Facility",
+     "nullable": true,
+     "kind": "ForeignKey SET_NULL (:20-25)"
+    },
+    {
+     "field": "assigned_to",
+     "target": "users.User",
+     "nullable": true,
+     "kind": "ForeignKey SET_NULL (:40-45)"
+    },
+    {
+     "field": "related_patient",
+     "target": "emr.Patient",
+     "nullable": true,
+     "kind": "ForeignKey CASCADE (:47-53)"
+    },
+    {
+     "field": "created_by/updated_by",
+     "target": "users.User",
+     "nullable": true,
+     "kind": "ForeignKey (inherited)"
+    }
+   ],
+   "global_unique_or_cache": "none",
+   "notes": "The cross-tenant FKs can't be expressed in schema-per-tenant (see risks)."
+  },
+  {
+   "model": "ResourceRequestComment",
+   "app": "emr",
+   "file": "care/emr/models/resource_request.py:58-62",
+   "proposed_scope": "tenant",
+   "scope_reason": "Comment on a ResourceRequest. It follows the parent's scope.",
+   "fks_out": [
+    {
+     "field": "request",
+     "target": "emr.ResourceRequest",
+     "nullable": false,
+     "kind": "ForeignKey PROTECT (:59-61)"
+    },
+    {
+     "field": "created_by/updated_by",
+     "target": "users.User",
+     "nullable": true,
+     "kind": "ForeignKey (inherited)"
+    }
+   ],
+   "global_unique_or_cache": "none",
+   "notes": "Staff at the approving or assigned facility comment on the origin's request. Cross-tenant."
+  },
+  {
+   "model": "ResourceCategory",
+   "app": "emr",
+   "file": "care/emr/models/resource_category.py:11-93",
+   "proposed_scope": "tenant",
+   "scope_reason": "facility is NOT NULL (:12-15). It is the hospital's category tree for charges and products, with monetary components.",
+   "fks_out": [
+    {
+     "field": "facility",
+     "target": "facility.Facility",
+     "nullable": false,
+     "kind": "ForeignKey PROTECT (:12-15)"
+    },
+    {
+     "field": "parent",
+     "target": "emr.ResourceCategory",
+     "nullable": true,
+     "kind": "self ForeignKey CASCADE (:21-27)"
+    },
+    {
+     "field": "root_org",
+     "target": "emr.ResourceCategory",
+     "nullable": true,
+     "kind": "self ForeignKey CASCADE (:32-38)"
+    },
+    {
+     "field": "parent_cache",
+     "target": "emr.ResourceCategory",
+     "nullable": false,
+     "kind": "soft ref ArrayField(int) (:30)"
+    },
+    {
+     "field": "created_by/updated_by",
+     "target": "users.User",
+     "nullable": true,
+     "kind": "ForeignKey (inherited)"
+    }
+   ],
+   "global_unique_or_cache": "Index (slug, facility) only, no unique constraint (:48-51). cached_parent_json has a 15-day expiry (:66-85). The Celery @shared_task summarise_monetary_components is re-queued per child with an integer id: .delay(component.id) (:123-140).",
+   "notes": ""
+  },
+  {
+   "model": "TagConfig",
+   "app": "emr",
+   "file": "care/emr/models/tag_config.py:10-98",
+   "proposed_scope": "either",
+   "scope_reason": "Rows with a NULL facility are instance-wide tags, merged with facility tags (api/viewsets/tag_config.py:101-104; tagging/base.py:46,118). That makes it look shared. But it also has FKs to FacilityOrganization (tenant), and tenant rows store its integer PKs in tags arrays. Recommendation: tenant, with instance tags seeded per schema.",
+   "fks_out": [
+    {
+     "field": "facility",
+     "target": "facility.Facility",
+     "nullable": true,
+     "kind": "ForeignKey PROTECT (:15-21)"
+    },
+    {
+     "field": "facility_organization",
+     "target": "emr.FacilityOrganization",
+     "nullable": true,
+     "kind": "ForeignKey CASCADE (:22-27)"
+    },
+    {
+     "field": "organization",
+     "target": "emr.Organization",
+     "nullable": true,
+     "kind": "ForeignKey CASCADE (:28-33)"
+    },
+    {
+     "field": "parent",
+     "target": "emr.TagConfig",
+     "nullable": true,
+     "kind": "self ForeignKey CASCADE (:42-44)"
+    },
+    {
+     "field": "root_tag_config",
+     "target": "emr.TagConfig",
+     "nullable": true,
+     "kind": "self ForeignKey CASCADE (:46-52)"
+    },
+    {
+     "field": "parent_cache",
+     "target": "emr.TagConfig",
+     "nullable": false,
+     "kind": "soft ref ArrayField(int) (:40)"
+    },
+    {
+     "field": "created_by/updated_by",
+     "target": "users.User",
+     "nullable": true,
+     "kind": "ForeignKey (inherited)"
+    }
+   ],
+   "global_unique_or_cache": "cached_parent_json has a 15-day expiry (:71-91). Its integer PKs are referenced by soft-ref 'tags' ArrayFields across many tenant models.",
+   "notes": ""
+  },
+  {
+   "model": "ValueSet",
+   "app": "emr",
+   "file": "care/emr/models/valueset.py:12-56",
+   "proposed_scope": "either",
+   "scope_reason": "Terminology value set definitions. System sets are synced from a code registry (management/commands/sync_valueset.py:23-32, is_system_defined), and every hospital needs them identically, which suggests shared. Hospitals may also author their own. It has no FKs to tenant data, so shared is feasible.",
+   "fks_out": [
+    {
+     "field": "created_by/updated_by",
+     "target": "users.User",
+     "nullable": true,
+     "kind": "ForeignKey (inherited)"
+    }
+   ],
+   "global_unique_or_cache": "slug SlugField unique=True (:13). Slug is soft-referenced by questionnaires (resources/questionnaire/spec.py:157) and the interpretation evaluator (utils/evaluators/interpretation_evaluator.py:23). search() and lookup() call an external terminology server (:39-56).",
+   "notes": "If shared, hospital-authored sets need a namespace prefix to avoid slug clashes. If tenant, sync_valueset must run in every schema."
+  },
+  {
+   "model": "UserValueSetPreference",
+   "app": "emr",
+   "file": "care/emr/models/valueset.py:59-67",
+   "proposed_scope": "either",
+   "scope_reason": "Per-user favourite codes. If ValueSet is shared, this can be shared (one doctor, same favourites at both hospitals) or tenant (separate per hospital). If ValueSet is tenant, this must be tenant.",
+   "fks_out": [
+    {
+     "field": "user",
+     "target": "users.User",
+     "nullable": false,
+     "kind": "ForeignKey CASCADE (:60)"
+    },
+    {
+     "field": "valueset",
+     "target": "emr.ValueSet",
+     "nullable": false,
+     "kind": "ForeignKey CASCADE (:61)"
+    },
+    {
+     "field": "created_by/updated_by",
+     "target": "users.User",
+     "nullable": true,
+     "kind": "ForeignKey (inherited)"
+    }
+   ],
+   "global_unique_or_cache": "unique_together (user, valueset) (:64-65). MAX_FAVORITES is a class constant (:67). The companion non-model RecentViewsManager (:70-122) uses a class-level _client and a raw Redis connection; keys are 'user_valueset_code_prefs:{slug}:{user_id}:recent_views|favourites' (api/viewsets/valueset.py:63-67) with no tenant prefix.",
+   "notes": ""
+  },
+  {
+   "model": "SchedulableResource",
+   "app": "emr",
+   "file": "care/emr/models/scheduling/schedule.py:6-35",
+   "proposed_scope": "tenant",
+   "scope_reason": "A practitioner, location or service bookable at one facility. A doctor at two hospitals gets one row in each tenant schema.",
+   "fks_out": [
+    {
+     "field": "facility",
+     "target": "facility.Facility",
+     "nullable": false,
+     "kind": "ForeignKey CASCADE (:9)"
+    },
+    {
+     "field": "user",
+     "target": "users.User",
+     "nullable": true,
+     "kind": "ForeignKey CASCADE (:11-13)"
+    },
+    {
+     "field": "location",
+     "target": "emr.FacilityLocation",
+     "nullable": true,
+     "kind": "ForeignKey CASCADE (:14-16)"
+    },
+    {
+     "field": "healthcare_service",
+     "target": "emr.HealthcareService",
+     "nullable": true,
+     "kind": "ForeignKey CASCADE (:17-19)"
+    },
+    {
+     "field": "created_by/updated_by",
+     "target": "users.User",
+     "nullable": true,
+     "kind": "ForeignKey (inherited)"
+    }
+   ],
+   "global_unique_or_cache": "UniqueConstraints (facility,resource_type,user), (facility,resource_type,location) and (facility,resource_type,healthcare_service) (:21-35). Per table, so per-schema is fine.",
+   "notes": "user CASCADE to a shared User."
+  },
+  {
+   "model": "Schedule",
+   "app": "emr",
+   "file": "care/emr/models/scheduling/schedule.py:38-58",
+   "proposed_scope": "tenant",
+   "scope_reason": "Schedule of a resource.",
+   "fks_out": [
+    {
+     "field": "resource",
+     "target": "emr.SchedulableResource",
+     "nullable": false,
+     "kind": "ForeignKey CASCADE (:39)"
+    },
+    {
+     "field": "charge_item_definition",
+     "target": "emr.ChargeItemDefinition",
+     "nullable": true,
+     "kind": "ForeignKey PROTECT (:43-49)"
+    },
+    {
+     "field": "revisit_charge_item_definition",
+     "target": "emr.ChargeItemDefinition",
+     "nullable": true,
+     "kind": "ForeignKey PROTECT (:51-57)"
+    },
+    {
+     "field": "created_by/updated_by",
+     "target": "users.User",
+     "nullable": true,
+     "kind": "ForeignKey (inherited)"
+    }
+   ],
+   "global_unique_or_cache": "none",
+   "notes": "is_public (:58) suggests public booking. The public booking endpoint must resolve the tenant (subdomain) before it queries."
+  },
+  {
+   "model": "Availability",
+   "app": "emr",
+   "file": "care/emr/models/scheduling/schedule.py:61-69",
+   "proposed_scope": "tenant",
+   "scope_reason": "Slot pattern within a schedule.",
+   "fks_out": [
+    {
+     "field": "schedule",
+     "target": "emr.Schedule",
+     "nullable": false,
+     "kind": "ForeignKey CASCADE (:62)"
+    },
+    {
+     "field": "created_by/updated_by",
+     "target": "users.User",
+     "nullable": true,
+     "kind": "ForeignKey (inherited)"
+    }
+   ],
+   "global_unique_or_cache": "none",
+   "notes": ""
+  },
+  {
+   "model": "AvailabilityException",
+   "app": "emr",
+   "file": "care/emr/models/scheduling/schedule.py:72-79",
+   "proposed_scope": "tenant",
+   "scope_reason": "Leave or blocked time for a resource.",
+   "fks_out": [
+    {
+     "field": "resource",
+     "target": "emr.SchedulableResource",
+     "nullable": false,
+     "kind": "ForeignKey CASCADE (:73)"
+    },
+    {
+     "field": "created_by/updated_by",
+     "target": "users.User",
+     "nullable": true,
+     "kind": "ForeignKey (inherited)"
+    }
+   ],
+   "global_unique_or_cache": "none",
+   "notes": "A doctor's leave is entered per tenant. Leave at hospital A does not block slots at hospital B."
+  },
+  {
+   "model": "TokenSlot",
+   "app": "emr",
+   "file": "care/emr/models/scheduling/booking.py:9-19",
+   "proposed_scope": "tenant",
+   "scope_reason": "Generated booking slot.",
+   "fks_out": [
+    {
+     "field": "resource",
+     "target": "emr.SchedulableResource",
+     "nullable": false,
+     "kind": "ForeignKey CASCADE (:10-12)"
+    },
+    {
+     "field": "availability",
+     "target": "emr.Availability",
+     "nullable": true,
+     "kind": "ForeignKey CASCADE (:13-15)"
+    },
+    {
+     "field": "created_by/updated_by",
+     "target": "users.User",
+     "nullable": true,
+     "kind": "ForeignKey (inherited)"
+    }
+   ],
+   "global_unique_or_cache": "allocated counter (:18)",
+   "notes": ""
+  },
+  {
+   "model": "TokenBooking",
+   "app": "emr",
+   "file": "care/emr/models/scheduling/booking.py:22-50",
+   "proposed_scope": "tenant",
+   "scope_reason": "Patient appointment.",
+   "fks_out": [
+    {
+     "field": "token_slot",
+     "target": "emr.TokenSlot",
+     "nullable": false,
+     "kind": "ForeignKey PROTECT (:23-25)"
+    },
+    {
+     "field": "patient",
+     "target": "emr.Patient",
+     "nullable": false,
+     "kind": "ForeignKey CASCADE (:26-31)"
+    },
+    {
+     "field": "booked_by",
+     "target": "users.User",
+     "nullable": true,
+     "kind": "ForeignKey CASCADE (:33)"
+    },
+    {
+     "field": "associated_encounter",
+     "target": "emr.Encounter",
+     "nullable": true,
+     "kind": "ForeignKey PROTECT (:37-39)"
+    },
+    {
+     "field": "token",
+     "target": "emr.Token",
+     "nullable": true,
+     "kind": "ForeignKey PROTECT (:40-47)"
+    },
+    {
+     "field": "charge_item",
+     "target": "emr.ChargeItem",
+     "nullable": true,
+     "kind": "ForeignKey CASCADE (:48-50)"
+    },
+    {
+     "field": "tags",
+     "target": "emr.TagConfig",
+     "nullable": false,
+     "kind": "soft ref ArrayField(int) (:36)"
+    },
+    {
+     "field": "created_by/updated_by",
+     "target": "users.User",
+     "nullable": true,
+     "kind": "ForeignKey (inherited)"
+    }
+   ],
+   "global_unique_or_cache": "none",
+   "notes": "booked_by CASCADE to a shared User would delete appointments if a user were hard-deleted."
+  },
+  {
+   "model": "TokenQueue",
+   "app": "emr",
+   "file": "care/emr/models/scheduling/token.py:7-17",
+   "proposed_scope": "tenant",
+   "scope_reason": "Daily queue for a resource.",
+   "fks_out": [
+    {
+     "field": "facility",
+     "target": "facility.Facility",
+     "nullable": false,
+     "kind": "ForeignKey CASCADE (:12)"
+    },
+    {
+     "field": "resource",
+     "target": "emr.SchedulableResource",
+     "nullable": false,
+     "kind": "ForeignKey CASCADE (:13)"
+    },
+    {
+     "field": "created_by/updated_by",
+     "target": "users.User",
+     "nullable": true,
+     "kind": "ForeignKey (inherited)"
+    }
+   ],
+   "global_unique_or_cache": "none",
+   "notes": ""
+  },
+  {
+   "model": "TokenSubQueue",
+   "app": "emr",
+   "file": "care/emr/models/scheduling/token.py:20-34",
+   "proposed_scope": "tenant",
+   "scope_reason": "Room-level sub-queue.",
+   "fks_out": [
+    {
+     "field": "facility",
+     "target": "facility.Facility",
+     "nullable": false,
+     "kind": "ForeignKey CASCADE (:28)"
+    },
+    {
+     "field": "resource",
+     "target": "emr.SchedulableResource",
+     "nullable": false,
+     "kind": "ForeignKey CASCADE (:29)"
+    },
+    {
+     "field": "current_token",
+     "target": "emr.Token",
+     "nullable": true,
+     "kind": "ForeignKey CASCADE (:32-34)"
+    },
+    {
+     "field": "created_by/updated_by",
+     "target": "users.User",
+     "nullable": true,
+     "kind": "ForeignKey (inherited)"
+    }
+   ],
+   "global_unique_or_cache": "none",
+   "notes": ""
+  },
+  {
+   "model": "TokenCategory",
+   "app": "emr",
+   "file": "care/emr/models/scheduling/token.py:37-47",
+   "proposed_scope": "tenant",
+   "scope_reason": "Token categories configured per facility (facility NOT NULL).",
+   "fks_out": [
+    {
+     "field": "facility",
+     "target": "facility.Facility",
+     "nullable": false,
+     "kind": "ForeignKey CASCADE (:42)"
+    },
+    {
+     "field": "created_by/updated_by",
+     "target": "users.User",
+     "nullable": true,
+     "kind": "ForeignKey (inherited)"
+    }
+   ],
+   "global_unique_or_cache": "none",
+   "notes": ""
+  },
+  {
+   "model": "Token",
+   "app": "emr",
+   "file": "care/emr/models/scheduling/token.py:50-86",
+   "proposed_scope": "tenant",
+   "scope_reason": "Patient queue token.",
+   "fks_out": [
+    {
+     "field": "facility",
+     "target": "facility.Facility",
+     "nullable": false,
+     "kind": "ForeignKey CASCADE (:56)"
+    },
+    {
+     "field": "patient",
+     "target": "emr.Patient",
+     "nullable": true,
+     "kind": "ForeignKey CASCADE (:57-59)"
+    },
+    {
+     "field": "queue",
+     "target": "emr.TokenQueue",
+     "nullable": false,
+     "kind": "ForeignKey CASCADE (:60)"
+    },
+    {
+     "field": "category",
+     "target": "emr.TokenCategory",
+     "nullable": false,
+     "kind": "ForeignKey CASCADE (:61)"
+    },
+    {
+     "field": "sub_queue",
+     "target": "emr.TokenSubQueue",
+     "nullable": true,
+     "kind": "ForeignKey CASCADE (:62-64)"
+    },
+    {
+     "field": "booking",
+     "target": "emr.TokenBooking",
+     "nullable": true,
+     "kind": "ForeignKey CASCADE (:69-75)"
+    },
+    {
+     "field": "created_by/updated_by",
+     "target": "users.User",
+     "nullable": true,
+     "kind": "ForeignKey (inherited)"
+    }
+   ],
+   "global_unique_or_cache": "get_next_number uses MAX(number) per (queue, category), including deleted rows (:77-86). No unique constraint, so concurrent inserts can race. That race is independent of tenancy.",
+   "notes": "Token and TokenBooking point at each other (token.py:69 and booking.py:40), a circular FK within the tenant."
+  }
+ ],
+ "model_risks": [
+  {
+   "risk": "Shared User has an FK into a tenant table. users.User.home_facility points to facility.Facility. In django-tenants a public table cannot reference a table in a tenant schema, so this blocks migrations. The field is per-hospital anyway: a doctor at two hospitals has two home facilities.",
+   "evidence": "care/users/models.py:142-144. grep finds no use of home_facility outside the model and migrations, so dropping it, or moving it to a tenant-side staff profile, is a small logged CARE edit.",
+   "severity": "high"
+  },
+  {
+   "risk": "Shared User has an FK into emr.Organization (User.geo_organization). If Organization is per tenant, this is another public-to-tenant FK, which is a blocker.",
+   "evidence": "care/users/models.py:117-119",
+   "severity": "high"
+  },
+  {
+   "risk": "emr.Organization mixes global reference data ('govt' India geography) with hospital-specific data ('team', 'role', 'product_supplier') in one self-referencing tree table. Sharing it leaks other hospitals' teams and role-orgs and puts all tenants' names into one uniqueness check. Making it per tenant duplicates the LGD geography in every schema; at full village level, hundreds of tenants times about 250k villages is large. Splitting it needs either a CARE model change or a geography-only shared table.",
+   "evidence": "care/emr/models/organization.py:106-107; care/emr/resources/organization/spec.py:10-14; care/emr/models/organization.py:76-99; care/emr/management/commands/load_govt_organization_csv.py",
+   "severity": "high"
+  },
+  {
+   "risk": "User.cached_role_orgs is stored once per person on the shared User row, but it is built from OrganizationUser in whatever tenant schema is active. A doctor at hospitals A and B gets A's role-orgs cached and served in B (stale, and a cross-tenant leak). Cache resets in one tenant overwrite the other.",
+   "evidence": "care/users/models.py:184, 192-200; care/emr/models/organization.py:123-146",
+   "severity": "high"
+  },
+  {
+   "risk": "Redis cache keys are built from integer PKs with no tenant prefix. Each schema has its own sequences, so facility id=1, role id=5 and so on exist in every tenant. Cached facility flags, role permissions and model_from_cache serialisations then leak between tenants. The CACHES setting has no KEY_FUNCTION or KEY_PREFIX. A tenant-aware key function is needed (e.g. django_tenants.cache.make_key), and other raw redis/cache uses need an audit.",
+   "evidence": "care/utils/models/base.py:51-56, 72-92; care/facility/models/facility_flag.py:16-17; care/security/models/role.py:10-12, 45, 66, 106-115; care/emr/resources/base.py:205-257 (model_cache_key 'app.Model:pk'); config/settings/base.py:85-95",
+   "severity": "high"
+  },
+  {
+   "risk": "With User shared, the user list and search endpoint returns every non-deleted user on the platform. Each hospital would see, and could search, staff from all other hospitals (a DPDP privacy issue). The queryset must be filtered to users who are members of the current tenant.",
+   "evidence": "care/emr/api/viewsets/user.py:103-106 (search_fields first_name/last_name/username; get_queryset filters only deleted=False)",
+   "severity": "high"
+  },
+  {
+   "risk": "is_superuser is a global flag on the shared User and bypasses every authorization check. A CARE superuser would be superuser in every tenant. Platform operators need tenant-scoped admin rights, with superuser reserved for the platform.",
+   "evidence": "care/security/authorization/base.py:33, 44; care/security/authorization/service_account.py:14; care/security/authorization/facility_location.py:56",
+   "severity": "high"
+  },
+  {
+   "risk": "Roles need a scope decision. RoleModel holds both code-defined system roles and admin-created custom roles, with a name unique across the whole table. If shared, custom roles leak and collide across hospitals. If per tenant, sync_permissions_roles must run in every schema (and at tenant creation), and Facility.save's get_or_create by role name runs in the tenant schema.",
+   "evidence": "care/security/models/role.py:23-39; care/security/management/commands/sync_permissions_roles.py:36-66; care/facility/models/facility.py:257",
+   "severity": "medium"
+  },
+  {
+   "risk": "Mixing shared and tenant tables makes hard deletes fail. sync_permissions_roles uses queryset .delete() on PermissionModel, RoleModel and RolePermission. If these sit in public while tenant tables FK into them (OrganizationUser.role CASCADE, PatientUser.role PROTECT), Django's ORM cascade only sees the current search_path. Rows in other schemas are not collected, so the deferred DB FK constraints fail at commit or the sync aborts.",
+   "evidence": "care/security/management/commands/sync_permissions_roles.py:34, 46, 66; care/emr/models/patient.py:155; care/emr/models/organization.py:121, 155",
+   "severity": "medium"
+  },
+  {
+   "risk": "Per-hospital professional data lives on the global User row: user_type, weekly_working_hours, preferences, plus prefix/qualification, which are arguably global. A doctor at two hospitals cannot have different user_type or working hours. A tenant-side staff profile model is needed.",
+   "evidence": "care/users/models.py:108, 145-147, 182",
+   "severity": "medium"
+  },
+  {
+   "risk": "Process-level class caches are not tenant-aware. PatientIdentifierConfigCache keeps mutable class dicts that persist across requests for different tenants in the same worker, with invalidation limited to that process. instance_configs semantics ('facility IS NULL' meaning deployment-wide) now mean tenant-wide.",
+   "evidence": "care/emr/models/patient.py:179-205, 207-218",
+   "severity": "medium"
+  },
+  {
+   "risk": "Celery tasks and management commands run without tenant context. Examples are the OTP cleanup task, sync_permissions_roles, load_govt_organization_csv and load_fixtures. They will hit only the public schema unless wrapped (e.g. tenant-schemas-celery, tenant_command or all_tenants_command).",
+   "evidence": "care/emr/tasks/cleanup_expired_otps.py:17-20; care/security/management/commands/sync_permissions_roles.py; care/emr/management/commands/",
+   "severity": "medium"
+  },
+  {
+   "risk": "Keycloak becomes a second identity store. CARE's User keeps a local password, totp_secret and mfa_settings, which duplicates Keycloak's job and risks MFA bypass if the local login stays enabled.",
+   "evidence": "care/users/models.py:177-178 (and AbstractUser password)",
+   "severity": "medium"
+  },
+  {
+   "risk": "MobileOTP scope decides patient-login isolation. If it is shared, an OTP or session issued on one hospital's subdomain could be accepted on another. Keep it per tenant and bind tokens to the tenant.",
+   "evidence": "care/facility/models/patient.py:8-28; care/emr/api/otp_viewsets/login.py:16",
+   "severity": "medium"
+  },
+  {
+   "risk": "Integer-array and JSON soft references (parent_cache, geo_organization_cache, internal_organization_cache, organization_cache, users_cache, managing_organizations, facility_identifiers keyed by facility id, RoleAssociation.context_id) are not FK-enforced. They break silently if a hospital's data is moved, merged or copied between schemas (onboarding imports, tenant split or merge) without remapping IDs. If Organization is shared, organization_cache will hold public-schema IDs inside tenant rows.",
+   "evidence": "care/emr/models/organization.py:24, 107; care/facility/models/facility.py:176, 185; care/emr/models/patient.py:42-50; care/security/models/permission_association.py:15-16",
+   "severity": "medium"
+  },
+  {
+   "risk": "'Instance' scope in CARE (SlugBaseModel 'i-' slugs, PatientIdentifierConfig with facility NULL, Patient.instance_identifiers and instance_tags, Facility.is_public) assumes one deployment is one organisation. Under schema-per-tenant these silently become per-tenant for tenant tables but stay global for any table kept in public. Every 'instance' feature needs to be checked against the scope chosen for its table.",
+   "evidence": "care/emr/models/base.py:32-64; care/emr/models/patient.py:46-50, 108-114, 162-167; care/facility/models/facility.py:199",
+   "severity": "medium"
+  },
+  {
+   "risk": "Upstream bug: Patient.rebuild_organization_cache adds patient_organization.id (the PatientOrganization PK) to organization_cache instead of patient_organization.organization.id. Organization-based patient access checks may compare the wrong IDs. This is not caused by tenancy but affects the authorization the tenancy layer relies on. Report it upstream rather than patching it locally.",
+   "evidence": "care/emr/models/patient.py:89-95",
+   "severity": "low"
+  },
+  {
+   "risk": "external_id UUIDs are unique per schema only. Any public-level lookup by external_id (for example a cross-tenant index, or Keycloak claims carrying a CARE external_id) must also record the tenant. uuid4 makes real collisions negligible.",
+   "evidence": "care/utils/models/base.py:16; care/users/models.py:97",
+   "severity": "low"
+  },
+  {
+   "risk": "The AbstractUser M2Ms to auth.Group and auth.Permission and the contenttypes framework must stay in SHARED_APPS alongside users.User. If they are also in TENANT_APPS, the duplicated contenttypes IDs need care for any generic relations.",
+   "evidence": "care/users/models.py:96 (class User(AbstractUser))",
+   "severity": "low"
+  },
+  {
+   "risk": "RoleAssociation appears to be dead code: it has a generic context/context_id soft reference and no references outside its definition. If it is revived, context_id integer IDs are schema-local.",
+   "evidence": "care/security/models/permission_association.py:8-22 (grep shows no other references)",
+   "severity": "low"
+  },
+  {
+   "risk": "django-tenants splits tables by Django APP, not by model. Every model reviewed here, plus Patient, Organization, ValueSet, ProductKnowledge and TagConfig, is in the single 'emr' app. Any 'shared' or 'either' choice for an emr model therefore cannot be expressed through SHARED_APPS/TENANT_APPS alone. Putting emr in both lists creates every emr table in public AND in every tenant schema. Unqualified FK REFERENCES then resolve through search_path to the tenant's own copy, so a 'shared' row in public is never the FK target. A per-model split needs a custom DB router (allow_migrate per model), moving models into a new app (an upstream edit), or keeping all of emr tenant and seeding reference rows per tenant.",
+   "evidence": "apps/backend/care/emr/apps.py:5-7 (single EMRConfig name='care.emr'); all models in the scope files use app label 'emr'",
+   "severity": "high"
+  },
+  {
+   "risk": "The global login wants users.User shared (public), but User has FKs into tenant models: home_facility to facility.Facility, and geo_organization to emr.Organization (tenant, if emr is tenant). The public schema migration would reference tables that do not exist there, and a shared row cannot point at a per-tenant row. This is a shared-to-tenant FK that Postgres cannot express under django-tenants. It needs a minimal logged edit (e.g. drop the FK or replace it with a soft ref, or move home facility into a per-tenant membership table).",
+   "evidence": "apps/backend/care/users/models.py:117-119 (geo_organization FK emr.Organization), apps/backend/care/users/models.py:142-144 (home_facility FK facility.Facility PROTECT)",
+   "severity": "high"
+  },
+  {
+   "risk": "Tenant tables FK into the shared users.User with on_delete=CASCADE or PROTECT. Django's deletion collector only sees the current schema. Deleting or merging a User from public either fails at commit on a deferred FK from another tenant's schema, or (run inside a tenant) hard-deletes clinical rows in that tenant only. CASCADE on clinical data also conflicts with retention (NABH/DPDP). User lifecycle must be handled as deactivate-only, never delete, with per-tenant reassignment.",
+   "evidence": "apps/backend/care/emr/models/observation.py:17-24 (data_entered_by CASCADE); service_request.py:39-45 (requester CASCADE); medication_request.py:14-16 (prescribed_by CASCADE); file_upload.py:25-31 and report/report_upload.py:26-32 (archived_by PROTECT); favorites.py:19 (user CASCADE); base.py:11-26 (created_by/updated_by SET_NULL on every model)",
+   "severity": "high"
+  },
+  {
+   "risk": "The Redis favourites cache has no tenant namespace. Keys use the per-schema integer facility.id (likely 1 in many tenants) and user.id. A doctor who works at two hospitals gets lists that collide or overwrite each other, which leaks the other hospital's favourite list names and resource ids into the wrong tenant. The facility=None key ('-') is fully shared. CACHES sets no tenant-aware KEY_FUNCTION (e.g. django_tenants.cache.make_key) or KEY_PREFIX in base settings.",
+   "evidence": "apps/backend/care/emr/models/favorites.py:10-15,27-49; apps/backend/care/emr/api/viewsets/favorites.py:32-56; apps/backend/config/settings/base.py:85-93",
+   "severity": "high"
+  },
+  {
+   "risk": "Object storage is not partitioned by tenant. FileUpload and ReportUpload use a class-level S3FilesManager per BucketType, and object keys are '{file_type}/{internal_name}' in one bucket per type. All hospitals' PHI files share one keyspace and bucket policy. Per-tenant export, DPDP erasure, retention and CERT-In scoping, and blast-radius limits all need a tenant prefix or per-tenant bucket. That is an edit to care/emr/utils/file_manager.py or a plugin override.",
+   "evidence": "apps/backend/care/emr/models/file_upload.py:33; apps/backend/care/emr/models/report/report_upload.py:34; apps/backend/care/emr/utils/file_manager.py:35-40,65,77,86,103",
+   "severity": "medium"
+  },
+  {
+   "risk": "Instance-wide definitions (facility NULL, 'i-' slugs) assume ONE shared catalogue visible to every facility. Only is_superuser can create or edit them, and list endpoints merge facility rows with facility__isnull rows. Under schema-per-tenant these become per-tenant copies, so a platform master catalogue needs a seed or sync job for every tenant (hundreds of schemas) plus migration of updates. Alternatively they are made shared, but their facility FK into the tenant facility.Facility (and inbound CASCADE/PROTECT FKs from tenant clinical rows) blocks that without a split model.",
+   "evidence": "apps/backend/care/emr/models/observation_definition.py:7-13; specimen_definition.py:7-13; report/template.py:7-12; apps/backend/care/emr/api/viewsets/observation_definition.py:99,113,151; apps/backend/care/emr/api/viewsets/report/template.py:90,100,158-161; apps/backend/care/emr/api/viewsets/inventory/product_knowledge.py:176,193",
+   "severity": "medium"
+  },
+  {
+   "risk": "Global is_superuser on a shared User grants platform-wide powers in every tenant: creating instance-level definitions and templates, and editing or deleting any questionnaire. In SaaS, the hospital-admin role and the platform-operator role must be separated (Keycloak org roles). Otherwise a superuser flag set for one hospital applies in all of them.",
+   "evidence": "apps/backend/care/emr/api/viewsets/questionnaire.py:63-69; apps/backend/care/emr/api/viewsets/observation_definition.py:99,113; apps/backend/care/emr/api/viewsets/report/template.py:90,100",
+   "severity": "medium"
+  },
+  {
+   "risk": "Questionnaire is instance-global upstream (no facility FK, globally unique slug), but it stores per-hospital access in internal_organization_cache (FacilityOrganization ids) and links to FacilityOrganization. It cannot be one shared row per form. As a tenant model, the standard CARE and system forms must be seeded into each tenant, slug uniqueness becomes per-schema, and render_responses() always uses the current definition, so a later platform-wide form update changes how past responses render in every tenant that receives it.",
+   "evidence": "apps/backend/care/emr/models/questionnaire.py:12,19-20,75-96,121-142; apps/backend/care/emr/resources/questionnaire/spec.py:199-206",
+   "severity": "medium"
+  },
+  {
+   "risk": "Many integer-PK ArrayField soft references have no FK integrity and are meaningful only within one schema. Any tenant cloning, seeding from a template tenant, moving a facility between tenants or cross-tenant analytics must remap them. If a referenced model (TagConfig, Organization, definitions) ends up shared while the referrer is tenant, id spaces mix silently.",
+   "evidence": "encounter.py:24,27,35; service_request.py:20,46; activity_definition.py:20-24,33; questionnaire.py:19-20,155-156; medication_request.py:20; medication_dispense.py:45; favorites.py:20; allergy_intolerance.py:18-20",
+   "severity": "medium"
+  },
+  {
+   "risk": "Model save() side-effects and EMR signals must run in the right schema. Encounter.save() calls sync_organization_cache (a second save that reads facility.default_internal_organization_id). EncounterOrganization, QuestionnaireOrganization and QuestionnaireFacilityOrganization saves rewrite parent caches. care.emr.signals is wired in AppConfig.ready. Celery tasks or management commands that touch these models need tenant context (e.g. tenant-schemas-celery / schema_context), or they write into public or the wrong tenant.",
+   "evidence": "apps/backend/care/emr/models/encounter.py:39-63,72-74; apps/backend/care/emr/models/questionnaire.py:104-118,126-142; apps/backend/care/emr/apps.py:9-13",
+   "severity": "medium"
+  },
+  {
+   "risk": "Slug uniqueness for SlugBaseModel definitions is enforced only in viewset code (no DB constraint), with an exists() check that is race-prone. The calculated facility slug embeds the facility external_id ('f-<uuid>-slug'). This is safe per tenant, but any shared or master-catalogue sync has to reproduce the 'i-' slug convention exactly, or lookups by slug (ActivityDefinition requirements, questionnaire response templates) break.",
+   "evidence": "apps/backend/care/emr/models/base.py:32-64; apps/backend/care/emr/api/viewsets/observation_definition.py:70-90; apps/backend/care/emr/api/viewsets/activity_definition.py:91,106,136,177-185; apps/backend/care/emr/resources/questionnaire_response_template/spec.py:24-46",
+   "severity": "low"
+  },
+  {
+   "risk": "Generic UUID or string soft references (Observation.subject_id/parent, QuestionnaireResponse.subject_id, FileUpload/ReportUpload.associating_id, MetaArtifact.associating_external_id) are resolved by external_id lookups in the current schema. Under schema isolation this is safe: a foreign tenant's UUID just returns 404. But there is no DB integrity, and code that runs without tenant context (public schema) silently resolves nothing. BaseModel.external_id unique=True becomes per-schema unique, so an external_id alone no longer identifies the tenant, and every API or deep link must carry the tenant (subdomain).",
+   "evidence": "apps/backend/care/emr/models/observation.py:12-13,36; questionnaire.py:61; file_upload.py:16; report/report_upload.py:18; meta_artifact.py:7-8; apps/backend/care/utils/models/base.py:16; apps/backend/care/emr/api/viewsets/file_upload.py:38-92",
+   "severity": "low"
+  },
+  {
+   "risk": "If ProductKnowledge (which also has instance-wide facility-NULL rows) were made shared, the tenant clinical FKs into it (MedicationAdministration.administered_product with on_delete=CASCADE) would mean deleting one shared product cascades, or is blocked, across hundreds of tenant schemas. Django cannot collect that, and the DB FK would fail at commit.",
+   "evidence": "apps/backend/care/emr/models/medication_administration.py:27-29 (CASCADE); apps/backend/care/emr/models/medication_request.py:48-54 (SET_NULL); apps/backend/care/emr/api/viewsets/inventory/product_knowledge.py:176,193",
+   "severity": "low"
+  },
+  {
+   "risk": "Cache keys built from integer PKs collide across tenants. In schema-per-tenant every schema has its own id sequences, so facility_id=1 exists in every tenant. Tenant B could read Tenant A's discount and monetary configuration, which would put wrong prices or discounts on invoices.",
+   "evidence": "care/emr/models/facility_config.py:33-39 (key 'facility:{facility_id}:...'), :50-57 and :62-72 (cache.get/set), :76-77 (cache.delete). Fix: a django-tenants tenant-aware cache KEY_FUNCTION (django_tenants.cache.make_key) in settings. No model edit is needed.",
+   "severity": "high"
+  },
+  {
+   "risk": "Celery tasks take bare integer ids and have no tenant context. A worker runs in the public schema (or whatever search_path it last had), so it gets DoesNotExist or silently updates another tenant's row with the same id. Every .delay() call across CARE needs tenant propagation (e.g. tenant-schemas-celery).",
+   "evidence": "care/emr/models/resource_category.py:123-140 (summarise_monetary_components @shared_task, .delay(component.id) at :140; also called at api/viewsets/resource_category.py:208). care/emr/models/location.py:160-168 (handle_cascade @app.task, currently invoked synchronously at :129 and :168).",
+   "severity": "high"
+  },
+  {
+   "risk": "ResourceRequest is an inter-facility workflow. Its origin, approving and assigned facilities are different hospitals, so different tenants. Postgres/django-tenants cannot hold FKs across tenant schemas, and the comments thread is written by the other hospital's staff. Under schema-per-tenant this needs a redesign, for example a public-schema exchange or referral record with UUID soft references and tenant ids, or it must be disabled.",
+   "evidence": "care/emr/models/resource_request.py:9-25 (origin_facility, approving_facility, assigned_facility -> facility.Facility), :47-53 (related_patient), :58-62 (ResourceRequestComment).",
+   "severity": "high"
+  },
+  {
+   "risk": "Several models mix scopes: a NULL facility means an instance-wide row shared by all facilities. These look like shared data, but they cannot move to the public schema, because a shared table cannot have FKs into tenant tables (ResourceCategory, FacilityOrganization, Facility). The workable option is to keep them in the tenant schema and seed or sync the instance-wide rows into every tenant. That needs a sync command run on each tenant's creation and on each upstream sync.",
+   "evidence": "ProductKnowledge: product_knowledge.py:7-9 (nullable facility), :21-26 (FK to the facility-bound ResourceCategory), viewset api/viewsets/inventory/product_knowledge.py:176,193. TagConfig: tag_config.py:15-33 (nullable facility, FK to FacilityOrganization and Organization), tagging/base.py:46,118, api/viewsets/tag_config.py:101-104. HealthcareService: healthcare_service.py:8-14.",
+   "severity": "medium"
+  },
+  {
+   "risk": "Integer soft references in ArrayFields have no DB constraint. They hold TagConfig ids (tags), FacilityOrganization ids (facility_organization_cache), FacilityLocation ids (HealthcareService.locations), ChargeItem ids (Invoice.charge_items) and parent_cache ids. If any referenced model is split across public and tenant schemas, or data is migrated between schemas (onboarding an existing CARE install, merging or splitting tenants), these ids silently point at the wrong rows. The referenced models must stay tenant-local, and migration tooling must remap the arrays.",
+   "evidence": "account.py:28; charge_item.py:48; charge_item_definition.py:20; invoice.py:25; supply_request.py:26; supply_delivery.py:43; location.py:22,29,39; device.py:38; healthcare_service.py:21; tag_config.py:40; resource_category.py:30; scheduling/booking.py:36.",
+   "severity": "medium"
+  },
+  {
+   "risk": "users.User is shared (global Keycloak login), but every tenant table has FKs to it. Some use CASCADE. Django's deletion collector only sees the current schema, so hard-deleting a User would either fail on the FK constraints in other schemas at commit, or cascade-delete billing and appointment rows in only one tenant. Users must never be hard-deleted; deactivate them instead. CASCADE on performer_actor could wipe charge items.",
+   "evidence": "base.py:11-26 (created_by/updated_by on every model); charge_item.py:49-55 (performer_actor CASCADE); scheduling/booking.py:33 (booked_by CASCADE); scheduling/schedule.py:11-13 (SchedulableResource.user CASCADE); resource_request.py:40-45; valueset.py:60 (UserValueSetPreference.user CASCADE).",
+   "severity": "medium"
+  },
+  {
+   "risk": "ValueSet.slug is globally unique, and slugs are soft-referenced from questionnaires and evaluators. Shared: one copy is kept and hospital-authored sets need a namespace prefix, but a hospital's custom set would be visible to all tenants unless filtered. Tenant: the unique constraint is per schema, and sync_valueset or the registry must run in every schema after each upstream sync. ValueSet.search/lookup call the terminology server, so all tenants share that dependency (see P1-T10).",
+   "evidence": "care/emr/models/valueset.py:13 (slug unique=True), :18 (is_system_defined), :39-56 (external search/lookup); management/commands/sync_valueset.py:23-32; resources/questionnaire/spec.py:157; utils/evaluators/interpretation_evaluator.py:23.",
+   "severity": "medium"
+  },
+  {
+   "risk": "Recent and favourite code keys bypass the Django cache key function. RecentViewsManager uses a raw django_redis connection with a class-level cached client, and keys have no tenant prefix. A django-tenants KEY_FUNCTION will NOT cover them. A doctor at two hospitals shares recents across tenants, which could leak hospital-specific codes if value sets are tenant-local with the same slug.",
+   "evidence": "care/emr/models/valueset.py:70-78 (_client class cache, get_redis_connection), :93-122; api/viewsets/valueset.py:63-67 (key 'user_valueset_code_prefs:{slug}:{user_id}:...').",
+   "severity": "low"
+  },
+  {
+   "risk": "emr.Organization is the FK target for suppliers and some tags. It mixes globally shared 'govt' (geographic) organizations with hospital-specific 'product_supplier', 'team' and 'role' organizations. If Organization is made shared to keep the govt hierarchy as one copy, each hospital's supplier list lands in the public schema and is visible to every tenant. It probably needs to be split, or kept as tenant with the govt rows seeded.",
+   "evidence": "care/emr/models/supply_request.py:27-32 and supply_delivery.py:44-46 (supplier -> emr.Organization); tag_config.py:28-33; resources/organization/spec.py:10-14 (OrganizationTypeChoices team/govt/role/product_supplier).",
+   "severity": "medium"
+  },
+  {
+   "risk": "Almost every model has a non-null FK to facility.Facility, and model code relies on Facility's tenant-side relations (default_internal_organization, the root FacilityOrganization). Facility must therefore stay in the tenant schema. Routing, i.e. subdomain to schema, needs a separate public Tenant/Domain model; Facility must not be moved to public.",
+   "evidence": "location.py:23 and :99 (self.facility.default_internal_organization_id); device.py:43-45 (root FacilityOrganization lookup by facility); facility FKs in account.py:8, charge_item.py:8, invoice.py:8, scheduling/token.py:12,28,42,56, etc.",
+   "severity": "low"
+  },
+  {
+   "risk": "Integer PKs and per-facility counters are only unique within a schema. That is correct inside a tenant. Anything that leaves the schema (accounting outbox to Tally/ERPNext, analytics, audit logs, Celery payloads, ABDM callbacks) must key on (tenant, external_id UUID), never on the integer id. Invoice number, built from invoice_number_expression, is not DB-unique even within a tenant.",
+   "evidence": "care/utils/models/base.py:16 (external_id UUID unique); invoice.py:31 (number, no constraint); facility_config.py:14-16 (invoice_number_expression); scheduling/token.py:77-86 (Token.get_next_number MAX+1, no unique constraint).",
+   "severity": "low"
+  },
+  {
+   "risk": "SlugBaseModel's 'i-' instance-scoped slugs assume one instance-wide namespace. Under schema-per-tenant, 'i-' becomes per tenant, so the same 'i-' slug can mean different definitions in different hospitals. Slug uniqueness is not enforced in the DB even within a tenant (index only).",
+   "evidence": "care/emr/models/base.py:32-64 (calculate_slug / parse_slug); resource_category.py:48-51 (Index slug+facility, not unique); api/viewsets/inventory/product_knowledge.py:82-88.",
+   "severity": "low"
+  },
+  {
+   "risk": "FacilityMonetoryConfig.get_monetory_config lazily INSERTs a row whenever none exists. If it is called without tenant context (Celery, a management command, the public schema), it will create rows in the wrong schema or fail on the FK.",
+   "evidence": "care/emr/models/facility_config.py:18-23.",
+   "severity": "low"
+  },
+  {
+   "risk": "Schedule.is_public implies anonymous or public booking endpoints. These must resolve the tenant from the subdomain before any query, otherwise they hit the public schema. A doctor working at two hospitals has independent SchedulableResource, Schedule and AvailabilityException rows per tenant, so leave or double-booking across hospitals is not detected.",
+   "evidence": "care/emr/models/scheduling/schedule.py:58 (is_public), :6-35 (SchedulableResource unique per facility+user), :72-79 (AvailabilityException per resource).",
+   "severity": "low"
+  }
+ ]
+}
