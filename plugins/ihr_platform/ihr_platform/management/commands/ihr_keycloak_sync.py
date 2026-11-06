@@ -59,8 +59,8 @@ def hospital_login(hospital):
         msg = f"{hospital.slug} has no web address."
         raise CommandError(msg)
     origins = [settings.IHR_FRONTEND_URL_TEMPLATE.format(domain=d) for d in domains]
-    # P1-T4's web-app login lands on /auth/callback.
-    redirects = [f"{o}/auth/callback" for o in origins]
+    # The backend finishes the sign-in (P1-T4, ADR-009).
+    redirects = [f"{o}/api/ihr/auth/callback/" for o in origins]
     if settings.IHR_KEYCLOAK_DEV_REDIRECTS:
         if settings.IHR_TENANT_DOMAIN_SUFFIX != "localhost" or not settings.DEBUG:
             msg = "IHR_KEYCLOAK_DEV_REDIRECTS is for local development only."

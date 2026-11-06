@@ -43,7 +43,7 @@ def section(data):
         f" — temporary admin `{env.get('KC_BOOTSTRAP_ADMIN_USERNAME', '?')}`,"
         f" password `{env.get('KC_BOOTSTRAP_ADMIN_PASSWORD', '?')}`",
         "",
-        "| Username | Name | Hospitals | Password | Authenticator key |",
+        "| Username | Name | Signs in as (hospital: CARE user) | Password | Authenticator key |",
         "|---|---|---|---|---|",
     ]
     for u in data["users"]:
@@ -52,7 +52,8 @@ def section(data):
         else:
             key = "none yet: set up at first sign-in"
         lines.append(
-            f"| {u['username']} | {u['name']} | {', '.join(u['hospitals'])} |"
+            f"| {u['username']} | {u['name']} |"
+            f" {', '.join(f'{h}: {c}' for h, c in u.get('care_users', {}).items())} |"
             f" `{u['password']}` | {key} |"
         )
     lines += ["", END]

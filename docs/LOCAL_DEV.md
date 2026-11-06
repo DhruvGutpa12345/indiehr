@@ -33,6 +33,15 @@ scripts/keycloak-test.sh               # live tests in a throwaway realm (~45 s)
 - Every staff sign-in needs a password **and** a 6-digit code (decision in ADR-008).
 - Short of memory? Run `scripts/care-dev.sh keycloak stop` when you are done.
 
+## Staff sign-in through the backend (P1-T4a)
+
+Staff sign in through Keycloak only; CARE's own password form no longer works on hospital addresses (ADR-009). Until the web app is moved over (P1-T4b), check a sign-in directly:
+
+- http://alpha.localhost:8080/api/ihr/auth/login/?next=/api/ihr/auth/session/ signs you in (password + 6-digit code) and shows who you are at that hospital.
+- `POST /api/ihr/auth/logout/` with the header `X-IHR-CSRF: 1` signs out at every hospital.
+- The demo staff are linked to CARE users by `keycloak seed` (`dr.meera` is `care-doctor` at both hospitals).
+- Link another user with `manage.py ihr_link_staff --slug alpha --username care-nurse --sub <Keycloak user id> --yes`.
+
 ## Stop or inspect
 
 ```bash

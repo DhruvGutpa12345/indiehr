@@ -52,9 +52,10 @@ class LoginResult:
     page: str = None  # text of the page where the run stopped, if not redirected
     pages: list = field(default_factory=list)  # ids of the forms that were filled
     tokens: dict = None
-    enrolled_secret: str = (
-        None  # set when the "set up authenticator" page was completed
-    )
+    # set when the "set up authenticator" page was completed
+    enrolled_secret: str = None
+    landed: str = None  # app_sign_in: the app page the browser was sent back to
+    nonce: str = None  # login: the nonce sent, to check the ID token against
 
     @property
     def access(self):
@@ -129,20 +130,53 @@ class Browser:
             "code_challenge_method": "S256",
             **(extra or {}),
         }
-        result = LoginResult()
-        resp = self.fetch("GET", f"{self.oidc}/auth?{urlencode(params)}")
-        url = f"{self.oidc}/auth"
-        for _ in range(12):
+        result = LoginResult(nonce=params["nonce"])
+        url = f"{self.oidc}/auth?{urlencode(params)}"
+        location = self._walk(
+            url,
+            result,
+            username,
+            password,
+            otp_secret,
+            lambda u: u.startswith(redirect_uri),
+        )
+        if location is not None:
+            query = parse_qs(urlsplit(location).query)
+            if query.get("state", [None])[0] != params["state"]:
+                result.error = "state_mismatch"
+                return result
+            result.code = query.get("code", [None])[0]
+            result.error = query.get("error", [None])[0]
+        if result.code and exchange:
+            token = request(
+                "POST",
+                f"{self.oidc}/token",
+                headers={"Content-Type": "application/x-www-form-urlencoded"},
+                body=urlencode(
+                    {
+                        "grant_type": "authorization_code",
+                        "code": result.code,
+                        "redirect_uri": redirect_uri,
+                        "client_id": client_id,
+                        "code_verifier": verifier,
+                    }
+                ),
+            )
+            if token.status != HTTPStatus.OK:
+                result.error = f"token:{token.status}:{token.text[:200]}"
+            else:
+                result.tokens = token.json()
+        return result
+
+    def _walk(self, url, result, username, password, otp_secret, done):
+        """Follow redirects and fill the forms we know until ``done(location)``; returns that
+        location, or None when the run stops on a page (kept in ``result.page``)."""
+        resp = self.fetch("GET", url)
+        for _ in range(16):
             if resp.status in (301, 302, 303):
                 location = urljoin(url, resp.headers["Location"])
-                if location.startswith(redirect_uri):
-                    query = parse_qs(urlsplit(location).query)
-                    if query.get("state", [None])[0] != params["state"]:
-                        result.error = "state_mismatch"
-                        return result
-                    result.code = query.get("code", [None])[0]
-                    result.error = query.get("error", [None])[0]
-                    break
+                if done(location):
+                    return location
                 url = location
                 resp = self.fetch("GET", url)
                 continue
@@ -177,28 +211,35 @@ class Browser:
             else:
                 result.page = text
                 result.pages.append(f"stopped:{resp.status}")
-                return result
+                return None
             url = urljoin(url, form.action)
             resp = self.fetch("POST", url, data)
-        if result.code and exchange:
-            token = request(
-                "POST",
-                f"{self.oidc}/token",
-                headers={"Content-Type": "application/x-www-form-urlencoded"},
-                body=urlencode(
-                    {
-                        "grant_type": "authorization_code",
-                        "code": result.code,
-                        "redirect_uri": redirect_uri,
-                        "client_id": client_id,
-                        "code_verifier": verifier,
-                    }
-                ),
+        result.pages.append("too-many-steps")
+        return None
+
+    def app_sign_in(
+        self, app, username=None, password=None, otp_secret=None, next_path="/"
+    ):
+        """Sign in to a hospital the way its web app does: start at ``<app>/api/ihr/auth/login/``
+        and stop when the app sends the browser back to one of its own pages. Returns the
+        result with ``landed`` set to that page (or to ``/login?error=...``)."""
+        result = LoginResult()
+        host = urlsplit(app).netloc
+
+        def back_in_app(location):
+            parts = urlsplit(location)
+            return parts.netloc in ("", host) and not parts.path.startswith(
+                "/api/ihr/auth/"
             )
-            if token.status != HTTPStatus.OK:
-                result.error = f"token:{token.status}:{token.text[:200]}"
-            else:
-                result.tokens = token.json()
+
+        result.landed = self._walk(
+            f"{app}/api/ihr/auth/login/?{urlencode({'next': next_path})}",
+            result,
+            username,
+            password,
+            otp_secret,
+            back_in_app,
+        )
         return result
 
     def refresh(self, client_id, refresh_token):

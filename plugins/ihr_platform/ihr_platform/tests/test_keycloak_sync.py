@@ -65,7 +65,7 @@ class KeycloakSyncCommandTests(SimpleTestCase):
             self.assertIsNone(stored)
             self.assertEqual(login.slug, "testhosp")
             self.assertTrue(
-                all(u.endswith("/auth/callback") for u in login.redirect_uris)
+                all(u.endswith("/api/ihr/auth/callback/") for u in login.redirect_uris)
             )
             self.assertIn("ihr-h-testhosp -> organisation", out)
             with schema_context("public"):

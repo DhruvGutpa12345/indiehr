@@ -14,4 +14,9 @@ if [[ -z "${IHR_KC_TEST_ADMIN_ID:-}" ]]; then
   export IHR_KC_TEST_ADMIN_SECRET="$KC_BOOTSTRAP_ADMIN_CLIENT_SECRET"
 fi
 cd "$ROOT/plugins/ihr_platform"
-exec python3 -m unittest -v "${@:-ihr_platform.keycloak.tests.test_live}"
+# The backend's token checks (ihr_identity.tokens) need PyJWT: the versions the backend pins.
+if python3 -c "import jwt, cryptography" 2>/dev/null; then
+  exec python3 -m unittest -v "${@:-ihr_platform.keycloak.tests.test_live}"
+fi
+exec uv run --no-project --with pyjwt==2.15.1 --with cryptography==50.0.2 \
+  python -m unittest -v "${@:-ihr_platform.keycloak.tests.test_live}"

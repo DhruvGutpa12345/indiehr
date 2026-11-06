@@ -214,6 +214,82 @@ class KeycloakLiveTest(unittest.TestCase):
                 (result.error, result.code), ("invalid_scope", None), scope
             )
 
+    # --- what the backend accepts (P1-T4, ADR-009) -----------------------------------------
+
+    def _realm_keys(self):
+        import jwt
+
+        certs = request(
+            "GET", f"{URL}/realms/{self.realm}/protocol/openid-connect/certs"
+        )
+        return {
+            k["kid"]: jwt.PyJWK(k, algorithm="RS256")
+            for k in certs.json()["keys"]
+            if k.get("use") == "sig" and k.get("alg") == "RS256"
+        }
+
+    def test_real_tokens_pass_the_backend_checks_for_their_hospital_only(self):
+        """The backend's own checks (ihr_identity.tokens) on tokens Keycloak really issued:
+        the unit tests' minted tokens cannot drift from this shape unnoticed."""
+        from ihr_identity.tokens import (
+            TokenRejectedError,
+            verify_access_token,
+            verify_id_token,
+        )
+
+        _, name, pw, secret = self.user(["alpha"])
+        result = self.login(self.browser(), "alpha", name, pw, secret)
+        keys = self._realm_keys()
+        expected = {
+            "keys": keys,
+            "issuer": f"{URL}/realms/{self.realm}",
+            "now": time.time(),
+        }
+        alpha = {
+            "client_id": "ihr-h-alpha",
+            "org_id": self.ids["alpha"].org_id,
+            "slug": "alpha",
+        }
+        beta = {
+            "client_id": "ihr-h-beta",
+            "org_id": self.ids["beta"].org_id,
+            "slug": "beta",
+        }
+        access = verify_access_token(result.tokens["access_token"], **expected, **alpha)
+        verify_id_token(
+            result.tokens["id_token"],
+            keys=keys,
+            issuer=expected["issuer"],
+            client_id="ihr-h-alpha",
+            nonce=result.nonce,
+            access=access,
+            now=time.time(),
+        )
+        with self.assertRaises(TokenRejectedError):
+            verify_access_token(result.tokens["access_token"], **expected, **beta)
+
+    def test_back_channel_logout_ends_single_sign_on_everywhere(self):
+        """What the backend does at sign-out and idle time-out (owner's decision)."""
+        _, name, pw, secret = self.user(["alpha", "beta"])
+        browser = self.browser()
+        alpha = self.login(browser, "alpha", name, pw, secret).tokens
+        beta = self.login(browser, "beta", None, None, None).tokens
+        resp = request(
+            "POST",
+            f"{URL}/realms/{self.realm}/protocol/openid-connect/logout",
+            headers={"Content-Type": "application/x-www-form-urlencoded"},
+            body=urlencode(
+                {"client_id": "ihr-h-alpha", "refresh_token": alpha["refresh_token"]}
+            ),
+        )
+        self.assertEqual(resp.status, 204, resp.text)
+        self.assertEqual(
+            browser.refresh("ihr-h-beta", beta["refresh_token"]).status, 400
+        )
+        again = self.login(browser, "beta", None, None, None)
+        self.assertIsNone(again.code)
+        self.assertIn("kc-form-login", again.page or "")
+
     # --- the gates fail closed -------------------------------------------------------------
 
     def _scratch_client(self, **overrides):

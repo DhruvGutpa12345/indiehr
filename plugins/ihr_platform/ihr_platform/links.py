@@ -29,3 +29,16 @@ def frontend_base_url():
         msg = f"Hospital {schema} has no web address."
         raise ImproperlyConfigured(msg)
     return settings.IHR_FRONTEND_URL_TEMPLATE.format(domain=domain)
+
+
+def hospital_origins():
+    """Every web origin of the current hospital (requests from anywhere else are refused)."""
+    from ihr_platform.models import Domain
+
+    schema = getattr(connection, "schema_name", None)
+    domains = Domain.objects.filter(tenant__schema_name=schema).values_list(
+        "domain", flat=True
+    )
+    return {
+        settings.IHR_FRONTEND_URL_TEMPLATE.format(domain=d).rstrip("/") for d in domains
+    }

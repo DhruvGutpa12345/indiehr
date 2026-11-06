@@ -32,6 +32,12 @@ reset-token-tid|apps/backend/care/emr/utils/reset_password.py|        if schema 
 celery-tenant-app|apps/backend/config/celery_app.py|    from tenant_schemas_celery.app import CeleryApp as Celery|    pass|test_celery_tasks_run_in_the_senders_tenant|
 beat-active-only|plugins/ihr_platform/ihr_platform/beat.py|Hospital.objects.filter(status=Hospital.Status.ACTIVE).exclude(|Hospital.objects.exclude(|test_periodic_jobs_run_once_per_active_tenant|
 anonymous-default-allow|plugins/ihr_platform/ihr_platform/settings/tenancy.py|    settings["CELERY_BEAT_SCHEDULER"] =|    settings["REST_FRAMEWORK"]["DEFAULT_PERMISSION_CLASSES"] = ["rest_framework.permissions.AllowAny"]\n    settings["CELERY_BEAT_SCHEDULER"] =|test_anonymous_access_matches_reviewed_allow_list|
+oidc-azp|plugins/ihr_platform/ihr_identity/tokens.py|    if claims["azp"] != client_id:|    if False:|ihr_identity.tests.test_tokens.AccessTokenTests.test_wrong_azp_is_refused|
+oidc-org-id|plugins/ihr_platform/ihr_identity/tokens.py|    if org.get("id") != str(org_id) or org.get("alias") != slug:|    if False:|test_staff_session_from_a_is_rejected_on_b|
+oidc-acr|plugins/ihr_platform/ihr_identity/tokens.py|    if claims["acr"] != "mfa":|    if False:|ihr_identity.tests.test_tokens.AccessTokenTests.test_password_only_sign_in_is_refused|
+session-tid|plugins/ihr_platform/ihr_identity/authentication.py|        if session.tid != connection.schema_name:  # second line behind the key prefix|        if False:|ihr_identity.tests.test_staff_sign_in.StaffSessionTests.test_session_from_another_schema_is_refused|
+revocation-check|plugins/ihr_platform/ihr_identity/authentication.py|    if valid_after and session.created < valid_after.timestamp():|    if False:|ihr_identity.tests.test_staff_sign_in.StaffSessionTests.test_revoked_person_is_refused|
+care-login-blocked|plugins/ihr_platform/ihr_platform/urls_tenant.py|    *blocked_urlpatterns(),  # CARE's own staff sign-in is off (ADR-009); must come first\n||ihr_identity.tests.test_staff_sign_in.StaffSessionTests.test_care_password_sign_in_routes_are_gone|
 TABLE
 )
 
@@ -39,6 +45,7 @@ row() {
   local line
   line=$(grep -E "^$1\|" <<<"$MUTATIONS") || { echo "unknown mutation: $1" >&2; exit 2; }
   IFS='|' read -r NAME FILE FIND REPLACE TESTS SIGNATURE <<<"$line"
+  [[ -n "$TESTS" ]] || { echo "mutation $1 names no test" >&2; exit 2; }
 }
 
 mutate() {

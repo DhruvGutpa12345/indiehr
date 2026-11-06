@@ -13,7 +13,10 @@ Parallel runs are not supported yet: Django clones the test database before we c
 tenant schema, so ``--parallel`` is forced to 1.
 """
 
+import importlib.util
+import unittest
 import weakref
+from pathlib import Path
 
 import redis.client
 from django.db import connection, connections
@@ -21,6 +24,7 @@ from django.db.backends.signals import connection_created
 from django.test.runner import DiscoverRunner
 
 TEST_SCHEMA = "h_testhosp01"
+EXCLUDED_CARE_TESTS = Path(__file__).with_name("care_tests_excluded.txt")
 TEST_DOMAINS = ("testserver", "localhost", "127.0.0.1")
 _initialised_connections = weakref.WeakSet()
 
@@ -119,12 +123,44 @@ def _point_new_connection_at_test_tenant(sender, connection, **kwargs):
         connection.set_schema(TEST_SCHEMA)
 
 
+def _flatten(suite):
+    for item in suite:
+        if isinstance(item, unittest.TestSuite):
+            yield from _flatten(item)
+        else:
+            yield item
+
+
 class TenantTestRunner(DiscoverRunner):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         if self.parallel > 1:
             self.log("Tenant mode: running tests serially (parallel=1).")
             self.parallel = 1
+
+    def build_suite(self, *args, **kwargs):
+        """Leave out CARE's tests of features switched off in tenant mode (listed, reviewed)."""
+        suite = super().build_suite(*args, **kwargs)
+        excluded = [
+            line.split("#")[0].strip()
+            for line in EXCLUDED_CARE_TESTS.read_text().splitlines()
+            if line.split("#")[0].strip()
+        ]
+        for label in excluded:
+            if importlib.util.find_spec(label) is None:
+                msg = f"care_tests_excluded.txt lists {label}, which no longer exists."
+                raise RuntimeError(msg)
+        kept, dropped = unittest.TestSuite(), 0
+        for test in _flatten(suite):
+            if test.id().startswith(tuple(f"{label}." for label in excluded)):
+                dropped += 1
+            else:
+                kept.addTest(test)
+        if dropped:
+            self.log(
+                f"Tenant mode: left out {dropped} CARE tests of switched-off features."
+            )
+        return kept
 
     def setup_databases(self, **kwargs):
         # Start clean and record from the first write, so provisioning is audited too.

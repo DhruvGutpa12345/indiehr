@@ -75,6 +75,7 @@ jobs:
               - 'upstream.lock'
             keycloak:
               - 'plugins/ihr_platform/ihr_platform/keycloak/**'
+              - 'plugins/ihr_platform/ihr_identity/tokens.py'
               - 'deploy/keycloak/**'
               - 'deploy/dev/keycloak*'
               - 'scripts/keycloak*'
@@ -176,7 +177,7 @@ jobs:
       - name: CARE suite + ihr_platform tests inside a tenant schema
         run: |
           set +e
-          $COMPOSE exec -T backend python manage.py test --settings=ihr_platform.settings.test --noinput -v 2 ihr_platform ihr_tenant_settings . > tenant-tests.log 2>&1
+          $COMPOSE exec -T backend python manage.py test --settings=ihr_platform.settings.test --noinput -v 2 ihr_platform ihr_tenant_settings ihr_identity . > tenant-tests.log 2>&1
           status=$?
           grep -vE "\.\.\. ok$" tenant-tests.log | tail -400
           exit $status
@@ -300,6 +301,12 @@ jobs:
           done
           docker logs kc | tail -100
           exit 1
+
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: "3.13"
+      - name: Token-check dependencies (same pins as the backend)
+        run: pip install pyjwt==2.15.1 cryptography==50.0.2
 
       - name: Live tests (throwaway realm, real login pages)
         env:

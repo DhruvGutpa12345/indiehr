@@ -15,7 +15,7 @@ SHARED_APPS = [
 ]
 PLATFORM_ONLY_APPS = {"django_tenants", "ihr_platform"}
 # Our apps that live in every hospital's schema (TENANCY_DESIGN.md §3).
-IHR_TENANT_APPS = ["ihr_tenant_settings"]
+IHR_TENANT_APPS = ["ihr_tenant_settings", "ihr_identity"]
 
 
 def apply_tenancy(settings):
@@ -82,6 +82,28 @@ def apply_tenancy(settings):
         "TITLE": "IndieHR API",
         "DESCRIPTION": "IndieHR hospital API",
     }
+
+    # Staff sign in only through Keycloak, with tokens kept by the backend (P1-T4, ADR-009).
+    # CARE's own JWT, Basic and Django-session classes are gone; patient OTP views keep theirs.
+    settings["REST_FRAMEWORK"] = {
+        **settings["REST_FRAMEWORK"],
+        "DEFAULT_AUTHENTICATION_CLASSES": [
+            "ihr_identity.authentication.StaffSessionAuthentication",
+            "ihr_identity.authentication.ServiceTokenAuthentication",
+        ],
+    }
+    settings["MIDDLEWARE"] = [
+        *settings["MIDDLEWARE"],
+        "ihr_identity.middleware.StaffSessionMiddleware",
+    ]
+    settings["CORS_ALLOW_CREDENTIALS"] = False
+    settings.setdefault("IHR_SESSION_IDLE_SECONDS", 1800)
+    settings.setdefault("IHR_SESSION_MAX_SECONDS", 43200)
+    settings.setdefault("IHR_OIDC_LEEWAY_SECONDS", 30)
+    settings.setdefault("IHR_SESSION_COOKIE", "__Host-ihr_session")
+    settings.setdefault("IHR_LOGIN_COOKIE", "__Host-ihr_login")
+    settings.setdefault("IHR_SESSION_COOKIE_SECURE", True)
+    settings.setdefault("IHR_STAFF_REFUSE_SUPERUSERS", True)
 
     # Keycloak (P1-T3, ADR-008): one realm for all hospitals. Admin credentials are never
     # settings: ihr_keycloak_sync reads them from its own environment.

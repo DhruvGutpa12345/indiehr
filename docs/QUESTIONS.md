@@ -55,6 +55,10 @@
 | Q-K2 | **MFA for all staff** (2026-11-06), enforced by Keycloak and checked by the backend | ADR-008 |
 | Q-K3 | **Passwords: 12+ characters, last 5 not reused, no username/email, common-password block list**, no composition rules (2026-11-06) | ADR-008 |
 | Q-K4 | **Sessions: 30 min idle, 12 h maximum**; access tokens 5 min (2026-11-06) | ADR-008 |
+| Q-K5 | **Staff tokens kept by the backend**, HttpOnly cookie in the browser (2026-11-07; closes R0-20) | ADR-009, P1-T4a |
+| Q-K6 | **Sign-out and the 30-min idle time-out end sign-in at all hospitals** (2026-11-07) | ADR-009 |
+| Q-K7 | **Keycloak only for staff**, in development too: CARE's password login, its MFA, password reset and the Django admin are off on hospital addresses (2026-11-07) | ADR-009 |
+| Q-K8 | **P1-T4 split** into P1-T4a (backend) and P1-T4b (web app + click-through) (2026-11-07) | PLAN |
 | Q-G4 | **`/goal` and `/advisor` = second-opinion reviews:** an independent Opus agent reviews each finished phase against the plan | Working agreement §5 |
 
 **Still open:** Q-B4 (final MVP module list: assumed as in PLAN.md Phase 2) and Q-B6/B7 (pricing, timeline). Q-F2 is moot while AI is deferred.

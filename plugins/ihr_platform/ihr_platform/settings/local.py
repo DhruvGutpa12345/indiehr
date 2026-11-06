@@ -1,5 +1,7 @@
 """CARE's local settings in tenant mode (scripts/care-dev.sh)."""
 
+import os
+
 from config.settings.local import *  # noqa: F403
 
 from ihr_platform.settings.tenancy import apply_tenancy
@@ -12,5 +14,10 @@ IHR_KEYCLOAK_PUBLIC_URL = "http://auth.localhost:8081"
 IHR_KEYCLOAK_URL = "http://keycloak:8080"
 # Also allow the dev token viewer (http://<slug>.localhost:8082/) as a login redirect.
 IHR_KEYCLOAK_DEV_REDIRECTS = True
+# Dev runs on plain http://*.localhost: no __Host- prefix, no Secure flag (ADR-009).
+IHR_SESSION_COOKIE = "ihr_session"
+IHR_LOGIN_COOKIE = "ihr_login"
+IHR_SESSION_COOKIE_SECURE = False
+IHR_SESSION_IDLE_SECONDS = int(os.environ.get("IHR_SESSION_IDLE_SECONDS", "1800"))
 
 apply_tenancy(globals())

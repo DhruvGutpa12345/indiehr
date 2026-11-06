@@ -12,6 +12,7 @@ import secrets
 
 from django.conf import settings
 from django.core.management.base import BaseCommand, CommandError
+from django_tenants.utils import schema_context
 
 from ihr_platform.keycloak import totp
 from ihr_platform.keycloak.hospital import ensure_member, hospital_ids
@@ -20,17 +21,35 @@ from ihr_platform.keycloak.users import create_user
 from ihr_platform.management.commands.ihr_keycloak_sync import keycloak_admin
 from ihr_platform.models import Hospital
 
-# username, first name, last name, hospitals, TOTP pre-set (False: enrols at first login)
+# username, first name, last name, {hospital: CARE user it signs in as}, TOTP pre-set
+# (False: enrols at first sign-in). CARE's `admin` is a superuser and is never linked (Q-T5).
 DEMO_STAFF = [
-    ("dr.meera", "Meera", "Iyer", ["alpha", "beta"], True),
-    ("nurse.asha", "Asha", "Nair", ["alpha"], True),
-    ("admin.bhavesh", "Bhavesh", "Rao", ["beta"], True),
-    ("new.neha", "Neha", "Kulkarni", ["alpha"], False),
+    (
+        "dr.meera",
+        "Meera",
+        "Iyer",
+        {"alpha": "care-doctor", "beta": "care-doctor"},
+        True,
+    ),
+    ("nurse.asha", "Asha", "Nair", {"alpha": "care-nurse"}, True),
+    ("admin.bhavesh", "Bhavesh", "Rao", {"beta": "care-fac-admin"}, True),
+    ("new.neha", "Neha", "Kulkarni", {"alpha": "care-staff"}, False),
 ]
 
 
 def new_password():
     return f"Ihr-{secrets.token_urlsafe(12)}-7"
+
+
+def _link(hospital, username, sub):
+    """The Keycloak person signs in to this hospital as its CARE user ``username``."""
+    from care.users.models import User
+    from ihr_identity.models import StaffIdentity
+
+    with schema_context(hospital.schema_name):
+        user = User.objects.get(username=username)
+        StaffIdentity.objects.filter(user=user).delete()
+        StaffIdentity.objects.create(user=user, keycloak_sub=sub)
 
 
 class Command(BaseCommand):
@@ -59,15 +78,17 @@ class Command(BaseCommand):
                 user_id = create_user(
                     admin, username, first, last, password, otp_secret
                 )
-                for slug in member_of:
+                for slug, care_user in member_of.items():
                     ensure_member(admin, ids[slug], user_id)
+                    _link(hospitals[slug], care_user, user_id)
                 users.append(
                     {
                         "username": username,
                         "name": f"{first} {last}",
                         "password": password,
                         "otp_secret": otp_secret,
-                        "hospitals": member_of,
+                        "hospitals": list(member_of),
+                        "care_users": member_of,
                     }
                 )
         except KeycloakError as exc:

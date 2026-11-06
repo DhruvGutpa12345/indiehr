@@ -7,7 +7,16 @@ from rest_framework.exceptions import ParseError
 
 logger = logging.getLogger(__name__)
 
-HEADERS_TO_INCLUDE = ["HTTP_USER_AGENT", "HTTP_AUTHORIZATION"]
+# IndieHR (P1-T4): the staff session cookie and our headers, checked per sub-request
+HEADERS_TO_INCLUDE = [
+    "HTTP_USER_AGENT",
+    "HTTP_AUTHORIZATION",
+    "HTTP_COOKIE",
+    "HTTP_X_IHR_CSRF",
+    "HTTP_X_IHR_IDLE",
+    "HTTP_ORIGIN",
+    "HTTP_SEC_FETCH_SITE",
+]
 DEFAULT_CONTENT_TYPE = "application/json"
 
 

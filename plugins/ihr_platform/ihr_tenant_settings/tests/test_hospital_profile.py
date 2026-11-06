@@ -15,11 +15,12 @@ from django.core.management import call_command
 from django.db import IntegrityError, connection, transaction
 from django.test import SimpleTestCase
 from django_tenants.utils import schema_context
+from ihr_identity import testing
+from ihr_identity.models import StaffIdentity
 from ihr_platform.links import frontend_base_url
 from ihr_platform.models import Domain, Hospital, RetiredAddress, generate_schema_name
 from ihr_platform.test_runner import TEST_SCHEMA
 from rest_framework.test import APIClient
-from rest_framework_simplejwt.tokens import RefreshToken
 
 from ihr_tenant_settings.branding import initials
 from ihr_tenant_settings.models import HospitalProfile
@@ -286,15 +287,16 @@ class HospitalProfileTests(SimpleTestCase):
         user = User.objects.create_user(
             username="profile-reader", password="x-Unused-1"
         )
-        client = APIClient(HTTP_HOST="testserver")
-        client.credentials(
-            HTTP_AUTHORIZATION=f"Bearer {RefreshToken.for_user(user).access_token}"
-        )
+        with schema_context("public"):
+            hospital = Hospital.objects.get(schema_name=TEST_SCHEMA)
         try:
-            response = client.get("/api/ihr/profile/")
+            with testing.fake_keycloak():
+                client = testing.staff_client(hospital, "testserver", user)
+                response = client.get("/api/ihr/profile/")
             self.assertEqual(response.status_code, 200)
             self.assertEqual(response.json()["gstin"], VALID_GSTINS[0])
         finally:
+            StaffIdentity.objects.filter(user=user).delete()
             user.delete()
 
     def test_platform_host_has_no_hospital_routes(self):

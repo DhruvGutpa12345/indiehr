@@ -16,8 +16,11 @@ from django.conf import settings
 from django.core.exceptions import ImproperlyConfigured
 from django.core.files.uploadedfile import SimpleUploadedFile
 from django.db import connection
-from django.test import SimpleTestCase
+from django.test import SimpleTestCase, override_settings
 from django_tenants.utils import schema_context
+from ihr_identity import testing
+from ihr_identity.authentication import StaffSessionAuthentication
+from ihr_identity.blocked import Blocked
 from rest_framework.test import APIClient
 from rest_framework_simplejwt.tokens import RefreshToken
 
@@ -59,6 +62,12 @@ def _owns(response, tenant):
     return bool(set(UUID_RE.findall(body)) & tenant.ids)
 
 
+NOT_SIGNED_IN = b"Authentication credentials were not provided."
+
+
+# The crawl signs in as each tenant's CARE superuser so every route has data to show; real
+# sign-ins refuse superusers (ADR-009), which ihr_identity's own tests check.
+@override_settings(IHR_STAFF_REFUSE_SUPERUSERS=False)
 class CrossTenantIsolationTests(SimpleTestCase):
     maxDiff = None
     databases = {"default"}
@@ -68,9 +77,12 @@ class CrossTenantIsolationTests(SimpleTestCase):
         super().setUpClass()
         cls.a, cls.b = build_world()
         cls.routes = get_routes()
+        cls._keycloak = testing.fake_keycloak()
+        cls._keycloak.__enter__()
 
     @classmethod
     def tearDownClass(cls):
+        cls._keycloak.__exit__(None, None, None)
         drop_world(cls.a, cls.b)
         connection.set_schema(TEST_SCHEMA)
         super().tearDownClass()
@@ -79,25 +91,24 @@ class CrossTenantIsolationTests(SimpleTestCase):
         connection.set_schema(TEST_SCHEMA)
         super().tearDown()
 
-    def _staff_client(self, tenant):
-        """A real Bearer token (not force_authenticate), so every view's own auth classes run."""
-        with schema_context(tenant.schema):
-            token = str(RefreshToken.for_user(tenant.admin).access_token)
-        client = APIClient(HTTP_HOST=tenant.domain, raise_request_exception=False)
-        client.credentials(HTTP_AUTHORIZATION=f"Bearer {token}")
-        return client
+    def _staff_client(self, tenant, **claims):
+        """A real staff session (not force_authenticate), so every view's own auth runs."""
+        return testing.staff_client(
+            tenant.hospital, tenant.domain, tenant.admin, **claims
+        )
 
     # --- API crawl -------------------------------------------------------------------------
 
     def _crawl(self, viewer, other):
         """Every GET route as ``viewer``'s admin on its host, filled with its own ids."""
         client = self._staff_client(viewer)
-        from config.authentication import CustomJWTAuthentication
 
         statuses, skipped, leaks, errors, own = Counter(), set(), [], [], 0
         refused = []  # staff routes that refused the staff token
         for route, cls, allows_get in self.routes:
-            if not allows_get:
+            if (
+                not allows_get or cls is Blocked
+            ):  # switched off; ihr_identity tests them
                 continue
             path = fill(route, cls, viewer)
             if path is None:
@@ -107,10 +118,14 @@ class CrossTenantIsolationTests(SimpleTestCase):
             statuses[response.status_code] += 1
             if response.status_code >= 500:
                 errors.append(path)
-            staff_route = CustomJWTAuthentication in getattr(
+            staff_route = StaffSessionAuthentication in getattr(
                 cls, "authentication_classes", ()
             )
-            if response.status_code == 401 and staff_route:
+            if (
+                response.status_code in (401, 403)
+                and NOT_SIGNED_IN in response.content
+                and staff_route
+            ):
                 refused.append(path)
             if found := _leaks(response, other):
                 leaks.append(f"{path} -> {sorted(found)[:3]}")
@@ -189,16 +204,42 @@ class CrossTenantIsolationTests(SimpleTestCase):
 
     # --- tokens ----------------------------------------------------------------------------
 
-    def test_staff_token_from_a_is_rejected_on_b(self):
-        with schema_context(self.a.schema):
-            token = str(RefreshToken.for_user(self.a.admin).access_token)
-        for tenant, expected in ((self.a, (200,)), (self.b, (401, 403))):
-            client = APIClient(HTTP_HOST=tenant.domain)
-            client.credentials(HTTP_AUTHORIZATION=f"Bearer {token}")
-            response = client.get("/api/v1/users/getcurrentuser/")
-            self.assertIn(response.status_code, expected, tenant.hospital.slug)
-        # The rejection rests on User.external_id being random per tenant (TENANCY_DESIGN §4).
-        self.assertNotEqual(self.a.admin.external_id, self.b.admin.external_id)
+    def test_staff_session_from_a_is_rejected_on_b(self):
+        me = "/api/v1/users/getcurrentuser/"
+        client = self._staff_client(self.a)
+        self.assertEqual(client.get(me).status_code, 200)  # positive control
+        # 1. A's session cookie, presented at B's address.
+        cookie = client.cookies[settings.IHR_SESSION_COOKIE].value
+        at_b = APIClient(HTTP_HOST=self.b.domain, HTTP_X_IHR_CSRF="1")
+        at_b.cookies[settings.IHR_SESSION_COOKIE] = cookie
+        self.assertEqual(at_b.get(me).status_code, 403)
+        # 2. A session at B holding a token Keycloak issued for A's client.
+        a_client = f"ihr-h-{self.a.hospital.slug}"
+        for_a = {
+            "azp": a_client,
+            "aud": a_client,
+            "resource_access": {a_client: {"roles": ["member"]}},
+            "ihr_org": {
+                "alias": self.a.hospital.slug,
+                "id": str(self.a.hospital.keycloak_org_id),
+            },
+        }
+        self.assertEqual(self._staff_client(self.b, **for_a).get(me).status_code, 403)
+        # 3. A token for B's client that names A's organisation.
+        a_org = {
+            "alias": self.b.hospital.slug,
+            "id": str(self.a.hospital.keycloak_org_id),
+        }
+        self.assertEqual(
+            self._staff_client(self.b, ihr_org=a_org).get(me).status_code, 403
+        )
+        # 4. CARE's own JWT, which no longer opens anything.
+        for tenant in (self.a, self.b):
+            with schema_context(tenant.schema):
+                token = str(RefreshToken.for_user(tenant.admin).access_token)
+            care = APIClient(HTTP_HOST=tenant.domain)
+            care.credentials(HTTP_AUTHORIZATION=f"Bearer {token}")
+            self.assertEqual(care.get(me).status_code, 403, tenant.hospital.slug)
 
     def test_patient_otp_token_from_a_is_rejected_on_b(self):
         """Same phone number in both tenants: A's patient-login token must not open B."""

@@ -1,0 +1,9 @@
+# CARE test modules that do not run in tenant mode (P1-T4, ADR-009): they exercise CARE's own
+# staff password sign-in, JWT tokens, two-factor and password reset, which are switched off on
+# hospital addresses (ihr_identity/blocked.py). They still run in the plain "Backend" CI job.
+# The runner fails if a listed module disappears, so this list cannot go stale silently.
+care.emr.tests.test_mfa_login
+care.emr.tests.test_totp
+care.emr.tests.test_reset_password_api
+care.emr.tests.test_otp_reset_password_api
+care.users.tests.test_change_password
