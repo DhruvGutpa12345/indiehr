@@ -163,6 +163,10 @@ class TenantTestRunner(DiscoverRunner):
         return kept
 
     def setup_databases(self, **kwargs):
+        if not kwargs.get("aliases"):
+            # Only database-free tests were selected (e.g. one mutation's guarding test):
+            # Django creates no test database, so there is no tenant to set up.
+            return super().setup_databases(**kwargs)
         # Start clean and record from the first write, so provisioning is audited too.
         _test_redis().flushdb()
         _start_recording_redis_writes()
@@ -201,6 +205,8 @@ class TenantTestRunner(DiscoverRunner):
         return failures
 
     def teardown_databases(self, old_config, **kwargs):
+        if not old_config:
+            return super().teardown_databases(old_config, **kwargs)
         connection_created.disconnect(_point_new_connection_at_test_tenant)
         connection.set_schema_to_public()
-        super().teardown_databases(old_config, **kwargs)
+        return super().teardown_databases(old_config, **kwargs)
