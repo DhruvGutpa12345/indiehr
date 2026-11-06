@@ -344,10 +344,13 @@ class CrossTenantIsolationTests(SimpleTestCase):
         self.assertEqual(
             settings.CELERY_BEAT_SCHEDULER, "ihr_platform.beat.ActiveTenantScheduler"
         )
+        from care.emr.tasks import setup_periodic_tasks
+
         from ihr_platform.beat import ActiveTenantScheduler
 
-        app.loader.import_default_modules()
-        app.finalize()
+        # CARE registers these from on_after_finalize; if an earlier test already finalized the
+        # app, that hook never fired in this process. Registering again is idempotent (by name).
+        setup_periodic_tasks(app)
         scheduler = ActiveTenantScheduler(app=app, lazy=True)
         entries = scheduler._tenant_aware_beat_schedule_to_dict(app.conf.beat_schedule)
         self.assertTrue(
