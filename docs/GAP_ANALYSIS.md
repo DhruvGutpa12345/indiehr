@@ -153,7 +153,7 @@
 ## 7b. Known gaps from the egress lockdown (P0-T10)
 
 - **Facility map** (facility form): map tiles and address search use OpenStreetMap servers; the enforced CSP blocks them, so the map is blank and address search fails. Decide later: self-hosted tiles, an Indian provider, or manual lat/long only.
-- **reCAPTCHA** after failed logins is off (no site key). Brute-force protection must come from Keycloak (P1-T3).
+- **reCAPTCHA** after failed logins is off (no site key). Brute-force protection must come from Keycloak (P1-T3). *(P1-T3: Keycloak locks an account after 5 failures, 1 to 15 minutes; it covers CARE once login moves to Keycloak in P1-T4.)*
 
 ## 8. Verified behaviours (P0-T11, 2026-11-03)
 

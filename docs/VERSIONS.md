@@ -107,3 +107,15 @@ Backend lock fully re-resolved on 2026-11-04 (latest compatible for every packag
 | django-tenants | 4.0.1 (2026-10-23, security release; declares Django 5.2–6.1) | 2026-11-06 |
 | tenant-schemas-celery | 5.0.0 (2026-08-01; requires celery>=5) | 2026-11-06 |
 | ruff (pre-commit, plugins/) | v0.14.8 (same as CARE's config) | 2026-11-06 |
+
+## Identity — P1-T3
+
+| Item | Version | Checked |
+|---|---|---|
+| Keycloak | 26.8.2 (2026-11-05; fixes a 2FA-setup bypass, an organisation-login takeover and a minimum-ACR bypass in older 26.x) — `quay.io/keycloak/keycloak:26.8.2@sha256:3879c623248408de29a5303178b5816c77e8dfef3890c361f8c0bbeaa979ba3b` | 2026-11-06 |
+| Keycloak database (dev) | the dev Postgres 17.11, own database and owner role `keycloak` | 2026-11-06 |
+| Keycloak database (CI) | `postgres:18.6-alpine@sha256:123b17998ccaf47e53b502e8c6a1e79afd8f579c6f3eec83c563da026f957395` | 2026-11-06 |
+| Password block list | SecLists commit `2f31b22e1f9963ec2fd2b12606c00f0fb04910f1` (MIT), filtered to 12+ characters | 2026-11-06 |
+| keycloak-config-cli | not used: latest release v6.5.1 (2026-05-22) predates Keycloak 26.7 and mishandles 26.8 organisations | 2026-11-06 |
+
+Measured locally with the CARE stack running: Keycloak uses about 540 MB (limit 1 GB, heap 50%); first start about 30 s.

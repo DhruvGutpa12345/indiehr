@@ -51,6 +51,10 @@
 | Q-T9 | **Clear cached data at logout** (frontend patch) | §6.9 |
 | Q-T10 | **Packs auto-update unedited rows**; edited rows need admin OK | §5 |
 | Q-T11 | **Domain decided at P1-T8** (staging) | — |
+| Q-K1 | **Job roles live in CARE only** (2026-11-06); Keycloak holds one `member` role per hospital | ADR-008, P1-T3 |
+| Q-K2 | **MFA for all staff** (2026-11-06), enforced by Keycloak and checked by the backend | ADR-008 |
+| Q-K3 | **Passwords: 12+ characters, last 5 not reused, no username/email, common-password block list**, no composition rules (2026-11-06) | ADR-008 |
+| Q-K4 | **Sessions: 30 min idle, 12 h maximum**; access tokens 5 min (2026-11-06) | ADR-008 |
 | Q-G4 | **`/goal` and `/advisor` = second-opinion reviews:** an independent Opus agent reviews each finished phase against the plan | Working agreement §5 |
 
 **Still open:** Q-B4 (final MVP module list: assumed as in PLAN.md Phase 2) and Q-B6/B7 (pricing, timeline). Q-F2 is moot while AI is deferred.

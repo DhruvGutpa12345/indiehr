@@ -48,6 +48,11 @@ class Hospital(TenantMixin):
         max_length=16, choices=Status.choices, default=Status.PROVISIONING
     )
     created_on = models.DateTimeField(auto_now_add=True)
+    # Keycloak organisation of this hospital (TENANCY_DESIGN §4, P1-T3). Set once by
+    # ihr_keycloak_sync and never changed: tokens are checked against it (P1-T4).
+    keycloak_org_id = models.UUIDField(
+        null=True, blank=True, unique=True, editable=False
+    )
 
     # v1 provisioning: create the schema and run every migration in it (no cloning).
     auto_create_schema = True

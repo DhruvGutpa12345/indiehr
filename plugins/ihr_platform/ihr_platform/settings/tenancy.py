@@ -83,6 +83,11 @@ def apply_tenancy(settings):
         "DESCRIPTION": "IndieHR hospital API",
     }
 
+    # Keycloak (P1-T3, ADR-008): one realm for all hospitals. Admin credentials are never
+    # settings: ihr_keycloak_sync reads them from its own environment.
+    settings.setdefault("IHR_KEYCLOAK_REALM", "indiehr")
+    settings.setdefault("IHR_KEYCLOAK_DEV_REDIRECTS", False)
+
     settings["FILE_OBJECT_KEY_PREFIX_FUNCTION"] = (
         "ihr_platform.storage.tenant_key_prefix"
     )

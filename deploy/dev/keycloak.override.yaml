@@ -1,0 +1,47 @@
+# IndieHR local Keycloak (P1-T3), on top of care-local.override.yaml. Opt-in (profile
+# "keycloak") because of RAM: run it through `scripts/care-dev.sh keycloak up`.
+#  - browser address http://auth.localhost:8081; the CARE containers reach it as http://keycloak:8080
+#  - its own database "keycloak" (owner role "keycloak") on the dev Postgres, never ihr_dev
+#  - secrets come from deploy/dev/keycloak.env (git-ignored, written by care-dev.sh)
+# Relative paths resolve against apps/backend (the compose project directory).
+services:
+  keycloak:
+    image: quay.io/keycloak/keycloak:26.8.2@sha256:3879c623248408de29a5303178b5816c77e8dfef3890c361f8c0bbeaa979ba3b
+    profiles: ["keycloak"]
+    command: ["start-dev"]
+    env_file:
+      - path: ../../deploy/dev/keycloak.env
+        required: true
+    environment:
+      KC_DB: postgres
+      KC_DB_URL_HOST: db
+      KC_DB_URL_DATABASE: keycloak
+      KC_DB_USERNAME: keycloak
+      # Dev Postgres allows 40 connections; Keycloak's default pool is 100.
+      KC_DB_POOL_INITIAL_SIZE: "1"
+      KC_DB_POOL_MIN_SIZE: "1"
+      KC_DB_POOL_MAX_SIZE: "8"
+      # Tokens carry the browser address as issuer; back-channel calls may use keycloak:8080.
+      KC_HOSTNAME: http://auth.localhost:8081
+      KC_HOSTNAME_BACKCHANNEL_DYNAMIC: "true"
+      KC_HEALTH_ENABLED: "true"
+      KC_FEATURES_DISABLED: device-flow,ciba,impersonation,kerberos
+      KC_SPI_PASSWORD_POLICY__PASSWORD_BLACKLIST__BLACKLISTS_PATH: /opt/keycloak/data/password-blacklists
+      JAVA_OPTS_KC_HEAP: "-XX:MaxRAMPercentage=50 -XX:InitialRAMPercentage=20 -XX:MinHeapFreeRatio=10 -XX:MaxHeapFreeRatio=30"
+    volumes:
+      - ../../deploy/keycloak/password-blocklist:/opt/keycloak/data/password-blacklists:ro
+    depends_on:
+      db:
+        condition: service_healthy
+    # No curl in the image; bash's /dev/tcp reads the readiness endpoint on the management port.
+    healthcheck:
+      test: ["CMD-SHELL", "exec 3<>/dev/tcp/127.0.0.1/9000 && printf 'GET /health/ready HTTP/1.0\\r\\nHost: localhost\\r\\n\\r\\n' >&3 && grep -q '\"UP\"' <&3"]
+      interval: 10s
+      timeout: 5s
+      retries: 30
+      start_period: 60s
+    mem_limit: 1g
+    restart: "no"
+    ports:
+      - "127.0.0.1:8081:8080"
+      - "127.0.0.1:9002:9000"

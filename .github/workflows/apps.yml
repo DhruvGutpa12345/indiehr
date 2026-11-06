@@ -34,6 +34,7 @@ jobs:
       frontend: ${{ steps.filter.outputs.frontend }}
       infra: ${{ steps.filter.outputs.infra }}
       isolation: ${{ steps.filter.outputs.isolation }}
+      keycloak: ${{ steps.filter.outputs.keycloak }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: dorny/paths-filter@ceb8a2b8f2d89434be7ff52d3de7ec3738c5cc9d # v4.0.3
@@ -72,6 +73,12 @@ jobs:
               - 'deploy/ci/**'
               - '.github/workflows/apps.yml'
               - 'upstream.lock'
+            keycloak:
+              - 'plugins/ihr_platform/ihr_platform/keycloak/**'
+              - 'deploy/keycloak/**'
+              - 'deploy/dev/keycloak*'
+              - 'scripts/keycloak*'
+              - '.github/workflows/apps.yml'
             infra:
               - 'deploy/**'
               - 'scripts/**'
@@ -255,6 +262,54 @@ jobs:
             fi
           done < <(../../scripts/isolation-mutation.sh expect "$MUTATION")
           echo "Mutation $MUTATION killed, as required."
+
+  keycloak:
+    name: Keycloak live tests
+    needs: changes
+    if: needs.changes.outputs.keycloak == 'true' || github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    env:
+      # Same image as deploy/dev/keycloak.override.yaml (docs/VERSIONS.md)
+      KEYCLOAK_IMAGE: quay.io/keycloak/keycloak:26.8.2@sha256:3879c623248408de29a5303178b5816c77e8dfef3890c361f8c0bbeaa979ba3b
+      POSTGRES_IMAGE: postgres:18.6-alpine@sha256:123b17998ccaf47e53b502e8c6a1e79afd8f579c6f3eec83c563da026f957395
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Start Postgres and Keycloak (throwaway secrets)
+        run: |
+          DB_PW="$(openssl rand -hex 16)"
+          ADMIN_SECRET="$(openssl rand -hex 24)"
+          echo "::add-mask::$ADMIN_SECRET"
+          echo "IHR_KC_TEST_ADMIN_SECRET=$ADMIN_SECRET" >> "$GITHUB_ENV"
+          docker network create kc
+          docker run -d --name kc-db --network kc -e POSTGRES_USER=keycloak \
+            -e POSTGRES_PASSWORD="$DB_PW" -e POSTGRES_DB=keycloak "$POSTGRES_IMAGE"
+          docker run -d --name kc --network kc -p 127.0.0.1:8081:8080 -p 127.0.0.1:9002:9000 \
+            -e KC_DB=postgres -e KC_DB_URL_HOST=kc-db -e KC_DB_URL_DATABASE=keycloak \
+            -e KC_DB_USERNAME=keycloak -e KC_DB_PASSWORD="$DB_PW" \
+            -e KC_HOSTNAME=http://auth.localhost:8081 -e KC_HEALTH_ENABLED=true \
+            -e KC_FEATURES_DISABLED=device-flow,ciba,impersonation,kerberos \
+            -e KC_SPI_PASSWORD_POLICY__PASSWORD_BLACKLIST__BLACKLISTS_PATH=/opt/keycloak/data/password-blacklists \
+            -e KC_BOOTSTRAP_ADMIN_CLIENT_ID=ihr-ci -e KC_BOOTSTRAP_ADMIN_CLIENT_SECRET="$ADMIN_SECRET" \
+            -v "$PWD/deploy/keycloak/password-blocklist:/opt/keycloak/data/password-blacklists:ro" \
+            "$KEYCLOAK_IMAGE" start-dev
+          for _ in $(seq 90); do
+            curl -fsS http://127.0.0.1:9002/health/ready >/dev/null 2>&1 && exit 0
+            sleep 2
+          done
+          docker logs kc | tail -100
+          exit 1
+
+      - name: Live tests (throwaway realm, real login pages)
+        env:
+          IHR_KC_TEST_URL: http://auth.localhost:8081
+          IHR_KC_TEST_ADMIN_ID: ihr-ci
+        run: scripts/keycloak-test.sh
+
+      - name: Keycloak log on failure
+        if: failure()
+        run: docker logs kc 2>&1 | tail -200
 
   frontend:
     name: Frontend (typecheck, lint, unit tests, build)

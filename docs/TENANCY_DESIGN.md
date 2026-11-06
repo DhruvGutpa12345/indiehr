@@ -69,10 +69,10 @@ Two of the three independent designs converged on this.
 3. **Token checks**, done in the DRF authentication layer so they also cover CARE's batch-request endpoint (fatal flaw fixed, §6.5):
    - RS256 signature, `iss`, `aud`, `exp`, `typ=Bearer`;
    - `azp` must be in the allow-list;
-   - the `organization` claim must contain **exactly one** organisation, and its id must equal the current tenant's `keycloak_org_id`;
+   - ~~the `organization` claim must contain **exactly one** organisation~~ *(P1-T3, ADR-008: the request can widen Keycloak's `organization` claim, so hospital clients refuse that scope)*. Instead the server-set claim `ihr_org.id` must equal the current tenant's `keycloak_org_id`, `azp` must be `ihr-h-<slug>`, and `resource_access.ihr-h-<slug>.roles` must contain `member`;
    - `sub` → `StaffIdentity` → active `User`.
    - **Recommended: one Keycloak client per tenant** (Q-T4), so a script on hospital A's page cannot get a token for hospital B.
-   - **MFA everywhere for staff:** required at the realm level, and the token's `acr` must show MFA. A weak login at one hospital therefore cannot open a doctor's other hospitals through silent single sign-on.
+   - **MFA everywhere for staff:** required at the realm level, and the token's `acr` must show MFA. *(P1-T3: Keycloak enforces `acr=mfa` per hospital client with a two-level login flow; a per-hospital gate flow refuses non-members, including through single sign-on. Details: ADR-008.)* A weak login at one hospital therefore cannot open a doctor's other hospitals through silent single sign-on.
 4. **A doctor at two hospitals:** one Keycloak account and two organisation memberships.
    - The "Hospitals" switcher in the user menu lists their hospitals from `StaffDirectoryEntry`.
    - Choosing one goes to that hospital's address, where Keycloak single sign-on logs them in silently.

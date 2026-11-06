@@ -16,6 +16,23 @@ Then open **http://alpha.localhost:8080** or **http://beta.localhost:8080** (bro
 > `http://localhost:8080` is the platform's own address: it has no hospital, so the app there cannot sign in.
 > Guided tour of the app: [CLICK_THROUGH.md](CLICK_THROUGH.md).
 
+## Keycloak (staff sign-in, P1-T3)
+
+Keycloak is optional: it needs about 540 MB more. The web app does not use it yet; it switches over in P1-T4. Until then the token viewer shows what a hospital's sign-in returns.
+
+```bash
+scripts/care-dev.sh keycloak up        # own database "keycloak", start, create/repair realm + both hospitals
+scripts/care-dev.sh keycloak seed      # demo staff with fresh passwords + authenticator keys -> TEST_USERS.md
+scripts/care-dev.sh keycloak devtools  # token viewer at http://alpha.localhost:8082/ and http://beta.localhost:8082/
+scripts/care-dev.sh keycloak otp dr.meera   # current 6-digit code for a demo user
+scripts/care-dev.sh keycloak sync --all --check   # report drift from the baseline (exit 1 if any)
+scripts/keycloak-test.sh               # live tests in a throwaway realm (~45 s)
+```
+
+- Secrets are in `deploy/dev/keycloak.env` (git-ignored, created on first use).
+- Every staff sign-in needs a password **and** a 6-digit code (decision in ADR-008).
+- Short of memory? Run `scripts/care-dev.sh keycloak stop` when you are done.
+
 ## Stop or inspect
 
 ```bash
@@ -61,3 +78,6 @@ The overrides live in `deploy/dev/care-local.override.yaml`; CARE's files are un
 | http://localhost:9001 | File storage console |
 | http://localhost:9100 | File storage S3 API (pre-signed file URLs) |
 | localhost:5433 / 6380 | Postgres / Redis |
+| http://auth.localhost:8081 | Keycloak (staff sign-in), realm `indiehr`; admin console at `/admin/` |
+| http://alpha.localhost:8082 · http://beta.localhost:8082 | Dev token viewer: signs in through Keycloak and shows the token |
+| localhost:9002 | Keycloak health (`/health/ready`) |

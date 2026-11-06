@@ -35,3 +35,6 @@ test-results/
 *.sql.gz
 backups/
 deploy/dev/frontend-build/
+
+# Local Keycloak secrets (P1-T3)
+deploy/dev/keycloak.env
