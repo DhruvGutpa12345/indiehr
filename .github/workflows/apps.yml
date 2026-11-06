@@ -349,6 +349,8 @@ jobs:
 
       - name: Unit tests
         run: npm run test:unit
+      - name: IndieHR unit tests (src/Utils/ihr)
+        run: node --import tsx --test src/Utils/ihr/*.test.ts
 
       - name: Production build (IndieHR settings, not OHC defaults)
         run: |

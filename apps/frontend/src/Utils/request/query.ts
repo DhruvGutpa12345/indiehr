@@ -1,5 +1,6 @@
 import careConfig from "@careConfig";
 
+import { addSessionHeaders } from "@/Utils/ihr/staffSession";
 import {
   ApiCallOptions,
   ApiRoute,
@@ -24,9 +25,11 @@ export async function callApi<Route extends ApiRoute<unknown, unknown>>(
 
   const isFormData = options?.body instanceof FormData;
 
+  const headers = makeHeaders(noAuth ?? false, options?.headers, isFormData);
+  addSessionHeaders(url, headers); // IndieHR (P1-T4b): CSRF + idle headers, own API only
   const fetchOptions: RequestInit = {
     method,
-    headers: makeHeaders(noAuth ?? false, options?.headers, isFormData),
+    headers,
     signal: options?.signal,
   };
 

@@ -40,6 +40,8 @@ Staff sign in through Keycloak only; CARE's own password form no longer works on
 - http://alpha.localhost:8080/api/ihr/auth/login/?next=/api/ihr/auth/session/ signs you in (password + 6-digit code) and shows who you are at that hospital.
 - `POST /api/ihr/auth/logout/` with the header `X-IHR-CSRF: 1` signs out at every hospital.
 - The demo staff are linked to CARE users by `keycloak seed` (`dr.meera` is `care-doctor` at both hospitals).
+- The web app's "Sign in with your hospital account" needs a bundle built after P1-T4b (`gh workflow run "Frontend bundle" -f api_url=`).
+- For a quick idle test, start the backend with a short limit: `IHR_SESSION_IDLE_SECONDS=120 scripts/care-dev.sh up` (warning after about a minute, sign-out at 2 minutes).
 - Link another user with `manage.py ihr_link_staff --slug alpha --username care-nurse --sub <Keycloak user id> --yes`.
 
 ## Stop or inspect

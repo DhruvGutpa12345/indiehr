@@ -1,7 +1,6 @@
-import careConfig from "@careConfig";
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useSetAtom } from "jotai";
-import { navigate, usePath } from "raviger";
+import { navigate } from "raviger";
 import { useCallback, useEffect, useState } from "react";
 
 import Loading from "@/components/Common/Loading";
@@ -10,15 +9,21 @@ import { AuthUserContext } from "@/hooks/useAuthUser";
 
 import { LocalStorageKeys } from "@/common/constants";
 
-import mutate from "@/Utils/request/mutate";
+import {
+  EndReason,
+  announceSignOut,
+  clearStaffStorage,
+  forgetLegacyTokens,
+  onSignOutElsewhere,
+  requestSignOut,
+  setStaffSignedIn,
+  signOutPending,
+  startSignIn,
+} from "@/Utils/ihr/staffSession";
+import { useIdleSignOut } from "@/Utils/ihr/useIdleSignOut";
 import query from "@/Utils/request/query";
 import { userAtom } from "@/atoms/user-atom";
-import {
-  JwtTokenObtainPair,
-  LoginResponse,
-  MfaAuthenticationToken,
-} from "@/types/auth/auth";
-import authApi from "@/types/auth/authApi";
+import { LoginResponse } from "@/types/auth/auth";
 import { TokenData } from "@/types/otp/otp";
 import userApi from "@/types/user/userApi";
 
@@ -28,113 +33,58 @@ interface Props {
   otpAuthorized: React.ReactNode;
 }
 
-const isMFAResponse = (data: LoginResponse): data is MfaAuthenticationToken => {
-  return "temp_token" in data;
-};
-
-const isJwtTokenResponse = (
-  data: LoginResponse,
-): data is JwtTokenObtainPair => {
-  return "access" in data && "refresh" in data;
-};
-
+// IndieHR (P1-T4b, ADR-009): staff sign in through Keycloak, run by the backend. The browser
+// holds only an HttpOnly cookie: no staff token is stored or refreshed here, CARE's password
+// form and its two-factor step are gone, and sign-out clears everything cached in the browser.
 export default function AuthUserProvider({
   children,
   unauthorized,
   otpAuthorized,
 }: Props) {
   const queryClient = useQueryClient();
-  const [accessToken, setAccessToken] = useState(
-    localStorage.getItem(LocalStorageKeys.accessToken),
-  );
-  const path = usePath();
   const [patientToken, setPatientToken] = useState<TokenData | null>(
     JSON.parse(
       localStorage.getItem(LocalStorageKeys.patientTokenKey) || "null",
     ),
   );
 
-  const { data: user, isLoading } = useQuery({
-    queryKey: ["currentUser", accessToken],
+  // Signed in or not is the backend's answer (a 403 here simply means "not signed in").
+  // After a sign-out the backend has not confirmed yet, this browser stays signed out.
+  const [pendingSignOut] = useState(signOutPending);
+  const { data: currentUser, isLoading } = useQuery({
+    queryKey: ["currentUser"],
     queryFn: query(userApi.currentUser, { silent: true }),
     retry: false,
-    enabled: !!localStorage.getItem(LocalStorageKeys.accessToken),
+    enabled: !pendingSignOut,
   });
+  const user = pendingSignOut ? undefined : currentUser;
+
+  useEffect(() => {
+    forgetLegacyTokens(); // CARE's old staff tokens are useless now
+    if (pendingSignOut) requestSignOut("user"); // retry until the backend confirms
+  }, [pendingSignOut]);
+
+  useEffect(() => {
+    setStaffSignedIn(!!user);
+  }, [user]);
 
   const setUser = useSetAtom(userAtom);
   useEffect(() => {
     setUser(user);
   }, [user, setUser]);
-  const refreshToken = localStorage.getItem(LocalStorageKeys.refreshToken);
 
-  const tokenRefreshQuery = useQuery({
-    queryKey: ["user-refresh-token"],
-    queryFn: query(authApi.tokenRefresh, {
-      body: { refresh: refreshToken || "" },
-    }),
-    refetchIntervalInBackground: true,
-    refetchInterval: careConfig.auth.tokenRefreshInterval,
-    enabled: !!refreshToken && !!user,
-  });
+  const signIn = useCallback(async (): Promise<LoginResponse> => {
+    startSignIn(
+      getRedirectOr(window.location.pathname + window.location.search),
+    );
+    return new Promise<LoginResponse>(() => undefined); // the page is leaving
+  }, []);
 
-  useEffect(() => {
-    if (tokenRefreshQuery.isError) {
-      localStorage.removeItem(LocalStorageKeys.accessToken);
-      localStorage.removeItem(LocalStorageKeys.refreshToken);
-      return;
-    }
-
-    if (tokenRefreshQuery.data) {
-      const { access, refresh } = tokenRefreshQuery.data;
-      localStorage.setItem(LocalStorageKeys.accessToken, access);
-      localStorage.setItem(LocalStorageKeys.refreshToken, refresh);
-    }
-  }, [tokenRefreshQuery.data, tokenRefreshQuery.isError]);
-
-  const { mutateAsync: signIn, isPending: isAuthenticating } = useMutation({
-    mutationFn: mutate(authApi.login),
-    onSuccess: async (data: LoginResponse) => {
-      queryClient.invalidateQueries({ queryKey: ["enabled-plugins"] });
-      if (isMFAResponse(data)) {
-        localStorage.setItem("mfa_temp_token", data.temp_token);
-        const redirectURL = getRedirectURL();
-        const directURL = path !== "/login" ? window.location.href : null;
-        navigate(
-          redirectURL
-            ? `/2fa?redirect=${redirectURL}`
-            : directURL
-              ? `/2fa?redirect=${directURL}`
-              : "/2fa",
-        );
-        return;
-      }
-
-      if (isJwtTokenResponse(data)) {
-        setAccessToken(data.access);
-        localStorage.setItem(LocalStorageKeys.accessToken, data.access);
-        localStorage.setItem(LocalStorageKeys.refreshToken, data.refresh);
-
-        await queryClient.invalidateQueries({ queryKey: ["currentUser"] });
-        if (path === "/" || path === "/login") {
-          navigate(getRedirectOr("/"));
-        }
-      }
-    },
-  });
-
-  const { mutateAsync: verifyMFA, isPending: isVerifyingMFA } = useMutation({
-    mutationFn: mutate(authApi.mfa.login),
-    onSuccess: async (data: JwtTokenObtainPair) => {
-      localStorage.removeItem("mfa_temp_token");
-
-      setAccessToken(data.access);
-      localStorage.setItem(LocalStorageKeys.accessToken, data.access);
-      localStorage.setItem(LocalStorageKeys.refreshToken, data.refresh);
-
-      await queryClient.invalidateQueries({ queryKey: ["currentUser"] });
-      navigate(getRedirectOr("/"));
-    },
-  });
+  // Keycloak runs the second factor; CARE's own step no longer exists.
+  const verifyMFA = useCallback(async (): Promise<LoginResponse> => {
+    navigate("/login");
+    return new Promise<LoginResponse>(() => undefined);
+  }, []);
 
   const patientLogin = (tokenData: TokenData, redirectUrl: string) => {
     setPatientToken(tokenData);
@@ -145,55 +95,51 @@ export default function AuthUserProvider({
     navigate(redirectUrl);
   };
 
-  const signOut = useCallback(async () => {
-    const accessToken = localStorage.getItem(LocalStorageKeys.accessToken);
-    const refreshToken = localStorage.getItem(LocalStorageKeys.refreshToken);
+  const endLocally = useCallback(
+    (reason: EndReason) => {
+      setStaffSignedIn(false);
+      queryClient.clear();
+      clearStaffStorage();
+      localStorage.removeItem(LocalStorageKeys.patientTokenKey);
+      // A full page load, so nothing of the session stays in memory either.
+      window.location.replace(`/login?${new URLSearchParams({ reason })}`);
+    },
+    [queryClient],
+  );
 
-    if (accessToken && refreshToken) {
-      try {
-        await mutate(authApi.logout)({
-          access: accessToken,
-          refresh: refreshToken,
-        });
-      } catch (error) {
-        console.error("Error during logout:", error);
-      }
-    }
+  const signOut = useCallback(
+    async (why?: unknown) => {
+      const idle = why === "idle";
+      const everywhere = await requestSignOut(idle ? "idle" : "user");
+      // Not confirmed by Keycloak (or the backend unreachable): say so, this may be a
+      // shared computer. The app stays signed out here either way.
+      const reason: EndReason = everywhere
+        ? idle
+          ? "idle"
+          : "signed_out"
+        : "signed_out_here_only";
+      announceSignOut(reason);
+      endLocally(reason);
+    },
+    [endLocally],
+  );
 
-    localStorage.removeItem(LocalStorageKeys.accessToken);
-    localStorage.removeItem(LocalStorageKeys.refreshToken);
-    localStorage.removeItem(LocalStorageKeys.patientTokenKey);
-    setAccessToken(null);
-    setPatientToken(null);
+  // A sign-out in another tab of this hospital ends this one at once.
+  useEffect(() => onSignOutElsewhere(endLocally), [endLocally]);
 
-    await queryClient.resetQueries({ queryKey: ["currentUser"] });
-
-    const redirectURL = getRedirectURL();
-    navigate(redirectURL ? `/login?redirect=${redirectURL}` : "/login");
-  }, [queryClient]);
-
-  // Handles signout from current tab, if signed out from another tab.
+  // A patient sign-out in another tab (patient portal) reaches this one too.
   useEffect(() => {
     const listener = (event: StorageEvent) => {
-      if (
-        !event.newValue &&
-        event.key &&
-        [
-          LocalStorageKeys.accessToken,
-          LocalStorageKeys.refreshToken,
-          LocalStorageKeys.patientTokenKey,
-        ].includes(event.key)
-      ) {
-        signOut();
+      if (event.key === LocalStorageKeys.patientTokenKey && !event.newValue) {
+        setPatientToken(null);
       }
     };
-
     addEventListener("storage", listener);
+    return () => removeEventListener("storage", listener);
+  }, []);
 
-    return () => {
-      removeEventListener("storage", listener);
-    };
-  }, [signOut]);
+  const signOutIdle = useCallback(() => signOut("idle"), [signOut]);
+  useIdleSignOut(!!user, signOutIdle);
 
   if (isLoading) {
     return <Loading />;
@@ -205,8 +151,8 @@ export default function AuthUserProvider({
         signIn,
         signOut,
         verifyMFA,
-        isAuthenticating,
-        isVerifyingMFA,
+        isAuthenticating: false,
+        isVerifyingMFA: false,
         user,
         patientLogin,
         patientToken,

@@ -1,9 +1,7 @@
 import careConfig from "@careConfig";
 import { Redirect, useRoutes } from "raviger";
 
-import { Authenticate } from "@/components/Auth/Authenticate";
 import Login from "@/components/Auth/Login";
-import ResetPassword from "@/components/Auth/ResetPassword";
 import BrowserWarning from "@/components/ErrorPages/BrowserWarning";
 import InvalidReset from "@/components/ErrorPages/InvalidReset";
 import SessionExpired from "@/components/ErrorPages/SessionExpired";
@@ -44,11 +42,10 @@ export const routes = {
       <PatientLogin facilityId={facilityId} staffId={staffId} page={page} />
     ),
   "/login": () => <Login />,
-  "/2fa": () => <Authenticate />,
-  "/forgot-password": () => <Login forgot={true} />,
-  "/password_reset/:token": ({ token }: { token: string }) => (
-    <ResetPassword token={token} />
-  ),
+  // IndieHR (P1-T4b, ADR-009): Keycloak runs two-factor and passwords.
+  "/2fa": () => <Redirect to="/login" />,
+  "/forgot-password": () => <Redirect to="/login" />,
+  "/password_reset/:token": () => <Redirect to="/login" />,
   "/session-expired": () => <SessionExpired />,
   "/licenses": () => <LicensesPage />,
   "/invalid-reset": () => <InvalidReset />,

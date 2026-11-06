@@ -3,7 +3,6 @@ import { useMutation } from "@tanstack/react-query";
 import { REGEXP_ONLY_DIGITS } from "input-otp";
 import { useQueryParams } from "raviger";
 import { useEffect, useState } from "react";
-import ReCaptcha from "react-google-recaptcha";
 import { useTranslation } from "react-i18next";
 import { isValidPhoneNumber } from "react-phone-number-input";
 import { toast } from "sonner";
@@ -18,18 +17,15 @@ import {
   CardHeader,
   CardTitle,
 } from "@/components/ui/card";
-import { Input } from "@/components/ui/input";
 import {
   InputOTP,
   InputOTPGroup,
   InputOTPSlot,
 } from "@/components/ui/input-otp";
-import { PasswordInput } from "@/components/ui/input-password";
 import { Label } from "@/components/ui/label";
 import { PhoneInput } from "@/components/ui/phone-input";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 
-import { ForgotPasswordPanel } from "@/components/Auth/ForgotPasswordPanel";
 import CircularProgress from "@/components/Common/CircularProgress";
 import LanguageSelectorLogin from "@/components/Common/LanguageSelectorLogin";
 
@@ -37,18 +33,12 @@ import { useAuthContext } from "@/hooks/useAuthUser";
 
 import { LocalStorageKeys } from "@/common/constants";
 
-import FiltersCache from "@/Utils/FiltersCache";
-import ViewCache from "@/Utils/ViewCache";
 import mutate from "@/Utils/request/mutate";
-import { HTTPError } from "@/Utils/request/types";
-import authApi from "@/types/auth/authApi";
 import { TokenData } from "@/types/otp/otp";
 import otpApi from "@/types/otp/otpApi";
 
-import { clearQueryPersistenceCache } from "@/Utils/request/queryClient";
-import { invalidateAllPaymentReconcilationLocationCaches } from "@/atoms/paymentReconcilationLocationAtom";
-import { clearQueuePractitionerCache } from "@/atoms/queuePractitionerAtom";
 import { AuthHero } from "./AuthHero";
+import { IhrStaffSignIn } from "./IhrStaffSignIn";
 
 interface OtpLoginData {
   phone_number: string;
@@ -73,14 +63,11 @@ interface OtpValidationError {
 
 type LoginMode = "staff" | "patient";
 
-interface LoginProps {
-  forgot?: boolean;
-}
-
-const Login = (props: LoginProps) => {
-  const { signIn, patientLogin, isAuthenticating } = useAuthContext();
+const Login = () => {
+  // IndieHR (P1-T4b, ADR-009): staff sign in through Keycloak (IhrStaffSignIn); CARE's
+  // username/password form, its reCAPTCHA and "forgot password" are gone.
+  const { patientLogin } = useAuthContext();
   const {
-    reCaptchaSiteKey,
     urls,
     stateLogo,
     customLogo,
@@ -88,19 +75,9 @@ const Login = (props: LoginProps) => {
     resendOtpTimeout,
     disablePatientLogin,
   } = careConfig;
-  const initForm: any = {
-    username: "",
-    password: "",
-  };
-  const { forgot } = props;
   const [params, setQueryParams] = useQueryParams();
   const { mode } = params;
-  const initErr: any = {};
-  const [form, setForm] = useState(initForm);
-  const [errors, setErrors] = useState(initErr);
-  const [isCaptchaEnabled, setCaptcha] = useState(false);
   const { t } = useTranslation();
-  const [forgotPassword, setForgotPassword] = useState(forgot);
   const [isOtpSent, setIsOtpSent] = useState(false);
   const [phone, setPhone] = useState("");
   const [otp, setOtp] = useState("");
@@ -187,113 +164,6 @@ const Login = (props: LoginProps) => {
     },
   });
 
-  // Forgot Password Mutation
-  const { mutate: submitForgetPassword, isPending: forgotPasswordPending } =
-    useMutation({
-      mutationFn: mutate(authApi.forgotPassword),
-      onSuccess: () => {
-        toast.success(t("password_sent"));
-      },
-    });
-
-  // Login form validation
-  const handleChange = (e: any) => {
-    const { value, name } = e.target;
-    const fieldValue = Object.assign({}, form);
-    const errorField = Object.assign({}, errors);
-    if (errorField[name]) {
-      errorField[name] = null;
-      setErrors(errorField);
-    }
-    fieldValue[name] = value;
-    if (name === "username") {
-      fieldValue[name] = value.toLowerCase();
-    }
-    setForm(fieldValue);
-  };
-
-  const validateData = () => {
-    let hasError = false;
-    const err = Object.assign({}, errors);
-    Object.keys(form).forEach((key) => {
-      if (
-        typeof form[key] === "string" &&
-        key !== "password" &&
-        key !== "confirm"
-      ) {
-        if (!form[key].match(/\w/)) {
-          hasError = true;
-          err[key] = "field_required";
-        }
-      }
-      if (!form[key]) {
-        hasError = true;
-        err[key] = "field_required";
-      }
-    });
-    if (hasError) {
-      setErrors(err);
-      return false;
-    }
-    return form;
-  };
-
-  const handleSubmit = async (e: React.SubmitEvent) => {
-    e.preventDefault();
-    ViewCache.invalidateAll();
-    const validated = validateData();
-    if (!validated) return;
-
-    FiltersCache.invalidateAll();
-    invalidateAllPaymentReconcilationLocationCaches();
-    clearQueuePractitionerCache();
-    clearQueryPersistenceCache();
-    try {
-      await signIn(validated);
-    } catch (error) {
-      if (error instanceof HTTPError) {
-        setCaptcha(error.status == 429);
-      }
-    }
-  };
-
-  const validateForgetData = () => {
-    let hasError = false;
-    const err = Object.assign({}, errors);
-
-    if (typeof form.username === "string") {
-      if (!form.username.match(/\w/)) {
-        hasError = true;
-        err.username = "field_required";
-      }
-    }
-    if (!form.username) {
-      hasError = true;
-      err.username = "field_required";
-    }
-
-    if (hasError) {
-      setErrors(err);
-      return false;
-    }
-    return form;
-  };
-  const handleForgetSubmit = async (e: React.SubmitEvent<HTMLFormElement>) => {
-    e.preventDefault();
-    const valid = validateForgetData();
-    if (!valid) return;
-
-    submitForgetPassword(valid);
-  };
-
-  const onCaptchaChange = (value: any) => {
-    if (value && isCaptchaEnabled) {
-      const formCaptcha = { ...form };
-      formCaptcha["g-recaptcha-response"] = value;
-      setForm(formCaptcha);
-    }
-  };
-
   // Handle OTP flow
   const handlePatientLogin = async (e: React.SubmitEvent) => {
     e.preventDefault();
@@ -315,7 +185,7 @@ const Login = (props: LoginProps) => {
   };
 
   // Loading state derived from mutations
-  const isLoading = isAuthenticating || sendOtpPending || verifyOtpPending;
+  const isLoading = sendOtpPending || verifyOtpPending;
 
   const logos = [stateLogo, customLogo].filter(
     (logo) => logo?.light || logo?.dark,
@@ -370,92 +240,7 @@ const Login = (props: LoginProps) => {
               </CardHeader>
               <CardContent>
                 {disablePatientLogin ? (
-                  <>
-                    {/* Staff Login */}
-                    {!forgotPassword ? (
-                      <form onSubmit={handleSubmit} className="space-y-4">
-                        <div className="space-y-2">
-                          <Label htmlFor="username">{t("username")}</Label>
-                          <Input
-                            id="username"
-                            name="username"
-                            type="text"
-                            autoComplete="username"
-                            value={form.username}
-                            onChange={handleChange}
-                            className={cn(
-                              errors.username &&
-                                "border-red-500 focus-visible:ring-red-500",
-                            )}
-                          />
-                          {errors.username && (
-                            <p className="text-sm text-red-500">
-                              {t(errors.username)}
-                            </p>
-                          )}
-                        </div>
-                        <div className="space-y-2">
-                          <Label htmlFor="password">{t("password")}</Label>
-                          <PasswordInput
-                            id="password"
-                            name="password"
-                            autoComplete="current-password"
-                            value={form.password}
-                            onChange={handleChange}
-                            className={cn(
-                              errors.password &&
-                                "border-red-500 focus-visible:ring-red-500",
-                            )}
-                          />
-                          {errors.password && (
-                            <p className="text-sm text-red-500">
-                              {t(errors.password)}
-                            </p>
-                          )}
-                        </div>
-
-                        {isCaptchaEnabled && reCaptchaSiteKey && (
-                          <div className="py-4">
-                            <ReCaptcha
-                              sitekey={reCaptchaSiteKey}
-                              onChange={onCaptchaChange}
-                            />
-                          </div>
-                        )}
-
-                        <Button
-                          variant="link"
-                          type="button"
-                          onClick={() => setForgotPassword(true)}
-                          className="px-0"
-                        >
-                          {t("forget_password")}
-                        </Button>
-
-                        <Button
-                          type="submit"
-                          className="w-full"
-                          variant="primary"
-                          disabled={isLoading}
-                        >
-                          {isLoading ? (
-                            <CircularProgress className="text-white" />
-                          ) : (
-                            t("login")
-                          )}
-                        </Button>
-                      </form>
-                    ) : (
-                      <ForgotPasswordPanel
-                        username={form.username}
-                        usernameError={errors.username}
-                        onUsernameChange={handleChange}
-                        onSubmitEmail={handleForgetSubmit}
-                        onBackToLogin={() => setForgotPassword(false)}
-                        isSubmitting={isLoading || forgotPasswordPending}
-                      />
-                    )}
-                  </>
+                  <IhrStaffSignIn />
                 ) : (
                   <Tabs
                     value={mode === "patient" ? "patient" : "staff"}
@@ -463,8 +248,6 @@ const Login = (props: LoginProps) => {
                       setQueryParams({ mode: value as LoginMode });
                       if (value === "staff") {
                         resetPatientLogin();
-                      } else {
-                        setForgotPassword(false);
                       }
                     }}
                   >
@@ -481,89 +264,7 @@ const Login = (props: LoginProps) => {
 
                     {/* Staff Login */}
                     <TabsContent value="staff">
-                      {!forgotPassword ? (
-                        <form onSubmit={handleSubmit} className="space-y-4">
-                          <div className="space-y-2">
-                            <Label htmlFor="username">{t("username")}</Label>
-                            <Input
-                              id="username"
-                              name="username"
-                              type="text"
-                              autoComplete="username"
-                              value={form.username}
-                              onChange={handleChange}
-                              className={cn(
-                                errors.username &&
-                                  "border-red-500 focus-visible:ring-red-500",
-                              )}
-                            />
-                            {errors.username && (
-                              <p className="text-sm text-red-500">
-                                {t(errors.username)}
-                              </p>
-                            )}
-                          </div>
-                          <div className="space-y-2">
-                            <Label htmlFor="password">{t("password")}</Label>
-                            <PasswordInput
-                              id="password"
-                              name="password"
-                              autoComplete="current-password"
-                              value={form.password}
-                              onChange={handleChange}
-                              className={cn(
-                                errors.password &&
-                                  "border-red-500 focus-visible:ring-red-500",
-                              )}
-                            />
-                            {errors.password && (
-                              <p className="text-sm text-red-500">
-                                {t(errors.password)}
-                              </p>
-                            )}
-                          </div>
-
-                          {isCaptchaEnabled && reCaptchaSiteKey && (
-                            <div className="py-4">
-                              <ReCaptcha
-                                sitekey={reCaptchaSiteKey}
-                                onChange={onCaptchaChange}
-                              />
-                            </div>
-                          )}
-
-                          <Button
-                            variant="link"
-                            type="button"
-                            onClick={() => setForgotPassword(true)}
-                            className="px-0"
-                          >
-                            {t("forget_password")}
-                          </Button>
-
-                          <Button
-                            type="submit"
-                            className="w-full"
-                            variant="primary"
-                            disabled={isLoading}
-                          >
-                            {isLoading ? (
-                              <CircularProgress className="text-white" />
-                            ) : (
-                              t("login")
-                            )}
-                          </Button>
-                        </form>
-                      ) : (
-                        <ForgotPasswordPanel
-                          username={form.username}
-                          usernameError={errors.username}
-                          onUsernameChange={handleChange}
-                          onSubmitEmail={handleForgetSubmit}
-                          onBackToLogin={() => setForgotPassword(false)}
-                          isSubmitting={isLoading || forgotPasswordPending}
-                        />
-                      )}
+                      <IhrStaffSignIn />
                     </TabsContent>
 
                     {/* Patient Login */}

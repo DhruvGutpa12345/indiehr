@@ -3,6 +3,7 @@ import { navigate } from "raviger";
 import { toast } from "sonner";
 
 import * as Notifications from "@/Utils/Notifications";
+import { endExpiredSession } from "@/Utils/ihr/staffSession";
 import { HTTPError, StructuredError } from "@/Utils/request/types";
 
 export function handleHttpError(error: Error) {
@@ -75,6 +76,14 @@ function isSessionExpired(error: HTTPError["cause"]) {
 }
 
 function handleSessionExpired() {
+  // IndieHR (P1-T4b, Q-T9): a staff session ended on the server (idle, sign-out elsewhere,
+  // removal): clear what the browser kept and sign in again. Patient pages: as before.
+  const ended = endExpiredSession(() =>
+    import("@/Utils/request/queryClient").then(({ default: client }) =>
+      client.clear(),
+    ),
+  );
+  if (ended) return;
   if (!location.pathname.startsWith("/session-expired")) {
     navigate(`/session-expired?redirect=${window.location.href}`);
   }

@@ -7,10 +7,8 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
 import ServiceTokenSection from "@/components/Users/ServiceTokenSection";
-import { TwoFactorAuth } from "@/components/Users/TwoFactorAuth";
 import UserAvatar from "@/components/Users/UserAvatar";
 import UserDeleteDialog from "@/components/Users/UserDeleteDialog";
-import UserResetPassword from "@/components/Users/UserResetPassword";
 import { RoleOrgAccessSummary } from "@/components/Users/UserRoleOrganizationAccess";
 import UserSoftwareUpdate from "@/components/Users/UserSoftwareUpdate";
 import {
@@ -44,7 +42,6 @@ export default function UserSummaryTab({
   };
   const isOwnAccount = authUser.username === userData.username;
   const canEditUser = authUser.is_superuser || isOwnAccount;
-  const canResetPassword = isOwnAccount;
 
   const renderBasicInformation = () => {
     return (
@@ -170,22 +167,9 @@ export default function UserSummaryTab({
           Child={renderRoleOrganizationAccess}
           childProps={userColumnsData}
         />
-        {canResetPassword && (
-          <UserColumns
-            heading={t("reset_password")}
-            note={t("reset_password_note_self")}
-            Child={UserResetPassword}
-            childProps={userColumnsData}
-          />
-        )}
+        {/* IndieHR (P1-T4b, ADR-009): passwords and two-factor live in Keycloak. */}
         {authUser.username === userData.username && (
           <>
-            <UserColumns
-              heading={t("two_factor_authentication")}
-              note={t("two_factor_authentication_note")}
-              Child={TwoFactorAuth}
-              childProps={userColumnsData}
-            />
             <UserColumns
               heading={t("language_selection")}
               note={t("set_your_local_language")}

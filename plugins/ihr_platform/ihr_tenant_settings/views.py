@@ -7,6 +7,7 @@ registration numbers) is for signed-in staff.
 
 import json
 
+from django.conf import settings
 from django.http import HttpResponse, JsonResponse
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
@@ -69,8 +70,16 @@ def bootstrap_js(request):
     # JSON is valid JavaScript; also neutralise "<" so the value can never close a script tag.
     data = json.dumps(_branding(HospitalProfile.current())).replace("<", "\\u003c")
     # The tab shows the hospital's name from the first paint (pages then add their own titles).
+    # Idle time-out for the web app's warning (P1-T4b, ADR-009); the backend enforces it too.
+    auth = json.dumps(
+        {
+            "idle_seconds": settings.IHR_SESSION_IDLE_SECONDS,
+            "warn_seconds": min(120, settings.IHR_SESSION_IDLE_SECONDS // 2),
+        }
+    )
     body = (
         f"window.__IHR_BRANDING__ = {data};\n"
+        f"window.__IHR_AUTH__ = {auth};\n"
         "document.title = window.__IHR_BRANDING__.short_name;\n"
     )
     response = HttpResponse(body, content_type="text/javascript; charset=utf-8")
