@@ -1,0 +1,5 @@
+{"step": "dump_same_instance", "n": 175, "pg_class": 220064, "dump_seconds": [14.1, 13.8]}
+{"step": "dump_same_instance", "n": 150, "pg_class": 188689, "dump_seconds": [11.8, 11.7]}
+{"step": "dump_same_instance", "n": 125, "pg_class": 157314, "dump_seconds": [1.8, 1.6]}
+{"step": "dump_same_instance", "n": 100, "pg_class": 125939, "dump_seconds": [1.5, 1.3]}
+{"step": "dump_same_instance", "n": 50, "pg_class": 63189, "dump_seconds": [0.9, 0.8]}

@@ -45,7 +45,7 @@
 | Q-T3 | **Presigned URLs** for logos/covers/avatars | §6.8, logged patch |
 | Q-T4 | **One Keycloak client per tenant** | §4.3, created at onboarding |
 | Q-T5 | **No in-tenant superuser** for v1 | Hospital-wide forms come from packs |
-| Q-T6 | **Cell cap 100 tenants** initially | Revisit after P1-T1c numbers |
+| Q-T6 | **Cell cap 100 tenants** initially | Revisit after P1-T1c numbers. **P1-T1c measured (2026-11-06):** keep 100. Per-hospital dumps step up between 125 and 150 hospitals; releases take about 30–60 s at 100. Your confirmation is pending. See docs/reviews/p1-t1c/scale-results.md |
 | Q-T7 | **Support access = break-glass only** | §4.9 |
 | Q-T8 | **No inter-hospital referral in v1** (works between facilities of one tenant) | Redesign on ABDM later |
 | Q-T9 | **Clear cached data at logout** (frontend patch) | §6.9 |

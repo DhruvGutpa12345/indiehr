@@ -13,15 +13,13 @@ as a foreign UUID or canary in the crawl.
 
 import re
 from dataclasses import dataclass, field
-from unittest.mock import patch
 
 from django.apps import apps
 from django.db import connection
-from django.test import override_settings
 from django_tenants.utils import schema_context
-from rest_framework.test import APIClient
 
 from ihr_platform.models import Domain, Hospital
+from ihr_platform.seeding import load_demo_data
 
 UUID_RE = re.compile(r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}")
 
@@ -55,19 +53,7 @@ def _create(slug, name, domain, canary):
 
 
 def _seed(tenant):
-    from care.fixtures.context import care_fixture_context
-    from care.fixtures.scripts.default_fixtures import load_fixtures
-
-    def client_for_tenant():
-        return APIClient(HTTP_HOST=tenant.domain)
-
-    with (
-        schema_context(tenant.schema),
-        override_settings(DEBUG=True),
-        patch("care.fixtures.context.APIClient", client_for_tenant),
-        care_fixture_context() as base,
-    ):
-        load_fixtures(base)
+    load_demo_data(tenant.schema, tenant.domain)
 
 
 def _add_canaries(tenant):

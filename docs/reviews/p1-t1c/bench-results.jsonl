@@ -1,0 +1,31 @@
+{"step": "onboarding", "n": 1, "seconds": 64.6}
+{"step": "seed_template", "seconds": 4.9}
+{"step": "grow_total", "n": 1, "seconds": 71.9}
+{"step": "catalogue", "n": 1, "pg_class": 1694, "pg_attribute": 8296, "pg_depend": 7534, "catalog_mb": 16.0, "database_mb": 29.7}
+{"step": "connection_memory", "n": 1, "baseline_mb": 1.4, "after": [{"tenants": 1, "mb": 2.3}], "ms_per_tenant_visit": 14.4}
+{"step": "migrations", "n": 1, "noop_seconds": 0.3, "rollback_seconds": 0.8, "release_seconds": 0.4, "release_multiprocessing_seconds": 0.5, "processes": 2}
+{"step": "backup_restore", "n": 1, "dump_seconds": 0.2, "dump_mb": 0.0, "restore_empty_db_seconds": 1.4, "restore_side_name_seconds": 1.4, "empty_db_identical": true, "side_name_identical": true, "source_unchanged": true, "other_tenant_unchanged": true}
+{"step": "onboarding", "n": 25, "seconds": 72.4}
+{"step": "grow_total", "n": 25, "seconds": 157.4}
+{"step": "catalogue", "n": 25, "pg_class": 31814, "pg_attribute": 127891, "pg_depend": 141134, "catalog_mb": 102.6, "database_mb": 422.1}
+{"step": "connection_memory", "n": 25, "baseline_mb": 1.4, "after": [{"tenants": 1, "mb": 2.3}, {"tenants": 10, "mb": 12.8}, {"tenants": 25, "mb": 26.2}], "ms_per_tenant_visit": 8.6}
+{"step": "migrations", "n": 25, "noop_seconds": 6.8, "rollback_seconds": 20.3, "release_seconds": 12.6, "release_multiprocessing_seconds": 7.2, "processes": 2}
+{"step": "backup_restore", "n": 25, "dump_seconds": 0.5, "dump_mb": 0.0, "restore_empty_db_seconds": 1.4, "restore_side_name_seconds": 1.5, "empty_db_identical": true, "side_name_identical": true, "source_unchanged": true, "other_tenant_unchanged": true}
+{"step": "onboarding", "n": 50, "seconds": 73.2}
+{"step": "grow_total", "n": 50, "seconds": 130.8}
+{"step": "catalogue", "n": 50, "pg_class": 63189, "pg_attribute": 252515, "pg_depend": 280284, "catalog_mb": 193.3, "database_mb": 831.2}
+{"step": "connection_memory", "n": 50, "baseline_mb": 1.4, "after": [{"tenants": 1, "mb": 2.3}, {"tenants": 10, "mb": 12.8}, {"tenants": 50, "mb": 43.7}], "ms_per_tenant_visit": 8.1}
+{"step": "migrations", "n": 50, "noop_seconds": 15.3, "rollback_seconds": 42.3, "release_seconds": 27.0, "release_multiprocessing_seconds": 15.1, "processes": 2}
+{"step": "backup_restore", "n": 50, "dump_seconds": 0.9, "dump_mb": 0.0, "restore_empty_db_seconds": 1.4, "restore_side_name_seconds": 1.5, "empty_db_identical": true, "side_name_identical": true, "source_unchanged": true, "other_tenant_unchanged": true}
+{"step": "onboarding", "n": 100, "seconds": 81.8}
+{"step": "grow_total", "n": 100, "seconds": 244.2}
+{"step": "catalogue", "n": 100, "pg_class": 125939, "pg_attribute": 501714, "pg_depend": 558584, "catalog_mb": 367.0, "database_mb": 1645.8}
+{"step": "connection_memory", "n": 100, "baseline_mb": 1.4, "after": [{"tenants": 1, "mb": 2.3}, {"tenants": 10, "mb": 12.8}, {"tenants": 50, "mb": 43.7}, {"tenants": 100, "mb": 78.7}], "ms_per_tenant_visit": 8.0}
+{"step": "migrations", "n": 100, "noop_seconds": 34.8, "rollback_seconds": 88.7, "release_seconds": 58.3, "release_multiprocessing_seconds": 32.4, "processes": 2}
+{"step": "backup_restore", "n": 100, "dump_seconds": 1.3, "dump_mb": 0.0, "restore_empty_db_seconds": 1.4, "restore_side_name_seconds": 1.6, "empty_db_identical": true, "side_name_identical": true, "source_unchanged": true, "other_tenant_unchanged": true}
+{"step": "onboarding", "n": 200, "seconds": 79.5}
+{"step": "grow_total", "n": 200, "seconds": 211.2}
+{"step": "catalogue", "n": 200, "pg_class": 251439, "pg_attribute": 1000063, "pg_depend": 1115184, "catalog_mb": 722.9, "database_mb": 3288.4}
+{"step": "connection_memory", "n": 200, "baseline_mb": 1.4, "after": [{"tenants": 1, "mb": 2.3}, {"tenants": 10, "mb": 12.8}, {"tenants": 50, "mb": 43.7}, {"tenants": 100, "mb": 78.0}, {"tenants": 200, "mb": 152.8}], "ms_per_tenant_visit": 12.9}
+{"step": "migrations", "n": 200, "noop_seconds": 89.0, "rollback_seconds": 197.7, "release_seconds": 136.0, "release_multiprocessing_seconds": 75.7, "processes": 2}
+{"step": "backup_restore", "n": 200, "dump_seconds": 16.3, "dump_kb": 820, "restore_empty_db_seconds": 1.4, "restore_side_name_seconds": 2.0, "empty_db_identical": true, "side_name_identical": true, "source_unchanged": true, "other_tenant_unchanged": true}
