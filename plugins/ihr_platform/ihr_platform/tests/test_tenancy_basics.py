@@ -15,6 +15,7 @@ PUBLIC_TABLE_ALLOW_LIST = {
     "django_content_type",
     "ihr_platform_hospital",
     "ihr_platform_domain",
+    "ihr_platform_retiredaddress",
 }
 SECOND_DOMAIN = "second.testserver"
 

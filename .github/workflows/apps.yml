@@ -68,6 +68,7 @@ jobs:
               - 'apps/backend/config/patient_otp_authentication.py'
               - 'apps/backend/config/settings/**'
               - 'apps/backend/care/emr/resources/base.py'
+              - 'apps/backend/care/emr/utils/reset_password.py'
               - 'deploy/ci/**'
               - '.github/workflows/apps.yml'
               - 'upstream.lock'
@@ -168,7 +169,7 @@ jobs:
       - name: CARE suite + ihr_platform tests inside a tenant schema
         run: |
           set +e
-          $COMPOSE exec -T backend python manage.py test --settings=ihr_platform.settings.test --noinput -v 2 ihr_platform . > tenant-tests.log 2>&1
+          $COMPOSE exec -T backend python manage.py test --settings=ihr_platform.settings.test --noinput -v 2 ihr_platform ihr_tenant_settings . > tenant-tests.log 2>&1
           status=$?
           grep -vE "\.\.\. ok$" tenant-tests.log | tail -400
           exit $status

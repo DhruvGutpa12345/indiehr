@@ -3,9 +3,11 @@
 v1 provisioning never clones a template schema. Must run as the database owner role.
 """
 
+from django.conf import settings
 from django.core.management import call_command
 from django.core.management.base import BaseCommand, CommandError
 from django_tenants.utils import schema_context
+from ihr_tenant_settings.models import HospitalProfile
 
 from ihr_platform.models import Domain, Hospital
 
@@ -17,7 +19,10 @@ class Command(BaseCommand):
         parser.add_argument("--slug", help="Subdomain label, e.g. sunrise")
         parser.add_argument("--name", help="Display name of the legal entity")
         parser.add_argument(
-            "--domain", action="append", default=[], help="Host name; repeatable"
+            "--domain",
+            action="append",
+            default=[],
+            help="Host name; repeatable. Default: <slug>.<IHR_TENANT_DOMAIN_SUFFIX>",
         )
         parser.add_argument(
             "--public",
@@ -39,20 +44,29 @@ class Command(BaseCommand):
             self.stdout.write(self.style.SUCCESS(f"public tenant ready: {hospital}"))
             return
 
-        if not options["slug"] or not options["name"] or not options["domain"]:
-            raise CommandError("--slug, --name and at least one --domain are required")
+        if not options["slug"] or not options["name"]:
+            raise CommandError("--slug and --name are required")
+        domains = options["domain"] or [
+            f"{options['slug']}.{settings.IHR_TENANT_DOMAIN_SUFFIX}"
+        ]
 
         hospital = Hospital(slug=options["slug"], name=options["name"])
         hospital.save()  # creates the schema and runs every migration in it
-        self._add_domains(hospital, options["domain"])
+        self._add_domains(hospital, domains)
 
         with schema_context(hospital.schema_name):
             call_command("sync_permissions_roles", verbosity=0)
             call_command("sync_valueset", verbosity=0)
+            # the profile row itself comes from migration ihr_tenant_settings 0002
+            if not HospitalProfile.objects.exists():
+                msg = f"{hospital.schema_name}: hospital profile was not created"
+                raise CommandError(msg)
 
         hospital.status = Hospital.Status.ACTIVE
         hospital.save()
-        self.stdout.write(self.style.SUCCESS(f"tenant ready: {hospital}"))
+        self.stdout.write(
+            self.style.SUCCESS(f"tenant ready: {hospital} at {', '.join(domains)}")
+        )
 
     def _add_domains(self, hospital, domains):
         for index, domain in enumerate(domains):

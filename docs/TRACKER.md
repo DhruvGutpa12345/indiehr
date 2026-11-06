@@ -11,8 +11,8 @@
 Detailed task definitions: [PLAN.md](PLAN.md) §6. Open questions: [QUESTIONS.md](QUESTIONS.md).
 
 **Current phase:** P0 Foundations
-**Next task:** P1-T2 (subdomain tenant routing + branding). P1-T1b and P1-T1c await your review. Owner's deep-dive click-through still to come (docs/CLICK_THROUGH.md). Review: docs/reviews/phase-0-review.md
-**Recommended model for next task:** Opus · **medium** for P1-T2
+**Next task:** P1-T2b (runtime branding in the web app; dev stack with two demo hospitals you can click through). P1-T1b, P1-T1c and P1-T2a await your review. Owner's deep-dive click-through still to come (docs/CLICK_THROUGH.md). Review: docs/reviews/phase-0-review.md
+**Recommended model for next task:** Opus · **medium** for P1-T2b
 
 ---
 
@@ -25,6 +25,7 @@ Detailed task definitions: [PLAN.md](PLAN.md) §6. Open questions: [QUESTIONS.md
 | 2026-11-02 | R-2 | Consolidated research report | `reports/India hospital SaaS stack research.md` |
 | 2026-11-02 | R-3 | Master plan v0.1, question list, tracker, CLAUDE.md | `docs/` |
 | 2026-11-02 | R-4 | Workstation audit: 6.7 GB RAM, no GPU, Docker 26.1.3 without group access | PLAN.md §4 |
+| 2026-11-06 | P1-T2a | **Backend for per-hospital routing and branding.**<br>• New tenant app `ihr_tenant_settings`: one profile per hospital with names, GSTIN (format + check character + state match), address with GST state and PIN, registration numbers (CEA, NABH, HFR, ROHINI), letterhead footer, colour and logo (PNG/JPEG/WebP sniffed from bytes, ≤256 KB, no SVG).<br>• Public, host-based `/api/ihr/bootstrap/`, `bootstrap.js` and `logo/`: branding only, `private` caching, script-safe output. Staff-only `/api/ihr/profile/`.<br>• Hospital addresses default to `<slug>.<suffix>`. Slugs and addresses can never be renamed, moved or reused (`RetiredAddress`).<br>• Password links point at the hospital's own address, and reset tokens carry a `tid` claim (logged CARE patch). This closes the P1-T1b follow-up.<br>• Bug fixed: a 404 on the platform host became a 500 (CARE's error page links to a CARE route).<br>**Tests:** 40/40 plugin tests (incl. 18 new) and the isolation suite green locally; new mutation `reset-token-tid` killed. Adversarial review: 27 agents, 10 distinct findings, all fixed | Local runs; CI below |
 | 2026-11-06 | Q&A 5 | Cell cap (Q-T6) confirmed: **100 hospitals per database cell**, reviewed again on staging hardware (P1-T8) and with real data | QUESTIONS.md |
 | 2026-11-06 | P1-T1c | **Scale and operations measured at 1/25/50/100/200 hospitals** (PostgreSQL 18.6, dev machine, demo-sized hospitals).<br>• Onboarding a hospital: 65–82 s.<br>• One-migration release: 58 s at 100 (32 s with 2 processes), 136 s at 200.<br>• Catalogue: 367 MB at 100, 723 MB at 200.<br>• Per-hospital dump: 1.4 s at 100, 1.7 s at 125, **11.8 s at 150** (a step; same instance).<br>• Restores exact at every size, both into an empty database and in place under a side name. Checked by a hash of rows, sequences, indexes and constraints; negative controls passed.<br>• Connection memory: about 0.8–5 MB per hospital served per connection, never freed → recycle connections.<br>• Defaults that fail at scale: Docker 64 MB `/dev/shm` (about 158 hospitals) and `max_locks_per_transaction` 64.<br>**Recommendation: keep the cap at 100** (your decision, Q-T6), with operating rules in TENANCY_DESIGN §6.11.<br>New: `scripts/tenancy-scale-bench.sh`, `ihr_bench_scale` command, `ihr_platform.seeding`; research brief and 2 review rounds (4 + 2 agents) | docs/reviews/p1-t1c/ |
 | 2026-11-06 | P1-T1b | **Cross-tenant isolation suite: 22/22 green locally, all 10 mutation runs killed.**<br>• Two seeded tenants (CARE's full demo data each, canary words in facility/patient/staff names).<br>• Crawl of 132 GET routes as A, then B, then A again: 0 leaks, 0 server errors, ~76 routes return own data.<br>• 63 cross-id probes (B's host, A's ids): no 2xx, no leak.<br>• Anonymous access: 17 reviewed routes in `anonymous_allowlist.txt`, fail-closed.<br>• Also covered: staff and patient-OTP tokens (with positive controls), identifier caches, raw-Redis recent views, Celery tasks through real tenant hooks, beat per active tenant, every S3 key site incl. cover images, batch requests.<br>• Redis: 107 keys written, all tenant-prefixed; the runner now audits the whole run at the end.<br>**Leaks found and fixed (6 logged CARE patches):** identifier-config cache handed tenant B tenant A's config; identifier lookup cache; recent-views raw Redis keys; patient OTP token had no tenant claim (now `tid`); object keys had no tenant prefix (now `t/<uuid>/`).<br>**Production bugs fixed:** Celery beat would have run CARE's cleanup jobs in `public` (new `ActiveTenantScheduler`); CARE audit log pinned off.<br>**Mutation proof:** removing the cache key function makes B's crawl show A's ids and canary.<br>**Reviews:** 2 adversarial rounds (9 agents); 22 + 9 findings, all fixed or scheduled as follow-ups below.<br>New: `scripts/isolation-mutation.sh`; CI jobs "Isolation mutation" (when isolation files change, weekly, on demand).<br>**CI:** CARE suite + isolation suite in tenant mode, 2,027/2,027 pass; 832 Redis keys, all tenant-prefixed; 10/10 mutation jobs killed | Run 42174788127 |
@@ -92,14 +93,15 @@ Detailed task definitions: [PLAN.md](PLAN.md) §6. Open questions: [QUESTIONS.md
 - 🟡 P1-T1a Tenancy library spike; CARE suite in tenant mode — **2,013/2,013 tests pass inside a tenant schema**
 - 🟡 P1-T1b Isolation suite (+ mutation runs) — 22/22 green, 10/10 mutations killed; CI 2,027/2,027 (run 42174788127)
   - Follow-ups found by P1-T1b:
-    - ⬜ Staff password set-up/reset links use one global `CURRENT_DOMAIN`, and the reset token has no tenant claim → P1-T2 (or drop with P1-T4 Keycloak)
+    - ✅ Staff password set-up/reset links use one global `CURRENT_DOMAIN`, and the reset token has no tenant claim → fixed in P1-T2a
     - ⬜ Anonymous routes to harden: `/health/*` reachable only from monitoring (P1-T8); `govt/organization` limited to government geography; `schedulable_users` exposes staff username, last login and roles (trim, require patient OTP); PlugConfig `meta` must never hold secrets
     - ⬜ Seed the 34 models CARE's fixtures leave empty, so their detail routes are crawled too (`crawl_skips.txt`)
     - ⬜ Remaining design patches not yet built: presigned cover/avatar URLs, batch sub-request path allow-list, separate patient/report bucket credentials (TENANCY_DESIGN §10)
 - 🟡 P1-T1c Scale & ops numbers — measured; **cell cap 100 confirmed** (Q-T6, 2026-11-06)
   - Follow-ups: re-measure on staging hardware (P1-T8) and with real data volumes (P4-T7 / pilot); apply the §6.11 operating rules in P1-T8
 - ⬜ P1-T1d Playwright two-subdomain isolation (after P1-T4)
-- ⬜ P1-T2 Subdomain tenant routing + branding
+- 🟡 P1-T2a Hospital profile, bootstrap endpoint, subdomain domains (backend) — 40/40 tests
+- ⬜ P1-T2b Runtime branding in the web app; dev stack with two demo hospitals
 - ⬜ P1-T3 Keycloak 26.8 (Organizations, roles, MFA)
 - ⬜ P1-T4 CARE ↔ OIDC
 - ⬜ P1-T5 Super-admin tenant provisioning

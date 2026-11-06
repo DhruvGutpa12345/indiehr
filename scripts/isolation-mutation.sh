@@ -28,6 +28,7 @@ otp-tid-check|apps/backend/config/patient_otp_token.py|        if schema and sel
 identifier-config-cache|apps/backend/care/emr/signals/patient/base.py|        cached_key = f"{schema}:{facility_key}:{cls.IDENTIFIER_SYSTEM}"|        cached_key = f"{facility_key}:{cls.IDENTIFIER_SYSTEM}"|test_patient_identifier_config_cache_is_per_tenant|emr_patientidentifie_config_id_[0-9a-f]+_fk
 identifier-lookup-cache|apps/backend/care/emr/models/patient.py|        return f"{getattr(connection, 'schema_name', '')}:{config_id}"|        return config_id|test_identifier_config_lookup_cache_is_per_tenant|
 recent-views-prefix|apps/backend/care/emr/models/valueset.py|        return f"{schema}:{cache_key}" if schema else cache_key|        return cache_key|test_raw_redis_recent_views_are_per_tenant|
+reset-token-tid|apps/backend/care/emr/utils/reset_password.py|        if schema and payload.get("tid") != schema:|        if False:|ihr_tenant_settings.tests.test_hospital_profile.HospitalProfileTests.test_reset_token_from_one_hospital_is_refused_by_another|
 celery-tenant-app|apps/backend/config/celery_app.py|    from tenant_schemas_celery.app import CeleryApp as Celery|    pass|test_celery_tasks_run_in_the_senders_tenant|
 beat-active-only|plugins/ihr_platform/ihr_platform/beat.py|Hospital.objects.filter(status=Hospital.Status.ACTIVE).exclude(|Hospital.objects.exclude(|test_periodic_jobs_run_once_per_active_tenant|
 anonymous-default-allow|plugins/ihr_platform/ihr_platform/settings/tenancy.py|    settings["CELERY_BEAT_SCHEDULER"] =|    settings["REST_FRAMEWORK"]["DEFAULT_PERMISSION_CLASSES"] = ["rest_framework.permissions.AllowAny"]\n    settings["CELERY_BEAT_SCHEDULER"] =|test_anonymous_access_matches_reviewed_allow_list|
@@ -64,17 +65,23 @@ case "${1:-}" in
   check)
     while read -r name; do row "$name"; mutate check; done < <(cut -d'|' -f1 <<<"$MUTATIONS")
     ;;
-  test) row "${2:?name}"; for t in ${TESTS//,/ }; do printf '%s.%s ' "$CLS" "$t"; done; echo ;;
+  # A test is a method of the isolation class, or a full dotted label for any other test.
+  test)
+    row "${2:?name}"
+    for t in ${TESTS//,/ }; do
+      if [[ "$t" == *.* ]]; then printf '%s ' "$t"; else printf '%s.%s ' "$CLS" "$t"; fi
+    done
+    echo
+    ;;
   # One regex per line; the run's log must match every line.
   expect)
     row "${2:?name}"
     # An assertion FAIL, not an ERROR: an error could come from unrelated breakage.
+    # Anchored on the full label (unittest prints "FAIL: method (module.Class.method)").
     for t in ${TESTS//,/ }; do
-      if [[ -n "$SIGNATURE" ]]; then
-        echo "^FAIL: $t \(ihr_platform\.tests\.isolation|$SIGNATURE"
-      else
-        echo "^FAIL: $t \(ihr_platform\.tests\.isolation"
-      fi
+      [[ "$t" == *.* ]] || t="$CLS.$t"
+      anchor="^FAIL: ${t##*.} \(${t//./\\.}\)"
+      if [[ -n "$SIGNATURE" ]]; then echo "$anchor|$SIGNATURE"; else echo "$anchor"; fi
     done
     ;;
   *) sed -n '5,10p' "$0"; exit 1 ;;

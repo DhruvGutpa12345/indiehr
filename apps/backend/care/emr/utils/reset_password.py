@@ -5,8 +5,10 @@ from datetime import timedelta
 import jwt
 from django.conf import settings
 from django.core.mail import EmailMessage
+from django.db import connection
 from django.template.loader import render_to_string
 from django.utils import timezone
+from django.utils.module_loading import import_string
 
 from care.emr.resources.common.mail_type import MailTypeChoices
 from care.users.models import User
@@ -27,7 +29,16 @@ def generate_password_reset_token(user):
         "password_hash": password_hash,
         "username": user.username,
     }
+    # IndieHR: under schema-per-tenant, bind the token to the hospital (schema) that issued it.
+    if schema := getattr(connection, "schema_name", None):
+        payload["tid"] = schema
     return jwt.encode(payload, secret_key, algorithm="HS256")
+
+
+def frontend_base_url():
+    """IndieHR: optional settings hook (each hospital's own address); else CURRENT_DOMAIN."""
+    hook = getattr(settings, "FRONTEND_BASE_URL_FUNCTION", None)
+    return import_string(hook)() if hook else settings.CURRENT_DOMAIN
 
 
 def verify_password_reset_token(token):
@@ -38,6 +49,9 @@ def verify_password_reset_token(token):
 
     try:
         payload = jwt.decode(token, secret_key, algorithms=["HS256"])
+        schema = getattr(connection, "schema_name", None)
+        if schema and payload.get("tid") != schema:
+            return (None, "Invalid token")
         username = payload.get("username")
         if not username:
             return (None, "Invalid token")
@@ -74,7 +88,7 @@ def send_password_reset_email(user, mail_type):
             "current_user": user,
             "username": user.username,
             "email": user.email,
-            "reset_password_url": f"{settings.CURRENT_DOMAIN}/password_reset/{token}",
+            "reset_password_url": f"{frontend_base_url()}/password_reset/{token}",
         }
         if mail_type == MailTypeChoices.create.value:
             email_html_message = render_to_string(

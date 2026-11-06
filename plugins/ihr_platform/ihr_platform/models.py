@@ -64,10 +64,25 @@ class Hospital(TenantMixin):
             not SLUG_RE.match(self.slug or "") or self.slug in RESERVED_SLUGS
         ):
             raise ValidationError({"slug": "Invalid or reserved slug."})
+        if (
+            not self.pk
+            and RetiredAddress.objects.filter(kind="slug", value=self.slug).exists()
+        ):
+            raise ValidationError({"slug": "This slug belonged to another hospital."})
 
     def save(self, *args, **kwargs):
         if not self.schema_name:
             self.schema_name = generate_schema_name()
+        if self.pk:
+            # Web addresses are never renamed or reused (TENANCY_DESIGN.md §6.9): bookmarks,
+            # printed QR codes and old links must never reach a different hospital.
+            old_slug = (
+                Hospital.objects.filter(pk=self.pk)
+                .values_list("slug", flat=True)
+                .first()
+            )
+            if old_slug is not None and old_slug != self.slug:
+                raise ValidationError({"slug": "A hospital's slug can never change."})
         self.full_clean(exclude=["uuid"])
         super().save(*args, **kwargs)
 
@@ -76,4 +91,40 @@ class Hospital(TenantMixin):
 
 
 class Domain(DomainMixin):
-    pass
+    def save(self, *args, **kwargs):
+        if self.pk:
+            # An address never moves to another hospital and is never renamed (§6.9).
+            old = (
+                Domain.objects.filter(pk=self.pk).values("domain", "tenant_id").first()
+            )
+            if old and (old["domain"], old["tenant_id"]) != (
+                self.domain,
+                self.tenant_id,
+            ):
+                raise ValidationError("A hospital's web address can never be changed.")
+        elif RetiredAddress.objects.filter(kind="domain", value=self.domain).exists():
+            raise ValidationError("This web address belonged to another hospital.")
+        super().save(*args, **kwargs)
+
+
+class RetiredAddress(models.Model):
+    """Slugs and web addresses of deleted hospitals, never given to another one (§6.9).
+
+    Filled by the delete signals in ``signals.py``, which also fire for queryset deletes.
+    """
+
+    KINDS = (("slug", "slug"), ("domain", "domain"))
+
+    kind = models.CharField(max_length=6, choices=KINDS)
+    value = models.CharField(max_length=253)
+    retired_on = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(
+                fields=["kind", "value"], name="unique_retired_address"
+            )
+        ]
+
+    def __str__(self):
+        return f"{self.kind}:{self.value}"

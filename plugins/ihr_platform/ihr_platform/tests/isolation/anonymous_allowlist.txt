@@ -22,3 +22,6 @@
 /api/v1/^govt/organization/(?P<external_id>[^/.]+)/$   # as above (FOLLOW-UP)
 /api/v1/^facility/(?P<facility_external_id>[^/.]+)/schedulable_users/$   # patient-portal booking. FOLLOW-UP: exposes staff username, last_login and roles; trim fields and require a patient OTP login
 /api/v1/^getallfacilities/(?P<external_id>[^/.]+)/$   # detail of a public facility (is_public=True only), patient portal
+/api/ihr/bootstrap/                 # P1-T2a: this hospital's branding for the login page (name, colour, logo URL); no GSTIN, address or staff data
+/api/ihr/bootstrap.js               # same branding as a same-origin script the web app loads before its own code
+/api/ihr/logo/                      # this hospital's logo (PNG/JPEG/WebP only, sniffed; CSP default-src 'none'); 404 when none is set

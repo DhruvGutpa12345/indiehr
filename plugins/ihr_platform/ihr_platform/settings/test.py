@@ -9,6 +9,8 @@ from ihr_platform.settings.tenancy import apply_tenancy
 # CARE's test settings drop the Swagger cache that config/urls.py uses; the route crawl needs it.
 CACHES["swagger_cache"] = {"BACKEND": "django.core.cache.backends.locmem.LocMemCache"}  # noqa: F405
 
+IHR_TENANT_DOMAIN_SUFFIX = "localhost"
+
 apply_tenancy(globals())
 
 TEST_RUNNER = "ihr_platform.test_runner.TenantTestRunner"
