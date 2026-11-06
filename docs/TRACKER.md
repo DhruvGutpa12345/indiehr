@@ -11,8 +11,8 @@
 Detailed task definitions: [PLAN.md](PLAN.md) §6. Open questions: [QUESTIONS.md](QUESTIONS.md).
 
 **Current phase:** P0 Foundations
-**Next task:** P1-T2b (runtime branding in the web app; dev stack with two demo hospitals you can click through). P1-T1b, P1-T1c and P1-T2a await your review. Owner's deep-dive click-through still to come (docs/CLICK_THROUGH.md). Review: docs/reviews/phase-0-review.md
-**Recommended model for next task:** Opus · **medium** for P1-T2b
+**Next task:** P1-T3 (Keycloak 26.8: realm, one Organization per hospital, roles, MFA). P1-T1b, P1-T1c, P1-T2a and P1-T2b await your review — P1-T2b has a click-through for you (two demo hospitals). Owner's deep-dive click-through still to come (docs/CLICK_THROUGH.md). Review: docs/reviews/phase-0-review.md
+**Recommended model for next task:** Opus · **medium** for P1-T3
 
 ---
 
@@ -25,6 +25,7 @@ Detailed task definitions: [PLAN.md](PLAN.md) §6. Open questions: [QUESTIONS.md
 | 2026-11-02 | R-2 | Consolidated research report | `reports/India hospital SaaS stack research.md` |
 | 2026-11-02 | R-3 | Master plan v0.1, question list, tracker, CLAUDE.md | `docs/` |
 | 2026-11-02 | R-4 | Workstation audit: 6.7 GB RAM, no GPU, Docker 26.1.3 without group access | PLAN.md §4 |
+| 2026-11-06 | P1-T2b | **Hospital branding in the web app; dev stack with two demo hospitals.**<br>• The web app loads `/api/ihr/bootstrap.js` from its own origin before the bundle. Login page, logos and tab titles show the hospital's name, colour and logo; the OHC logo/links are replaced by "Powered by IndieHR" (5 small logged frontend patches).<br>• Our nginx image passes `/api/` to `API_UPSTREAM` with the browser's host, so one bundle serves every hospital; off by default (404).<br>• Hospitals without a logo get an initials mark in their colour (SVG we generate, escaped, CSP `default-src 'none'`).<br>• Emails use our templates and name the hospital (subject hook, logged); From "IndieHR", IST times, no CARE/OHC. SMS OTP texts and API docs title no longer say "Care".<br>• Dev stack in tenant mode (database `ihr_dev`): `seed` creates Alpha Multispeciality Hospital and Beta Children's Hospital (synthetic) with CARE's demo data and a different password per hospital (`ihr_seed_demo`).<br>**Checked in the browser:** each address shows its own branding; Alpha's password is refused at Beta; each hospital lists only its own 10 encounters; Beta's API answers 404 for Alpha's facility; Alpha's reset email links to alpha.localhost.<br>**Tests:** 20/20 hospital-profile tests locally (3 new: initials logo, emails, title). CI's first run caught one CARE test expecting "for Care" in the subject; that assertion was loosened (logged) | Run 42218861591 + follow-up |
 | 2026-11-06 | P1-T2a | **Backend for per-hospital routing and branding.**<br>• New tenant app `ihr_tenant_settings`: one profile per hospital with names, GSTIN (format + check character + state match), address with GST state and PIN, registration numbers (CEA, NABH, HFR, ROHINI), letterhead footer, colour and logo (PNG/JPEG/WebP sniffed from bytes, ≤256 KB, no SVG).<br>• Public, host-based `/api/ihr/bootstrap/`, `bootstrap.js` and `logo/`: branding only, `private` caching, script-safe output. Staff-only `/api/ihr/profile/`.<br>• Hospital addresses default to `<slug>.<suffix>`. Slugs and addresses can never be renamed, moved or reused (`RetiredAddress`).<br>• Password links point at the hospital's own address, and reset tokens carry a `tid` claim (logged CARE patch). This closes the P1-T1b follow-up.<br>• Bug fixed: a 404 on the platform host became a 500 (CARE's error page links to a CARE route).<br>**Tests:** 40/40 plugin tests (incl. 18 new) and the isolation suite green locally; new mutation `reset-token-tid` killed. Adversarial review: 27 agents, 10 distinct findings, all fixed.<br>**CI:** 2,045/2,045 tests in tenant mode (CARE + ours); 833 Redis keys, all tenant-prefixed; 11/11 mutations killed. The first CI run caught CARE's reset tests expecting their own error messages, so the hospital check now runs last | Run 42203433586 |
 | 2026-11-06 | Q&A 5 | Cell cap (Q-T6) confirmed: **100 hospitals per database cell**, reviewed again on staging hardware (P1-T8) and with real data | QUESTIONS.md |
 | 2026-11-06 | P1-T1c | **Scale and operations measured at 1/25/50/100/200 hospitals** (PostgreSQL 18.6, dev machine, demo-sized hospitals).<br>• Onboarding a hospital: 65–82 s.<br>• One-migration release: 58 s at 100 (32 s with 2 processes), 136 s at 200.<br>• Catalogue: 367 MB at 100, 723 MB at 200.<br>• Per-hospital dump: 1.4 s at 100, 1.7 s at 125, **11.8 s at 150** (a step; same instance).<br>• Restores exact at every size, both into an empty database and in place under a side name. Checked by a hash of rows, sequences, indexes and constraints; negative controls passed.<br>• Connection memory: about 0.8–5 MB per hospital served per connection, never freed → recycle connections.<br>• Defaults that fail at scale: Docker 64 MB `/dev/shm` (about 158 hospitals) and `max_locks_per_transaction` 64.<br>**Recommendation: keep the cap at 100** (your decision, Q-T6), with operating rules in TENANCY_DESIGN §6.11.<br>New: `scripts/tenancy-scale-bench.sh`, `ihr_bench_scale` command, `ihr_platform.seeding`; research brief and 2 review rounds (4 + 2 agents) | docs/reviews/p1-t1c/ |
@@ -101,7 +102,8 @@ Detailed task definitions: [PLAN.md](PLAN.md) §6. Open questions: [QUESTIONS.md
   - Follow-ups: re-measure on staging hardware (P1-T8) and with real data volumes (P4-T7 / pilot); apply the §6.11 operating rules in P1-T8
 - ⬜ P1-T1d Playwright two-subdomain isolation (after P1-T4)
 - 🟡 P1-T2a Hospital profile, bootstrap endpoint, subdomain domains (backend) — CI 2,045/2,045 (run 42203433586)
-- ⬜ P1-T2b Runtime branding in the web app; dev stack with two demo hospitals
+- 🟡 P1-T2b Runtime branding in the web app; dev stack with two demo hospitals — click-through waiting for you
+  - Follow-ups: buttons and links still use CARE's green (a full theme from the brand colour needs the theme tokens, P1-T7 or later); printed QR codes and queue token cards still show CARE's mark (letterhead work); the production backend image does not yet include `plugins/` (P1-T8)
 - ⬜ P1-T3 Keycloak 26.8 (Organizations, roles, MFA)
 - ⬜ P1-T4 CARE ↔ OIDC
 - ⬜ P1-T5 Super-admin tenant provisioning
@@ -223,9 +225,9 @@ Detailed task definitions: [PLAN.md](PLAN.md) §6. Open questions: [QUESTIONS.md
 
 | What | Where |
 |---|---|
-| Web app (local) | http://localhost:8080 — start with `scripts/care-dev.sh up` then `scripts/care-dev.sh frontend` |
-| Usernames | `care-doctor`, `care-nurse`, `care-pharmacist`, `care-billing`, `care-staff`, `care-fac-admin`, `care-admin`, `admin` (superuser) |
-| Password | in `deploy/seed/TEST_USERS.md` (git-ignored); new one any time: `scripts/care-dev.sh reset-passwords` |
+| Web app (local) | http://alpha.localhost:8080 and http://beta.localhost:8080 (two synthetic hospitals) — start with `scripts/care-dev.sh up` then `scripts/care-dev.sh frontend` |
+| Usernames | `care-doctor`, `care-nurse`, `care-pharmacist`, `care-billing`, `care-staff`, `care-fac-admin`, `care-admin`, `admin` (superuser) — in each hospital, as separate accounts |
+| Passwords | one per hospital, in `deploy/seed/TEST_USERS.md` (git-ignored); new ones any time: `scripts/care-dev.sh reset-passwords` |
 | Guided tour | docs/CLICK_THROUGH.md |
-| Demo patients | e.g. Nakul Chadha (+91 79642 54593), Madhavi Narayanan (+91 88323 75901) — synthetic |
+| Demo patients | generated per hospital by CARE's fixtures (synthetic; names differ between Alpha and Beta) |
 | How it runs | docs/LOCAL_DEV.md |

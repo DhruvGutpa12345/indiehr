@@ -42,7 +42,8 @@ class ResetPasswordAPITest(CareAPITestBase):
         self.assertEqual(response.status_code, 200)
         self.assertEqual(len(mail.outbox), 1)
         self.assertEqual(mail.outbox[0].to, ["testuser@example.com"])
-        self.assertIn("password reset for care", mail.outbox[0].subject.lower())
+        # IndieHR: the subject ends with the site name ("Care" upstream, the hospital for us).
+        self.assertIn("password reset for ", mail.outbox[0].subject.lower())
 
     def test_reset_password_request_with_invalid_username(self):
         """

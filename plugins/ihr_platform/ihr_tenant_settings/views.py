@@ -68,7 +68,11 @@ def bootstrap_js(request):
     """The same data as a script the web app loads before its own code (same origin, so CSP-safe)."""
     # JSON is valid JavaScript; also neutralise "<" so the value can never close a script tag.
     data = json.dumps(_branding(HospitalProfile.current())).replace("<", "\\u003c")
-    body = f"window.__IHR_BRANDING__ = {data};\n"
+    # The tab shows the hospital's name from the first paint (pages then add their own titles).
+    body = (
+        f"window.__IHR_BRANDING__ = {data};\n"
+        "document.title = window.__IHR_BRANDING__.short_name;\n"
+    )
     response = HttpResponse(body, content_type="text/javascript; charset=utf-8")
     response["X-Content-Type-Options"] = "nosniff"
     return _private_no_cache(response)

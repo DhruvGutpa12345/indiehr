@@ -1,18 +1,19 @@
-# Running CARE locally (P0-T5)
+# Running CARE locally (P0-T5, tenant mode since P1-T2b)
 
-This setup fits the current **6.7 GB** dev machine. The whole backend uses about 550 MB. The web app is built on GitHub, because a local build needs about 4 GB.
+This setup fits the current **6.7 GB** dev machine. It runs in **tenant mode**: one database (`ihr_dev`), one schema per hospital, and two synthetic demo hospitals, each at its own address. The old single-tenant database `care` is left in place but no longer used. The whole backend uses about 550 MB. The web app is built on GitHub, because a local build needs about 4 GB.
 
 ## Start
 
 ```bash
-scripts/care-dev.sh up          # build image if missing, start db/redis/storage/api/worker
-scripts/care-dev.sh seed        # first time only: CARE demo data + our test users (writes deploy/seed/TEST_USERS.md)
-scripts/care-dev.sh frontend    # serve the web app bundle on http://localhost:8080
+scripts/care-dev.sh up          # build image if missing, create ihr_dev, start db/redis/storage/api/worker (migrates every hospital)
+scripts/care-dev.sh seed        # first time only: hospitals alpha + beta with CARE's demo data and our test users (~3 min each)
+scripts/care-dev.sh frontend    # serve the web app bundle; /api is passed through to the backend
 ```
 
-Then open **http://localhost:8080** and log in with a user from `deploy/seed/TEST_USERS.md` (git-ignored; created by P0-T5).
+Then open **http://alpha.localhost:8080** or **http://beta.localhost:8080** (browsers send `*.localhost` to this machine) and log in with a user from `deploy/seed/TEST_USERS.md` (git-ignored).
 
-> `seed` replaces CARE's public fixture passwords with a generated one. Lost it? `scripts/care-dev.sh reset-passwords` makes a new one.
+> Each hospital has its own users and its **own password**: the same username exists in both, as separate accounts. `seed` replaces CARE's public fixture passwords; lost them? `scripts/care-dev.sh reset-passwords` makes new ones.
+> `http://localhost:8080` is the platform's own address: it has no hospital, so the app there cannot sign in.
 > Guided tour of the app: [CLICK_THROUGH.md](CLICK_THROUGH.md).
 
 ## Stop or inspect
@@ -26,10 +27,10 @@ scripts/care-dev.sh shell       # bash inside the API container
 
 ## Get a fresh web app bundle
 
-The bundle has the API URL baked in. To rebuild it on GitHub and download it:
+The bundle talks to the API on its own origin (`/api`, passed through by nginx with the hospital's address), so one bundle serves every hospital. To rebuild it on GitHub and download it:
 
 ```bash
-gh workflow run "Frontend bundle" -f api_url=http://localhost:9000
+gh workflow run "Frontend bundle" -f api_url=
 gh run list --workflow "Frontend bundle" -L1      # wait until completed
 rm -rf deploy/dev/frontend-build && gh run download <run-id> -n frontend-bundle -D deploy/dev/frontend-build
 scripts/care-dev.sh frontend
@@ -45,16 +46,18 @@ The overrides live in `deploy/dev/care-local.override.yaml`; CARE's files are un
 | `SNOWSTORM_DEPLOYMENT_URL` points to a dead local address | Upstream default sends clinical search text to a third-party IP over HTTP. Diagnosis/drug search will not work until P1-T10 |
 | One Celery process (`--pool=solo`), no auto-reload, memory caps | Upstream starts one worker per CPU core |
 | Web app served by our non-root nginx image from a CI-built bundle | No local Node build (needs ~4 GB) |
-| Bundle built with `deploy/frontend.env` and checked by `scripts/check-bundle-egress.sh`; enforced CSP allows only `localhost:9000` (API) and `localhost:9100` (files) | No third-party calls (P0-T10). Facility map and address search are blocked on purpose |
-| Test-user passwords replaced | CARE's fixture passwords are public in its source |
+| Bundle built with `deploy/frontend.env` and checked by `scripts/check-bundle-egress.sh`; enforced CSP allows only the page's own origin (API) and `localhost:9100` (files) | No third-party calls (P0-T10). Facility map and address search are blocked on purpose |
+| Test-user passwords replaced, one per hospital | CARE's fixture passwords are public in its source |
+| Tenant mode: `DJANGO_SETTINGS_MODULE=ihr_platform.settings.local`, database `ihr_dev`; the worker runs `ihr_create_tenant --public --domain localhost` and syncs roles/value sets per hospital (`all_tenants_command --no-public`) | One schema per hospital, as in production (ADR-002) |
+| nginx passes `/api/` to `backend:9000` (`API_UPSTREAM`) keeping the browser's host | The backend picks the hospital from the address; no cross-origin API calls |
 
 ## Ports
 
 | URL | What |
 |---|---|
-| http://localhost:8080 | Web app |
-| http://localhost:9000/api/v1/ | API |
-| http://localhost:9000/admin/ | Django admin (superuser `admin`) |
+| http://alpha.localhost:8080 | Web app, Alpha Multispeciality Hospital (synthetic) |
+| http://beta.localhost:8080 | Web app, Beta Children's Hospital (synthetic) |
+| http://alpha.localhost:9000/api/v1/ | API direct (the host picks the hospital) |
 | http://localhost:9001 | File storage console |
 | http://localhost:9100 | File storage S3 API (pre-signed file URLs) |
 | localhost:5433 / 6380 | Postgres / Redis |

@@ -194,7 +194,7 @@ Two of the three independent designs converged on this.
 
 - **One web-app build for every hospital.** The API is same-origin (`REACT_CARE_API_URL=""`), `REACT_CARE_URL_MAP` is never set, and the CSP allows `self`, the Keycloak host and the file-storage host.
 - An unauthenticated `bootstrap` call returns the hospital's name, branding and Keycloak settings. *(P1-T2a: `/api/ihr/bootstrap/`, `/api/ihr/bootstrap.js` and `/api/ihr/logo/` serve branding only, with `private` caching. The full profile, `/api/ihr/profile/`, is for signed-in staff. Keycloak settings join in P1-T4.)*
-- **Ingress:** wildcard certificate `*.app.<domain>`; `/api` and `/plugins` go to the backend with the Host header kept.
+- **Ingress:** wildcard certificate `*.app.<domain>`; `/api` and `/plugins` go to the backend with the Host header kept. *(P1-T2b: our frontend nginx does this for `/api/` when `API_UPSTREAM` is set; `index.html` loads `/api/ihr/bootstrap.js` before the bundle, and `care.config.ts` takes the hospital's name, colour and logo from it. Hospitals without a logo get an initials mark. Emails use our templates and the hospital's name.)*
 - The **hospital switcher** is an `ihr_*` frontend plugin.
 - **Login moves to Keycloak** (P1-T4), including the token-storage decision (review R0-20).
 

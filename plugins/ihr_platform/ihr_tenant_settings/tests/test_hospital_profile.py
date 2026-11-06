@@ -238,6 +238,7 @@ class HospitalProfileTests(SimpleTestCase):
         )
         body = response.content.decode()
         self.assertTrue(body.startswith("window.__IHR_BRANDING__ = {"))
+        self.assertIn("document.title = window.__IHR_BRANDING__.short_name;", body)
         self.assertNotIn("<", body)
         self.assertEqual(response["Content-Type"], "text/javascript; charset=utf-8")
         self.assertEqual(response["X-Content-Type-Options"], "nosniff")
