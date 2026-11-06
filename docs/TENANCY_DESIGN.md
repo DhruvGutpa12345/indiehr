@@ -235,7 +235,7 @@ P1-T1 is split into sub-tasks. a → b → c must each pass in CI before the nex
    - our settings module, split apps, `pg_trgm` in public;
    - create two tenants by migrate + seed;
    - **CARE's full suite (2,005 tests) passes inside a tenant schema.** The test runner must give the tenant to every database connection, including threads and parallel workers.
-2. **P1-T1b, isolation suite — ✅ met 2026-11-06 locally** (22 tests green, 10/10 mutations killed; CI run in TRACKER) — see `plugins/ihr_platform/ihr_platform/tests/isolation/` and `scripts/isolation-mutation.sh`; results in TRACKER:
+2. **P1-T1b, isolation suite — ✅ met 2026-11-06 locally** (CI run 42174788127: 2,027/2,027 tests in tenant mode incl. 22 isolation tests; 10/10 mutations killed) — see `plugins/ihr_platform/ihr_platform/tests/isolation/` and `scripts/isolation-mutation.sh`; results in TRACKER:
    - structural: public table allow-list, no app in both lists;
    - API crawl of every route with canary strings, as tenant B against tenant A, and anonymously;
    - Redis keyspace audit, Celery, file keys, tokens (Keycloak org, `tid`, `azp`), batch requests;
