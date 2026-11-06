@@ -1,0 +1,14 @@
+{% load ihr_branding %}{% hospital_name as hospital %}<!doctype html>
+<html lang="en">
+  <head>
+    <meta http-equiv="Content-Type" content="text/html; charset=UTF-8">
+    <title>Two-factor authentication turned on</title>
+  </head>
+  <body style="font-family: system-ui, sans-serif; color: #1f2937;">
+    <p>Hello {{ username }},</p>
+    <p>Two-factor authentication was turned on for your account at <strong>{{ hospital }}</strong> on {% now "d-m-Y, h:i A" %} IST.</p>
+    <p>Keep your backup codes somewhere safe and never share your sign-in codes with anyone.</p>
+    <p>If you did not make this change, tell your hospital's IT administrator straight away.</p>
+    <p>Regards,<br>{{ hospital }}</p>
+  </body>
+</html>

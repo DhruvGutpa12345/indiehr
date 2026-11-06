@@ -8,9 +8,9 @@ on:
   workflow_dispatch:
     inputs:
       api_url:
-        description: "Backend API URL baked into the bundle"
-        required: true
-        default: "http://localhost:9000"
+        description: "Backend API URL baked into the bundle; empty = same origin (/api via nginx, tenant mode)"
+        required: false
+        default: ""
 
 permissions:
   contents: read
@@ -38,7 +38,10 @@ jobs:
         run: |
           set -a; . ../../deploy/frontend.env; set +a
           REACT_APP_TITLE="IndieHR (dev)" REACT_CARE_API_URL="$API_URL" npm run build
-          grep -rqF "$API_URL" build/ || { echo "API URL not found in bundle"; exit 1; }
+          if [[ -n "$API_URL" ]]; then
+            grep -rqF "$API_URL" build/ || { echo "API URL not found in bundle"; exit 1; }
+          fi
+          grep -qF '<script src="/api/ihr/bootstrap.js"></script>' build/index.html
 
       - name: Egress check (no unreviewed external hosts in bundle)
         working-directory: .

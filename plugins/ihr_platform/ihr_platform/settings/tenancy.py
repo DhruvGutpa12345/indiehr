@@ -4,6 +4,8 @@ Call ``apply_tenancy(globals())`` at the end of a settings module that imported 
 Applied last on purpose: CARE's test settings redefine CACHES, which would drop the key function.
 """
 
+import os
+
 from django.core.exceptions import ImproperlyConfigured
 
 SHARED_APPS = [
@@ -56,6 +58,30 @@ def apply_tenancy(settings):
     settings.setdefault("IHR_FRONTEND_URL_TEMPLATE", "https://{domain}")
     # CARE's password set-up/reset links point at the hospital's own address (links.py).
     settings["FRONTEND_BASE_URL_FUNCTION"] = "ihr_platform.links.frontend_base_url"
+
+    # Our product name, never CARE's or OHC's (P1-T2b). Emails speak for the hospital.
+    settings["SITE_NAME_FUNCTION"] = "ihr_tenant_settings.branding.hospital_name"
+    for name in (
+        "user_create_password",
+        "user_reset_password",
+        "totp_enabled",
+        "totp_disabled",
+    ):
+        settings[f"{name.upper()}_EMAIL_TEMPLATE_PATH"] = f"ihr_email/{name}.html"
+    if "EMAIL_FROM" not in os.environ:
+        settings["DEFAULT_FROM_EMAIL"] = "IndieHR <no-reply@localhost>"
+    settings["EMAIL_SUBJECT_PREFIX"] = "[IndieHR] "
+    settings["OTP_SMS_LOGIN_CONTENT"] = (
+        "Your login OTP is {otp}. Please do not share this with anyone."
+    )
+    settings["OTP_SMS_RESET_PASSWORD_CONTENT"] = (
+        "Your password reset OTP is {otp}. Please do not share this with anyone."
+    )
+    settings["SPECTACULAR_SETTINGS"] = {
+        **settings["SPECTACULAR_SETTINGS"],
+        "TITLE": "IndieHR API",
+        "DESCRIPTION": "IndieHR hospital API",
+    }
 
     settings["FILE_OBJECT_KEY_PREFIX_FUNCTION"] = (
         "ihr_platform.storage.tenant_key_prefix"

@@ -12,6 +12,7 @@ from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
+from ihr_tenant_settings.branding import default_logo_svg
 from ihr_tenant_settings.models import HospitalProfile
 
 PLATFORM_NAME = "IndieHR"
@@ -46,9 +47,10 @@ def _branding(profile):
         "name": profile.display_name,
         "short_name": profile.short_name or profile.display_name,
         "primary_colour": profile.primary_colour,
+        # Without an upload, the same path serves a default mark (initials on the colour).
         "logo_url": f"{LOGO_PATH}?v={profile.logo_sha256[:16]}"
         if profile.logo_sha256
-        else None,
+        else LOGO_PATH,
     }
 
 
@@ -74,12 +76,17 @@ def bootstrap_js(request):
 
 def logo(request):
     profile = HospitalProfile.current(with_logo=True)
-    if not profile.logo_sha256:
-        return _private_no_cache(HttpResponse(status=404))
-    response = HttpResponse(bytes(profile.logo), content_type=profile.logo_content_type)
+    if profile.logo_sha256:
+        response = HttpResponse(
+            bytes(profile.logo), content_type=profile.logo_content_type
+        )
+    else:
+        response = HttpResponse(
+            default_logo_svg(profile), content_type="image/svg+xml; charset=utf-8"
+        )
     response["X-Content-Type-Options"] = "nosniff"
     response["Content-Security-Policy"] = "default-src 'none'"
-    if request.GET.get("v") == profile.logo_sha256[:16]:
+    if profile.logo_sha256 and request.GET.get("v") == profile.logo_sha256[:16]:
         # Versioned URL: the content for this exact address never changes. Shared caches must
         # still key on the Host (every hospital uses the same path).
         response["Cache-Control"] = "public, max-age=31536000, immutable"

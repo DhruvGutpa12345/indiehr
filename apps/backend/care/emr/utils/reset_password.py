@@ -35,6 +35,12 @@ def generate_password_reset_token(user):
     return jwt.encode(payload, secret_key, algorithm="HS256")
 
 
+def site_name():
+    """IndieHR: optional settings hook (the hospital's name for email subjects); else "Care"."""
+    hook = getattr(settings, "SITE_NAME_FUNCTION", None)
+    return import_string(hook)() if hook else "Care"
+
+
 def frontend_base_url():
     """IndieHR: optional settings hook (each hospital's own address); else CURRENT_DOMAIN."""
     hook = getattr(settings, "FRONTEND_BASE_URL_FUNCTION", None)
@@ -95,12 +101,12 @@ def send_password_reset_email(user, mail_type):
             email_html_message = render_to_string(
                 settings.USER_CREATE_PASSWORD_EMAIL_TEMPLATE_PATH, context
             )
-            subject = "Set Up Your Password for Care"
+            subject = f"Set Up Your Password for {site_name()}"
         else:
             email_html_message = render_to_string(
                 settings.USER_RESET_PASSWORD_EMAIL_TEMPLATE_PATH, context
             )
-            subject = "Password Reset for Care"
+            subject = f"Password Reset for {site_name()}"
         msg = EmailMessage(
             subject,
             email_html_message,

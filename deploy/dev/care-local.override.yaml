@@ -3,14 +3,18 @@
 #  - fit a 6.7 GB machine (one celery process, no auto-reload, memory caps)
 #  - localhost only: every port is bound to 127.0.0.1 (upstream binds 0.0.0.0)
 #  - no external calls: the terminology server is pointed at a black hole until P1-T10
+#  - tenant mode (P1-T2b): one schema per hospital in the database "ihr_dev"; each hospital at
+#    http://<slug>.localhost:8080. The old single-tenant database "care" is left untouched.
 # Entrypoints write /tmp/container-role like upstream's scripts (used by healthcheck.sh).
 # Run via scripts/care-dev.sh, not directly.
 services:
   backend:
     volumes:
       - ../../plugins:/ihr/plugins:ro
-    environment:
+    environment: &tenant-env
       PYTHONPATH: "/ihr/plugins/ihr_platform"
+      DJANGO_SETTINGS_MODULE: "ihr_platform.settings.local"
+      DATABASE_URL: "postgres://postgres:postgres@db:5432/ihr_dev"
       SNOWSTORM_DEPLOYMENT_URL: "http://127.0.0.1:9/fhir"
       CURRENT_DOMAIN: "localhost:8080"
     entrypoint: ["bash", "-c", "printf api > /tmp/container-role && ./scripts/wait_for_db.sh && ./scripts/wait_for_redis.sh && python manage.py collectstatic --noinput -v 0 && python manage.py compilemessages -v 0 && exec python manage.py runserver 0.0.0.0:9000 --noreload"]
@@ -22,10 +26,10 @@ services:
   celery:
     volumes:
       - ../../plugins:/ihr/plugins:ro
-    environment:
-      PYTHONPATH: "/ihr/plugins/ihr_platform"
-      SNOWSTORM_DEPLOYMENT_URL: "http://127.0.0.1:9/fhir"
-    entrypoint: ["bash", "-c", "printf celery > /tmp/container-role && ./scripts/wait_for_db.sh && ./scripts/wait_for_redis.sh && python manage.py migrate --noinput && python manage.py compilemessages -v 0 && python manage.py sync_permissions_roles && python manage.py sync_valueset && exec celery --workdir=/app -A config.celery_app worker -B --pool=solo --concurrency=1 --loglevel=INFO"]
+    environment: *tenant-env
+    # In tenant mode "migrate" covers the shared schema and every hospital; roles and value sets
+    # are synced inside each hospital's schema.
+    entrypoint: ["bash", "-c", "printf celery > /tmp/container-role && ./scripts/wait_for_db.sh && ./scripts/wait_for_redis.sh && python manage.py migrate --noinput && python manage.py compilemessages -v 0 && python manage.py all_tenants_command --no-public sync_permissions_roles && python manage.py all_tenants_command --no-public sync_valueset && exec celery --workdir=/app -A config.celery_app worker -B --pool=solo --concurrency=1 --loglevel=INFO"]
     mem_limit: 700m
     restart: "no"
 

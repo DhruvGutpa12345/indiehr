@@ -316,6 +316,9 @@ jobs:
           curl -fsS -o /dev/null http://127.0.0.1:8080/patients
           curl -fsSI http://127.0.0.1:8080/ | grep -qi "x-content-type-options: nosniff"
           curl -fsSI http://127.0.0.1:8080/ | grep -i "^content-security-policy:" | grep -q "connect-src 'self' http://localhost:9000"
+          # Hospital branding script is loaded first; without API_UPSTREAM the API path is a 404
+          curl -fsS http://127.0.0.1:8080/ | grep -qF '<script src="/api/ihr/bootstrap.js"></script>'
+          test "$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:8080/api/ihr/bootstrap.js)" = 404
           docker rm -f fe
 
   security:

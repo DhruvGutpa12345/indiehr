@@ -2,6 +2,7 @@
 
 import re
 
+from care.emr.tasks.totp import send_totp_disabled_email, send_totp_enabled_email
 from care.emr.utils.reset_password import (
     generate_password_reset_token,
     send_password_reset_email,
@@ -20,6 +21,7 @@ from ihr_platform.test_runner import TEST_SCHEMA
 from rest_framework.test import APIClient
 from rest_framework_simplejwt.tokens import RefreshToken
 
+from ihr_tenant_settings.branding import initials
 from ihr_tenant_settings.models import HospitalProfile
 from ihr_tenant_settings.validators import (
     gstin_check_character,
@@ -221,7 +223,7 @@ class HospitalProfileTests(SimpleTestCase):
         )
         self.assertEqual(
             (own["name"], own["primary_colour"], own["logo_url"]),
-            ("Test Hospital", "#112233", None),
+            ("Test Hospital", "#112233", "/api/ihr/logo/"),
         )
         self.assertEqual(
             (other["name"], other["primary_colour"]), ("Brand <b>Test</b>", "#445566")
@@ -254,10 +256,25 @@ class HospitalProfileTests(SimpleTestCase):
             "/api/ihr/logo/?v=0000000000000000", HTTP_HOST=self.second_domain
         )
         self.assertEqual(stale["Cache-Control"], "private, no-cache")
-        self._set(TEST_SCHEMA, logo=None)
-        self.assertEqual(
-            client.get("/api/ihr/logo/", HTTP_HOST="testserver").status_code, 404
+
+    def test_hospitals_without_a_logo_get_their_initials(self):
+        self._set(
+            TEST_SCHEMA,
+            display_name="Alpha <Hospital>",
+            primary_colour="#112233",
+            logo=None,
         )
+        response = APIClient().get("/api/ihr/logo/", HTTP_HOST="testserver")
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response["Content-Type"], "image/svg+xml; charset=utf-8")
+        self.assertEqual(response["Content-Security-Policy"], "default-src 'none'")
+        self.assertEqual(response["Cache-Control"], "private, no-cache")
+        svg = response.content.decode()
+        self.assertIn('fill="#112233"', svg)
+        self.assertIn(">AH</text>", svg)
+        self.assertIn("<title>Alpha &lt;Hospital&gt;</title>", svg)  # escaped
+        self.assertEqual(initials("  sunrise   multi speciality"), "SM")
+        self.assertEqual(initials("<>"), "H")
 
     def test_full_profile_is_for_signed_in_staff_only(self):
         self._set(TEST_SCHEMA, gstin=VALID_GSTINS[0], state_code="27")
@@ -314,10 +331,39 @@ class HospitalProfileTests(SimpleTestCase):
                 password="x-Unused-1",
             )
             mail.outbox.clear()
-            send_password_reset_email(user, "reset")
+            send_password_reset_email(user, "reset_password")
         link = re.search(r"https?://[^\s\"'<]+/password_reset/", mail.outbox[0].body)
         self.assertIsNotNone(link)
         self.assertEqual(link.group(0), f"https://{self.second_domain}/password_reset/")
+
+    def test_emails_speak_for_the_hospital_not_care(self):
+        self._set(self.second.schema_name, display_name="Brand Test Hospital")
+        with schema_context(self.second.schema_name):
+            user = User.objects.create_user(
+                username="mail-test", email="mail-test@example.test", password="x-1"
+            )
+            mail.outbox.clear()
+            send_password_reset_email(user, "create_password")
+            send_password_reset_email(user, "reset_password")
+            send_totp_enabled_email(user.email, user.username)
+            send_totp_disabled_email(user.email, user.username)
+        self.assertEqual(
+            [m.subject for m in mail.outbox[:2]],
+            [
+                "Set Up Your Password for Brand Test Hospital",
+                "Password Reset for Brand Test Hospital",
+            ],
+        )
+        for message in mail.outbox:
+            with self.subTest(subject=message.subject):
+                self.assertIn("Brand Test Hospital", message.body)
+                self.assertNotRegex(
+                    message.body + message.subject + message.from_email,
+                    r"(?i)\bcare\b|open healthcare|ohc",
+                )
+        self.assertRegex(
+            mail.outbox[2].body, r"\d{2}-\d{2}-\d{4}, \d{2}:\d{2} [AP]M IST"
+        )
 
     def test_reset_token_from_one_hospital_is_refused_by_another(self):
         with schema_context(self.second.schema_name):

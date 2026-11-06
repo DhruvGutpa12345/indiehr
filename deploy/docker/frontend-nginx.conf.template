@@ -3,6 +3,9 @@
 # Rendered at container start by the image's envsubst step:
 #   CSP_API_ORIGIN      e.g. https://api.example.in   (the CARE API)
 #   CSP_STORAGE_ORIGIN  e.g. https://files.example.in (pre-signed file URLs)
+#   API_UPSTREAM        e.g. http://backend:9000 — serve the API on the same origin (P1-T2b).
+#                       Each hospital's host then reaches its own schema. Empty: /api/ is 404.
+#   NGINX_RESOLVER      DNS server for API_UPSTREAM (default 127.0.0.11, Docker's own)
 server {
   listen 8080;
   root /usr/share/nginx/html;
@@ -19,6 +22,22 @@ server {
   include mime.types;
   types {
     text/javascript js mjs;
+  }
+
+  # Same-origin API: the browser's Host (the hospital's address) is passed through unchanged,
+  # so the backend picks that hospital's schema. Resolved per request: nginx starts without it.
+  resolver ${NGINX_RESOLVER} valid=30s ipv6=off;
+  set $api_upstream "${API_UPSTREAM}";
+  location /api/ {
+    if ($api_upstream = "") {
+      return 404;
+    }
+    proxy_pass $api_upstream;
+    proxy_set_header Host $http_host;
+    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+    proxy_set_header X-Forwarded-Proto $scheme;
+    proxy_read_timeout 120s;
+    client_max_body_size 10m;
   }
 
   location = /index.html {

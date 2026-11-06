@@ -1,3 +1,4 @@
+import careConfig from "@careConfig";
 import { Pin } from "lucide-react";
 import { useCallback, useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
@@ -52,7 +53,8 @@ function PinPageDialog({ url }: PinPageDialogProps) {
   useEffect(() => {
     if (open) {
       // Try to get a sensible default title from the page
-      const pageTitle = document.title?.replace(" | CARE", "") || "";
+      const pageTitle =
+        document.title?.replace(` | ${careConfig.titleSuffix}`, "") || "";
       setTitle(pageTitle);
       setIncludeQueryParams(false);
     }

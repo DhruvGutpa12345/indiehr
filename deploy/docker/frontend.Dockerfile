@@ -10,6 +10,8 @@ COPY --chown=nginx:nginx . /usr/share/nginx/html
 COPY --from=config frontend-nginx.conf.template /etc/nginx/templates/default.conf.template
 # Allowed API/storage origins for the CSP; set per deployment at `docker run -e ...`.
 ENV CSP_API_ORIGIN="" CSP_STORAGE_ORIGIN=""
+# Same-origin API proxy (see the template); off unless API_UPSTREAM is set.
+ENV API_UPSTREAM="" NGINX_RESOLVER="127.0.0.11"
 
 USER nginx
 EXPOSE 8080

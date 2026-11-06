@@ -50,20 +50,46 @@ const resolveApiUrl = (): string => {
   return env.REACT_CARE_API_URL ?? "";
 };
 
+/**
+ * IndieHR: the hospital's branding, set by /api/ihr/bootstrap.js before this bundle runs
+ * (see index.html). Missing on hosts that are not a hospital.
+ */
+export interface IhrBranding {
+  platform: string;
+  name: string;
+  short_name: string;
+  primary_colour: string;
+  logo_url: string;
+}
+
+type IhrWindow = { __IHR_BRANDING__?: IhrBranding };
+const ihrBranding =
+  typeof window !== "undefined"
+    ? (window as unknown as IhrWindow).__IHR_BRANDING__
+    : undefined;
+const ihrLogo: ILogo | undefined = ihrBranding?.logo_url
+  ? { light: ihrBranding.logo_url, dark: ihrBranding.logo_url }
+  : undefined;
+
 const careConfig = {
   apiUrl: resolveApiUrl(),
+  branding: ihrBranding,
+  /** IndieHR: the suffix of every page title (the hospital's short name). */
+  titleSuffix: ihrBranding?.short_name ?? "Care",
   sbomBaseUrl: env.REACT_SBOM_BASE_URL || "",
   urls: {
     github: env.REACT_GITHUB_URL || "https://github.com/ohcnetwork",
     ohcn: env.REACT_OHCN_URL || "https://ohc.network?ref=care",
   },
 
-  mainLogo: logo(env.REACT_MAIN_LOGO, {
-    light: "/images/care_logo.svg",
-    dark: "/images/care_logo.svg",
-  }),
+  mainLogo:
+    ihrLogo ??
+    logo(env.REACT_MAIN_LOGO, {
+      light: "/images/care_logo.svg",
+      dark: "/images/care_logo.svg",
+    }),
   stateLogo: logo(env.REACT_STATE_LOGO),
-  customLogo: logo(env.REACT_CUSTOM_LOGO),
+  customLogo: ihrLogo ?? logo(env.REACT_CUSTOM_LOGO),
   customLogoAlt: logo(env.REACT_CUSTOM_LOGO_ALT),
   customDescription: env.REACT_CUSTOM_DESCRIPTION,
   availableLocales: (env.REACT_ALLOWED_LOCALES || "")

@@ -3,7 +3,7 @@ import { Link } from "raviger";
 import { useTranslation } from "react-i18next";
 
 export const AuthHero = () => {
-  const { urls, stateLogo, customLogo, customLogoAlt } = careConfig;
+  const { urls, stateLogo, customLogo, customLogoAlt, branding } = careConfig;
   const customDescriptionHtml = __CUSTOM_DESCRIPTION_HTML__;
   const { t } = useTranslation();
 
@@ -12,7 +12,15 @@ export const AuthHero = () => {
   );
 
   return (
-    <div className="login-hero order-last relative flex flex-auto flex-col justify-between p-6 md:order-first md:h-full md:w-[calc(50%+130px)] md:flex-none md:p-0 md:px-16 md:pr-[calc(4rem+130px)]">
+    <div
+      // IndieHR: the hospital's brand colour.
+      style={
+        branding && {
+          background: `linear-gradient(to bottom right, ${branding.primary_colour}, #111827)`,
+        }
+      }
+      className="login-hero order-last relative flex flex-auto flex-col justify-between p-6 md:order-first md:h-full md:w-[calc(50%+130px)] md:flex-none md:p-0 md:px-16 md:pr-[calc(4rem+130px)]"
+    >
       <div></div>
       <div className="mt-4 flex flex-col items-start rounded-lg py-4 md:mt-12">
         <div className="mb-4 hidden items-center gap-6 md:flex">
@@ -44,7 +52,7 @@ export const AuthHero = () => {
         </div>
         <div className="max-w-lg">
           <h1 className="text-4xl font-black leading-tight tracking-wider text-white lg:text-5xl">
-            {t("care")}
+            {branding?.name ?? t("care")}
           </h1>
           {customDescriptionHtml ? (
             <div className="py-6">
@@ -64,33 +72,11 @@ export const AuthHero = () => {
       </div>
       <div className="mb-6 flex items-center">
         <div className="max-w-lg text-xs md:text-sm">
-          <div className="mb-2 ml-1 flex items-center gap-4">
-            <a href={urls.ohcn} rel="noopener noreferrer" target="_blank">
-              <img
-                src="/images/ohc_logo_light.svg"
-                className="inline-block h-10"
-                alt="Open Healthcare Network logo"
-              />
-            </a>
+          {/* IndieHR: our platform credit; licences stay one click away. */}
+          <div className="mb-2 ml-1 text-secondary-400">
+            {t("powered_by")} {branding?.platform ?? "IndieHR"}
           </div>
-          <a
-            href={urls.ohcn}
-            target="_blank"
-            rel="noopener noreferrer"
-            className="text-secondary-500"
-          >
-            {t("footer_body")}
-          </a>
           <div className="mx-auto mt-2">
-            <a
-              href={urls.github}
-              target="_blank"
-              rel="noopener noreferrer"
-              className="text-primary-400 hover:text-primary-500"
-            >
-              {t("contribute_github")}
-            </a>
-            <span className="mx-2 text-primary-400">|</span>
             <Link
               href="/licenses"
               target="_blank"
