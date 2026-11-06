@@ -3,6 +3,8 @@ This is the base class to create patient identifiers based on patient attributes
 This allows workflows without strict Authz to function as needed
 """
 
+from django.db import connection
+
 from care.emr.models.patient import PatientIdentifier, PatientIdentifierConfig
 from care.emr.resources.patient_identifier.spec import (
     IdentifierConfig,
@@ -22,7 +24,9 @@ class BasePatientIdentifierConfig:
     @classmethod
     def get_or_create_system_name_identifier_config(cls, facility):
         facility_key = str(facility.id) if facility else ""
-        cached_key = f"{facility_key}:{cls.IDENTIFIER_SYSTEM}"
+        # IndieHR: facility ids repeat across tenant schemas, so the schema is part of the key.
+        schema = getattr(connection, "schema_name", "")
+        cached_key = f"{schema}:{facility_key}:{cls.IDENTIFIER_SYSTEM}"
         if cached_key in cls.CACHED_CONFIG:
             return cls.CACHED_CONFIG[cached_key]
         identifiers = PatientIdentifierConfig.objects.filter(

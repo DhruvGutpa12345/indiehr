@@ -1,0 +1,7 @@
+# Lint config for our own Python: CARE's rules (one style for both codebases) plus a few
+# test-only relaxations: assertion thresholds (PLR2004), Django `_meta` access (SLF001) and
+# progress prints in the isolation suite (T201).
+extend = "../apps/backend/pyproject.toml"
+
+[lint.per-file-ignores]
+"**/tests/**" = ["DTZ001", "PLR2004", "SLF001", "T201"]

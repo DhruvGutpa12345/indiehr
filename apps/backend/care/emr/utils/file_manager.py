@@ -2,6 +2,8 @@ import logging
 
 import boto3
 from botocore.exceptions import ClientError
+from django.conf import settings
+from django.utils.module_loading import import_string
 
 from care.utils.csp.config import get_client_config
 
@@ -26,6 +28,17 @@ class FileManager:
     """
 
 
+def key_prefix():
+    """IndieHR: optional object-key prefix from a settings hook (a tenant prefix); "" if unset."""
+    prefix_function = getattr(settings, "FILE_OBJECT_KEY_PREFIX_FUNCTION", None)
+    return import_string(prefix_function)() if prefix_function else ""
+
+
+def object_key(file_obj):
+    """Object-storage key for a file."""
+    return f"{key_prefix()}{file_obj.file_type}/{file_obj.internal_name}"
+
+
 class S3FilesManager(FileManager):
     bucket_type = None
 
@@ -37,7 +50,7 @@ class S3FilesManager(FileManager):
         s3 = boto3.client("s3", **config)
         params = {
             "Bucket": bucket_name,
-            "Key": f"{file_obj.file_type}/{file_obj.internal_name}",
+            "Key": object_key(file_obj),
         }
 
         _mime_type = file_obj.meta.get("mime_type") or mime_type
@@ -62,7 +75,7 @@ class S3FilesManager(FileManager):
             "get_object",
             Params={
                 "Bucket": bucket_name,
-                "Key": f"{file_obj.file_type}/{file_obj.internal_name}",
+                "Key": object_key(file_obj),
                 "ResponseContentDisposition": f"{content_disposition}; filename={file_obj.name}{file_obj.get_extension()}",
             },
             ExpiresIn=duration,  # seconds
@@ -74,7 +87,7 @@ class S3FilesManager(FileManager):
         return s3.put_object(
             Body=file,
             Bucket=bucket_name,
-            Key=f"{file_obj.file_type}/{file_obj.internal_name}",
+            Key=object_key(file_obj),
             **kwargs,
         )
 
@@ -83,7 +96,7 @@ class S3FilesManager(FileManager):
         s3 = boto3.client("s3", **config)
         return s3.get_object(
             Bucket=bucket_name,
-            Key=f"{file_obj.file_type}/{file_obj.internal_name}",
+            Key=object_key(file_obj),
             **kwargs,
         )
 
@@ -100,7 +113,7 @@ class S3FilesManager(FileManager):
         try:
             return s3.delete_object(
                 Bucket=bucket_name,
-                Key=f"{file_obj.file_type}/{file_obj.internal_name}",
+                Key=object_key(file_obj),
                 **kwargs,
             )
         except s3.exceptions.NoSuchKey as e:
@@ -113,10 +126,7 @@ class S3FilesManager(FileManager):
         config, bucket_name = get_client_config(self.bucket_type)
         s3 = boto3.client("s3", **config)
 
-        keys = [
-            f"{file_obj.file_type}/{file_obj.internal_name}"
-            for file_obj in file_obj_list
-        ]
+        keys = [object_key(file_obj) for file_obj in file_obj_list]
         objects = [{"Key": key} for key in keys]
 
         try:

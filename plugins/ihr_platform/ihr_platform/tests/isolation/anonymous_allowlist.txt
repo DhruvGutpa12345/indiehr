@@ -1,0 +1,24 @@
+# Routes that may answer 2xx to an anonymous GET on a tenant host (TENANCY_DESIGN.md §6.6).
+# One route per line: "/" + the route regex exactly as Django lists it ("/" alone = site root).
+# Each needs a reason. The isolation suite fails on any anonymous 2xx not listed here
+# (fail-closed), so new upstream routes cannot become public unnoticed.
+# Reviewed 2026-11-06 (P1-T1b). All are same-tenant only: none returns another tenant's data.
+# FOLLOW-UP marks routes that stay public for now but need hardening (see TRACKER).
+
+/                                   # CARE's static landing template; no data
+/ping/                              # liveness: {"status": "OK"}
+/app_version/                       # build version string only
+/health/                            # healthy_django checks. FOLLOW-UP: reachable only from the load balancer / monitoring (P1-T8 ingress), not the internet
+/health/statuspage                  # as above (FOLLOW-UP, P1-T8)
+/health/main_database               # as above (FOLLOW-UP, P1-T8)
+/health/main_cache                  # as above (FOLLOW-UP, P1-T8)
+/health/celery_queue_length         # as above (FOLLOW-UP, P1-T8)
+/api/schema/                        # OpenAPI schema; config/urls.py serves it only when DEBUG or not IS_PRODUCTION
+/swagger/                           # as above, non-production only
+/redoc/                             # as above, non-production only
+/api/v1/^plug_config/$              # frontend plugin list, needed before login. FOLLOW-UP: PlugConfig.meta must never hold secrets (admin-only writes)
+/api/v1/^getallfacilities/$         # public facility finder (is_public=True only), used by the patient portal
+/api/v1/^govt/organization/$        # geography picker for addresses. FOLLOW-UP: restrict to government geography (TENANCY_DESIGN §6.6 / §10)
+/api/v1/^govt/organization/(?P<external_id>[^/.]+)/$   # as above (FOLLOW-UP)
+/api/v1/^facility/(?P<facility_external_id>[^/.]+)/schedulable_users/$   # patient-portal booking. FOLLOW-UP: exposes staff username, last_login and roles; trim fields and require a patient OTP login
+/api/v1/^getallfacilities/(?P<external_id>[^/.]+)/$   # detail of a public facility (is_public=True only), patient portal

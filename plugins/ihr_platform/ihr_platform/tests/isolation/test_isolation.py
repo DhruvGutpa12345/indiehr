@@ -1,0 +1,477 @@
+"""Cross-tenant isolation suite (TENANCY_DESIGN.md §11.2, task P1-T1b).
+
+Two tenants, Alpha (A) and Beta (B), are each seeded with CARE's full demo data. Every test tries
+to see or reach one tenant's data from the other. Record ids are UUIDs that are random per
+tenant, and names carry a per-tenant canary word, so either one turning up in the other tenant's
+response is a leak. Most tests also check a positive control (the same call works for the owner),
+so they cannot pass just because nothing answered.
+"""
+
+from collections import Counter
+from pathlib import Path
+from types import SimpleNamespace
+from unittest.mock import MagicMock, patch
+
+from django.conf import settings
+from django.core.exceptions import ImproperlyConfigured
+from django.core.files.uploadedfile import SimpleUploadedFile
+from django.db import connection
+from django.test import SimpleTestCase
+from django_tenants.utils import schema_context
+from rest_framework.test import APIClient
+from rest_framework_simplejwt.tokens import RefreshToken
+
+from ihr_platform.models import Hospital
+from ihr_platform.test_runner import (
+    TEST_SCHEMA,
+    WRITTEN_REDIS_KEYS,
+    unprefixed_redis_keys,
+)
+from ihr_platform.tests.isolation.routes import SHARED_VALUE_PARAMS, fill, get_routes
+from ihr_platform.tests.isolation.world import UUID_RE, build_world, drop_world
+
+HERE = Path(__file__).parent
+ANONYMOUS_ALLOW_LIST = HERE / "anonymous_allowlist.txt"
+CRAWL_SKIPS = HERE / "crawl_skips.txt"
+# A crawl as one tenant's admin must get real data back from at least this many routes.
+MIN_ROUTES_WITH_OWN_DATA = 60
+
+
+def _reviewed_list(path):
+    return {
+        line.split("#")[0].strip()
+        for line in path.read_text().splitlines()
+        if line.split("#")[0].strip()
+    }
+
+
+def _leaks(response, other):
+    """Ids and canary of tenant ``other`` found in a response body."""
+    body = response.content.decode(errors="replace").lower()
+    found = set(UUID_RE.findall(body)) & other.ids
+    if other.canary.lower() in body:
+        found.add(other.canary)
+    return found
+
+
+def _owns(response, tenant):
+    body = response.content.decode(errors="replace").lower()
+    return bool(set(UUID_RE.findall(body)) & tenant.ids)
+
+
+class CrossTenantIsolationTests(SimpleTestCase):
+    maxDiff = None
+    databases = {"default"}
+
+    @classmethod
+    def setUpClass(cls):
+        super().setUpClass()
+        cls.a, cls.b = build_world()
+        cls.routes = get_routes()
+
+    @classmethod
+    def tearDownClass(cls):
+        drop_world(cls.a, cls.b)
+        connection.set_schema(TEST_SCHEMA)
+        super().tearDownClass()
+
+    def tearDown(self):
+        connection.set_schema(TEST_SCHEMA)
+        super().tearDown()
+
+    def _staff_client(self, tenant):
+        """A real Bearer token (not force_authenticate), so every view's own auth classes run."""
+        with schema_context(tenant.schema):
+            token = str(RefreshToken.for_user(tenant.admin).access_token)
+        client = APIClient(HTTP_HOST=tenant.domain, raise_request_exception=False)
+        client.credentials(HTTP_AUTHORIZATION=f"Bearer {token}")
+        return client
+
+    # --- API crawl -------------------------------------------------------------------------
+
+    def _crawl(self, viewer, other):
+        """Every GET route as ``viewer``'s admin on its host, filled with its own ids."""
+        client = self._staff_client(viewer)
+        from config.authentication import CustomJWTAuthentication
+
+        statuses, skipped, leaks, errors, own = Counter(), set(), [], [], 0
+        refused = []  # staff routes that refused the staff token
+        for route, cls, allows_get in self.routes:
+            if not allows_get:
+                continue
+            path = fill(route, cls, viewer)
+            if path is None:
+                skipped.add("/" + route)
+                continue
+            response = client.get(path)
+            statuses[response.status_code] += 1
+            if response.status_code >= 500:
+                errors.append(path)
+            staff_route = CustomJWTAuthentication in getattr(
+                cls, "authentication_classes", ()
+            )
+            if response.status_code == 401 and staff_route:
+                refused.append(path)
+            if found := _leaks(response, other):
+                leaks.append(f"{path} -> {sorted(found)[:3]}")
+            if response.status_code < 300 and _owns(response, viewer):
+                own += 1
+        print(
+            f"\n[isolation] crawl as {viewer.hospital.slug}: statuses {dict(statuses)}, "
+            f"{own} with own data, {len(skipped)} skipped"
+        )
+        return refused, skipped, leaks, errors, own
+
+    def test_crawl_never_shows_the_other_tenants_data(self):
+        """Crawl A, then B, then A again (caches warm from the other tenant each time)."""
+        for viewer, other in ((self.a, self.b), (self.b, self.a), (self.a, self.b)):
+            with self.subTest(viewer=viewer.hospital.slug):
+                refused, skipped, leaks, errors, own = self._crawl(viewer, other)
+                self.assertEqual(leaks, [], "other tenant's data in responses")
+                self.assertEqual(errors, [], "server errors can hide leaks")
+                self.assertEqual(refused, [], "staff token refused on its own host")
+                self.assertGreaterEqual(own, MIN_ROUTES_WITH_OWN_DATA)
+                self.assertEqual(
+                    sorted(skipped - _reviewed_list(CRAWL_SKIPS)),
+                    [],
+                    "routes skipped by the crawl but not in crawl_skips.txt",
+                )
+                if stale := sorted(_reviewed_list(CRAWL_SKIPS) - skipped):
+                    print(f"\n[isolation] crawl_skips.txt entries now crawled: {stale}")
+
+    def test_other_tenants_record_ids_are_not_reachable(self):
+        """B's host, with A's ids: for the record only, and for every id in the path."""
+        client = self._staff_client(self.b)
+        checked, answered, leaks = 0, [], []
+        for route, cls, allows_get in self.routes:
+            if not allows_get or "(?P<external_id>" not in route:
+                continue
+            if any(f"(?P<{name}>" in route for name in SHARED_VALUE_PARAMS):
+                continue
+            paths = {
+                fill(route, cls, self.b, external_id_from=self.a),
+                fill(route, cls, self.b, ids_from=self.a),
+            } - {None}
+            for path in paths:
+                response = client.get(path)
+                checked += 1
+                if response.status_code < 300:
+                    answered.append(f"{path} -> {response.status_code}")
+                if found := _leaks(response, self.a):
+                    leaks.append(f"{path} -> {sorted(found)[:3]}")
+        print(f"\n[isolation] cross-id probes: {checked} requests with A's ids on B")
+        self.assertGreater(checked, 40)
+        self.assertEqual(leaks, [], "A records reachable from B by id")
+        self.assertEqual(answered, [], "B answered 2xx for A's record ids")
+
+    def test_anonymous_access_matches_reviewed_allow_list(self):
+        """On A's host with no login, only reviewed routes may answer 2xx (fail-closed)."""
+        client = APIClient(HTTP_HOST=self.a.domain, raise_request_exception=False)
+        open_routes = set()
+        for route, cls, allows_get in self.routes:
+            if not allows_get:
+                continue
+            path = fill(route, cls, self.a)
+            if path is None:
+                continue
+            if client.get(path).status_code < 300:
+                open_routes.add("/" + route)
+        allowed = _reviewed_list(ANONYMOUS_ALLOW_LIST)
+        self.assertEqual(
+            sorted(open_routes - allowed),
+            [],
+            "Anonymous 2xx on routes not in anonymous_allowlist.txt",
+        )
+        # Some entries are open only for certain data (e.g. a public facility), so entries that
+        # did not answer are reported, not failed.
+        if stale := sorted(allowed - open_routes):
+            print(f"\n[isolation] allow-listed but not open this run: {stale}")
+
+    # --- tokens ----------------------------------------------------------------------------
+
+    def test_staff_token_from_a_is_rejected_on_b(self):
+        with schema_context(self.a.schema):
+            token = str(RefreshToken.for_user(self.a.admin).access_token)
+        for tenant, expected in ((self.a, (200,)), (self.b, (401, 403))):
+            client = APIClient(HTTP_HOST=tenant.domain)
+            client.credentials(HTTP_AUTHORIZATION=f"Bearer {token}")
+            response = client.get("/api/v1/users/getcurrentuser/")
+            self.assertIn(response.status_code, expected, tenant.hospital.slug)
+        # The rejection rests on User.external_id being random per tenant (TENANCY_DESIGN §4).
+        self.assertNotEqual(self.a.admin.external_id, self.b.admin.external_id)
+
+    def test_patient_otp_token_from_a_is_rejected_on_b(self):
+        """Same phone number in both tenants: A's patient-login token must not open B."""
+        from care.emr.models import Patient
+        from config.patient_otp_token import PatientToken
+
+        with schema_context(self.a.schema):
+            phone = Patient.objects.exclude(phone_number="").first().phone_number
+            token = PatientToken()
+            token["phone_number"] = phone
+            token = str(token)
+        with schema_context(self.b.schema):
+            patient = Patient.objects.exclude(phone_number="").first()
+            patient.phone_number = phone
+            patient.save(update_fields=["phone_number"])
+
+        own = APIClient(HTTP_HOST=self.a.domain)
+        own.credentials(HTTP_AUTHORIZATION=f"Bearer {token}")
+        response = own.get("/api/v1/otp/patient/")
+        self.assertEqual(response.status_code, 200, response.content[:300])
+        self.assertTrue(_owns(response, self.a), "positive control: A sees its patient")
+
+        client = APIClient(HTTP_HOST=self.b.domain)
+        client.credentials(HTTP_AUTHORIZATION=f"Bearer {token}")
+        response = client.get("/api/v1/otp/patient/")
+        self.assertIn(response.status_code, (401, 403), response.content[:300])
+
+    # --- process-wide caches ---------------------------------------------------------------
+
+    def test_patient_identifier_config_cache_is_per_tenant(self):
+        from care.emr.signals.patient.base import BasePatientIdentifierConfig
+        from care.facility.models import Facility
+
+        subclasses = BasePatientIdentifierConfig.__subclasses__()
+        self.assertTrue(subclasses, "no identifier config classes found")
+        config_cls = subclasses[0]
+        with schema_context(self.a.schema):
+            a_facility = Facility.objects.order_by("id").first()
+            a_config = config_cls.get_or_create_system_name_identifier_config(
+                a_facility
+            )
+        with schema_context(self.b.schema):
+            # same integer id, other tenant (ids line up on purpose, see world.py)
+            b_facility = Facility.objects.get(id=a_facility.id)
+            b_config = config_cls.get_or_create_system_name_identifier_config(
+                b_facility
+            )
+            self.assertEqual(b_config.facility_id, b_facility.id)
+            self.assertNotEqual(str(b_config.external_id), str(a_config.external_id))
+            self.assertTrue(
+                type(b_config)
+                .objects.filter(external_id=b_config.external_id)
+                .exists(),
+                "B was handed a config object that does not exist in B",
+            )
+
+    def test_identifier_config_lookup_cache_is_per_tenant(self):
+        """PatientIdentifierConfigCache: same config id in both tenants, each sees its own."""
+        from care.emr.models.patient import (
+            PatientIdentifierConfig,
+            PatientIdentifierConfigCache,
+        )
+
+        def make(tenant, external_id=None):
+            with schema_context(tenant.schema):
+                kwargs = {"external_id": external_id} if external_id else {}
+                return PatientIdentifierConfig.objects.create(
+                    status="active",
+                    config={"display": f"{tenant.canary} probe", "system": "probe"},
+                    **kwargs,
+                )
+
+        a_config = make(self.a)
+        make(self.b, external_id=a_config.external_id)
+        try:
+            with schema_context(self.a.schema):
+                seen_by_a = str(
+                    PatientIdentifierConfigCache.get_config(a_config.external_id)
+                )
+            with schema_context(self.b.schema):
+                seen_by_b = str(
+                    PatientIdentifierConfigCache.get_config(a_config.external_id)
+                )
+            self.assertIn(self.a.canary, seen_by_a)
+            self.assertIn(self.b.canary, seen_by_b)
+        finally:
+            PatientIdentifierConfigCache.clear_cache()
+            for tenant in (self.a, self.b):
+                with schema_context(tenant.schema):
+                    PatientIdentifierConfig.objects.filter(
+                        external_id=a_config.external_id
+                    ).delete()
+
+    def test_raw_redis_recent_views_are_per_tenant(self):
+        """CARE's recent-views list talks to Redis directly (no Django cache key function)."""
+        from care.emr.models.valueset import RecentViewsManager
+
+        key = "ihr-isolation-probe"
+        with schema_context(self.a.schema):
+            RecentViewsManager.add_recent_view(
+                key, {"code": "A-ONLY", "system": "probe"}
+            )
+            self.assertEqual(
+                [v["code"] for v in RecentViewsManager.get_recent_views(key)],
+                ["A-ONLY"],
+            )
+        with schema_context(self.b.schema):
+            self.assertEqual(RecentViewsManager.get_recent_views(key), [])
+
+    # --- background jobs ------------------------------------------------------------------
+
+    def test_celery_tasks_run_in_the_senders_tenant(self):
+        """Through tenant-schemas-celery's real prerun/postrun hooks (eager in tests)."""
+        from config.celery_app import app
+        from tenant_schemas_celery.app import CeleryApp
+        from tenant_schemas_celery.task import TenantTask
+
+        self.assertIsInstance(app, CeleryApp)
+        not_tenant_aware = [
+            name
+            for name, task in app.tasks.items()
+            if not name.startswith("celery.") and not isinstance(task, TenantTask)
+        ]
+        self.assertEqual(not_tenant_aware, [])
+
+        @app.task(name="ihr_platform.tests.isolation_probe")
+        def probe():
+            return connection.schema_name
+
+        with schema_context(self.b.schema):
+            self.assertEqual(probe.apply().get(), self.b.schema)
+            sent_for_a = probe.apply(headers={"_schema_name": self.a.schema})
+            self.assertEqual(sent_for_a.get(), self.a.schema)
+            self.assertEqual(
+                connection.schema_name, self.b.schema, "schema not restored"
+            )
+
+    def test_periodic_jobs_run_once_per_active_tenant(self):
+        """Celery beat: CARE's periodic jobs go to every active hospital, never to public."""
+        from celery.beat import ScheduleEntry
+        from config.celery_app import app
+
+        self.assertEqual(
+            settings.CELERY_BEAT_SCHEDULER, "ihr_platform.beat.ActiveTenantScheduler"
+        )
+        from ihr_platform.beat import ActiveTenantScheduler
+
+        app.loader.import_default_modules()
+        app.finalize()
+        scheduler = ActiveTenantScheduler(app=app, lazy=True)
+        entries = scheduler._tenant_aware_beat_schedule_to_dict(app.conf.beat_schedule)
+        self.assertTrue(
+            any("cleanup_expired_otps" in name for name in entries), entries
+        )
+
+        with schema_context("public"):
+            Hospital.objects.filter(pk=self.b.hospital.pk).update(
+                status=Hospital.Status.SUSPENDED
+            )
+        try:
+            sent = []
+            with patch.object(
+                scheduler,
+                "apply_async",
+                side_effect=lambda entry, **kw: sent.append(connection.schema_name)
+                or MagicMock(id="x"),
+            ):
+                for name, fields in entries.items():
+                    scheduler.apply_entry(ScheduleEntry(name=name, app=app, **fields))
+        finally:
+            with schema_context("public"):
+                Hospital.objects.filter(pk=self.b.hospital.pk).update(
+                    status=Hospital.Status.ACTIVE
+                )
+        per_schema = Counter(sent)
+        self.assertNotIn("public", per_schema)
+        self.assertNotIn(self.b.schema, per_schema, "suspended hospital got jobs")
+        self.assertEqual(per_schema[self.a.schema], len(entries))
+
+    # --- object storage --------------------------------------------------------------------
+
+    def test_file_object_keys_carry_the_tenant(self):
+        """Every S3 call site, for both tenants, gets t/<that tenant's uuid>/; public refuses."""
+        from care.emr.utils.file_manager import S3FilesManager
+        from care.utils.csp.config import BucketType
+        from care.utils.file_uploads.cover_image import upload_cover_image
+
+        keys = []
+
+        def record(**params):
+            if "Key" in params:
+                keys.append(params["Key"])
+            keys.extend(o["Key"] for o in params.get("Delete", {}).get("Objects", []))
+            return MagicMock()
+
+        fake_s3 = MagicMock()
+        for method in ("put_object", "get_object", "delete_object", "delete_objects"):
+            getattr(fake_s3, method).side_effect = record
+        fake_s3.generate_presigned_url.side_effect = lambda *a, **kw: record(
+            **kw.get("Params", {})
+        )
+
+        file_obj = SimpleNamespace(
+            file_type="patient",
+            internal_name="probe.pdf",
+            name="probe",
+            meta={},
+            get_extension=lambda: ".pdf",
+        )
+        manager = S3FilesManager(BucketType.PATIENT)
+        for tenant in (self.a, self.b):
+            keys.clear()
+            with (
+                schema_context(tenant.schema),
+                patch("boto3.client", return_value=fake_s3),
+            ):
+                manager.signed_url(file_obj)
+                manager.read_signed_url(file_obj)
+                manager.put_object(file_obj, b"x")
+                manager.get_object(file_obj)
+                manager.delete_object(file_obj)
+                manager.delete_objects([file_obj])
+                upload_cover_image(
+                    SimpleUploadedFile("c.png", b"x"), "probe", "cover_images"
+                )
+                upload_cover_image(
+                    SimpleUploadedFile("a.png", b"x"), "probe", "avatars"
+                )
+            self.assertEqual(len(keys), 8, keys)
+            prefix = f"t/{tenant.hospital.uuid}/"
+            self.assertEqual([k for k in keys if not k.startswith(prefix)], [])
+
+        self.assertNotEqual(self.a.hospital.uuid, self.b.hospital.uuid)
+        with schema_context("public"), self.assertRaises(ImproperlyConfigured):
+            manager.signed_url(file_obj)
+
+    # --- batch endpoint ---------------------------------------------------------------------
+
+    def test_batch_requests_stay_in_the_callers_tenant(self):
+        client = self._staff_client(self.b)
+        own = {
+            "requests": [
+                {"url": "/api/v1/users/", "method": "GET", "reference_id": "users"},
+                {"url": "/api/v1/facility/", "method": "GET", "reference_id": "fac"},
+            ]
+        }
+        response = client.post("/api/v1/batch_requests/", own, format="json")
+        self.assertEqual(response.status_code, 200, response.content[:300])
+        self.assertIn(str(self.b.admin.external_id), response.content.decode())
+        self.assertEqual(_leaks(response, self.a), set())
+
+        a_facility = self.a.first_id_by_model["facility.facility"]
+        foreign = {
+            "requests": [
+                {
+                    "url": f"/api/v1/facility/{a_facility}/",
+                    "method": "GET",
+                    "reference_id": "a-facility",
+                }
+            ]
+        }
+        response = client.post("/api/v1/batch_requests/", foreign, format="json")
+        self.assertEqual(response.status_code, 400, response.content[:300])
+        self.assertEqual(response.json()["results"][0]["status_code"], 404)
+        self.assertEqual(_leaks(response, self.a), set())
+
+    # --- runs last: everything above has populated the cache --------------------------------
+
+    def test_zz_redis_keyspace_is_tenant_prefixed(self):
+        """Early signal; the runner repeats this audit after the whole run (test_runner.py)."""
+        bad = unprefixed_redis_keys()
+        print(
+            f"\n[isolation] Redis: {len(WRITTEN_REDIS_KEYS)} keys written, unprefixed: {len(bad)}"
+        )
+        self.assertGreater(len(WRITTEN_REDIS_KEYS), 0, "write recorder saw nothing")
+        self.assertEqual(bad[:30], [], "Redis keys without a tenant prefix")

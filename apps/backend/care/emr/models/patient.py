@@ -3,7 +3,7 @@ from datetime import date
 from dateutil.relativedelta import relativedelta
 from django.contrib.postgres.fields import ArrayField
 from django.core.validators import MinValueValidator
-from django.db import models
+from django.db import connection, models
 from django.template.defaultfilters import pluralize
 from django.utils import timezone
 
@@ -187,22 +187,28 @@ class PatientIdentifierConfigCache:
     instance_configs = None
     facility_configs = {}
 
+    @staticmethod
+    def _key(config_id):
+        # IndieHR: one process serves many tenant schemas; keep their entries apart.
+        return f"{getattr(connection, 'schema_name', '')}:{config_id}"
+
     @classmethod
     def get_config(cls, config_id) -> PatientIdentifierConfig:
         from care.emr.resources.patient_identifier.spec import PatientIdentifierListSpec
 
-        if config_id not in cls.configs:
-            cls.configs[config_id] = PatientIdentifierListSpec.serialize(
+        key = cls._key(config_id)
+        if key not in cls.configs:
+            cls.configs[key] = PatientIdentifierListSpec.serialize(
                 PatientIdentifierConfig.objects.get(external_id=config_id)
             ).to_json()
-        return cls.configs[config_id]
+        return cls.configs[key]
 
     @classmethod
     def clear_cache(cls, config_id: int | None = None):
         if config_id is None:
             cls.configs = {}
         else:
-            cls.configs.pop(config_id, None)
+            cls.configs.pop(cls._key(config_id), None)
 
     @classmethod
     def get_instance_config(cls) -> list[dict]:

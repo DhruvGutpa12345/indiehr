@@ -33,6 +33,7 @@ jobs:
       backend: ${{ steps.filter.outputs.backend }}
       frontend: ${{ steps.filter.outputs.frontend }}
       infra: ${{ steps.filter.outputs.infra }}
+      isolation: ${{ steps.filter.outputs.isolation }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: dorny/paths-filter@ceb8a2b8f2d89434be7ff52d3de7ec3738c5cc9d # v4.0.3
@@ -44,6 +45,7 @@ jobs:
               - 'plugins/**'
               - 'deploy/docker/backend.Dockerfile'
               - 'deploy/ci/**'
+              - 'scripts/isolation-mutation.sh'
               - '.github/workflows/apps.yml'
             frontend:
               - 'apps/frontend/**'
@@ -52,6 +54,23 @@ jobs:
               - 'deploy/frontend*'
               - 'scripts/check-bundle-egress.sh'
               - '.github/workflows/apps.yml'
+            # Mutation runs cost ~10 jobs: only when an isolation control or its tests change
+            isolation:
+              - 'plugins/ihr_platform/**'
+              - 'scripts/isolation-mutation.sh'
+              - 'apps/backend/config/patient_otp_token.py'
+              - 'apps/backend/care/emr/signals/patient/base.py'
+              - 'apps/backend/care/emr/models/valueset.py'
+              - 'apps/backend/care/emr/models/patient.py'
+              - 'apps/backend/care/emr/utils/file_manager.py'
+              - 'apps/backend/care/utils/file_uploads/cover_image.py'
+              - 'apps/backend/config/celery_app.py'
+              - 'apps/backend/config/patient_otp_authentication.py'
+              - 'apps/backend/config/settings/**'
+              - 'apps/backend/care/emr/resources/base.py'
+              - 'deploy/ci/**'
+              - '.github/workflows/apps.yml'
+              - 'upstream.lock'
             infra:
               - 'deploy/**'
               - 'scripts/**'
@@ -163,6 +182,78 @@ jobs:
       - name: Service logs on failure
         if: failure()
         run: $COMPOSE logs --tail=200
+
+  mutation-list:
+    name: Isolation mutations (list)
+    needs: changes
+    if: needs.changes.outputs.isolation == 'true' || github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    outputs:
+      names: ${{ steps.list.outputs.names }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Every mutation target still exists
+        run: scripts/isolation-mutation.sh check
+      - id: list
+        run: echo "names=$(scripts/isolation-mutation.sh list | jq -Rnc '[inputs]')" >> "$GITHUB_OUTPUT"
+
+  # TENANCY_DESIGN.md §11.2: remove one isolation control at a time; the isolation suite must
+  # then fail on the test that guards it. A green run here means a test has stopped guarding.
+  isolation-mutation:
+    name: Isolation mutation (${{ matrix.mutation }} must fail)
+    needs: mutation-list
+    runs-on: ubuntu-24.04
+    timeout-minutes: 40
+    strategy:
+      fail-fast: false
+      matrix:
+        mutation: ${{ fromJSON(needs.mutation-list.outputs.names) }}
+    defaults:
+      run:
+        working-directory: apps/backend
+    env:
+      COMPOSE: docker compose -f docker-compose.yaml -f docker-compose.local.yaml -f ../../deploy/ci/tenancy.override.yaml
+      MUTATION: ${{ matrix.mutation }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+
+      - name: Build dev image
+        run: |
+          docker buildx build \
+            --file docker/dev.Dockerfile \
+            --tag care_local \
+            --cache-from type=gha,scope=backend \
+            --load .
+
+      - name: Remove the control
+        run: ../../scripts/isolation-mutation.sh apply "$MUTATION"
+
+      - name: Start services (with ihr_platform mounted)
+        run: $COMPOSE up -d --wait || ($COMPOSE logs && exit 1)
+
+      - name: The guarding tests must fail
+        run: |
+          read -r -a labels <<<"$(../../scripts/isolation-mutation.sh test "$MUTATION")"
+          set +e
+          $COMPOSE exec -T backend python manage.py test --settings=ihr_platform.settings.test --noinput -v 2 "${labels[@]}" > mutation.log 2>&1
+          status=$?
+          set -e
+          grep -E "^(FAIL|ERROR):|^Ran |^OK|^FAILED|Error:" mutation.log | head -40 || true
+          if [ "$status" -eq 0 ]; then
+            echo "::error::Mutation $MUTATION survived: the suite stayed green without this control"
+            exit 1
+          fi
+          while read -r expect; do
+            if ! grep -qE "$expect" mutation.log; then
+              echo "::error::Mutation $MUTATION: no line matching '$expect'"
+              tail -150 mutation.log
+              exit 1
+            fi
+          done < <(../../scripts/isolation-mutation.sh expect "$MUTATION")
+          echo "Mutation $MUTATION killed, as required."
 
   frontend:
     name: Frontend (typecheck, lint, unit tests, build)

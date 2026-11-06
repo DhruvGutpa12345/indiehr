@@ -109,6 +109,12 @@ class TenancyBasicsTests(SimpleTestCase):
     def test_host_selects_tenant(self):
         response = self.client.get("/ping/", HTTP_HOST=SECOND_DOMAIN)
         self.assertEqual(response.status_code, 200)
+        # the middleware switched this connection to the second tenant, not the default one
+        self.assertEqual(connection.schema_name, self.second.schema_name)
+
+    def test_care_audit_log_is_off_in_tenant_mode(self):
+        """CARE's audit log can mix up users across tenants (thread-local); off until P1-T6."""
+        self.assertFalse(settings.AUDIT_LOG_ENABLED)
 
     def test_unknown_host_is_refused(self):
         response = self.client.get("/ping/", HTTP_HOST="unknown.example.test")

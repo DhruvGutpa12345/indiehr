@@ -1,7 +1,7 @@
 import json
 
 from django.conf import settings
-from django.db import models
+from django.db import connection, models
 from django_redis import get_redis_connection
 
 from care.emr.fhir.resources.valueset import ValueSetResource
@@ -77,6 +77,12 @@ class RecentViewsManager:
             cls._client = get_redis_connection("default")
         return cls._client
 
+    @staticmethod
+    def _tenant_key(cache_key):
+        # IndieHR: raw Redis keys get the tenant schema, like Django cache keys do.
+        schema = getattr(connection, "schema_name", None)
+        return f"{schema}:{cache_key}" if schema else cache_key
+
     @classmethod
     def _remove_by_code(cls, cache_key, code):
         client = cls.get_client()
@@ -92,12 +98,14 @@ class RecentViewsManager:
 
     @classmethod
     def get_recent_views(cls, cache_key):
+        cache_key = cls._tenant_key(cache_key)
         client = cls.get_client()
         items = client.lrange(cache_key, 0, -1)
         return [json.loads(item.decode()) for item in items]
 
     @classmethod
     def add_recent_view(cls, cache_key, code_obj):
+        cache_key = cls._tenant_key(cache_key)
         code = code_obj.get("code")
         if not code:
             return
@@ -111,6 +119,7 @@ class RecentViewsManager:
 
     @classmethod
     def remove_recent_view(cls, cache_key, code_obj):
+        cache_key = cls._tenant_key(cache_key)
         code = code_obj.get("code")
         if not code:
             return
@@ -118,5 +127,6 @@ class RecentViewsManager:
 
     @classmethod
     def clear_recent_views(cls, cache_key):
+        cache_key = cls._tenant_key(cache_key)
         client = cls.get_client()
         client.delete(cache_key)

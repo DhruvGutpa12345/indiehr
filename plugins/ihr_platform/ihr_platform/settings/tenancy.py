@@ -36,6 +36,16 @@ def apply_tenancy(settings):
         *middleware,
     ]
 
+    # Periodic jobs run once per active hospital, in its schema (ihr_platform/beat.py).
+    settings["CELERY_BEAT_SCHEDULER"] = "ihr_platform.beat.ActiveTenantScheduler"
+    # CARE's own audit log keeps the last request in a thread-local that GET requests never reset,
+    # so it could attribute one hospital's change to another hospital's user. Off until P1-T6.
+    settings["AUDIT_LOG_ENABLED"] = False
+
+    settings["FILE_OBJECT_KEY_PREFIX_FUNCTION"] = (
+        "ihr_platform.storage.tenant_key_prefix"
+    )
+
     for cache in settings["CACHES"].values():
         cache["KEY_FUNCTION"] = "django_tenants.cache.make_key"
         cache["REVERSE_KEY_FUNCTION"] = "django_tenants.cache.reverse_key"

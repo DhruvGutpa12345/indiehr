@@ -6,6 +6,7 @@ import boto3
 from django.conf import settings
 from django.core.files.uploadedfile import UploadedFile
 
+from care.emr.utils.file_manager import key_prefix
 from care.utils.csp.config import BucketType, get_client_config
 
 logger = logging.getLogger(__name__)
@@ -37,9 +38,8 @@ def upload_cover_image(
             logger.warning("Failed to delete old cover image %s", old_key)
 
     image_extension = image.name.rsplit(".", 1)[-1]
-    image_key = (
-        f"{folder}/{object_external_id}_{secrets.token_hex(8)}.{image_extension}"
-    )
+    # IndieHR: optional tenant prefix (same hook as care.emr.utils.file_manager.object_key)
+    image_key = f"{key_prefix()}{folder}/{object_external_id}_{secrets.token_hex(8)}.{image_extension}"
 
     boto_params = {
         "Bucket": bucket_name,
