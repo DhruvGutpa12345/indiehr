@@ -240,7 +240,7 @@ P1-T1 is split into sub-tasks. a → b → c must each pass in CI before the nex
    - API crawl of every route with canary strings, as tenant B against tenant A, and anonymously;
    - Redis keyspace audit, Celery, file keys, tokens (Keycloak org, `tid`, `azp`), batch requests;
    - **mutation runs:** remove the cache key function, the `tid` check or the org check, and each run must fail. Built with 10 mutations (cache key function, file and cover-image prefixes, OTP `tid`, both identifier caches, recent-views prefix, tenant Celery app, active-only beat, default-allow permissions); the Keycloak org/`azp` checks join when P1-T4 exists. CI runs them when an isolation control or its tests change, weekly and on demand (not nightly: Actions minutes).
-3. **P1-T1c, scale and operations — measured 2026-11-06** (`docs/reviews/p1-t1c/scale-results.md`; cap decision with the owner):
+3. **P1-T1c, scale and operations — measured 2026-11-06; cap 100 confirmed by the owner** (`docs/reviews/p1-t1c/scale-results.md`):
    - migration time and catalogue size at 1, 50 and 200 schemas;
    - per-tenant backup/restore round trip;
    - onboarding time.
@@ -256,7 +256,7 @@ P1-T1 is split into sub-tasks. a → b → c must each pass in CI before the nex
 | Q-T3 | Facility logos and covers: presigned (private) URLs (as written in §6.8), or public images in a separate bucket? | **Presigned**, as §6.8 assumes. One small patch, no public bucket. |
 | Q-T4 | One Keycloak login client **per hospital** (stronger) or one shared client with strict checks? | **One per hospital.** Created automatically at onboarding. |
 | Q-T5 | May one designated hospital admin be "superuser" **inside their own hospital only** (CARE needs it to edit hospital-wide forms and templates)? | **No for v1.** Hospital-wide forms come from our packs; hospitals customise at facility level. Revisit with pilot feedback. |
-| Q-T6 | Cap of hospitals per database cluster ("cell")? | **Start at 100**, adjust after P1-T1c measurements. |
+| Q-T6 | Cap of hospitals per database cluster ("cell")? | **Start at 100**, adjust after P1-T1c measurements. **Decided 2026-11-06: 100** (P1-T1c: per-hospital dumps step up between 125 and 150). |
 | Q-T7 | Platform support access to patient data: break-glass only (hospital admin approves, time-limited, logged)? | **Yes**, break-glass only. |
 | Q-T8 | Drop inter-hospital referral and transfer (CARE's cross-facility resource requests) for v1, redesign later on ABDM? | **Yes.** It still works between facilities of the same tenant. |
 | Q-T9 | Include the patch that clears cached data at logout (shared hospital computers)? | **Yes.** |

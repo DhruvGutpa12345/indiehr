@@ -42,7 +42,7 @@ A "dedicated" option (its own database or own cluster) for large hospitals. The 
 ## Consequences
 
 - Strong isolation at low cost per tenant. One codebase and one upgrade covers everyone.
-- Migrations run once per schema. Upgrade time grows with the number of tenants, so migrations must stay fast. *(Amendment 1: CARE's migrations are not backward-compatible, so upgrades use a short announced maintenance window with a per-tenant migration-fingerprint gate.)* We plan for 100s of tenants per cluster; beyond that we shard tenants across clusters.
+- Migrations run once per schema. Upgrade time grows with the number of tenants, so migrations must stay fast. *(Amendment 1: CARE's migrations are not backward-compatible, so upgrades use a short announced maintenance window with a per-tenant migration-fingerprint gate.)* We plan for 100s of tenants per cluster; beyond that we shard tenants across clusters. *(P1-T1c, owner-confirmed 2026-11-06: a cap of **100 hospitals per cell**; per-hospital dumps step up between 125 and 150, see docs/reviews/p1-t1c/scale-results.md.)*
 - Upstream CARE code assumes a single schema. Any raw SQL, cross-schema queries or global caches in CARE must be audited (part of P1-T1).
 
 ---
