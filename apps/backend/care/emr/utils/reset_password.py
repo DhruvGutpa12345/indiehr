@@ -49,9 +49,6 @@ def verify_password_reset_token(token):
 
     try:
         payload = jwt.decode(token, secret_key, algorithms=["HS256"])
-        schema = getattr(connection, "schema_name", None)
-        if schema and payload.get("tid") != schema:
-            return (None, "Invalid token")
         username = payload.get("username")
         if not username:
             return (None, "Invalid token")
@@ -67,6 +64,10 @@ def verify_password_reset_token(token):
             return (None, "Invalid token type")
         if payload.get("sub") != str(user.external_id):
             return (None, "Token doesn't match user")
+        # IndieHR: last, so CARE's own checks keep their specific messages.
+        schema = getattr(connection, "schema_name", None)
+        if schema and payload.get("tid") != schema:
+            return (None, "Invalid token")
 
     except jwt.ExpiredSignatureError:
         error_message = "Token has expired"
