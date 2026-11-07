@@ -28,6 +28,7 @@ from ihr_platform.keycloak.realm import check_realm, ensure_realm
 from ihr_platform.models import Domain, Hospital
 
 INACTIVE = {
+    Hospital.Status.PROVISIONING,  # turned on by provisioning's last step (P1-T5a)
     Hospital.Status.SUSPENDED,
     Hospital.Status.OFFBOARDING,
     Hospital.Status.ARCHIVED,
@@ -74,6 +75,7 @@ def hospital_login(hospital):
         origins=tuple(origins),
         redirect_uris=tuple(redirects),
         enabled=hospital.status not in INACTIVE,
+        uuid=str(hospital.uuid),
     )
 
 
@@ -95,7 +97,12 @@ class Command(BaseCommand):
 
     def handle(self, *args, realm, slug, every, check, rebuild_flows, **options):
         admin = keycloak_admin()
-        hospitals = Hospital.objects.exclude(schema_name="public").order_by("slug")
+        # Hospitals still being provisioned belong to the provisioning engine (P1-T5a).
+        hospitals = (
+            Hospital.objects.exclude(schema_name="public")
+            .exclude(status=Hospital.Status.PROVISIONING)
+            .order_by("slug")
+        )
         if not every:
             hospitals = hospitals.filter(slug__in=slug)
             missing = set(slug) - set(hospitals.values_list("slug", flat=True))

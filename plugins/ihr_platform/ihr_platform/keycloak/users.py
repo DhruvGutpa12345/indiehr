@@ -7,12 +7,18 @@ with a password someone else chose.
 import json
 
 from . import totp
-from .kc_http import q
+from .kc_http import KeycloakError, q
 
 
-def create_user(admin, username, first, last, password, otp_secret=None):
-    """(Re)create one user with a password and, optionally, a TOTP credential."""
+def create_user(
+    admin, username, first, last, password, otp_secret=None, *, replace=True
+):
+    """(Re)create one user with a password and, optionally, a TOTP credential.
+    With ``replace=False`` an existing user of that name is an error, never deleted."""
     for old in admin.get(f"users?username={q(username)}&exact=true"):
+        if not replace:
+            msg = f"Keycloak user {username} already exists"
+            raise KeycloakError(msg)
         admin.delete(f"users/{old['id']}")
     credentials = [{"type": "password", "value": password, "temporary": False}]
     if otp_secret:

@@ -2,7 +2,7 @@
 # Run upstream CARE locally with the IndieHR low-memory override (P0-T5), in tenant mode with
 # two synthetic demo hospitals at http://alpha.localhost:8080 and http://beta.localhost:8080
 # (P1-T2b), and Keycloak on demand (P1-T3: `scripts/care-dev.sh keycloak help`).
-# Usage: scripts/care-dev.sh <up|down|ps|logs|seed|reset-passwords|frontend|shell|keycloak>
+# Usage: scripts/care-dev.sh <up|down|ps|logs|seed|reset-passwords|frontend|shell|keycloak|provision|provision-demo>
 set -euo pipefail
 ROOT="$(git -C "$(dirname "$0")" rev-parse --show-toplevel)"
 BACKEND="$ROOT/apps/backend"
@@ -43,7 +43,8 @@ write_test_users() {
   # Keep the Keycloak section (written by `keycloak seed`) when the CARE logins are rewritten.
   local kc=""
   [[ -f "$ROOT/deploy/seed/TEST_USERS.md" ]] &&
-    kc="$(sed -n '/<!-- keycloak:start -->/,/<!-- keycloak:end -->/p' "$ROOT/deploy/seed/TEST_USERS.md")"
+    kc="$(sed -n -e '/<!-- keycloak:start -->/,/<!-- keycloak:end -->/p' \
+      -e '/<!-- provisioned:start -->/,/<!-- provisioned:end -->/p' "$ROOT/deploy/seed/TEST_USERS.md")"
   {
     cat <<EOT
 # Local test users — synthetic, localhost only, NOT committed
@@ -190,5 +191,19 @@ case "${1:-}" in
     for slug in "${HOSPITALS[@]}"; do echo "Web app: http://$slug.localhost:8080"; done
     ;;
   keycloak) keycloak_cmd "${@:2}" ;;
+  provision) kc_manage ihr_provision "${@:2}" ;;
+  provision-demo)
+    # A synthetic hospital brought live by the provisioning engine (P1-T5a), with a dev login
+    # for its first admin (the real invitation e-mail comes in P1-T5c).
+    slug="${2:?slug, e.g. gamma}"
+    time kc_manage ihr_provision start --slug "$slug" --name "${slug^} Health Pvt Ltd" \
+      --display-name "${slug^} Test Hospital" --state-code 27 --district Pune --city Pune \
+      --pin-code 411001 --phone +912000000099 --address "1 Test Road, Pune" \
+      --facility-name "${slug^} Test Hospital" --admin-email "admin@$slug.example.test" \
+      --admin-first-name Test --admin-last-name Admin
+    json="$(kc_manage ihr_provision dev-activate-admin --slug "$slug" | tail -1)"
+    python3 "$ROOT/scripts/keycloak_test_users.py" --provisioned "$ROOT/deploy/seed/TEST_USERS.md" <<<"$json"
+    echo "Sign in: http://$slug.localhost:8080/api/ihr/auth/login/?next=/api/ihr/auth/session/ (login in deploy/seed/TEST_USERS.md)"
+    ;;
   *) sed -n '3,4p' "$0"; exit 1 ;;
 esac

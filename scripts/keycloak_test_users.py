@@ -60,7 +60,47 @@ def section(data):
     return "\n".join(lines)
 
 
+PROV_START, PROV_END = "<!-- provisioned:start -->", "<!-- provisioned:end -->"
+
+
+def add_provisioned(path, user):
+    """Add (or replace) one provisioned hospital's first admin in its own section."""
+    text = path.read_text() if path.exists() else ""
+    rows = []
+    match = re.search(re.escape(PROV_START) + "(.*?)" + re.escape(PROV_END), text, re.S)
+    if match:
+        rows = [
+            line
+            for line in match.group(1).splitlines()
+            if line.startswith("| ") and not line.startswith(f"| {user['username']} |")
+            and not line.startswith("| Username")
+        ]
+        text = text.replace(match.group(0), "").rstrip()
+    key = f"`{totp.app_key(user['otp_secret'])}` <!-- raw:{user['otp_secret']} -->"
+    care = ", ".join(f"{h}: {c}" for h, c in user["care_users"].items())
+    rows.append(f"| {user['username']} | {user['name']} | {care} | `{user['password']}` | {key} |")
+    block = "\n".join(
+        [
+            PROV_START,
+            "## Hospitals made by the provisioning engine (P1-T5a) — first admins",
+            "",
+            "Sign in at `http://<hospital>.localhost:8080/api/ihr/auth/login/?next=/api/ihr/auth/session/`.",
+            "",
+            "| Username | Name | Signs in as (hospital: CARE user) | Password | Authenticator key |",
+            "|---|---|---|---|---|",
+            *rows,
+            "",
+            PROV_END,
+        ]
+    )
+    path.write_text(f"{text}\n\n{block}\n")
+    path.chmod(0o600)
+
+
 def main():
+    if sys.argv[1] == "--provisioned":
+        add_provisioned(Path(sys.argv[2]), json.loads(sys.stdin.read()))
+        return
     if sys.argv[1] == "--otp":
         user, path = sys.argv[2], Path(sys.argv[3])
         for line in path.read_text().splitlines():

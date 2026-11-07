@@ -10,6 +10,7 @@ import re
 import secrets
 import time
 import unittest
+import uuid
 from urllib.parse import urlencode
 
 from ihr_platform.keycloak.browser import Browser, decode_jwt
@@ -289,6 +290,36 @@ class KeycloakLiveTest(unittest.TestCase):
         again = self.login(browser, "beta", None, None, None)
         self.assertIsNone(again.code)
         self.assertIn("kc-form-login", again.page or "")
+
+    # --- provisioning safety (P1-T5a) ---------------------------------------------------
+
+    def test_leftovers_of_another_hospital_are_never_adopted(self):
+        from dataclasses import replace
+
+        from ihr_platform.keycloak.hospital import remove_hospital
+
+        mine = replace(hospital("zeta"), uuid=str(uuid.uuid4()))
+        ids = ensure_hospital(self.admin, mine)
+        org = self.admin.get(f"organizations/{ids.org_id}")
+        self.assertEqual(org["attributes"]["ihr.hospital_uuid"], [mine.uuid])
+        client = self.admin.get(f"clients/{ids.client_uuid}")
+        self.assertEqual(client["attributes"]["ihr.hospital_uuid"], mine.uuid)
+        # A resumed provisioning (no id stored yet) may reuse what it created itself...
+        self.assertEqual(ensure_hospital(self.admin, mine).org_id, ids.org_id)
+        # ...but a new hospital under the same slug never takes over these objects.
+        other = replace(mine, uuid=str(uuid.uuid4()))
+        with self.assertRaisesRegex(KeycloakError, "belongs to another hospital"):
+            ensure_hospital(self.admin, other)
+        with self.assertRaisesRegex(KeycloakError, "belongs to another hospital"):
+            remove_hospital(self.admin, other)
+        remove_hospital(self.admin, mine)
+        self.assertEqual(self.admin.get("clients?clientId=ihr-h-zeta"), [])
+        aliases = {
+            o["alias"] for o in self.admin.get("organizations?briefRepresentation=true")
+        }
+        self.assertNotIn("zeta", aliases)
+        flows = {f["alias"] for f in self.admin.get("authentication/flows")}
+        self.assertNotIn("ihr-hospital-zeta", flows)
 
     # --- the gates fail closed -------------------------------------------------------------
 

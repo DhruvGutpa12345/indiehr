@@ -44,6 +44,18 @@ Staff sign in through Keycloak only; CARE's own password form no longer works on
 - For a quick idle test, start the backend with a short limit: `IHR_SESSION_IDLE_SECONDS=120 scripts/care-dev.sh up` (warning after about a minute, sign-out at 2 minutes).
 - Link another user with `manage.py ihr_link_staff --slug alpha --username care-nurse --sub <Keycloak user id> --yes`.
 
+## Provisioning a new hospital (P1-T5a)
+
+```bash
+scripts/care-dev.sh provision-demo gamma          # synthetic hospital live in ~70 s, plus a dev login for its first admin
+scripts/care-dev.sh provision status --slug gamma # step table with timings
+scripts/care-dev.sh provision start --slug x ... [--stop-after STEP]   # all fields: manage.py ihr_provision start -h
+scripts/care-dev.sh provision resume <operation id>
+scripts/care-dev.sh provision rollback <operation id>   # only a hospital that never went live
+```
+
+Keycloak must be running (`scripts/care-dev.sh keycloak up`). The first admin is created inactive; `provision-demo` gives them a development login (written to `deploy/seed/TEST_USERS.md`) until the real setup e-mail arrives in P1-T5c.
+
 ## Stop or inspect
 
 ```bash

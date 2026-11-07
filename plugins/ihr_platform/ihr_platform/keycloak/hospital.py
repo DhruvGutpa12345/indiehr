@@ -56,6 +56,9 @@ class HospitalLogin:
     origins: tuple  # e.g. ("http://alpha.localhost:8080",)
     redirect_uris: tuple
     enabled: bool = True
+    # Hospital.uuid, stamped on the organisation and client (P1-T5a): a leftover object under
+    # the same alias (e.g. from a rolled-back hospital) is never adopted by a new hospital.
+    uuid: str = ""
 
 
 @dataclass(frozen=True)
@@ -73,8 +76,11 @@ def ensure_hospital(admin, h, org_id=None):
     reachable through the realm flow. ``org_id`` is the id already stored for this hospital;
     a different organisation under the same alias is an error, never silently adopted.
     """
+    fresh = org_id is None
     org_id = _ensure_org(admin, h, org_id)
     client = _find_client(admin, client_id_for(h.slug))
+    if client is not None and fresh and h.uuid:
+        _require_tag(client.get("attributes", {}).get(TAG), h, "client")
     if client is None:
         resp = admin.post(
             "clients", _client_rep(h, org_id, flow_ids=None, enabled=False)
@@ -269,18 +275,64 @@ def _ensure_org(admin, h, org_id):
     if org_id and (found is None or found["id"] != org_id):
         msg = f"{h.slug}: stored organisation {org_id} does not match Keycloak"
         raise KeycloakError(msg)
+    tags = {TAG: [h.uuid]} if h.uuid else {}
     if found is None:
         resp = admin.post(
             "organizations",
-            {"name": _org_name(h), "alias": h.slug, "enabled": True, "attributes": {}},
+            {
+                "name": _org_name(h),
+                "alias": h.slug,
+                "enabled": True,
+                "attributes": tags,
+            },
         )
         return admin.created_id(resp)
-    if found.get("name") != _org_name(h) or not found.get("enabled", True):
-        full = admin.get(f"organizations/{found['id']}")
+    full = admin.get(f"organizations/{found['id']}")
+    if not org_id and h.uuid:
+        # Nothing stored yet: only an organisation this very hospital created may be reused
+        # (a resumed provisioning), never one left behind by another hospital.
+        _require_tag((full.get("attributes") or {}).get(TAG), h, "organisation")
+    attrs = dict(full.get("attributes") or {}, **tags)
+    if (
+        full.get("name") != _org_name(h)
+        or not full.get("enabled", True)
+        or attrs != (full.get("attributes") or {})
+    ):
         admin.put(
-            f"organizations/{found['id']}", dict(full, name=_org_name(h), enabled=True)
+            f"organizations/{found['id']}",
+            dict(full, name=_org_name(h), enabled=True, attributes=attrs),
         )
     return found["id"]
+
+
+TAG = "ihr.hospital_uuid"
+
+
+def _require_tag(value, h, what):
+    values = value if isinstance(value, list) else [value]
+    if h.uuid not in values:
+        msg = f"{h.slug}: an existing {what} belongs to another hospital; refusing to adopt it"
+        raise KeycloakError(msg)
+
+
+def remove_hospital(admin, h):
+    """Delete a hospital's client, gate flow and organisation (roll-back of a hospital that
+    never went live). Only objects stamped with this hospital's uuid are touched."""
+    if not h.uuid:
+        raise KeycloakError("Refusing to remove a hospital without its uuid.")
+    client = _find_client(admin, client_id_for(h.slug))
+    if client is not None:
+        _require_tag(client.get("attributes", {}).get(TAG), h, "client")
+        admin.delete(f"clients/{client['id']}")
+    flow = _flow_id(admin, flow_for(h.slug))
+    if flow:
+        admin.delete(f"authentication/flows/{flow}")
+    orgs = admin.get("organizations?briefRepresentation=true&first=0&max=10000")
+    for org in orgs:
+        if org["alias"] == h.slug:
+            full = admin.get(f"organizations/{org['id']}")
+            _require_tag((full.get("attributes") or {}).get(TAG), h, "organisation")
+            admin.delete(f"organizations/{org['id']}")
 
 
 def _org_name(h):
@@ -317,6 +369,7 @@ def _client_rep(h, org_id, flow_ids, enabled):
         "attributes": {
             "ihr.kind": "hospital",
             "ihr.tenant": h.slug,
+            **({TAG: h.uuid} if h.uuid else {}),
             "pkce.code.challenge.method": "S256",
             "minimum.acr.value": "mfa",
             "oauth2.device.authorization.grant.enabled": "false",

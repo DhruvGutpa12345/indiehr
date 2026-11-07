@@ -6,6 +6,7 @@ v1 provisioning never clones a template schema. Must run as the database owner r
 from django.conf import settings
 from django.core.management import call_command
 from django.core.management.base import BaseCommand, CommandError
+from django.utils import timezone
 from django_tenants.utils import schema_context
 from ihr_tenant_settings.models import HospitalProfile
 
@@ -63,6 +64,7 @@ class Command(BaseCommand):
                 raise CommandError(msg)
 
         hospital.status = Hospital.Status.ACTIVE
+        hospital.activated_at = timezone.now()
         hospital.save()
         self.stdout.write(
             self.style.SUCCESS(f"tenant ready: {hospital} at {', '.join(domains)}")

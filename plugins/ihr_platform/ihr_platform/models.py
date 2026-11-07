@@ -53,6 +53,9 @@ class Hospital(TenantMixin):
     keycloak_org_id = models.UUIDField(
         null=True, blank=True, unique=True, editable=False
     )
+    # When it first went live (P1-T5a). Never cleared: only a hospital that never went live
+    # can be rolled back, and only its slug and addresses are released again.
+    activated_at = models.DateTimeField(null=True, blank=True, editable=False)
 
     # v1 provisioning: create the schema and run every migration in it (no cloning).
     auto_create_schema = True
@@ -133,3 +136,52 @@ class RetiredAddress(models.Model):
 
     def __str__(self):
         return f"{self.kind}:{self.value}"
+
+
+class TenantOperation(models.Model):
+    """One provisioning (or roll-back) run for a hospital, step by step (TENANCY_DESIGN §7.1).
+
+    Resumable: each step records its outcome, and a re-run continues after the last step that
+    succeeded. Holds no secrets; ``input`` is the onboarding form.
+    """
+
+    class Kind(models.TextChoices):
+        PROVISION = "provision"
+        ROLLBACK = "rollback"
+
+    class Status(models.TextChoices):
+        PENDING = "pending"
+        RUNNING = "running"
+        SUCCEEDED = "succeeded"
+        FAILED = "failed"
+        ROLLED_BACK = "rolled_back"
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    kind = models.CharField(max_length=16, choices=Kind.choices)
+    hospital = models.ForeignKey(
+        Hospital, null=True, blank=True, on_delete=models.SET_NULL
+    )
+    slug = models.CharField(max_length=31)
+    status = models.CharField(
+        max_length=16, choices=Status.choices, default=Status.PENDING
+    )
+    input = models.JSONField(default=dict)
+    steps = models.JSONField(default=list)
+    result = models.JSONField(default=dict)
+    requested_by = models.CharField(max_length=255)
+    created_at = models.DateTimeField(auto_now_add=True)
+    started_at = models.DateTimeField(null=True, blank=True)
+    finished_at = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        constraints = [
+            # One open provisioning per hospital address at a time.
+            models.UniqueConstraint(
+                fields=["slug"],
+                condition=models.Q(kind="provision", status__in=["pending", "running"]),
+                name="one_open_provisioning_per_slug",
+            )
+        ]
+
+    def __str__(self):
+        return f"{self.kind} {self.slug} ({self.status})"
