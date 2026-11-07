@@ -34,6 +34,10 @@ BLOCKED_PREFIXES = [
     rf"^api/v1/password_change{END}",
     rf"^api/v1/otp/password_reset{END}",
     rf"^api/v1/users/[^/]+/generate_service_account_token{END}",
+    # The format-suffix twin of "Add user" (DEBUG only) would skip the invitation (P1-T5e1)
+    r"^api/v1/users\.[^/]+/?$",
+    # CARE's bulk "upsert" creates users too, outside the invitation (review of P1-T5e1)
+    rf"^api/v1/users/upsert{END}",
 ]
 
 

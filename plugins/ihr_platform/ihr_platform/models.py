@@ -208,3 +208,56 @@ class OperatorAccount(models.Model):
 
     def __str__(self):
         return f"{self.name} ({'active' if self.active else 'removed'})"
+
+
+class StaffInvitation(models.Model):
+    """A hospital's invitation to one person (P1-T5e1, TENANCY_DESIGN §4.5).
+
+    Written by the hospital's web app when an admin adds a user in CARE (the user is created
+    switched off); delivered by the provisioner, the only process holding the Keycloak admin
+    credential. A new address gets Keycloak's one-time setup e-mail; an address that already
+    has an account gets a "join this hospital" e-mail whose link must be followed by a sign-in
+    and a confirmation. Only a hash of that link's token is stored.
+    """
+
+    class Status(models.TextChoices):
+        QUEUED = "queued"
+        SENT = "sent"
+        ACCEPTED = "accepted"
+        FAILED = "failed"
+
+    class Kind(models.TextChoices):
+        NEW = "new"  # no account yet: the setup e-mail (P1-T5c's mechanism)
+        JOIN = "join"  # an existing account: sign in and confirm
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    hospital = models.ForeignKey(Hospital, on_delete=models.CASCADE)
+    care_user_id = models.IntegerField()  # in the hospital's schema
+    email = models.EmailField()
+    first_name = models.CharField(max_length=150)
+    last_name = models.CharField(max_length=150, blank=True)
+    invited_by = models.CharField(max_length=255)
+    status = models.CharField(
+        max_length=16, choices=Status.choices, default=Status.QUEUED
+    )
+    kind = models.CharField(max_length=8, choices=Kind.choices, blank=True)
+    keycloak_sub = models.UUIDField(null=True, blank=True)
+    join_token_hash = models.CharField(max_length=64, blank=True, db_index=True)
+    expires_at = models.DateTimeField(null=True, blank=True)
+    attempts = models.PositiveSmallIntegerField(default=0)
+    not_before = models.DateTimeField(null=True, blank=True)  # retry after a failure
+    error = models.CharField(max_length=400, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    sent_at = models.DateTimeField(null=True, blank=True)
+    accepted_at = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(
+                fields=["hospital", "care_user_id"], name="one_invitation_per_user"
+            )
+        ]
+        indexes = [models.Index(fields=["status", "created_at"])]
+
+    def __str__(self):
+        return f"{self.kind or '?'} invitation at {self.hospital_id} ({self.status})"

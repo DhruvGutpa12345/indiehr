@@ -19,6 +19,14 @@ IHR_BACKCHANNEL_LOGOUT_URL = "http://backend:9000/api/ihr/backchannel-logout/"
 # Dev runs on plain http://*.localhost: no __Host- prefix, no Secure flag (ADR-009).
 IHR_SESSION_COOKIE = "ihr_session"
 IHR_LOGIN_COOKIE = "ihr_login"
+IHR_JOIN_COOKIE = "ihr_join"
+IHR_JOIN_CONFIRM_COOKIE = "ihr_join_ok"
+# Django's own e-mails (the "join this hospital" e-mail, P1-T5e1) also go to Mailpit.
+EMAIL_BACKEND = "django.core.mail.backends.smtp.EmailBackend"
+EMAIL_HOST = "mailpit"
+EMAIL_PORT = 1025
+EMAIL_USE_TLS = False
+DEFAULT_FROM_EMAIL = "IndieHR <no-reply@indiehr.localhost>"
 IHR_SESSION_COOKIE_SECURE = False
 # Operator console (P1-T5b), straight to the backend on the published port.
 IHR_CONSOLE_URL = "http://console.localhost:9000"

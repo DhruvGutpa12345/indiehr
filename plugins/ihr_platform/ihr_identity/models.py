@@ -20,6 +20,9 @@ class StaffIdentity(models.Model):
     # person first signs in with the password and authenticator they chose, from a verified
     # e-mail address; that sign-in activates them and clears this, once.
     awaiting_setup = models.BooleanField(default=False)
+    # Invited with an account they already had (P1-T5e1): activation needs the e-mailed join
+    # link, a sign-in and the "Join" click, never just a sign-in.
+    join_confirmation_required = models.BooleanField(default=False)
     created_at = models.DateTimeField(auto_now_add=True)
 
     def __str__(self):

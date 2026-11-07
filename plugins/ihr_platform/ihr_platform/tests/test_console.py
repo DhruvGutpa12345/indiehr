@@ -253,7 +253,8 @@ class ConsoleTests(SimpleTestCase):
         from ihr_platform.provisioning import runner
 
         with runner._exclusive("cons-busy"):  # e.g. the command line is running it
-            self.assertTrue(worker.work_once())
+            # Put back, and not counted as work: the loop sleeps instead of spinning on it.
+            self.assertFalse(worker.work_once())
         op.refresh_from_db()
         self.assertEqual(op.queued_action, "run")
         self.assertIsNotNone(op.queued_at)

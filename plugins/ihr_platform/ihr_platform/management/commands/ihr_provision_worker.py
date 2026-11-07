@@ -2,6 +2,8 @@
 
     manage.py ihr_provision_worker [--once] [--interval 3]
 
+It also delivers staff invitations queued by hospitals' "Add user" (P1-T5e1).
+
 A process of its own, the only one holding the Keycloak admin credential (from its
 environment, IHR_KEYCLOAK_ADMIN_CLIENT_ID/_SECRET): the console and the hospitals' web app and
 worker never do (TENANCY_DESIGN §4.5, review of P1-T5). It claims one queued operation at a
@@ -15,6 +17,7 @@ from django.core.management.base import BaseCommand
 from django.db import close_old_connections, connection, transaction
 from django.utils import timezone
 
+from ihr_platform import invitations
 from ihr_platform.models import TenantOperation
 from ihr_platform.provisioning import runner
 
@@ -42,7 +45,20 @@ def claim_next():
 
 
 def work_once():
-    """Run one queued operation, if any. True if there was one."""
+    """Run one queued operation, else deliver one due staff invitation (P1-T5e1). True if
+    there was something to do."""
+    if run_one_operation():
+        return True
+    try:
+        return invitations.deliver_once()
+    finally:
+        connection.set_schema_to_public()
+
+
+def run_one_operation():
+    """Run one queued operation, if any. True if one ran; False also when the one claimed
+    had to go back on the queue (its hospital is busy): that is no progress, so invitations
+    get their turn and the loop sleeps instead of spinning."""
     claimed = claim_next()
     if claimed is None:
         return False
@@ -61,6 +77,9 @@ def work_once():
             TenantOperation.objects.filter(pk=op.pk, queued_at__isnull=True).update(
                 queued_action=action, queued_by=who, queued_at=timezone.now()
             )
+            logger.info("provisioning %s (%s) waits: %s", op.slug, action, exc)
+            connection.set_schema_to_public()
+            return False
         logger.warning("provisioning %s (%s) refused: %s", op.slug, action, exc)
     except Exception:  # recorded on the operation; the worker carries on
         logger.exception("provisioning %s (%s) stopped", op.slug, action)

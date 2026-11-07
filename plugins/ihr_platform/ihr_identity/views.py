@@ -20,6 +20,7 @@ from urllib.parse import urlencode
 from django.conf import settings
 from django.db import connection
 from django.http import HttpResponseRedirect, JsonResponse
+from django.utils import timezone
 from django.utils.http import url_has_allowed_host_and_scheme
 from django.views.decorators.cache import never_cache
 from django.views.decorators.csrf import csrf_exempt
@@ -191,6 +192,11 @@ def _finish_sign_in(request, state):  # noqa: PLR0911 (each exit is one outcome)
         access_iat=access["iat"],
         refresh=tokens["refresh_token"],
     )
+    from ihr_identity.join import pending_join
+
+    joining = pending_join(request, candidate.sub)
+    if joining is not None:
+        return joining  # an existing account joining this hospital (P1-T5e1): no session yet
     identity = _linked_identity(
         candidate, email_verified=id_claims.get("email_verified") is True
     )
@@ -250,9 +256,9 @@ def _finish_setup(identity):
 
     from ihr_identity.models import StaffIdentity
 
-    if StaffIdentity.objects.filter(pk=identity.pk, awaiting_setup=True).update(
-        awaiting_setup=False
-    ):
+    if StaffIdentity.objects.filter(
+        pk=identity.pk, awaiting_setup=True, join_confirmation_required=False
+    ).update(awaiting_setup=False):
         get_user_model().objects.filter(
             pk=identity.user_id,
             deleted=False,
@@ -260,6 +266,13 @@ def _finish_setup(identity):
             is_service_account=False,
         ).update(is_active=True)
         identity.user.refresh_from_db()
+        from ihr_platform.models import StaffInvitation
+
+        StaffInvitation.objects.filter(
+            hospital=connection.tenant,
+            care_user_id=identity.user_id,
+            status=StaffInvitation.Status.SENT,
+        ).update(status=StaffInvitation.Status.ACCEPTED, accepted_at=timezone.now())
         logger.info("staff account %s activated by first sign-in", identity.user_id)
 
 

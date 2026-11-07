@@ -22,6 +22,8 @@ def load_demo_data(schema_name, domain):
         schema_context(schema_name),
         override_settings(DEBUG=True),
         patch("care.fixtures.context.APIClient", client_for_tenant),
+        # CARE's demo users are created with passwords, not invited (P1-T5e1)
+        patch("ihr_identity.invitations.DEMO_SEEDING", new=True),
         care_fixture_context() as base,
     ):
         load_fixtures(base)
