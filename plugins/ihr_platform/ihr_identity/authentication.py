@@ -135,6 +135,10 @@ class StaffSessionAuthentication(BaseAuthentication):
         if session.tid != connection.schema_name:  # second line behind the key prefix
             _clear_cookie_later(request)
             return None
+        if sessions.sign_in_ended(session):  # Keycloak said so (back-channel, P1-T5d)
+            sessions.delete(session.cookie)
+            _clear_cookie_later(request)
+            return None
         check_csrf(request)
         now = time.time()
         if not self._within_limits(request, session, now):

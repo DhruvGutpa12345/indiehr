@@ -14,6 +14,8 @@ IHR_KEYCLOAK_PUBLIC_URL = "http://auth.localhost:8081"
 IHR_KEYCLOAK_URL = "http://keycloak:8080"
 # Also allow the dev token viewer (http://<slug>.localhost:8082/) as a login redirect.
 IHR_KEYCLOAK_DEV_REDIRECTS = True
+# Keycloak reaches the backend inside the compose network ("backend" is a platform address).
+IHR_BACKCHANNEL_LOGOUT_URL = "http://backend:9000/api/ihr/backchannel-logout/"
 # Dev runs on plain http://*.localhost: no __Host- prefix, no Secure flag (ADR-009).
 IHR_SESSION_COOKIE = "ihr_session"
 IHR_LOGIN_COOKIE = "ihr_login"

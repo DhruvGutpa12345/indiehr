@@ -59,6 +59,8 @@ class HospitalLogin:
     # Hospital.uuid, stamped on the organisation and client (P1-T5a): a leftover object under
     # the same alias (e.g. from a rolled-back hospital) is never adopted by a new hospital.
     uuid: str = ""
+    # Where Keycloak posts logout tokens (P1-T5d): one internal address for all hospitals.
+    backchannel_url: str = ""
 
 
 @dataclass(frozen=True)
@@ -136,11 +138,13 @@ def _check_client_settings(h, client, org_id):
         "serviceAccountsEnabled",
         "fullScopeAllowed",
         "consentRequired",
+        "frontchannelLogout",
     ):
         if client.get(key) != want[key]:
             issues.append(f"{h.slug}: client {key} is {client.get(key)!r}")
     for key, value in want["attributes"].items():
-        if client.get("attributes", {}).get(key) != value:
+        # Keycloak drops an attribute set to "" (e.g. no back-channel address in tests)
+        if (client.get("attributes", {}).get(key) or "") != value:
             issues.append(f"{h.slug}: client attribute {key} is not {value!r}")
     for key in OVERRIDE_ATTRIBUTES:
         if client.get("attributes", {}).get(key):
@@ -361,7 +365,8 @@ def _client_rep(h, org_id, flow_ids, enabled):
         "serviceAccountsEnabled": False,
         "authorizationServicesEnabled": False,
         "fullScopeAllowed": False,
-        "frontchannelLogout": True,
+        # Sign-outs reach the backend server to server, never through the browser (P1-T5d)
+        "frontchannelLogout": False,
         "rootUrl": h.origins[0],
         "baseUrl": "/",
         "redirectUris": list(h.redirect_uris),
@@ -377,6 +382,9 @@ def _client_rep(h, org_id, flow_ids, enabled):
             "standard.token.exchange.enabled": "false",
             "post.logout.redirect.uris": "##".join(f"{o}/" for o in h.origins),
             "use.refresh.tokens": "true",
+            "backchannel.logout.url": h.backchannel_url,
+            "backchannel.logout.session.required": "true",
+            "backchannel.logout.revoke.offline.tokens": "false",
         },
         "defaultClientScopes": list(DEFAULT_SCOPES),
         "optionalClientScopes": [],

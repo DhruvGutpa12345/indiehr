@@ -66,6 +66,10 @@ COPY --from=builder --chown=django:django $APP_HOME/.venv $APP_HOME/.venv
 
 ARG APP_VERSION="unknown"
 ENV APP_VERSION=$APP_VERSION
+# Threads for CARE's gunicorn (start.sh keeps its --workers): a sign-out waits on Keycloak,
+# whose back-channel logout calls this same backend (P1-T5d). With single-threaded workers two
+# sign-outs could block each other until the timeouts. Gunicorn adds these to its own flags.
+ENV GUNICORN_CMD_ARGS="--worker-class gthread --threads 4"
 
 COPY --chmod=0755 --chown=django:django ./scripts/*.sh $APP_HOME
 

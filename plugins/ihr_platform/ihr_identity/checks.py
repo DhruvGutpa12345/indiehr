@@ -35,6 +35,15 @@ def staff_sign_in_settings(app_configs, **kwargs):
                     id="ihr_identity.E003",
                 )
             )
+        if not getattr(settings, "IHR_BACKCHANNEL_LOGOUT_URL", ""):
+            errors.append(
+                Error(
+                    "Set IHR_BACKCHANNEL_LOGOUT_URL (the platform host's "
+                    "/api/ihr/backchannel-logout/ as Keycloak reaches it), so a sign-out "
+                    "ends every hospital's session at once.",
+                    id="ihr_identity.E006",
+                )
+            )
         if not str(getattr(settings, "IHR_KEYCLOAK_PUBLIC_URL", "")).startswith(
             "https://"
         ):

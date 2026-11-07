@@ -417,6 +417,33 @@ class KeycloakLiveTest(unittest.TestCase):
         ensure_ops_realm(ops, redirect, origin)
         self.assertEqual(check_ops_realm(ops, redirect, origin), [])
 
+    # --- back-channel logout (P1-T5d) ---------------------------------------------------
+
+    def test_hospital_clients_send_sign_outs_server_to_server(self):
+        from dataclasses import replace
+
+        url = "http://backend.internal/api/ihr/backchannel-logout/"
+        h = replace(hospital("bclog"), backchannel_url=url)
+        ids = ensure_hospital(self.admin, h)
+        client = self.admin.get(f"clients/{ids.client_uuid}")
+        self.assertFalse(client["frontchannelLogout"])
+        attrs = client["attributes"]
+        self.assertEqual(attrs["backchannel.logout.url"], url)
+        self.assertEqual(attrs["backchannel.logout.session.required"], "true")
+        self.assertEqual(check_hospital(self.admin, h, ids.org_id), [])
+        # Drift: the back-channel address changed or the browser used instead.
+        client["frontchannelLogout"] = True
+        client["attributes"]["backchannel.logout.url"] = "http://evil.test/"
+        self.admin.put(f"clients/{ids.client_uuid}", client)
+        issues = check_hospital(self.admin, h, ids.org_id)
+        self.assertIn("bclog: client frontchannelLogout is True", issues)
+        self.assertIn(
+            f"bclog: client attribute backchannel.logout.url is not {url!r}", issues
+        )
+        ensure_hospital(self.admin, h, ids.org_id)
+        self.assertEqual(check_hospital(self.admin, h, ids.org_id), [])
+        self._drop_hospital(ids)
+
     # --- first-admin setup e-mail (P1-T5c) ----------------------------------------------
 
     def setup_email(self, address):

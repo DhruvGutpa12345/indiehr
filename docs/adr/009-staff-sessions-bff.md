@@ -75,7 +75,7 @@ Five CARE test modules exercise the removed features and are left out of the ten
 ## Consequences
 
 - The web app must change (P1-T4b): a "Sign in" button that goes to `login/`, no stored tokens, and on every request the `X-IHR-CSRF` and `X-IHR-Idle` headers. It must also clear its cached data on sign-out and when the session has expired (Q-T9), and warn before the idle time-out. **Until then, staff cannot sign in through the current web bundle**; the API works as described.
-- Other hospitals' open tabs end within about a minute of a sign-out, not at once. Instant back-channel logout comes in P1-T5.
+- ~~Other hospitals' open tabs end within about a minute of a sign-out, not at once. Instant back-channel logout comes in P1-T5.~~ *(P1-T5d: Keycloak now posts a signed logout token to one internal platform address, `/api/ihr/backchannel-logout/`, for every hospital a sign-in reached. The backend marks that sign-in (`sid`) as ended in the hospital's cache, and its sessions are refused from the next request. Measured on the dev stack: 0.10 s. The one-minute refresh stays as the fallback if a logout token is lost. A sign-out waits on Keycloak while Keycloak calls back into the backend, so the backend image runs gunicorn with threads (`GUNICORN_CMD_ARGS="--worker-class gthread --threads 4"`; checked with gunicorn 23.0.0). In production the back-channel address should be its own internal backend pool (P1-T8).)*
 - One Keycloak refresh call per active user per minute.
 - Idle enforcement trusts the web app's report. A modified browser could stay signed in up to the 12-hour limit. Keycloak's own 30-minute idle still applies to its session, but not to the refreshes the backend makes.
 

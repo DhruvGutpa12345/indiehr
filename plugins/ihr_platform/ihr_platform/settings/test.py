@@ -14,6 +14,7 @@ IHR_TENANT_DOMAIN_SUFFIX = "localhost"
 IHR_KEYCLOAK_PUBLIC_URL = "https://auth.test"
 IHR_KEYCLOAK_URL = "http://keycloak.test"
 IHR_CONSOLE_URL = "https://console.testserver"
+IHR_BACKCHANNEL_LOGOUT_URL = "http://console.testserver/api/ihr/backchannel-logout/"
 
 apply_tenancy(globals())
 

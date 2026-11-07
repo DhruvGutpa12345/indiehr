@@ -101,6 +101,7 @@ def hospital_login(hospital):
         name=hospital.name,
         origins=tuple(origins),
         redirect_uris=tuple(redirects),
+        backchannel_url=settings.IHR_BACKCHANNEL_LOGOUT_URL,
         enabled=hospital.status not in INACTIVE,
         uuid=str(hospital.uuid),
     )

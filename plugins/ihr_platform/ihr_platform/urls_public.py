@@ -1,5 +1,6 @@
 """URLs served on the platform (public schema) hosts: no CARE routes (TENANCY_DESIGN.md §3);
-the operator console lives under /ops/ (P1-T5b).
+the operator console lives under /ops/ (P1-T5b), Keycloak's back-channel logout at
+/api/ihr/backchannel-logout/ (P1-T5d).
 
 Errors are plain JSON: CARE's HTML error pages link to CARE routes that do not exist here, so
 rendering them would itself fail (a 404 became a 500).
@@ -7,6 +8,7 @@ rendering them would itself fail (a 404 became a 500).
 
 from django.http import JsonResponse
 from django.urls import include, path
+from ihr_identity import backchannel
 
 
 def ping(request):
@@ -27,4 +29,6 @@ handler500 = server_error
 urlpatterns = [
     path("ping/", ping),
     path("ops/", include("ihr_platform.console.urls")),  # operator console (P1-T5b)
+    # From Keycloak only: a sign-in ended (P1-T5d)
+    path("api/ihr/backchannel-logout/", backchannel.logout, name="ihr-backchannel"),
 ]

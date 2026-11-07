@@ -128,6 +128,21 @@ def unlock(session, token):
         cache.delete(key)
 
 
+def _ended_key(sid):
+    return f"ihr:sid-ended:{hashlib.sha256(sid.encode()).hexdigest()}"
+
+
+def end_sign_in(sid):
+    """Keycloak says sign-in ``sid`` ended (back-channel logout, P1-T5d): every session of
+    it at this hospital is refused from the next request on. Kept as long as a session can
+    live; the key is hospital-prefixed like every other."""
+    cache.set(_ended_key(sid), time.time(), timeout=settings.IHR_SESSION_MAX_SECONDS)
+
+
+def sign_in_ended(session):
+    return cache.get(_ended_key(session.sid)) is not None
+
+
 def delete(cookie):
     base = _base(cookie)
     cache.delete_many([base, f"{base}:act", f"{base}:lock"])

@@ -117,6 +117,9 @@ def apply_tenancy(settings):  # noqa: PLR0915 (one flat list of settings)
     # settings: ihr_keycloak_sync reads them from its own environment.
     settings.setdefault("IHR_KEYCLOAK_REALM", "indiehr")
     settings.setdefault("IHR_KEYCLOAK_DEV_REDIRECTS", False)
+    # Internal address Keycloak posts logout tokens to (P1-T5d): the platform host's
+    # /api/ihr/backchannel-logout/. Required outside development (ihr_identity.E006).
+    settings.setdefault("IHR_BACKCHANNEL_LOGOUT_URL", "")
     # The mail server Keycloak sends setup e-mails through (P1-T5c), as Keycloak's own
     # "smtpServer" fields; set on the realm by ihr_keycloak_sync --realm. None: no e-mails.
     # Never the password: ihr_keycloak_sync reads IHR_KEYCLOAK_SMTP_PASSWORD from its own env.

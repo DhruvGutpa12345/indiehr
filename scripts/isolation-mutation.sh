@@ -37,6 +37,8 @@ oidc-org-id|plugins/ihr_platform/ihr_identity/tokens.py|    if org.get("id") != 
 oidc-acr|plugins/ihr_platform/ihr_identity/tokens.py|    if claims["acr"] != "mfa":|    if False:|ihr_identity.tests.test_tokens.AccessTokenTests.test_password_only_sign_in_is_refused|
 session-tid|plugins/ihr_platform/ihr_identity/authentication.py|        if session.tid != connection.schema_name:  # second line behind the key prefix|        if False:|ihr_identity.tests.test_staff_sign_in.StaffSessionTests.test_session_from_another_schema_is_refused|
 revocation-check|plugins/ihr_platform/ihr_identity/authentication.py|    if valid_after and session.created < valid_after.timestamp():|    if False:|ihr_identity.tests.test_staff_sign_in.StaffSessionTests.test_revoked_person_is_refused|
+backchannel-sid|plugins/ihr_platform/ihr_identity/authentication.py|        if sessions.sign_in_ended(session):  # Keycloak said so (back-channel, P1-T5d)|        if False:|ihr_identity.tests.test_backchannel.BackChannelLogoutTests.test_a_signed_logout_token_ends_that_sign_in_here_at_once|
+backchannel-aud|plugins/ihr_platform/ihr_identity/tokens.py|    if _audiences(claims) != [client_id]:\n        raise TokenRejectedError("logout token for another client")||ihr_identity.tests.test_backchannel.BackChannelLogoutTests.test_the_token_check_itself_demands_this_hospitals_client|
 care-login-blocked|plugins/ihr_platform/ihr_platform/urls_tenant.py|    *blocked_urlpatterns(),  # CARE's own staff sign-in is off (ADR-009); must come first\n||ihr_identity.tests.test_staff_sign_in.StaffSessionTests.test_care_password_sign_in_routes_are_gone|
 TABLE
 )

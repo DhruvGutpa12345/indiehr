@@ -10,6 +10,11 @@ ALGORITHMS = ["RS256"]
 MAX_ACCESS_LIFETIME = 600  # seconds; ADR-008 sets 300, anything longer means drift
 ACCESS_CLAIMS = ["exp", "iat", "iss", "aud", "azp", "sub", "typ", "acr", "sid"]
 ID_CLAIMS = ["exp", "iat", "iss", "aud", "azp", "sub", "typ", "nonce", "auth_time"]
+# Back-channel logout (P1-T5d, OIDC Back-Channel Logout 1.0 §2.4); Keycloak also sends exp.
+LOGOUT_CLAIMS = ["exp", "iat", "iss", "aud", "jti", "events", "sid"]
+LOGOUT_EVENT = "http://schemas.openid.net/event/backchannel-logout"
+LOGOUT_TYPE = "logout+jwt"
+MAX_LOGOUT_AGE = 300  # seconds; Keycloak's logout tokens live 120
 
 
 class TokenRejectedError(Exception):
@@ -100,6 +105,29 @@ def verify_operator_token(token, *, keys, issuer, client_id, role, now=None, lee
         claims.get("acr") != "mfa"
     ):  # (not the hospitals' line: a mutation targets that one)
         raise TokenRejectedError("signed in without the second factor")
+    return claims
+
+
+def verify_logout_token(token, *, keys, issuer, client_id, now, leeway=30):
+    """The claims of a logout token Keycloak sent this hospital's back-channel, or
+    TokenRejectedError. It must name the sign-in (``sid``) that ended."""
+    try:
+        header_type = jwt.get_unverified_header(token).get("typ")
+    except jwt.PyJWTError as exc:
+        raise TokenRejectedError("malformed token") from exc
+    if header_type != LOGOUT_TYPE:
+        raise TokenRejectedError("not a logout token")
+    claims = _decode(token, keys, issuer, LOGOUT_CLAIMS, now, leeway)
+    if _audiences(claims) != [client_id]:
+        raise TokenRejectedError("logout token for another client")
+    if LOGOUT_EVENT not in (claims["events"] or {}):
+        raise TokenRejectedError("no back-channel logout event")
+    if "nonce" in claims:
+        raise TokenRejectedError("a logout token never carries a nonce")
+    if not isinstance(claims["sid"], str) or not claims["sid"]:
+        raise TokenRejectedError("logout token names no sign-in")
+    if now - claims["iat"] > MAX_LOGOUT_AGE + leeway:
+        raise TokenRejectedError("logout token too old")
     return claims
 
 

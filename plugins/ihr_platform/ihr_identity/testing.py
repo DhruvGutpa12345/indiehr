@@ -67,6 +67,26 @@ def mint(hospital, sub, *, kind="Bearer", key=None, kid=KID, **overrides):
     return jwt.encode(claims, key or _KEY, algorithm="RS256", headers={"kid": kid})
 
 
+def mint_logout(hospital, sid, *, sub=None, key=None, typ="logout+jwt", **overrides):
+    """A back-channel logout token as Keycloak 26.8 sends it (P1-T5d); None removes a claim."""
+    now = int(time.time())
+    claims = {
+        "iss": oidc.issuer(),
+        "aud": client_id_for(hospital.slug),
+        "sub": str(sub or uuid.uuid4()),
+        "typ": "Logout",
+        "iat": now,
+        "exp": now + 120,
+        "jti": str(uuid.uuid4()),
+        "sid": sid,
+        "events": {"http://schemas.openid.net/event/backchannel-logout": {}},
+    } | overrides
+    claims = {k: v for k, v in claims.items() if v is not None}
+    return jwt.encode(
+        claims, key or _KEY, algorithm="RS256", headers={"kid": KID, "typ": typ}
+    )
+
+
 def _refresh_token(sub):
     return f"refresh.{sub}.{secrets.token_hex(8)}"
 
@@ -117,7 +137,7 @@ def link(user, sub=None):
     return identity
 
 
-def staff_session(hospital, user, **claim_overrides):
+def staff_session(hospital, user, sid="sid-test", **claim_overrides):
     """A session for ``user`` at ``hospital`` (call inside that hospital's schema)."""
     hospital = ensure_org_id(hospital)
     identity = link(user)
@@ -127,7 +147,7 @@ def staff_session(hospital, user, **claim_overrides):
         tid=hospital.schema_name,
         user_id=user.pk,
         sub=str(identity.keycloak_sub),
-        sid="sid-test",
+        sid=sid,
         auth_time=now,
         access=access,
         access_exp=now + 300,
@@ -136,10 +156,10 @@ def staff_session(hospital, user, **claim_overrides):
     )
 
 
-def staff_client(hospital, domain, user, **claim_overrides):
+def staff_client(hospital, domain, user, sid="sid-test", **claim_overrides):
     """An API client signed in as ``user`` at ``hospital``, as the web app would be."""
     with schema_context(hospital.schema_name):
-        session = staff_session(hospital, user, **claim_overrides)
+        session = staff_session(hospital, user, sid, **claim_overrides)
     client = APIClient(
         HTTP_HOST=domain, HTTP_X_IHR_CSRF="1", raise_request_exception=False
     )
