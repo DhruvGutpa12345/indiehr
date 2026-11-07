@@ -30,6 +30,7 @@ from ihr_platform.keycloak.invite import (
     ensure_invited_user,
     find_invited_by_email,
     remove_invited_user,
+    reset_sign_in,
     send_setup_email,
 )
 from ihr_platform.keycloak.kc_http import KeycloakAdmin, KeycloakError, request
@@ -525,6 +526,103 @@ class KeycloakLiveTest(unittest.TestCase):
         self.assertFalse(remove_invited_user(self.admin, sub, hospital_uuid))
         self.assertEqual(self.admin.get(f"users/{sub}")["id"], sub)
 
+    # --- forgotten password (P1-T5e2) -----------------------------------------------------
+
+    def test_forgot_password_needs_the_link_and_the_code(self):
+        _, name, old, secret = self.user(["alpha"])
+        address = self.admin.get(f"users?username={name}&exact=true")[0]["email"]
+        redirect = self.h["alpha"].redirect_uris[0]
+        page = self.browser().forgot_password(client_id_for("alpha"), redirect, name)
+        self.assertIn("You should receive an email", page)
+        _, link = self.setup_email(address)
+        # The link alone: a wrong code changes nothing.
+        stuck = self.browser().follow_reset(
+            link, "0" * 20, "Pw-never-set-123", redirect
+        )
+        self.assertNotIn("new-password", stuck.pages)
+        new = f"Pw-{secrets.token_urlsafe(16)}"
+        done = self.browser().follow_reset(link, secret, new, redirect)
+        # Opened in another browser than the one that asked: Keycloak ends on its own
+        # "account updated" page (in the same browser it returns to the app, password-level
+        # only, which hospitals refuse: their tokens need acr=mfa).
+        self.assertEqual(done.pages[:2], ["otp", "new-password"])
+        self.assertTrue(
+            (done.landed or "").startswith(redirect)
+            or "Your account has been updated" in (done.page or "")
+        )
+        result = self.login(self.browser(), "alpha", name, new, secret)
+        self.assert_hospital_token(result, "alpha")
+        stale = self.login(self.browser(), "alpha", name, old, secret)
+        self.assertIsNone(stale.tokens)
+
+    def test_forgot_password_is_refused_without_an_authenticator(self):
+        """An account with no authenticator (an admin's reset in progress, an invitation
+        never set up) cannot be taken over with the mailbox alone through "Forgot
+        password?"; only the admin's own time-limited link sets it up."""
+        user_id, name, _, _ = self.user(["alpha"], otp=False)
+        address = self.admin.get(f"users/{user_id}")["email"]
+        redirect = self.h["alpha"].redirect_uris[0]
+        self.browser().forgot_password(client_id_for("alpha"), redirect, name)
+        _, link = self.setup_email(address)
+        tried = self.browser().follow_reset(
+            link, None, f"Pw-{secrets.token_urlsafe(16)}", redirect
+        )
+        self.assertNotIn("new-password", tried.pages)
+        self.assertNotIn("configure-otp", tried.pages)
+        self.assertEqual(
+            [c["type"] for c in self.admin.get(f"users/{user_id}/credentials")],
+            ["password"],
+        )
+
+    # --- an admin's reset of a lost authenticator (P1-T5e2) -------------------------------
+
+    def test_reset_clears_both_factors_ends_sign_ins_and_mails_a_link(self):
+        user_id, name, old, secret = self.user(["alpha", "beta"])
+        address = self.admin.get(f"users/{user_id}")["email"]
+        signed = self.login(self.browser(), "alpha", name, old, secret)
+        self.assert_hospital_token(signed, "alpha")
+        redirect = self.h["alpha"].redirect_uris[0]
+
+        stamped = self.admin.get(f"users/{user_id}")
+        stamped["attributes"] = {
+            **(stamped.get("attributes") or {}),
+            INVITED_FOR: ["h"],
+        }
+        self.admin.put(f"users/{user_id}", stamped)
+        reset_sign_in(self.admin, user_id, client_id_for("alpha"), redirect, 3600)
+        self.assertEqual(self.admin.get(f"users/{user_id}/credentials"), [])
+        after = self.admin.get(f"users/{user_id}")
+        self.assertNotIn(
+            INVITED_FOR, after.get("attributes") or {}
+        )  # no hospital's now
+        self.assertTrue(after["emailVerified"])
+        refreshed = self.browser().refresh(
+            client_id_for("alpha"), signed.tokens["refresh_token"]
+        )
+        self.assertEqual(refreshed.status, 400)  # every sign-in ended
+        # The old password (and code) no longer get anyone in, at any hospital.
+        self.assertIsNone(self.login(self.browser(), "beta", name, old, secret).tokens)
+
+        _, link = self.setup_email(address)
+        new = f"Pw-{secrets.token_urlsafe(16)}"
+        done = self.browser().setup_account(link, new)
+        self.assertIn("configure-otp", done.pages)
+        self.assertIn("new-password", done.pages)
+        self.assertNotEqual(done.enrolled_secret, secret)
+        self.assert_hospital_token(
+            self.login(self.browser(), "beta", name, new, done.enrolled_secret), "beta"
+        )
+        self.assertIsNone(self.login(self.browser(), "alpha", name, new, secret).tokens)
+
+    def test_reset_refuses_an_unverified_address(self):
+        user_id, *_ = self.user([])
+        user = self.admin.get(f"users/{user_id}")
+        user["emailVerified"] = False
+        self.admin.put(f"users/{user_id}", user)
+        with self.assertRaisesRegex(KeycloakError, "not verified"):
+            reset_sign_in(self.admin, user_id, client_id_for("alpha"), "x", 60)
+        self.assertNotEqual(self.admin.get(f"users/{user_id}/credentials"), [])
+
     def test_sending_again_replaces_the_account_so_older_links_die(self):
         """Keycloak keeps a sent link valid whatever happens to the account's sessions,
         so a resend replaces the unused account: the old link names an account that no
@@ -658,7 +756,7 @@ class KeycloakLiveTest(unittest.TestCase):
         self.assertIn(HOSPITAL_SCOPE, scopes)
         self.assertIn(
             f"client {client_id} is neither built in nor a hospital client",
-            check_realm(self.admin),
+            check_realm(self.admin, smtp=SMTP),
         )
         _, name, pw, secret = self.user(["alpha"])
         result = self.browser().login(
@@ -738,10 +836,11 @@ class KeycloakLiveTest(unittest.TestCase):
         otp = next(e for e in execs if e.get("providerId") == "auth-otp-form")
         self.admin.delete(f"authentication/executions/{otp['id']}")
         self.assertIn(
-            "flow ihr-core is not password + OTP as built", check_realm(self.admin)
+            "flow ihr-core is not password + OTP as built",
+            check_realm(self.admin, smtp=SMTP),
         )
-        ensure_realm(self.admin)
-        self.assertEqual(check_realm(self.admin), [])
+        ensure_realm(self.admin, smtp=SMTP)
+        self.assertEqual(check_realm(self.admin, smtp=SMTP), [])
 
     def _drop_hospital(self, ids):
         self.admin.delete(f"clients/{ids.client_uuid}")
@@ -750,12 +849,12 @@ class KeycloakLiveTest(unittest.TestCase):
         self.admin.delete(f"organizations/{ids.org_id}")
 
     def test_baseline_is_clean_and_provisioning_repeatable(self):
-        self.assertEqual(check_realm(self.admin), [])
+        self.assertEqual(check_realm(self.admin, smtp=SMTP), [])
         again = ensure_hospital(self.admin, self.h["alpha"], self.ids["alpha"].org_id)
         self.assertEqual(again, self.ids["alpha"])
         for slug, h in self.h.items():
             self.assertEqual(check_hospital(self.admin, h, self.ids[slug].org_id), [])
-        self.assertEqual(ensure_realm(self.admin), [])
+        self.assertEqual(ensure_realm(self.admin, smtp=SMTP), [])
         flows = [f["alias"] for f in self.admin.get("authentication/flows")]
         self.assertEqual(flows.count("ihr-hospital-alpha"), 1)
 

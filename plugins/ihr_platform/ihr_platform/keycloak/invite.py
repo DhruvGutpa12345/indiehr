@@ -107,8 +107,13 @@ def ensure_invited_user(admin, email, first, last, hospital_uuid, sub=None):
 
 
 def setup_pending(user):
-    """True while the person has not finished setting up (password and authenticator)."""
-    return bool(set(SETUP_ACTIONS) & set(user.get("requiredActions") or []))
+    """True while an invited account has never been set up: its address is not verified yet
+    (following the setup link verifies it). An admin's reset of a set-up account
+    (P1-T5e2) never counts: that account is someone's, and is never deleted or replaced
+    as an unused invitation."""
+    return not user.get("emailVerified") or "VERIFY_EMAIL" in (
+        user.get("requiredActions") or []
+    )
 
 
 def send_setup_email(admin, sub, hospital_uuid, client_id, redirect_uri, seconds):
@@ -147,3 +152,41 @@ def remove_invited_user(admin, sub, hospital_uuid):
         return False
     admin.call("DELETE", f"users/{sub}", ok=(204, 404))
     return True
+
+
+RESET_ACTIONS = ["UPDATE_PASSWORD", "CONFIGURE_TOTP"]
+
+
+def reset_sign_in(admin, sub, client_id, redirect_uri, seconds):
+    """A hospital admin's reset for a lost authenticator (P1-T5e2).
+
+    The password and the authenticator are both cleared: clearing only the authenticator
+    would let anyone who knows the password sign in and enrol their own. Every sign-in ends
+    (back-channel logout reaches every hospital), and a one-time link to set both again goes
+    to the person's own verified address; nobody else sees it. Until it is used nobody can
+    sign in with the account, which fails closed."""
+    user = admin.get(f"users/{sub}")
+    if not user.get("emailVerified"):
+        msg = "the account's e-mail address is not verified: no reset link can go there"
+        raise KeycloakError(msg)
+    for credential in admin.get(f"users/{sub}/credentials"):
+        if credential["type"] in ("password", "otp"):
+            admin.delete(f"users/{sub}/credentials/{credential['id']}")
+    # Once set up the account is the person's, not an invitation's: no hospital's stamp
+    # may mark it as theirs to replace or delete any more.
+    attributes = dict(user.get("attributes") or {})
+    attributes.pop(INVITED_FOR, None)
+    user["attributes"] = attributes
+    user["requiredActions"] = RESET_ACTIONS
+    admin.put(
+        f"users/{sub}", user
+    )  # the whole account: a partial update can drop fields
+    admin.post(f"users/{sub}/logout", ok=(204,))
+    query = urlencode(
+        {"client_id": client_id, "redirect_uri": redirect_uri, "lifespan": seconds}
+    )
+    admin.put(f"users/{sub}/execute-actions-email?{query}", RESET_ACTIONS)
+
+
+def account_exists(admin, sub):
+    return admin.call("GET", f"users/{sub}", ok=(200, 404)).status == HTTPStatus.OK

@@ -128,6 +128,8 @@ def apply_tenancy(settings):  # noqa: PLR0915 (one flat list of settings)
     # Never the password: ihr_keycloak_sync reads IHR_KEYCLOAK_SMTP_PASSWORD from its own env.
     settings.setdefault("IHR_KEYCLOAK_SMTP", None)
     settings.setdefault("IHR_SETUP_LINK_HOURS", 72)
+    # A hospital admin's reset of a lost authenticator (P1-T5e2): its link lives one day.
+    settings.setdefault("IHR_RESET_LINK_HOURS", 24)
 
     settings["FILE_OBJECT_KEY_PREFIX_FUNCTION"] = (
         "ihr_platform.storage.tenant_key_prefix"

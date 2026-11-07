@@ -2,7 +2,9 @@
 
     manage.py ihr_provision_worker [--once] [--interval 3]
 
-It also delivers staff invitations queued by hospitals' "Add user" (P1-T5e1).
+It also delivers staff invitations queued by hospitals' "Add user" (P1-T5e1), carries out
+hospital admins' requests (reset a lost authenticator, resend or cancel an invitation) and
+withdraws invitations nobody accepted in time (P1-T5e2).
 
 A process of its own, the only one holding the Keycloak admin credential (from its
 environment, IHR_KEYCLOAK_ADMIN_CLIENT_ID/_SECRET): the console and the hospitals' web app and
@@ -50,7 +52,11 @@ def work_once():
     if run_one_operation():
         return True
     try:
-        return invitations.deliver_once()
+        return (
+            invitations.deliver_once()
+            or invitations.handle_request_once()
+            or bool(invitations.expire_due())
+        )
     finally:
         connection.set_schema_to_public()
 

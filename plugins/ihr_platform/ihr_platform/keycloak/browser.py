@@ -171,6 +171,47 @@ class Browser:
                 result.tokens = token.json()
         return result
 
+    def forgot_password(self, client_id, redirect_uri, username):
+        """Ask for a password-reset e-mail from the sign-in page's "Forgot password?" link
+        (P1-T5e2). Returns the text of the page Keycloak shows afterwards."""
+        params = {
+            "client_id": client_id,
+            "redirect_uri": redirect_uri,
+            "response_type": "code",
+            "scope": "openid",
+            "state": secrets.token_urlsafe(12),
+            "code_challenge": "A" * 43,
+            "code_challenge_method": "S256",
+        }
+        url = f"{self.oidc}/auth?{urlencode(params)}"
+        page = self.fetch("GET", url)
+        parser = _FormParser()
+        parser.feed(page.text)
+        link = next(x for x in parser.links if "reset-credentials" in x)
+        url = urljoin(url, link)
+        parser = _FormParser()
+        parser.feed(self.fetch("GET", url).text)
+        form = next(f for f in parser.forms if f.id == "kc-reset-password-form")
+        resp = self.fetch(
+            "POST", urljoin(url, form.action), dict(form.inputs, username=username)
+        )
+        return resp.text
+
+    def follow_reset(self, link, otp_secret, new_password, redirect_uri):
+        """Follow the e-mailed reset link: authenticator code, then the new password. Returns
+        the result; ``landed`` is where Keycloak sent the browser back to, if it did."""
+        result = LoginResult()
+        result.landed = self._walk(
+            link,
+            result,
+            None,
+            None,
+            otp_secret,
+            lambda u: u.startswith(redirect_uri),
+            new_password=new_password,
+        )
+        return result
+
     def setup_account(self, link, new_password):
         """Follow an e-mailed setup link (P1-T5c) through Keycloak's pages: "proceed", set up
         the authenticator, choose a password. Stops on the first page it does not know (the

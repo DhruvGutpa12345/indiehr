@@ -98,7 +98,7 @@ Removing a member also ends that person's sessions, because a refresh does not r
 |---|---|
 | CARE backend accepts Keycloak tokens (signature, `iss`, `azp`/`aud`, `member`, `ihr_org` id = `Hospital.keycloak_org_id`, `acr`), web-app login at `/auth/callback`, token storage (R0-20) | P1-T4 |
 | Narrow production credentials: onboarding (org + client + flow; needs `manage-realm`, so operator-only) and a membership worker (FGAP v2, membership of its own hospital only). **Gate for production (P1-T8).** | P1-T5 / P1-T8 |
-| Staff invitations by email (no admin-chosen passwords); MFA reset by single-use link; recovery codes at enrolment | P1-T5 |
+| Staff invitations by email (no admin-chosen passwords); MFA reset by single-use link; recovery codes at enrolment | P1-T5 *(built in P1-T5c/T5e1/T5e2; recovery codes not now, owner 2026-11-07)* |
 | Operator realm `indiehr-ops` and platform super-admin | P1-T5 |
 | Hindi login pages (Keycloak ships no Hindi): a reviewed translation | P1-T7 |
 | Hospital-branded login pages (theme) | P1-T4 / P1-T7 |

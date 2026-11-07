@@ -304,3 +304,258 @@ def _send_join(inv, hospital):
     inv.join_token_hash = token_hash(token)
     inv.expires_at = timezone.now() + timedelta(hours=hours)
     inv.save(update_fields=["join_token_hash", "expires_at"])
+
+
+# --- hospital admins' requests and expiry (P1-T5e2) -------------------------------------
+
+
+class RequestError(Exception):
+    """A request that cannot be carried out as things stand (shown to the admin)."""
+
+
+def handle_request_once():
+    """Carry out one queued StaffAccessRequest, if any. True if there was one.
+
+    Claimed (RUNNING) and committed before Keycloak is called, outcome recorded after: a
+    crash part-way never replays a reset (which wipes credentials and sends e-mail)."""
+    from ihr_platform.models import StaffAccessRequest
+
+    with transaction.atomic():
+        req = (
+            StaffAccessRequest.objects.select_for_update(skip_locked=True)
+            .filter(status=StaffAccessRequest.Status.QUEUED)
+            .order_by("created_at")
+            .first()
+        )
+        if req is None:
+            return False
+        req.status = StaffAccessRequest.Status.RUNNING
+        req.save(update_fields=["status"])
+    status, error = StaffAccessRequest.Status.DONE, ""
+    try:
+        handle_request(req)
+    except (RequestError, InvitationError) as exc:
+        status, error = StaffAccessRequest.Status.FAILED, str(exc)
+    except Exception as exc:
+        logger.exception("staff request %s failed", req.pk)
+        status = StaffAccessRequest.Status.FAILED
+        error = f"{type(exc).__name__}: {exc}".replace("\n", " ")
+    StaffAccessRequest.objects.filter(pk=req.pk).update(
+        status=status, error=error[:MAX_ERROR], done_at=timezone.now()
+    )
+    return True
+
+
+def handle_request(req):
+    from ihr_platform.models import StaffAccessRequest
+
+    hospital = req.hospital
+    if hospital.status != Hospital.Status.ACTIVE or hospital.keycloak_org_id is None:
+        raise RequestError("the hospital is not live")
+    admin = keycloak_admin()
+    if req.action == StaffAccessRequest.Action.RESET_SIGN_IN:
+        _reset_sign_in(admin, req, hospital)
+        return
+    inv = StaffInvitation.objects.filter(
+        hospital=hospital, care_user_id=req.care_user_id
+    ).first()
+    if inv is None:
+        raise RequestError("this person has no invitation")
+    if req.action == StaffAccessRequest.Action.RESEND_INVITATION:
+        _resend(admin, inv)
+    else:
+        _withdraw(admin, inv, StaffInvitation.Status.CANCELLED)
+
+
+def _reset_sign_in(admin, req, hospital):
+    from django.contrib.auth import get_user_model
+    from ihr_identity.models import StaffIdentity
+
+    from ihr_platform.keycloak.hospital import client_id_for
+    from ihr_platform.keycloak.invite import reset_sign_in
+    from ihr_platform.management.commands.ihr_keycloak_sync import hospital_login
+
+    with schema_context(hospital.schema_name):
+        user = (
+            get_user_model()
+            .objects.filter(pk=req.care_user_id, deleted=False, is_active=True)
+            .first()
+        )
+        identity = StaffIdentity.objects.filter(user=user).first() if user else None
+    if identity is None or identity.awaiting_setup:
+        raise RequestError("not active staff here: resend or cancel the invitation")
+    if req.keycloak_sub and str(req.keycloak_sub) != str(identity.keycloak_sub):
+        raise RequestError("the person's account changed since the request")
+    reset_sign_in(
+        admin,
+        str(identity.keycloak_sub),
+        client_id_for(hospital.slug),
+        hospital_login(hospital).redirect_uris[0],
+        settings.IHR_RESET_LINK_HOURS * 3600,
+    )
+    with schema_context(hospital.schema_name):
+        # Back-channel logout ends the sessions everywhere; this also refuses any session
+        # here that started before the reset, even if that message were lost.
+        StaffIdentity.objects.filter(pk=identity.pk).update(
+            sessions_valid_after=timezone.now()
+        )
+
+
+def _is_active(inv):
+    from django.contrib.auth import get_user_model
+
+    with schema_context(inv.hospital.schema_name):
+        return (
+            get_user_model()
+            .objects.filter(pk=inv.care_user_id, is_active=True, deleted=False)
+            .exists()
+        )
+
+
+def _close(inv, allowed, status=None):
+    """Under row locks (the invitation, and the identity the join confirmation and the
+    first sign-in update): re-check the invitation, then unlink the inactive user and, if
+    given, set the new status. Committed before Keycloak is touched, so a "Join" click or a
+    first sign-in racing with it either finished first (and this refuses) or finds no link
+    (and refuses itself). Returns the locked, current invitation."""
+    from ihr_identity.models import StaffIdentity
+
+    with transaction.atomic():
+        current = StaffInvitation.objects.select_for_update().get(pk=inv.pk)
+        with schema_context(current.hospital.schema_name):
+            list(
+                StaffIdentity.objects.select_for_update().filter(
+                    user_id=current.care_user_id
+                )
+            )
+        if current.status not in allowed:
+            msg = f"the invitation is {current.status}"
+            raise RequestError(msg)
+        if _is_active(current):
+            # Never take membership from someone who already works here.
+            raise RequestError("they are already active staff here")
+        with schema_context(current.hospital.schema_name):
+            StaffIdentity.objects.filter(
+                user_id=current.care_user_id, user__is_active=False
+            ).delete()
+        if status:
+            current.status = status
+            current.join_token_hash = ""
+            current.save(update_fields=["status", "join_token_hash"])
+    return current
+
+
+WITHDRAWABLE = {
+    StaffInvitation.Status.SENT,
+    StaffInvitation.Status.FAILED,
+}
+
+
+def _withdraw(admin, inv, status):
+    """Cancel or expire an invitation. Access goes first (the link, in the database), then
+    what it granted in Keycloak: an account made for it that nobody set up is deleted; an
+    account someone uses keeps everything except this hospital's membership, and their
+    other hospitals are left alone."""
+    from ihr_platform.keycloak.hospital import hospital_ids, remove_member
+    from ihr_platform.keycloak.invite import (
+        account_exists,
+        account_state,
+        delete_pending,
+    )
+
+    inv = _close(inv, WITHDRAWABLE, status)
+    sub = str(inv.keycloak_sub) if inv.keycloak_sub else None
+    if not sub:
+        return
+    hospital = inv.hospital
+    tag = str(hospital.uuid)
+    deleted = (
+        inv.kind == StaffInvitation.Kind.NEW
+        and account_state(admin, sub, tag) == "pending"
+        and delete_pending(admin, sub, tag)  # its membership goes with it
+    )
+    if not deleted and account_exists(admin, sub):
+        ids = hospital_ids(admin, hospital.slug, str(hospital.keycloak_org_id))
+        remove_member(admin, ids, sub, end_sessions=False)
+
+
+def _resend(admin, inv):
+    """A fresh e-mail. A new account's unused setup account is replaced (Keycloak cannot
+    cancel a sent link, so earlier links die with it); a join gets a new link (only the new
+    hash is kept). Cancelled, expired or failed invitations start over."""
+    from ihr_platform.keycloak.invite import account_state, delete_pending
+
+    _care_user(inv)  # still there and not active yet
+    inv = _close(
+        inv,
+        WITHDRAWABLE
+        | {StaffInvitation.Status.CANCELLED, StaffInvitation.Status.EXPIRED},
+    )
+    if (
+        inv.status == StaffInvitation.Status.SENT
+        and inv.kind == StaffInvitation.Kind.NEW
+    ):
+        tag = str(inv.hospital.uuid)
+        state = account_state(admin, str(inv.keycloak_sub), tag)
+        if state == "set_up":
+            raise RequestError("they have set up their account: they can sign in now")
+        if state == "pending" and not delete_pending(admin, str(inv.keycloak_sub), tag):
+            raise RequestError("the unused account could not be replaced")
+    StaffInvitation.objects.filter(pk=inv.pk, status=inv.status).update(
+        status=StaffInvitation.Status.QUEUED,
+        kind="",
+        keycloak_sub=None,
+        join_token_hash="",
+        error="",
+        expires_at=None,
+        sent_at=None,
+        not_before=None,
+        attempts=0,
+    )
+
+
+EXPIRY_EVERY = 300
+# A new account set up but never used to sign in here gets this long after its link expired
+# before this hospital's membership is taken back (the account itself is theirs).
+SET_UP_GRACE = timedelta(days=14)
+_last_expiry = {"at": 0.0}
+
+
+def expire_due(now=None):
+    """Withdraw invitations not accepted in time (owner: clean up at expiry). Runs at most
+    every few minutes. Returns how many expired."""
+    import time
+
+    from ihr_platform.keycloak.invite import account_state
+
+    if now is None and time.monotonic() - _last_expiry["at"] < EXPIRY_EVERY:
+        return 0
+    _last_expiry["at"] = time.monotonic()
+    now = now or timezone.now()
+    due = StaffInvitation.objects.filter(
+        status=StaffInvitation.Status.SENT, expires_at__lt=now
+    ).select_related("hospital")
+    expired = 0
+    admin = None
+    for inv in due:
+        admin = admin or keycloak_admin()
+        try:
+            if _is_active(inv):
+                continue  # joined meanwhile; its own path marks it accepted
+            if (
+                inv.kind == StaffInvitation.Kind.NEW
+                and inv.keycloak_sub
+                and inv.expires_at < inv.sent_at + SET_UP_GRACE
+                and account_state(admin, str(inv.keycloak_sub), str(inv.hospital.uuid))
+                == "set_up"
+            ):
+                # Set up, not signed in here yet: a grace period, once.
+                StaffInvitation.objects.filter(pk=inv.pk).update(
+                    expires_at=now + SET_UP_GRACE
+                )
+                continue
+            _withdraw(admin, inv, StaffInvitation.Status.EXPIRED)
+            expired += 1
+        except Exception:  # the next sweep tries again
+            logger.exception("invitation %s could not be expired", inv.pk)
+    return expired

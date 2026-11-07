@@ -247,9 +247,10 @@ def ensure_member(admin, ids, user_id):
     admin.post(f"users/{user_id}/role-mappings/clients/{ids.client_uuid}", [role])
 
 
-def remove_member(admin, ids, user_id):
+def remove_member(admin, ids, user_id, *, end_sessions=True):
     """Remove a person from a hospital and end their sessions, so refresh tokens stop working
-    at once (a refresh does not re-run the login flow)."""
+    at once (a refresh does not re-run the login flow). ``end_sessions=False`` when they never
+    worked here (an invitation withdrawn, P1-T5e2): their other hospitals are left alone."""
     role = admin.get(f"clients/{ids.client_uuid}/roles/{MEMBER_ROLE}")
     admin.call(
         "DELETE",
@@ -258,7 +259,8 @@ def remove_member(admin, ids, user_id):
         ok=(204,),
     )
     admin.call("DELETE", f"organizations/{ids.org_id}/members/{user_id}", ok=(204, 404))
-    admin.post(f"users/{user_id}/logout", ok=(204,))
+    if end_sessions:
+        admin.post(f"users/{user_id}/logout", ok=(204,))
     effective = admin.get(
         f"users/{user_id}/role-mappings/clients/{ids.client_uuid}/composite"
     )

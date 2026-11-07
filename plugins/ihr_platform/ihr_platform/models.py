@@ -225,6 +225,8 @@ class StaffInvitation(models.Model):
         SENT = "sent"
         ACCEPTED = "accepted"
         FAILED = "failed"
+        CANCELLED = "cancelled"  # by a hospital admin (P1-T5e2)
+        EXPIRED = "expired"  # not accepted in time; what it granted is withdrawn
 
     class Kind(models.TextChoices):
         NEW = "new"  # no account yet: the setup e-mail (P1-T5c's mechanism)
@@ -261,3 +263,56 @@ class StaffInvitation(models.Model):
 
     def __str__(self):
         return f"{self.kind or '?'} invitation at {self.hospital_id} ({self.status})"
+
+
+class StaffAccessRequest(models.Model):
+    """A hospital admin's request about one staff member's sign-in (P1-T5e2), carried out by
+    the provisioner (the only holder of the Keycloak admin credential) and kept as that
+    hospital's record of who asked for what, and when.
+
+    - ``reset_sign_in``: lost authenticator. The person's password and authenticator are both
+      cleared (clearing only the authenticator would let anyone with the password enrol their
+      own), every sign-in ends, and a one-time link to set both again goes to their own
+      verified e-mail. The admin never sees it.
+    - ``resend_invitation`` / ``cancel_invitation``: for invitations not accepted yet.
+    """
+
+    class Action(models.TextChoices):
+        RESET_SIGN_IN = "reset_sign_in"
+        RESEND_INVITATION = "resend_invitation"
+        CANCEL_INVITATION = "cancel_invitation"
+
+    class Status(models.TextChoices):
+        QUEUED = "queued"
+        # Claimed by the provisioner. Never retried by itself: a reset wipes credentials and
+        # sends e-mail, so a crash mid-way is left for the admin to ask again.
+        RUNNING = "running"
+        DONE = "done"
+        FAILED = "failed"
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    hospital = models.ForeignKey(Hospital, on_delete=models.CASCADE)
+    care_user_id = models.IntegerField()
+    # The person (one account across hospitals): resets are limited per person, not per
+    # hospital, so admins at several hospitals cannot keep wiping one doctor's sign-in.
+    keycloak_sub = models.UUIDField(null=True, blank=True, db_index=True)
+    action = models.CharField(max_length=24, choices=Action.choices)
+    requested_by = models.CharField(max_length=255)
+    status = models.CharField(
+        max_length=16, choices=Status.choices, default=Status.QUEUED
+    )
+    error = models.CharField(max_length=400, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    done_at = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(
+                fields=["hospital", "care_user_id", "action"],
+                condition=models.Q(status__in=["queued", "running"]),
+                name="one_open_request_per_user_and_action",
+            )
+        ]
+
+    def __str__(self):
+        return f"{self.action} at {self.hospital_id} ({self.status})"

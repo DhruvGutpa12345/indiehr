@@ -27,6 +27,10 @@ FLOW_CORE = "ihr-core"
 FLOW_REALM = "ihr-realm-browser"
 FLOW_TEMPLATE = "ihr-hospital-template"
 FLOW_DENY = "ihr-deny-all"
+# "Forgot password?" (P1-T5e2): the e-mailed link alone never changes a password; the current
+# authenticator code is asked too. Keycloak's built-in flow can instead remove the
+# authenticator, and lets the person in without it.
+FLOW_RESET = "ihr-reset-credentials"
 HOSPITAL_SCOPE = "ihr-hospital"  # marker client scope carried by every hospital client
 # User-profile attribute naming the hospital (its uuid) whose setup e-mail created an account
 # (P1-T5c). Only admins can see or change it, so a person cannot claim another hospital's.
@@ -88,6 +92,28 @@ GATE_SHAPE = [
     (1, 1, "deny-access-authenticator", "REQUIRED", None),
 ]
 DENY_SHAPE = [(0, 0, "deny-access-authenticator", "REQUIRED", None)]
+RESET_OTP = "ihr-reset-otp"
+RESET_DENY = "ihr-reset-no-otp"
+RESET_SHAPE = [
+    (0, 0, "reset-credentials-choose-user", "REQUIRED", None),
+    (0, 1, "reset-credential-email", "REQUIRED", None),
+    # The current code, for anyone who has an authenticator...
+    (0, 2, "flow", "CONDITIONAL", None),
+    (1, 0, "conditional-user-configured", "REQUIRED", None),
+    (1, 1, "auth-otp-form", "REQUIRED", None),
+    # ...and refused for anyone who has none (Keycloak would otherwise let them enrol one
+    # with only the mailbox: an admin's reset in progress, an invitation not set up yet).
+    (0, 3, "flow", "CONDITIONAL", None),
+    (
+        1,
+        0,
+        "conditional-sub-flow-executed",
+        "REQUIRED",
+        (("check_result", "not-executed"), ("flow_to_check", RESET_OTP)),
+    ),
+    (1, 1, "deny-access-authenticator", "REQUIRED", None),
+    (0, 4, "reset-password", "REQUIRED", None),
+]
 MESSAGES = {
     "ihrNotMember": "You are not a member of this hospital.",
     "ihrHospitalLoginMissing": "This hospital's sign-in is not set up. Please contact support.",
@@ -104,8 +130,9 @@ def realm_settings(realm, smtp=None):
         "enabled": True,
         "organizationsEnabled": True,
         "registrationAllowed": False,
-        # Resetting a lost password or authenticator is done by the hospital (P1-T5e).
-        "resetPasswordAllowed": False,
+        # "Forgot password?" (P1-T5e2, owner: self-service) only where a mail server is set:
+        # the hospitals' realm. Pinned either way, so switching it on by hand is drift.
+        "resetPasswordAllowed": bool(smtp),
         "rememberMe": False,
         "loginWithEmailAllowed": True,
         "duplicateEmailsAllowed": False,
@@ -176,7 +203,11 @@ def ensure_realm(admin, fix=True, smtp=None):
     _ensure_flows(admin)
     admin.put(
         f"/{realm}",
-        {"browserFlow": FLOW_REALM, "directGrantFlow": FLOW_DENY},
+        {
+            "browserFlow": FLOW_REALM,
+            "directGrantFlow": FLOW_DENY,
+            "resetCredentialsFlow": FLOW_RESET,
+        },
     )
     _harden_built_in_clients(admin)
     _ensure_user_profile(admin)
@@ -225,6 +256,10 @@ def _check_settings(admin, smtp=None):
         issues.append(f"realm browser flow is {rep.get('browserFlow')!r}")
     if rep.get("directGrantFlow") != FLOW_DENY:
         issues.append(f"realm direct-grant flow is {rep.get('directGrantFlow')!r}")
+    if rep.get("resetCredentialsFlow") != FLOW_RESET:
+        issues.append(
+            f"realm password-reset flow is {rep.get('resetCredentialsFlow')!r}"
+        )
     return issues
 
 
@@ -274,6 +309,10 @@ def _check_flows(admin):
         issues.append(f"flow {FLOW_CORE} is not password + OTP as built")
     if FLOW_DENY in flows and flow_shape(admin, FLOW_DENY) != DENY_SHAPE:
         issues.append(f"flow {FLOW_DENY} no longer refuses every password grant")
+    if FLOW_RESET not in flows:
+        issues.append(f"flow {FLOW_RESET} is missing")
+    elif flow_shape(admin, FLOW_RESET) != RESET_SHAPE:
+        issues.append(f"flow {FLOW_RESET} no longer asks for the authenticator code")
     for alias in (FLOW_REALM, FLOW_TEMPLATE):
         if alias in flows and not shape_matches(
             flow_shape(admin, alias), CORE_SHAPE + GATE_SHAPE
@@ -334,6 +373,7 @@ def flow_shape(admin, alias):
         cfg = None
         if e.get("authenticationConfig") and e.get("providerId") in (
             "conditional-level-of-authentication",
+            "conditional-sub-flow-executed",
         ):
             cfg = tuple(
                 sorted(
@@ -441,6 +481,40 @@ def _add_gate(admin, flow, condition, condition_config, deny_message):
     )
 
 
+def _ensure_reset_flow(admin, flows):
+    if FLOW_RESET in flows and flow_shape(admin, FLOW_RESET) != RESET_SHAPE:
+        # Fail closed while it is rebuilt: password resets are refused meanwhile.
+        admin.put(f"/{admin.realm}", {"resetCredentialsFlow": FLOW_DENY})
+        admin.delete(f"authentication/flows/{flows.pop(FLOW_RESET)['id']}")
+    if FLOW_RESET not in flows:
+        admin.post(
+            "authentication/flows",
+            {
+                "alias": FLOW_RESET,
+                "description": "Forgot password: e-mailed link + authenticator code",
+                "providerId": "basic-flow",
+                "topLevel": True,
+                "builtIn": False,
+            },
+        )
+        _add_step(admin, FLOW_RESET, "reset-credentials-choose-user", "REQUIRED")
+        _add_step(admin, FLOW_RESET, "reset-credential-email", "REQUIRED")
+        _add_subflow(admin, FLOW_RESET, RESET_OTP, "CONDITIONAL")
+        _add_step(admin, RESET_OTP, "conditional-user-configured", "REQUIRED")
+        _add_step(admin, RESET_OTP, "auth-otp-form", "REQUIRED")
+        _add_subflow(admin, FLOW_RESET, RESET_DENY, "CONDITIONAL")
+        _add_step(
+            admin,
+            RESET_DENY,
+            "conditional-sub-flow-executed",
+            "REQUIRED",
+            {"flow_to_check": RESET_OTP, "check_result": "not-executed"},
+            f"{RESET_DENY}-condition",
+        )
+        _add_step(admin, RESET_DENY, "deny-access-authenticator", "REQUIRED")
+        _add_step(admin, FLOW_RESET, "reset-password", "REQUIRED")
+
+
 def _ensure_flows(admin):
     flows = _flows(admin)
     if FLOW_DENY not in flows:
@@ -470,6 +544,7 @@ def _ensure_flows(admin):
     if FLOW_DENY in flows and flow_shape(admin, FLOW_DENY) != DENY_SHAPE:
         msg = f"flow {FLOW_DENY} was changed: fix it by hand (it is bound to the realm)"
         raise KeycloakError(msg)
+    _ensure_reset_flow(admin, flows)
     if FLOW_CORE not in flows:
         admin.post(
             "authentication/flows",

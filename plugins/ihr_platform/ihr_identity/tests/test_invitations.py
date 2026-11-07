@@ -61,6 +61,7 @@ class FakeKeycloak:
         self.existing, self.elsewhere = {}, {}
         self.created, self.members, self.setup_mails = {}, [], []
         self.set_up = set()
+        self.deleted, self.removed, self.resets = [], [], []
 
     def account(self, sub):
         pending = sub not in self.set_up and (
@@ -70,6 +71,7 @@ class FakeKeycloak:
         return {
             "id": sub,
             "attributes": stamp,
+            "emailVerified": not pending,
             "requiredActions": self.PENDING if pending else [],
         }
 
@@ -91,6 +93,29 @@ class FakeKeycloak:
         self.setup_mails.append((sub, client_id, uri, seconds))
         return True
 
+    # --- P1-T5e2: recovery, resend, cancel, expiry ----------------------------------------
+
+    def account_state(self, admin, sub, tag):
+        if sub in self.set_up:
+            return "set_up"
+        return "pending" if sub in self.created.values() else "missing"
+
+    def delete_pending(self, admin, sub, tag):
+        if sub in self.set_up:
+            return False
+        self.created = {k: v for k, v in self.created.items() if v != sub}
+        self.deleted.append(sub)
+        return True
+
+    def account_exists(self, admin, sub):
+        return sub in {*self.created.values(), *self.existing.values()}
+
+    def remove_member(self, admin, ids, sub, *, end_sessions=True):
+        self.removed.append((ids.slug, sub, end_sessions))
+
+    def reset_sign_in(self, admin, sub, client_id, uri, seconds):
+        self.resets.append((sub, client_id, uri, seconds))
+
     def patches(self):
         kc = self
         admin = SimpleNamespace(get=lambda path: kc.account(path.split("/")[1]))
@@ -103,6 +128,11 @@ class FakeKeycloak:
                 SimpleNamespace(slug=slug)
             ),
             "ihr_platform.invitations._existing_account": self.existing_account,
+            "ihr_platform.keycloak.invite.account_state": self.account_state,
+            "ihr_platform.keycloak.invite.delete_pending": self.delete_pending,
+            "ihr_platform.keycloak.invite.account_exists": self.account_exists,
+            "ihr_platform.keycloak.invite.reset_sign_in": self.reset_sign_in,
+            "ihr_platform.keycloak.hospital.remove_member": self.remove_member,
             "ihr_platform.management.commands.ihr_keycloak_sync.keycloak_admin": (
                 lambda: admin
             ),
@@ -155,7 +185,7 @@ class InvitationCase(SimpleTestCase):
             patch.start()
         try:
             with schema_context("public"):
-                while invitations.deliver_once():
+                while invitations.deliver_once() or invitations.handle_request_once():
                     pass
         finally:
             for patch in patches:
@@ -473,3 +503,234 @@ class JoinTests(InvitationCase):
         """The first-sign-in activation of new accounts (P1-T5c) must skip joins."""
         self.sign_in()
         self.assert_not_joined()
+
+
+class RecoveryTests(InvitationCase):
+    """P1-T5e2: an admin resets a lost authenticator, resends or cancels an invitation, and
+    invitations nobody accepted are withdrawn at expiry."""
+
+    def act(self, user, action, api=None):
+        return (api or self.api).post(f"/api/ihr/staff/{user.username}/{action}/")
+
+    def requests(self, user):
+        from ihr_platform.models import StaffAccessRequest
+
+        with schema_context("public"):
+            return list(
+                StaffAccessRequest.objects.filter(care_user_id=user.pk).order_by(
+                    "created_at"
+                )
+            )
+
+    def tearDown(self):
+        from ihr_platform.models import StaffAccessRequest
+
+        with schema_context("public"):
+            StaffAccessRequest.objects.filter(hospital=self.hospital).delete()
+        super().tearDown()
+
+    def active_staff(self):
+        user, inv = self.invite()
+        self.deliver()
+        sub = self.kc.created[inv.email]
+        self.kc.set_up.add(sub)
+        User.objects.filter(pk=user.pk).update(is_active=True)
+        StaffIdentity.objects.filter(user=user).update(awaiting_setup=False)
+        with schema_context("public"):
+            StaffInvitation.objects.filter(pk=inv.pk).update(status="accepted")
+        user.refresh_from_db()
+        return user, sub
+
+    def test_reset_sign_in(self):
+        user, sub = self.active_staff()
+        self.assertEqual(self.act(user, "reset-sign-in").status_code, 202)
+        self.assertEqual(
+            self.act(user, "reset-sign-in").status_code, 400
+        )  # once at a time
+        self.deliver()
+        again = self.act(user, "reset-sign-in")  # and once a day per person
+        self.assertEqual(again.status_code, 400)
+        self.assertIn("in the last day", str(again.json()))
+        [(reset_sub, client_id, uri, seconds)] = self.kc.resets
+        self.assertEqual((reset_sub, client_id), (sub, "ihr-h-testhosp"))
+        self.assertTrue(uri.endswith("/api/ihr/auth/callback/"))
+        self.assertEqual(seconds, 24 * 3600)
+        identity = StaffIdentity.objects.get(user=user)
+        self.assertIsNotNone(identity.sessions_valid_after)  # sessions here end too
+        [req] = self.requests(user)
+        self.assertEqual(
+            (req.status, req.requested_by), ("done", f"user:{self.admin.external_id}")
+        )
+        page = self.api.get(f"/api/ihr/staff/{user.username}/access/").json()
+        self.assertEqual(page["requests"][0]["action"], "reset_sign_in")
+
+    def test_who_may_ask_and_for_whom(self):
+        user, _ = self.active_staff()
+        plain = User.objects.create_user(
+            username=f"pl-{time.time_ns()}"[:16], password="x-Unused-1"
+        )
+        self.addCleanup(plain.delete)
+        nobody = APIClient(HTTP_HOST=HOST)
+        nobody.force_authenticate(plain)
+        self.assertEqual(self.act(user, "reset-sign-in", nobody).status_code, 403)
+        self.assertEqual(self.act(self.admin, "reset-sign-in").status_code, 400)  # self
+        invited, _ = self.invite()
+        self.assertEqual(
+            self.act(invited, "reset-sign-in").status_code, 400
+        )  # not active
+        self.assertEqual(
+            self.act(user, "cancel-invitation").status_code, 400
+        )  # already active staff
+        self.assertEqual(self.act(user, "do-something").status_code, 400)
+        boss = User.objects.create_superuser(
+            username=f"su-{time.time_ns()}"[:16],
+            email=f"su{time.time_ns()}@example.test",
+            password="x-Unused-1",
+        )
+        self.addCleanup(boss.delete)
+        self.assertEqual(self.act(boss, "reset-sign-in").status_code, 403)
+        with mock.patch(
+            "ihr_identity.staff_access._hospital_wide_admin", lambda u: u.pk == user.pk
+        ):
+            refused = self.act(user, "reset-sign-in")
+        self.assertEqual(refused.status_code, 403)  # an admin above the asker
+        self.assertEqual(
+            self.api.post("/api/ihr/staff/nobody-here/reset-sign-in/").status_code, 404
+        )
+
+    def test_nothing_while_it_is_being_sent(self):
+        user, _ = self.invite()  # queued, not delivered yet
+        for action in ("cancel-invitation", "resend-invitation"):
+            response = self.act(user, action)
+            self.assertEqual(response.status_code, 400)
+            self.assertIn("being sent", str(response.json()))
+
+    def test_a_stale_cancel_never_undoes_a_join(self):
+        """The provisioner re-checks under row locks: an invitation accepted after the
+        request was made is left alone, and nothing is taken back in Keycloak."""
+        user, inv = self.invite()
+        self.deliver(existing=[inv.email])
+        inv.refresh_from_db()
+        User.objects.filter(pk=user.pk).update(is_active=True)
+        with schema_context("public"):
+            StaffInvitation.objects.filter(pk=inv.pk).update(status="accepted")
+        with self.assertRaisesMessage(invitations.RequestError, "accepted"):
+            invitations._withdraw(object(), inv, "cancelled")  # inv is the stale copy
+        self.assertEqual(self.kc.removed, [])
+        self.assertTrue(StaffIdentity.objects.filter(user=user).exists())
+
+    def test_a_reset_account_is_never_an_unused_invitation(self):
+        from ihr_platform.keycloak.invite import setup_pending
+
+        reset = {
+            "emailVerified": True,
+            "requiredActions": ["UPDATE_PASSWORD", "CONFIGURE_TOTP"],
+        }
+        self.assertFalse(setup_pending(reset))
+        self.assertTrue(setup_pending({"emailVerified": False, "requiredActions": []}))
+        self.assertTrue(
+            setup_pending({"emailVerified": True, "requiredActions": ["VERIFY_EMAIL"]})
+        )
+
+    def test_resend_replaces_an_unused_account(self):
+        user, inv = self.invite()
+        self.deliver()
+        first = self.kc.created[inv.email]
+        self.assertEqual(self.act(user, "resend-invitation").status_code, 202)
+        self.deliver()
+        inv.refresh_from_db()
+        second = self.kc.created[inv.email]
+        self.assertNotEqual(first, second)
+        self.assertEqual(self.kc.deleted, [first])  # its links die with it
+        self.assertEqual([m[0] for m in self.kc.setup_mails], [first, second])
+        self.assertEqual((inv.status, str(inv.keycloak_sub)), ("sent", second))
+        self.assertEqual(str(StaffIdentity.objects.get(user=user).keycloak_sub), second)
+        # Once they have set it up there is nothing to resend.
+        self.kc.set_up.add(second)
+        self.act(user, "resend-invitation")
+        self.deliver()
+        self.assertIn("can sign in now", self.requests(user)[-1].error)
+
+    def test_resend_a_join_makes_a_new_link(self):
+        user, inv = self.invite()
+        self.deliver(existing=[inv.email])
+        old = re.search(r"/api/ihr/join/\?t=([\w-]+)", mail.outbox[-1].body).group(1)
+        self.act(user, "resend-invitation")
+        self.deliver()
+        inv.refresh_from_db()
+        new = re.search(r"/api/ihr/join/\?t=([\w-]+)", mail.outbox[-1].body).group(1)
+        self.assertNotEqual(old, new)
+        self.assertEqual(inv.join_token_hash, invitations.token_hash(new))
+        browser = APIClient(HTTP_HOST=HOST)
+        self.assertEqual(
+            browser.get(f"/api/ihr/join/?t={old}")["Location"], "/login?error=join_link"
+        )
+
+    def test_cancel_takes_back_what_was_granted(self):
+        new_user, new_inv = self.invite()
+        join_user, join_inv = self.invite()
+        self.deliver(existing=[join_inv.email])
+        pending = self.kc.created[new_inv.email]
+        joiner = self.kc.existing[join_inv.email]
+        for user in (new_user, join_user):
+            self.assertEqual(self.act(user, "cancel-invitation").status_code, 202)
+        self.deliver()
+        self.assertEqual(self.kc.deleted, [pending])
+        self.assertEqual(
+            self.kc.removed, [("testhosp", joiner, False)]
+        )  # others untouched
+        for user, inv in ((new_user, new_inv), (join_user, join_inv)):
+            inv.refresh_from_db()
+            self.assertEqual((inv.status, inv.join_token_hash), ("cancelled", ""))
+            self.assertFalse(StaffIdentity.objects.filter(user=user).exists())
+        self.assertEqual(self.act(join_user, "cancel-invitation").status_code, 400)
+        # A cancelled invitation can be sent again from the start.
+        self.assertEqual(self.act(join_user, "resend-invitation").status_code, 202)
+        self.deliver()
+        join_inv.refresh_from_db()
+        self.assertEqual((join_inv.status, join_inv.kind), ("sent", "join"))
+
+    def test_unaccepted_invitations_expire(self):
+        _, inv_new = self.invite()
+        _, inv_join = self.invite()
+        set_up, inv_set = self.invite()
+        self.deliver(existing=[inv_join.email])
+        self.kc.set_up.add(self.kc.created[inv_set.email])
+        pending = self.kc.created[inv_new.email]
+        patches = self.kc.patches()
+        for patch in patches:
+            patch.start()
+        try:
+            with schema_context("public"):
+                invitations.expire_due(now=timezone.now() + timedelta(hours=73))
+        finally:
+            for patch in patches:
+                patch.stop()
+        for inv, status in (
+            (inv_new, "expired"),
+            (inv_join, "expired"),
+            (inv_set, "sent"),
+        ):
+            inv.refresh_from_db()
+            self.assertEqual(inv.status, status)
+        self.assertEqual(self.kc.deleted, [pending])
+        self.assertEqual(
+            self.kc.removed, [("testhosp", self.kc.existing[inv_join.email], False)]
+        )
+        self.assertTrue(
+            StaffIdentity.objects.filter(user=set_up).exists()
+        )  # may still sign in
+        # Set up but never signed in here: after the grace period, membership goes too.
+        set_up_sub = self.kc.created[inv_set.email]
+        for patch in patches:
+            patch.start()
+        try:
+            with schema_context("public"):
+                invitations.expire_due(now=timezone.now() + timedelta(days=18))
+        finally:
+            for patch in patches:
+                patch.stop()
+        inv_set.refresh_from_db()
+        self.assertEqual(inv_set.status, "expired")
+        self.assertIn(("testhosp", set_up_sub, False), self.kc.removed)
+        self.assertNotIn(set_up_sub, self.kc.deleted)  # their account stays theirs

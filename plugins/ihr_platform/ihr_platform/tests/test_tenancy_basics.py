@@ -20,6 +20,8 @@ PUBLIC_TABLE_ALLOW_LIST = {
     "ihr_platform_operatoraccount",  # P1-T5b: who may use the operator console
     # P1-T5e1: invitations waiting for the provisioner (staff e-mail and name, no patients)
     "ihr_platform_staffinvitation",
+    # P1-T5e2: hospital admins' requests (reset a sign-in, resend/cancel an invitation)
+    "ihr_platform_staffaccessrequest",
 }
 SECOND_DOMAIN = "second.testserver"
 
