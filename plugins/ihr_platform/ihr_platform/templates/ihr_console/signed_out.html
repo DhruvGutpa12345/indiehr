@@ -1,0 +1,12 @@
+{% extends "ihr_console/base.html" %}
+{% block main %}
+<h1>Operator console</h1>
+{% if reason == "signed_out" %}<p class="ok">You have signed out.</p>
+{% elif reason == "signed_out_here" %}<p class="error">Signed out here; the operator sign-in could not be ended. Close the browser if this is a shared computer.</p>
+{% elif reason == "not_operator" %}<p class="error">This account is not a platform operator.</p>
+{% elif reason == "expired" %}<p class="error">The sign-in took too long or was started elsewhere. Please try again.</p>
+{% elif reason == "cancelled" %}<p class="error">Sign-in was cancelled.</p>
+{% elif reason == "unavailable" %}<p class="error">Sign-in is not available right now.</p>
+{% elif reason == "refused" %}<p class="error">Sign-in could not be completed.</p>{% endif %}
+<p><a href="/ops/login/">Sign in</a></p>
+{% endblock %}

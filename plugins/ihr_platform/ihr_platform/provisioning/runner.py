@@ -60,6 +60,15 @@ def _exclusive(slug):
         holder.close()  # ends that session, which releases the lock
 
 
+def is_busy(slug):
+    """True while some run holds this hospital's lock."""
+    try:
+        with _exclusive(slug):
+            return False
+    except ProvisioningError:
+        return True
+
+
 def _safe_error(exc):
     """The exception's class and a short message (operators see it; no secrets in it)."""
     text = str(exc).replace("\n", " ")

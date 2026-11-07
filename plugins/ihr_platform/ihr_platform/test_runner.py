@@ -31,7 +31,13 @@ _initialised_connections = weakref.WeakSet()
 TEST_REDIS_DB = 15  # settings/test.py; the runner refuses to flush any other database
 WRITTEN_REDIS_KEYS = set()
 # Keys that are deliberately global (not tenant data). Reviewed; keep short.
-GLOBAL_REDIS_KEY_PREFIXES = ("_kombu", "celery", "unacked", "ihr:global:")
+GLOBAL_REDIS_KEY_PREFIXES = (
+    "_kombu",
+    "celery",
+    "unacked",
+    "ihr:global:",
+    "public::1:ihr:ops:",  # operator console sessions (P1-T5b): platform data, no hospital's
+)
 
 _SINGLE_KEY_WRITES = {
     "SET", "SETEX", "PSETEX", "SETNX", "SETRANGE", "GETSET", "GETEX", "APPEND", "INCR",

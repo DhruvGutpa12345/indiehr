@@ -39,6 +39,10 @@ HOSPITAL_DEFAULT_SCOPES = [
 ]
 SENTINEL_ROLE = "ihr-gate-sentinel"  # realm role that nobody may hold
 LOA_MAX_AGE = "43200"  # 12 h, the longest session (seconds)
+OUR_KINDS = {
+    "hospital",
+    "console",
+}  # client attribute ihr.kind of the clients we create
 BUILT_IN_CLIENTS = {
     "account",
     "account-console",
@@ -284,7 +288,7 @@ def _check_clients(admin, hospital_client_ids):
             issues.append(f"built-in client {cid} does not demand MFA")
         if cid in BUILT_IN_CLIENTS and client.get("authenticationFlowBindingOverrides"):
             issues.append(f"built-in client {cid} has its own login flow")
-        if cid not in BUILT_IN_CLIENTS and attrs.get("ihr.kind") != "hospital":
+        if cid not in BUILT_IN_CLIENTS and attrs.get("ihr.kind") not in OUR_KINDS:
             issues.append(f"client {cid} is neither built in nor a hospital client")
         elif (
             cid not in BUILT_IN_CLIENTS

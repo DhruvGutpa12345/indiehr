@@ -1,0 +1,27 @@
+{% extends "ihr_console/base.html" %}
+{% block head %}{% if busy and not waiting %}<meta http-equiv="refresh" content="3; url=?auto=1">{% endif %}{% endblock %}
+{% block title %}{{ op.slug }} · IndieHR operators{% endblock %}
+{% block main %}
+<h1>{{ op.slug }}: {{ op.status }}{% if op.queued_at %} (queued: {{ op.queued_action }}){% endif %}</h1>
+{% if op.status == "succeeded" %}<p class="ok">Live at {{ address }}.</p>{% endif %}
+{% if waiting %}<p class="error" role="alert">Queued for over a minute and not picked up: is the provisioner running? (Reload to check again.)</p>
+{% elif busy %}<p class="muted">Working… this page refreshes itself.</p>{% endif %}
+{% if stalled %}<p class="error" role="alert">This run stopped part-way (the provisioner was stopped). Retry continues where it stopped; roll back undoes it.</p>{% endif %}
+<table>
+  <tr><th>Step</th><th>Status</th><th>Seconds</th><th>Problem</th></tr>
+  {% for s in op.steps %}
+  <tr><td>{{ s.name }}</td><td>{{ s.status }}</td><td>{{ s.seconds|default_if_none:"" }}</td>
+      <td class="error">{{ s.error|default:"" }}</td></tr>
+  {% endfor %}
+  <tr><td><strong>Total</strong></td><td></td><td><strong>{{ total }}</strong></td><td></td></tr>
+</table>
+<p class="muted">Requested by {{ op.requested_by }} on {{ op.created_at|date:"d-m-Y H:i" }}.</p>
+{% if can_retry %}
+<form method="post" action="/ops/operations/{{ op.id }}/retry/">{% csrf_token %}
+  <button type="submit">Retry from where it stopped</button></form>
+{% endif %}
+{% if can_rollback %}
+<form method="post" action="/ops/operations/{{ op.id }}/rollback/">{% csrf_token %}
+  <button type="submit">Roll back (never went live)</button></form>
+{% endif %}
+{% endblock %}

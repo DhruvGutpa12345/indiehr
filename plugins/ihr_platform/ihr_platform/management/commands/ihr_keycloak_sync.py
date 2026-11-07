@@ -35,7 +35,7 @@ INACTIVE = {
 }
 
 
-def keycloak_admin():
+def keycloak_admin(realm=None):
     try:
         client_id = os.environ["IHR_KEYCLOAK_ADMIN_CLIENT_ID"]
         secret = os.environ["IHR_KEYCLOAK_ADMIN_CLIENT_SECRET"]
@@ -46,7 +46,9 @@ def keycloak_admin():
             "IHR_KEYCLOAK_ADMIN_CLIENT_ID/_SECRET in the environment."
         )
         raise CommandError(msg) from exc
-    return KeycloakAdmin(base_url, client_id, secret, settings.IHR_KEYCLOAK_REALM)
+    return KeycloakAdmin(
+        base_url, client_id, secret, realm or settings.IHR_KEYCLOAK_REALM
+    )
 
 
 def hospital_login(hospital):
@@ -114,10 +116,21 @@ class Command(BaseCommand):
             if realm and not check:
                 for item in ensure_realm(admin):
                     self.stdout.write(f"fixed: {item}")
+                if getattr(settings, "IHR_CONSOLE_URL", ""):
+                    self._ensure_operator_realm()
             if realm or check:
                 # With --all every hospital client is known, so leftovers are reported too.
                 known = {client_id_for(h.slug) for h in hospitals} if every else None
                 issues += check_realm(admin, known)
+                if getattr(settings, "IHR_CONSOLE_URL", ""):
+                    from ihr_platform.console.auth import console_url, redirect_uri
+                    from ihr_platform.keycloak.ops import check_ops_realm
+
+                    issues += check_ops_realm(
+                        keycloak_admin(settings.IHR_OPS_REALM),
+                        redirect_uri(),
+                        console_url(),
+                    )
             for hospital in hospitals:
                 try:
                     issues += self._sync_one(admin, hospital, check, rebuild_flows)
@@ -132,6 +145,14 @@ class Command(BaseCommand):
             msg = f"{len(issues)} problem(s) found in Keycloak"
             raise CommandError(msg)
         self.stdout.write(self.style.SUCCESS("Keycloak matches the baseline."))
+
+    def _ensure_operator_realm(self):
+        from ihr_platform.console.auth import console_url, redirect_uri
+        from ihr_platform.keycloak.ops import ensure_ops_realm
+
+        ops = keycloak_admin(settings.IHR_OPS_REALM)
+        ensure_ops_realm(ops, redirect_uri(), console_url())
+        self.stdout.write(f"operator realm {settings.IHR_OPS_REALM}: console ready")
 
     def _sync_one(self, admin, hospital, check, rebuild_flows):
         login = hospital_login(hospital)

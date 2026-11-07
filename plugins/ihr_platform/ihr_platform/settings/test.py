@@ -13,6 +13,7 @@ IHR_TENANT_DOMAIN_SUFFIX = "localhost"
 # Tests never reach Keycloak: ihr_identity.testing stands in for it.
 IHR_KEYCLOAK_PUBLIC_URL = "https://auth.test"
 IHR_KEYCLOAK_URL = "http://keycloak.test"
+IHR_CONSOLE_URL = "https://console.testserver"
 
 apply_tenancy(globals())
 

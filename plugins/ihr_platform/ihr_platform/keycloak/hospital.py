@@ -527,11 +527,15 @@ def _clear_scope_mappings(admin, client_uuid):
 
 
 def _ensure_mappers(admin, client_uuid, h, org_id):
+    _ensure_mappers_for(admin, client_uuid, _mapper_reps(h, org_id))
+
+
+def _ensure_mappers_for(admin, client_uuid, want):
+    """Exactly these token mappers on the client (extra ones are removed)."""
     have = {
         m["name"]: m
         for m in admin.get(f"clients/{client_uuid}/protocol-mappers/models")
     }
-    want = _mapper_reps(h, org_id)
     for name, mapper in have.items():
         if name not in want:
             admin.delete(

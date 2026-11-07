@@ -113,6 +113,12 @@ SELECT 'CREATE DATABASE keycloak OWNER keycloak' WHERE NOT EXISTS (SELECT 1 FROM
 SQL
       "${COMPOSE[@]}" --profile keycloak up -d --wait keycloak
       kc_manage ihr_keycloak_sync --realm --all
+      # The provisioner (P1-T5b) gets only the admin client credential, in a file of its own.
+      (umask 077; printf 'IHR_KEYCLOAK_ADMIN_CLIENT_ID=%s\nIHR_KEYCLOAK_ADMIN_CLIENT_SECRET=%s\n' \
+        "$KC_BOOTSTRAP_ADMIN_CLIENT_ID" "$KC_BOOTSTRAP_ADMIN_CLIENT_SECRET" > "$ROOT/deploy/dev/provisioner.env"
+        chmod 600 "$ROOT/deploy/dev/provisioner.env")
+      "${COMPOSE[@]}" --profile keycloak up -d provisioner
+      echo "Operator console: http://console.localhost:9000/ops/ (first time: scripts/care-dev.sh keycloak seed)"
       echo "Keycloak: http://auth.localhost:8081 (next, first time: scripts/care-dev.sh keycloak seed)"
       ;;
     sync) kc_manage ihr_keycloak_sync "${@:2}" ;;
@@ -134,8 +140,8 @@ SQL
         -m http.server -d /srv 8082 >/dev/null
       for slug in "${HOSPITALS[@]}"; do echo "Token viewer: http://$slug.localhost:8082/"; done
       ;;
-    logs) "${COMPOSE[@]}" --profile keycloak logs --tail=100 keycloak ;;
-    stop) "${COMPOSE[@]}" --profile keycloak stop keycloak; docker rm -f indiehr-kc-devtools >/dev/null 2>&1 || true ;;
+    logs) "${COMPOSE[@]}" --profile keycloak logs --tail=100 keycloak provisioner ;;
+    stop) "${COMPOSE[@]}" --profile keycloak stop provisioner keycloak; docker rm -f indiehr-kc-devtools >/dev/null 2>&1 || true ;;
     *) echo "scripts/care-dev.sh keycloak <up|seed|otp USER|devtools|sync [--check|--rebuild-flows]|logs|stop>"; exit 1 ;;
   esac
 }

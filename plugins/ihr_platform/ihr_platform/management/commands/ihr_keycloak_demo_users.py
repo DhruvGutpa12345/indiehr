@@ -52,6 +52,32 @@ def _link(hospital, username, sub):
         StaffIdentity.objects.create(user=user, keycloak_sub=sub)
 
 
+def _demo_operator():
+    """A synthetic platform operator for the console (P1-T5b): operator realm, role and
+    our own operator list."""
+    from ihr_platform.keycloak.kc_http import q
+    from ihr_platform.keycloak.ops import OPERATOR_ROLE
+    from ihr_platform.models import OperatorAccount
+
+    ops = keycloak_admin(settings.IHR_OPS_REALM)
+    password, otp_secret = new_password(), totp.new_secret()
+    sub = create_user(ops, "op.owner", "Owner", "Operator", password, otp_secret)
+    role = ops.get(f"roles/{q(OPERATOR_ROLE)}")
+    ops.post(f"users/{sub}/role-mappings/realm", [role])
+    OperatorAccount.objects.filter(name="Owner Operator (demo)").delete()
+    OperatorAccount.objects.create(
+        keycloak_sub=sub, name="Owner Operator (demo)", added_by="dev seed"
+    )
+    return {
+        "username": "op.owner",
+        "name": "Owner Operator",
+        "password": password,
+        "otp_secret": otp_secret,
+        "hospitals": ["console"],
+        "care_users": {"console": "operator (no CARE user)"},
+    }
+
+
 class Command(BaseCommand):
     help = "Create the synthetic Keycloak demo staff (development only)."
 
@@ -91,6 +117,8 @@ class Command(BaseCommand):
                         "care_users": member_of,
                     }
                 )
+            if getattr(settings, "IHR_CONSOLE_URL", ""):
+                users.append(_demo_operator())
         except KeycloakError as exc:
             raise CommandError(str(exc)) from exc
         self.stdout.write(

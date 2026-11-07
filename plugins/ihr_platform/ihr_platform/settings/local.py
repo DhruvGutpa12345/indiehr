@@ -18,6 +18,10 @@ IHR_KEYCLOAK_DEV_REDIRECTS = True
 IHR_SESSION_COOKIE = "ihr_session"
 IHR_LOGIN_COOKIE = "ihr_login"
 IHR_SESSION_COOKIE_SECURE = False
+# Operator console (P1-T5b), straight to the backend on the published port.
+IHR_CONSOLE_URL = "http://console.localhost:9000"
+IHR_OPS_SESSION_COOKIE = "ihr_ops"
+IHR_OPS_LOGIN_COOKIE = "ihr_ops_login"
 IHR_SESSION_IDLE_SECONDS = int(os.environ.get("IHR_SESSION_IDLE_SECONDS", "1800"))
 
 apply_tenancy(globals())

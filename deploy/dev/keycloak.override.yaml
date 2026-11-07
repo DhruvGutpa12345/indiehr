@@ -45,3 +45,36 @@ services:
     ports:
       - "127.0.0.1:8081:8080"
       - "127.0.0.1:9002:9000"
+
+  # The provisioner (P1-T5b): runs what operators queue in the console. The only CARE-side
+  # process given the Keycloak admin credential; the web app and the worker never have it.
+  provisioner:
+    image: care_local
+    profiles: ["keycloak"]
+    env_file:
+      - path: ./docker/.local.env
+        required: true
+      # Only the Keycloak admin client credential (written by care-dev.sh, git-ignored)
+      - path: ../../deploy/dev/provisioner.env
+        required: true
+    environment:
+      PYTHONPATH: "/ihr/plugins/ihr_platform"
+      DJANGO_SETTINGS_MODULE: "ihr_platform.settings.local"
+      DATABASE_URL: "postgres://postgres:postgres@db:5432/ihr_dev"
+      SNOWSTORM_DEPLOYMENT_URL: "http://127.0.0.1:9/fhir"
+      PYTHONDONTWRITEBYTECODE: "1"
+    volumes:
+      # Read-only: the web app and worker can write the shared source folder, and nothing
+      # they write may run in the one process that holds the Keycloak admin credential.
+      - .:/app:ro
+      - ../../plugins:/ihr/plugins:ro
+    entrypoint: ["bash", "-c", "./scripts/wait_for_db.sh && exec python manage.py ihr_provision_worker"]
+    depends_on:
+      db:
+        condition: service_healthy
+      keycloak:
+        condition: service_healthy
+    healthcheck:
+      disable: true  # CARE's image check is for the API and worker roles
+    mem_limit: 400m
+    restart: unless-stopped

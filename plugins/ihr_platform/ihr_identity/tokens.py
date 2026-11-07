@@ -82,6 +82,27 @@ def verify_access_token(
     return claims
 
 
+def verify_operator_token(token, *, keys, issuer, client_id, role, now=None, leeway=30):
+    """The claims of an operator's access token for the console (P1-T5b): issued by the
+    operator realm to the console client, with MFA and the operator role."""
+    claims = _decode(token, keys, issuer, ACCESS_CLAIMS, now, leeway)
+    if claims["typ"] != "Bearer":
+        raise TokenRejectedError("not an access token")
+    if claims["exp"] - claims["iat"] > MAX_ACCESS_LIFETIME:
+        raise TokenRejectedError("lifetime longer than allowed")
+    if claims["azp"] != client_id or _audiences(claims) != [client_id]:
+        raise TokenRejectedError("issued to another client")
+    if role not in ((claims.get("realm_access") or {}).get("roles") or []):
+        raise TokenRejectedError("not an operator")
+    if claims.get("resource_access"):
+        raise TokenRejectedError("roles of other clients in the token")
+    if (
+        claims.get("acr") != "mfa"
+    ):  # (not the hospitals' line: a mutation targets that one)
+        raise TokenRejectedError("signed in without the second factor")
+    return claims
+
+
 def verify_id_token(
     token, *, keys, issuer, client_id, nonce, access, now=None, leeway=30
 ):

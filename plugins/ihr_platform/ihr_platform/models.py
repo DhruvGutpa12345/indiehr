@@ -169,6 +169,11 @@ class TenantOperation(models.Model):
     steps = models.JSONField(default=list)
     result = models.JSONField(default=dict)
     requested_by = models.CharField(max_length=255)
+    # Set by the console (P1-T5b): the provisioner process picks the operation up and runs
+    # "run" or "rollback". The command line runs operations itself and never queues.
+    queued_action = models.CharField(max_length=16, blank=True)
+    queued_by = models.CharField(max_length=255, blank=True)
+    queued_at = models.DateTimeField(null=True, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
     started_at = models.DateTimeField(null=True, blank=True)
     finished_at = models.DateTimeField(null=True, blank=True)
@@ -185,3 +190,21 @@ class TenantOperation(models.Model):
 
     def __str__(self):
         return f"{self.kind} {self.slug} ({self.status})"
+
+
+class OperatorAccount(models.Model):
+    """A platform operator allowed into the console (P1-T5b, TENANCY_DESIGN §4.9).
+
+    Two locks: the person must hold the ``ihr-operator`` role in the operator realm *and*
+    be on this list, which only the ``ihr_operator`` command changes. Operators have no CARE
+    user in any hospital.
+    """
+
+    keycloak_sub = models.UUIDField(unique=True)
+    name = models.CharField(max_length=255)
+    active = models.BooleanField(default=True)
+    added_by = models.CharField(max_length=255)
+    added_at = models.DateTimeField(auto_now_add=True)
+
+    def __str__(self):
+        return f"{self.name} ({'active' if self.active else 'removed'})"

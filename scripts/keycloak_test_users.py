@@ -39,6 +39,7 @@ def section(data):
         "",
         "- Token viewer: http://alpha.localhost:8082/ and http://beta.localhost:8082/ "
         "(start it with `scripts/care-dev.sh keycloak devtools`)",
+        "- Operator console (P1-T5b): http://console.localhost:9000/ops/ — user `op.owner`",
         f"- Keycloak admin console: {data['keycloak']}/admin/ (realm `{data['realm']}`)"
         f" — temporary admin `{env.get('KC_BOOTSTRAP_ADMIN_USERNAME', '?')}`,"
         f" password `{env.get('KC_BOOTSTRAP_ADMIN_PASSWORD', '?')}`",

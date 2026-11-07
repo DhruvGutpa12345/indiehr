@@ -56,6 +56,13 @@ scripts/care-dev.sh provision rollback <operation id>   # only a hospital that n
 
 Keycloak must be running (`scripts/care-dev.sh keycloak up`). The first admin is created inactive; `provision-demo` gives them a development login (written to `deploy/seed/TEST_USERS.md`) until the real setup e-mail arrives in P1-T5c.
 
+## Operator console (P1-T5b)
+
+- http://console.localhost:9000/ops/ — sign in as `op.owner` (password and authenticator key in `deploy/seed/TEST_USERS.md`; code: `scripts/care-dev.sh keycloak otp op.owner`).
+- "New hospital" queues a provisioning run; the `provisioner` container (started by `scripts/care-dev.sh keycloak up`) runs it and the page refreshes itself until it is live (~70 s).
+- Operators are on two lists: role `ihr-operator` in realm `indiehr-ops`, and ours: `manage.py ihr_operator add|list|remove`.
+- Only the provisioner gets the Keycloak admin credential (`deploy/dev/provisioner.env`, git-ignored); the web app and worker never do.
+
 ## Stop or inspect
 
 ```bash

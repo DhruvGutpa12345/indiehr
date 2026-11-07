@@ -17,6 +17,7 @@ PUBLIC_TABLE_ALLOW_LIST = {
     "ihr_platform_domain",
     "ihr_platform_retiredaddress",
     "ihr_platform_tenantoperation",  # P1-T5a: provisioning runs (platform data, no patients)
+    "ihr_platform_operatoraccount",  # P1-T5b: who may use the operator console
 }
 SECOND_DOMAIN = "second.testserver"
 

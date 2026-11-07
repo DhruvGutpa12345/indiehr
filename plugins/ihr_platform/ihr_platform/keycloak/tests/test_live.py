@@ -321,6 +321,84 @@ class KeycloakLiveTest(unittest.TestCase):
         flows = {f["alias"] for f in self.admin.get("authentication/flows")}
         self.assertNotIn("ihr-hospital-zeta", flows)
 
+    # --- operator realm (P1-T5b) -----------------------------------------------------
+
+    def test_operator_realm_console_and_operator_tokens(self):
+        from ihr_identity.tokens import TokenRejectedError, verify_operator_token
+
+        from ihr_platform.keycloak.ops import (
+            OPERATOR_ROLE,
+            check_ops_realm,
+            ensure_ops_realm,
+        )
+
+        ops_realm = f"ihrtest_{secrets.token_hex(4)}"
+        ops = KeycloakAdmin(
+            URL,
+            os.environ["IHR_KC_TEST_ADMIN_ID"],
+            os.environ["IHR_KC_TEST_ADMIN_SECRET"],
+            ops_realm,
+        )
+        self.addCleanup(ops.delete, f"/{ops_realm}")
+        redirect, origin = (
+            "http://console.localhost:8099/ops/callback/",
+            "http://console.localhost:8099",
+        )
+        ensure_ops_realm(ops, redirect, origin)
+        ensure_ops_realm(ops, redirect, origin)  # idempotent
+        self.assertEqual(check_ops_realm(ops, redirect, origin), [])
+
+        def operator(with_role):
+            name, pw, secret = (
+                f"op{secrets.token_hex(3)}",
+                f"Pw-{secrets.token_urlsafe(16)}",
+                secrets.token_hex(10),
+            )
+            sub = create_user(ops, name, "Op", "Erator", pw, secret)
+            if with_role:
+                ops.post(
+                    f"users/{sub}/role-mappings/realm",
+                    [ops.get(f"roles/{OPERATOR_ROLE}")],
+                )
+            return Browser(URL, ops_realm).login(
+                "ihr-console", redirect, name, pw, secret
+            )
+
+        import jwt
+
+        certs = request(
+            "GET", f"{URL}/realms/{ops_realm}/protocol/openid-connect/certs"
+        ).json()
+        keys = {
+            k["kid"]: jwt.PyJWK(k, algorithm="RS256")
+            for k in certs["keys"]
+            if k.get("use") == "sig" and k.get("alg") == "RS256"
+        }
+        args = {
+            "keys": keys,
+            "issuer": f"{URL}/realms/{ops_realm}",
+            "client_id": "ihr-console",
+            "role": OPERATOR_ROLE,
+            "now": time.time(),
+        }
+        good = operator(with_role=True)
+        self.assertEqual(good.pages, ["username", "otp"])
+        verify_operator_token(good.tokens["access_token"], **args)
+        plain = operator(with_role=False)
+        with self.assertRaisesRegex(TokenRejectedError, "not an operator"):
+            verify_operator_token(plain.tokens["access_token"], **args)
+
+        # Drift: an extra scope mapping is reported, and the next sync removes it.
+        client = ops.get("clients?clientId=ihr-console")[0]
+        extra = ops.get("roles/offline_access")
+        ops.post(f"clients/{client['id']}/scope-mappings/realm", [extra])
+        self.assertIn(
+            "operator realm: console client scope mappings changed",
+            check_ops_realm(ops, redirect, origin),
+        )
+        ensure_ops_realm(ops, redirect, origin)
+        self.assertEqual(check_ops_realm(ops, redirect, origin), [])
+
     # --- the gates fail closed -------------------------------------------------------------
 
     def _scratch_client(self, **overrides):

@@ -38,3 +38,4 @@ deploy/dev/frontend-build/
 
 # Local Keycloak secrets (P1-T3)
 deploy/dev/keycloak.env
+deploy/dev/provisioner.env

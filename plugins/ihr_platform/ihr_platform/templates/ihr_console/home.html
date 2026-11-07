@@ -1,0 +1,22 @@
+{% extends "ihr_console/base.html" %}
+{% block main %}
+<h1>Hospitals</h1>
+<p><a href="/ops/hospitals/new/">+ New hospital</a></p>
+<table>
+  <tr><th>Address</th><th>Name</th><th>Status</th><th>Live since</th></tr>
+  {% for h in hospitals %}
+  <tr><td>{{ h.slug }}.{{ suffix }}</td><td>{{ h.name }}</td><td>{{ h.status }}</td>
+      <td>{{ h.activated_at|date:"d-m-Y H:i"|default:"—" }}</td></tr>
+  {% empty %}<tr><td colspan="4" class="muted">No hospitals yet.</td></tr>{% endfor %}
+</table>
+<h2>Recent provisioning runs</h2>
+<table>
+  <tr><th>Address</th><th>Kind</th><th>Status</th><th>Started</th><th></th></tr>
+  {% for op in operations %}
+  <tr><td>{{ op.slug }}</td><td>{{ op.kind }}</td>
+      <td>{{ op.status }}{% if op.queued_at %} (queued: {{ op.queued_action }}){% endif %}</td>
+      <td>{{ op.created_at|date:"d-m-Y H:i" }}</td>
+      <td>{% if op.kind == "provision" %}<a href="/ops/operations/{{ op.id }}/">details</a>{% endif %}</td></tr>
+  {% empty %}<tr><td colspan="5" class="muted">None yet.</td></tr>{% endfor %}
+</table>
+{% endblock %}

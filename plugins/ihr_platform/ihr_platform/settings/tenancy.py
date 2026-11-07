@@ -40,6 +40,8 @@ def apply_tenancy(settings):
     middleware = [m for m in settings["MIDDLEWARE"] if "TenantMainMiddleware" not in m]
     settings["MIDDLEWARE"] = [
         "django_tenants.middleware.main.TenantMainMiddleware",
+        # Platform hosts (the operator console): before CARE's session/auth middleware
+        "ihr_platform.console.middleware.PlatformHostMiddleware",
         *middleware,
     ]
 
@@ -104,6 +106,12 @@ def apply_tenancy(settings):
     settings.setdefault("IHR_LOGIN_COOKIE", "__Host-ihr_login")
     settings.setdefault("IHR_SESSION_COOKIE_SECURE", True)
     settings.setdefault("IHR_STAFF_REFUSE_SUPERUSERS", True)
+
+    # Operator console (P1-T5b): operators sign in to their own realm, never the hospitals'.
+    settings.setdefault("IHR_OPS_REALM", "indiehr-ops")
+    settings.setdefault("IHR_CONSOLE_CLIENT", "ihr-console")
+    settings.setdefault("IHR_OPS_SESSION_COOKIE", "__Host-ihr_ops")
+    settings.setdefault("IHR_OPS_LOGIN_COOKIE", "__Host-ihr_ops_login")
 
     # Keycloak (P1-T3, ADR-008): one realm for all hospitals. Admin credentials are never
     # settings: ihr_keycloak_sync reads them from its own environment.

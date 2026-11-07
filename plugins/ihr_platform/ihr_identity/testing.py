@@ -86,7 +86,7 @@ def fake_keycloak(refresh=None, logout_ok=True):
     calls = {"refresh": 0, "logout": 0}
     used = set()
 
-    def _refresh(token):
+    def _refresh(token, **kwargs):
         calls["refresh"] += 1
         if token in used:  # Keycloak rotates refresh tokens: each works once
             raise oidc.GrantRejectedError("invalid_grant")
@@ -95,13 +95,15 @@ def fake_keycloak(refresh=None, logout_ok=True):
             return refresh(token)
         return tokens_for(connection.tenant, token.split(".")[1])
 
-    def _logout(token):
+    def _logout(token, **kwargs):
         calls["logout"] += 1
         return logout_ok
 
     with ExitStack() as stack:
         stack.enter_context(
-            mock.patch.object(oidc, "signing_keys", lambda kid=None: public_keys())
+            mock.patch.object(
+                oidc, "signing_keys", lambda kid=None, realm=None: public_keys()
+            )
         )
         stack.enter_context(mock.patch.object(oidc, "refresh", _refresh))
         stack.enter_context(mock.patch.object(oidc, "end_keycloak_session", _logout))

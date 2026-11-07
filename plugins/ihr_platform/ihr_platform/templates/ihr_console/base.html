@@ -1,0 +1,23 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+{% block head %}{% endblock %}
+<title>{% block title %}IndieHR operators{% endblock %}</title>
+<link rel="stylesheet" href="/ops/style.css">
+</head>
+<body>
+<header>
+  <strong>IndieHR operator console</strong>
+  {% if operator %}
+  <a href="/ops/">Hospitals</a>
+  <a href="/ops/hospitals/new/">New hospital</a>
+  <form method="post" action="/ops/logout/">{% csrf_token %}
+    <span class="muted">{{ operator.name }}</span> <button type="submit">Sign out</button>
+  </form>
+  {% endif %}
+</header>
+<main>{% block main %}{% endblock %}</main>
+</body>
+</html>

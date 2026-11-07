@@ -1,11 +1,12 @@
-"""URLs served on the platform (public schema) hosts: no CARE routes (TENANCY_DESIGN.md §3).
+"""URLs served on the platform (public schema) hosts: no CARE routes (TENANCY_DESIGN.md §3);
+the operator console lives under /ops/ (P1-T5b).
 
 Errors are plain JSON: CARE's HTML error pages link to CARE routes that do not exist here, so
 rendering them would itself fail (a 404 became a 500).
 """
 
 from django.http import JsonResponse
-from django.urls import path
+from django.urls import include, path
 
 
 def ping(request):
@@ -23,4 +24,7 @@ def server_error(request):
 handler404 = not_found
 handler500 = server_error
 
-urlpatterns = [path("ping/", ping)]
+urlpatterns = [
+    path("ping/", ping),
+    path("ops/", include("ihr_platform.console.urls")),  # operator console (P1-T5b)
+]
