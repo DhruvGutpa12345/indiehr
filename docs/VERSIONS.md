@@ -116,6 +116,7 @@ Backend lock fully re-resolved on 2026-11-04 (latest compatible for every packag
 | Keycloak database (dev) | the dev Postgres 17.11, own database and owner role `keycloak` | 2026-11-06 |
 | Keycloak database (CI) | `postgres:18.6-alpine@sha256:123b17998ccaf47e53b502e8c6a1e79afd8f579c6f3eec83c563da026f957395` | 2026-11-06 |
 | Password block list | SecLists commit `2f31b22e1f9963ec2fd2b12606c00f0fb04910f1` (MIT), filtered to 12+ characters | 2026-11-06 |
+| Mailpit (dev and CI mail catcher, P1-T5c) | v1.33.0 (2026-10-31) — `axllent/mailpit:v1.33.0@sha256:9b3a463be15354c0f0eba91697d80e3e0d8a5623ef0e627cacc836bc17fd5231`; version check off (`MP_DISABLE_VERSION_CHECK`); uses about 11 MB | 2026-11-07 |
 | keycloak-config-cli | not used: latest release v6.5.1 (2026-05-22) predates Keycloak 26.7 and mishandles 26.8 organisations | 2026-11-06 |
 
 Measured locally with the CARE stack running: Keycloak uses about 540 MB (limit 1 GB, heap 50%); first start about 30 s.

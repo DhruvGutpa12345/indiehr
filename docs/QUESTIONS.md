@@ -61,7 +61,7 @@
 | Q-K8 | **P1-T4 split** into P1-T4a (backend) and P1-T4b (web app + click-through) (2026-11-07) | PLAN |
 | Q-K9 | **P1-T5 split into six tasks** T5a…T5f (2026-11-07) | PLAN |
 | Q-K10 | **Operator console = simple server-rendered pages**, operators sign in through a separate operator realm (2026-11-07) | P1-T5b |
-| Q-K11 | **First admin and all staff get a one-time setup e-mail** (confirm e-mail, choose password, set up authenticator); an existing account gets a "join this hospital" confirmation instead (2026-11-07) | P1-T5c/T5e |
+| Q-K11 | **First admin and all staff get a one-time setup e-mail** (confirm e-mail, choose password, set up authenticator); an existing account gets a "join this hospital" confirmation instead (2026-11-07). *Owner, 2026-11-07: P1-T5c covers new accounts only; an existing account stops provisioning at its second step, and the join confirmation comes with P1-T5e.* | P1-T5c/T5e |
 | Q-K12 | **Starter data = the minimum**: roles, code lists, profile, state + district, one facility, first admin; departments/price lists/GST later as reviewed packs (2026-11-07) | P1-T5a |
 | Q-G4 | **`/goal` and `/advisor` = second-opinion reviews:** an independent Opus agent reviews each finished phase against the plan | Working agreement §5 |
 

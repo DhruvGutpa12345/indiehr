@@ -18,7 +18,7 @@ PLATFORM_ONLY_APPS = {"django_tenants", "ihr_platform"}
 IHR_TENANT_APPS = ["ihr_tenant_settings", "ihr_identity"]
 
 
-def apply_tenancy(settings):
+def apply_tenancy(settings):  # noqa: PLR0915 (one flat list of settings)
     care_apps = [a for a in settings["INSTALLED_APPS"] if a not in PLATFORM_ONLY_APPS]
 
     # Every CARE app (and Django auth/sessions/sites/admin/authtoken) lives in the tenant schema.
@@ -117,6 +117,11 @@ def apply_tenancy(settings):
     # settings: ihr_keycloak_sync reads them from its own environment.
     settings.setdefault("IHR_KEYCLOAK_REALM", "indiehr")
     settings.setdefault("IHR_KEYCLOAK_DEV_REDIRECTS", False)
+    # The mail server Keycloak sends setup e-mails through (P1-T5c), as Keycloak's own
+    # "smtpServer" fields; set on the realm by ihr_keycloak_sync --realm. None: no e-mails.
+    # Never the password: ihr_keycloak_sync reads IHR_KEYCLOAK_SMTP_PASSWORD from its own env.
+    settings.setdefault("IHR_KEYCLOAK_SMTP", None)
+    settings.setdefault("IHR_SETUP_LINK_HOURS", 72)
 
     settings["FILE_OBJECT_KEY_PREFIX_FUNCTION"] = (
         "ihr_platform.storage.tenant_key_prefix"

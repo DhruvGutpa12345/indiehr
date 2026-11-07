@@ -23,16 +23,34 @@ from ihr_platform.keycloak.hospital import (
     rebuild_flow,
     remove_member,
 )
+from ihr_platform.keycloak.invite import (
+    ExistingAccountError,
+    account_state,
+    delete_pending,
+    ensure_invited_user,
+    find_invited_by_email,
+    remove_invited_user,
+    send_setup_email,
+)
 from ihr_platform.keycloak.kc_http import KeycloakAdmin, KeycloakError, request
 from ihr_platform.keycloak.realm import (
     FLOW_TEMPLATE,
     HOSPITAL_SCOPE,
+    INVITED_FOR,
     check_realm,
     ensure_realm,
 )
 from ihr_platform.keycloak.users import create_user
 
 URL = os.environ.get("IHR_KC_TEST_URL")
+# Setup e-mails (P1-T5c): Keycloak sends to Mailpit, the test reads them from its API.
+SMTP = {
+    "host": os.environ.get("IHR_KC_TEST_SMTP_HOST", "mailpit"),
+    "port": "1025",
+    "from": "no-reply@indiehr.test",
+    "fromDisplayName": "IndieHR",
+}
+MAILPIT = os.environ.get("IHR_KC_TEST_MAILPIT", "http://127.0.0.1:8025")
 REALM_RE = re.compile(r"^ihrtest_[0-9a-f]{8}$")
 NOT_MEMBER = "You are not a member of this hospital."
 
@@ -55,7 +73,7 @@ class KeycloakLiveTest(unittest.TestCase):
             os.environ["IHR_KC_TEST_ADMIN_SECRET"],
             cls.realm,
         )
-        ensure_realm(cls.admin)
+        ensure_realm(cls.admin, smtp=SMTP)
         cls.h = {slug: hospital(slug) for slug in ("alpha", "beta")}
         cls.ids = {slug: ensure_hospital(cls.admin, h) for slug, h in cls.h.items()}
 
@@ -398,6 +416,181 @@ class KeycloakLiveTest(unittest.TestCase):
         )
         ensure_ops_realm(ops, redirect, origin)
         self.assertEqual(check_ops_realm(ops, redirect, origin), [])
+
+    # --- first-admin setup e-mail (P1-T5c) ----------------------------------------------
+
+    def setup_email(self, address):
+        """The newest e-mail Mailpit holds for ``address``, and the setup link in it."""
+        query = urlencode({"query": f"to:{address}"})
+        for _ in range(40):
+            found = request("GET", f"{MAILPIT}/api/v1/search?{query}").json()
+            if found["messages"]:
+                break
+            time.sleep(0.25)
+        else:
+            self.fail(f"no e-mail reached Mailpit for {address}")
+        message = request(
+            "GET", f"{MAILPIT}/api/v1/message/{found['messages'][0]['ID']}"
+        ).json()
+        links = re.findall(
+            r"https?://\S+/login-actions/action-token\?\S+", message["Text"]
+        )
+        self.assertEqual(len(links), 1, message["Text"])
+        return message, links[0]
+
+    def test_setup_email_lets_a_new_person_set_up_and_sign_in(self):
+        hospital_uuid = str(uuid.uuid4())
+        address = f"first.{secrets.token_hex(4)}@alpha.example.test"
+        sub = ensure_invited_user(
+            self.admin, address.upper(), "First", "Admin", hospital_uuid
+        )
+        # Found again, never doubled (a resumed provisioning step).
+        self.assertEqual(
+            ensure_invited_user(self.admin, address, "First", "Admin", hospital_uuid),
+            sub,
+        )
+        user = self.admin.get(f"users/{sub}")
+        self.assertEqual((user["username"], user["email"]), (address, address))
+        self.assertFalse(user["emailVerified"])
+        self.assertEqual(user["attributes"][INVITED_FOR], [hospital_uuid])
+        self.assertEqual(self.admin.get(f"users/{sub}/credentials"), [])
+        ensure_member(self.admin, self.ids["alpha"], sub)
+        # No password yet: nobody can sign in with this account.
+        refused = self.login(self.browser(), "alpha", address, "", None)
+        self.assertIsNone(refused.tokens)
+
+        redirect = self.h["alpha"].redirect_uris[0]
+        self.assertTrue(
+            send_setup_email(
+                self.admin, sub, hospital_uuid, client_id_for("alpha"), redirect, 3600
+            )
+        )
+        message, link = self.setup_email(address)
+        self.assertEqual([t["Address"] for t in message["To"]], [address])
+        self.assertTrue(link.startswith(f"{URL}/realms/{self.realm}/"), link)
+        self.assertNotIn("Keycloak", message["Text"])  # realm display name: IndieHR
+
+        password = f"Pw-{secrets.token_urlsafe(16)}"
+        done = self.browser().setup_account(link, password)
+        self.assertEqual(
+            done.pages, ["proceed", "configure-otp", "new-password", "stopped:200"]
+        )
+        self.assertIn("Your account has been updated", done.page or "")
+        user = self.admin.get(f"users/{sub}")
+        self.assertTrue(user["emailVerified"], "following the link proves the address")
+        self.assertEqual(user.get("requiredActions"), [])
+        # The link works once.
+        again = self.browser().setup_account(link, f"Pw-{secrets.token_urlsafe(16)}")
+        self.assertNotIn("new-password", again.pages)
+        self.assertNotIn("configure-otp", again.pages)
+
+        result = self.login(
+            self.browser(), "alpha", address, password, done.enrolled_secret
+        )
+        self.assert_hospital_token(result, "alpha")
+        self.assertTrue(decode_jwt(result.tokens["id_token"])["email_verified"])
+        # Set up: no second e-mail, and the account is never removed as a leftover.
+        self.assertFalse(
+            send_setup_email(
+                self.admin, sub, hospital_uuid, client_id_for("alpha"), redirect, 3600
+            )
+        )
+        self.assertFalse(remove_invited_user(self.admin, sub, hospital_uuid))
+        self.assertEqual(self.admin.get(f"users/{sub}")["id"], sub)
+
+    def test_sending_again_replaces_the_account_so_older_links_die(self):
+        """Keycloak keeps a sent link valid whatever happens to the account's sessions,
+        so a resend replaces the unused account: the old link names an account that no
+        longer exists."""
+        tag = str(uuid.uuid4())
+        address = f"again.{secrets.token_hex(4)}@alpha.example.test"
+        redirect = self.h["alpha"].redirect_uris[0]
+        old = ensure_invited_user(self.admin, address, "A", "B", tag)
+        send_setup_email(self.admin, old, tag, client_id_for("alpha"), redirect, 3600)
+        _, old_link = self.setup_email(address)
+        self.assertEqual(account_state(self.admin, old, tag), "pending")
+        self.assertEqual(find_invited_by_email(self.admin, address, tag), old)
+
+        self.assertTrue(delete_pending(self.admin, old, tag))
+        self.assertEqual(account_state(self.admin, old, tag), "missing")
+        new = ensure_invited_user(self.admin, address, "A", "B", tag)
+        self.assertNotEqual(new, old)
+        ensure_member(self.admin, self.ids["alpha"], new)
+        time.sleep(1)  # Mailpit orders by arrival
+        send_setup_email(self.admin, new, tag, client_id_for("alpha"), redirect, 3600)
+        _, new_link = self.setup_email(address)
+        self.assertNotEqual(new_link, old_link)
+
+        stale = self.browser().setup_account(
+            old_link, f"Pw-{secrets.token_urlsafe(16)}"
+        )
+        self.assertNotIn("new-password", stale.pages)
+        self.assertNotIn("configure-otp", stale.pages)
+        self.assertEqual(account_state(self.admin, new, tag), "pending")
+        password = f"Pw-{secrets.token_urlsafe(16)}"
+        done = self.browser().setup_account(new_link, password)
+        self.assertIn("new-password", done.pages)
+        self.assertEqual(account_state(self.admin, new, tag), "set_up")
+        # A set-up account is never replaced.
+        self.assertFalse(delete_pending(self.admin, new, tag))
+        self.assert_hospital_token(
+            self.login(
+                self.browser(), "alpha", address, password, done.enrolled_secret
+            ),
+            "alpha",
+        )
+
+    def test_an_account_the_stamp_did_not_stick_to_is_never_left_behind(self):
+        profile = self.admin.get("users/profile")
+        profile["attributes"] = [
+            a for a in profile["attributes"] if a["name"] != INVITED_FOR
+        ]
+        self.admin.put("users/profile", profile, ok=(200,))
+        try:
+            address = f"nostamp.{secrets.token_hex(4)}@example.test"
+            with self.assertRaisesRegex(KeycloakError, "did not keep"):
+                ensure_invited_user(self.admin, address, "N", "S", str(uuid.uuid4()))
+            self.assertEqual(self.admin.get(f"users?email={address}&exact=true"), [])
+        finally:
+            ensure_realm(self.admin, smtp=SMTP)
+
+    def test_existing_accounts_are_never_adopted_or_removed(self):
+        user_id, _, _, _ = self.user(["beta"])
+        existing = self.admin.get(f"users/{user_id}")["email"]
+        for address in (existing, existing.upper()):
+            with self.assertRaises(ExistingAccountError):
+                ensure_invited_user(self.admin, address, "X", "Y", str(uuid.uuid4()))
+        # An account made for one hospital is neither adopted nor removed by another.
+        first, second = str(uuid.uuid4()), str(uuid.uuid4())
+        address = f"twice.{secrets.token_hex(4)}@example.test"
+        sub = ensure_invited_user(self.admin, address, "T", "W", first)
+        with self.assertRaises(ExistingAccountError):
+            ensure_invited_user(self.admin, address, "T", "W", second)
+        with self.assertRaises(ExistingAccountError):
+            ensure_invited_user(self.admin, address, "T", "W", second, sub)
+        self.assertFalse(remove_invited_user(self.admin, sub, second))
+        self.assertFalse(
+            send_setup_email(self.admin, sub, second, client_id_for("alpha"), "x", 3600)
+        )
+        self.assertFalse(remove_invited_user(self.admin, user_id, first))
+        # Its own hospital removes it while it has never been set up.
+        self.assertTrue(remove_invited_user(self.admin, sub, first))
+        self.assertTrue(remove_invited_user(self.admin, sub, first))
+
+    def test_mail_server_and_invitation_stamp_are_drift_checked(self):
+        self.assertEqual(check_realm(self.admin, smtp=SMTP), [])
+        realm = self.admin.get(f"/{self.realm}")
+        realm["smtpServer"] = {**realm["smtpServer"], "host": "mail.elsewhere.test"}
+        self.admin.put(f"/{self.realm}", realm)
+        profile = self.admin.get("users/profile")
+        stamp = next(a for a in profile["attributes"] if a["name"] == INVITED_FOR)
+        stamp["permissions"] = {"view": ["admin", "user"], "edit": ["admin", "user"]}
+        self.admin.put("users/profile", profile, ok=(200,))
+        issues = check_realm(self.admin, smtp=SMTP)
+        self.assertIn(f"realm mail server host is not {SMTP['host']!r}", issues)
+        self.assertIn(f"user attribute {INVITED_FOR} is not admin-only", issues)
+        ensure_realm(self.admin, smtp=SMTP)
+        self.assertEqual(check_realm(self.admin, smtp=SMTP), [])
 
     # --- the gates fail closed -------------------------------------------------------------
 

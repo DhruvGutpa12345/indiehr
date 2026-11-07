@@ -15,6 +15,16 @@
   {% endfor %}
   <tr><td><strong>Total</strong></td><td></td><td><strong>{{ total }}</strong></td><td></td></tr>
 </table>
+{% if setup %}
+<h2>First administrator</h2>
+{% if setup.done %}<p class="ok">{{ setup.email }} has set up their account and signed in.</p>
+{% elif setup.sent_at %}<p>Setup e-mail sent to {{ setup.email }} on {{ setup.sent_at|date:"d-m-Y H:i" }}; the link works once, for {{ setup.hours }} hours. Waiting for them to set up their password and authenticator.</p>
+{% if setup.problem %}<p class="error" role="alert">{{ setup.problem }}</p>{% endif %}
+<p class="muted">Sending again replaces the unused account, so earlier links stop working.</p>
+{% if not op.queued_at %}<form method="post" action="/ops/operations/{{ op.id }}/resend-setup/">{% csrf_token %}
+  <button type="submit">Send the setup e-mail again</button></form>{% endif %}
+{% else %}<p class="muted">No setup e-mail recorded (made before setup e-mails existed).</p>{% endif %}
+{% endif %}
 <p class="muted">Requested by {{ op.requested_by }} on {{ op.created_at|date:"d-m-Y H:i" }}.</p>
 {% if can_retry %}
 <form method="post" action="/ops/operations/{{ op.id }}/retry/">{% csrf_token %}

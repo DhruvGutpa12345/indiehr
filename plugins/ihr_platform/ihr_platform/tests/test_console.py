@@ -359,6 +359,53 @@ class ConsoleTests(SimpleTestCase):
         run.assert_called_once()
         self.assertFalse(worker.work_once())
 
+    def test_first_admin_setup_email_can_be_sent_again(self):
+        from care.users.models import User
+
+        from ihr_platform.management.commands import ihr_provision_worker as worker
+        from ihr_platform.models import Hospital
+
+        self.sign_in()
+        hospital = Hospital.objects.get(schema_name=TEST_SCHEMA)
+        with schema_context(TEST_SCHEMA):
+            admin = User.objects.create_user(
+                username=f"cons-{time.time_ns()}"[:16], password=None, is_active=False
+            )
+        self.addCleanup(lambda: self._delete_user(admin))
+        op = TenantOperation.objects.create(
+            kind="provision",
+            slug="cons-setup",
+            hospital=hospital,
+            status="succeeded",
+            input={"admin_email": "first.admin@cons.example.test"},
+            result={
+                "admin_user_id": admin.pk,
+                "setup_email_sent_at": "2026-11-07T10:00:00+05:30",
+                "setup_link_hours": 72,
+            },
+        )
+        page = self.browser.get(f"/ops/operations/{op.id}/").content.decode()
+        self.assertIn(
+            "Setup e-mail sent to first.admin@cons.example.test on 07-11-2026", page
+        )
+        self.assertIn("Send the setup e-mail again", page)
+        self.browser.post(f"/ops/operations/{op.id}/resend-setup/")
+        op.refresh_from_db()
+        self.assertEqual(op.queued_action, "resend_setup")
+        with mock.patch.object(worker.runner, "resend_setup") as resend:
+            self.assertTrue(worker.work_once())
+        resend.assert_called_once()
+
+        with schema_context(TEST_SCHEMA):
+            User.objects.filter(pk=admin.pk).update(is_active=True)
+        page = self.browser.get(f"/ops/operations/{op.id}/").content.decode()
+        self.assertIn("has set up their account", page)
+        self.assertNotIn("Send the setup e-mail again", page)
+
+    def _delete_user(self, user):
+        with schema_context(TEST_SCHEMA):
+            user.delete()
+
     def test_forms_need_the_csrf_token(self):
         self.sign_in()
         client = Client(HTTP_HOST=HOST, enforce_csrf_checks=True)

@@ -44,6 +44,49 @@ class FakeKeycloak:
     def __init__(self):
         self.ensured, self.removed = [], []
         self.org_id = str(uuid.uuid4())
+        self.accounts = {}  # (e-mail, hospital uuid) -> sub
+        self.existing = set()  # addresses that already have an account
+        self.set_up = set()  # subs whose person has finished the setup
+        self.sent, self.members, self.removed_accounts = [], [], []
+
+    def ensure_invited_user(self, admin, email, first, last, hospital_uuid, sub=None):
+        from ihr_platform.keycloak.invite import ExistingAccountError
+
+        if email.lower() in self.existing:
+            raise ExistingAccountError("This e-mail already has an IndieHR account.")
+        return self.accounts.setdefault(
+            (email.lower(), hospital_uuid), str(uuid.uuid4())
+        )
+
+    def find_invited_by_email(self, admin, email, hospital_uuid):
+        return self.accounts.get((email.lower(), hospital_uuid))
+
+    def account_state(self, admin, sub, hospital_uuid):
+        if sub in self.set_up:
+            return "set_up"
+        return "pending" if sub in self.accounts.values() else "missing"
+
+    def delete_pending(self, admin, sub, hospital_uuid):
+        if sub in self.set_up:
+            return False
+        self.accounts = {k: v for k, v in self.accounts.items() if v != sub}
+        return True
+
+    def send_setup_email(self, admin, sub, hospital_uuid, client_id, uri, seconds):
+        if sub in self.set_up:
+            return False
+        self.sent.append((sub, hospital_uuid, client_id, uri, seconds))
+        return True
+
+    def remove_invited_user(self, admin, sub, hospital_uuid):
+        self.removed_accounts.append((sub, hospital_uuid))
+        return True
+
+    def ensure_member(self, admin, ids, sub):
+        self.members.append((ids.slug, sub))
+
+    def hospital_ids(self, admin, slug, org_id):
+        return SimpleNamespace(slug=slug, org_id=org_id)
 
     def ensure(self, admin, login, org_id):
         self.ensured.append((login.slug, login.enabled, login.uuid, org_id))
@@ -69,6 +112,21 @@ class ProvisioningTests(SimpleTestCase):
             mock.patch(
                 "ihr_platform.management.commands.ihr_keycloak_sync.keycloak_admin",
                 lambda: object(),
+            ),
+            *(
+                mock.patch(
+                    f"ihr_platform.keycloak.{module}.{name}", getattr(self.kc, name)
+                )
+                for module, name in (
+                    ("invite", "ensure_invited_user"),
+                    ("invite", "find_invited_by_email"),
+                    ("invite", "account_state"),
+                    ("invite", "delete_pending"),
+                    ("invite", "send_setup_email"),
+                    ("invite", "remove_invited_user"),
+                    ("hospital", "ensure_member"),
+                    ("hospital", "hospital_ids"),
+                )
             ),
         ]
         for patch in patches:
@@ -109,7 +167,7 @@ class ProvisioningTests(SimpleTestCase):
 
     # --- the whole way live, through failures ---------------------------------------------
 
-    def test_provisioning_survives_failures_and_goes_live(self):
+    def test_provisioning_survives_failures_and_goes_live(self):  # noqa: PLR0915 (one story)
         self.addCleanup(self._drop, "prov-one")
         op = runner.start(form("prov-one"), "test")
         for name in ("geography", "facility", "keycloak"):
@@ -149,12 +207,58 @@ class ProvisioningTests(SimpleTestCase):
             mail.outbox, []
         )  # CARE's "set your password" e-mail never sent
 
-        # Running every step again changes nothing.
+        # The first admin's account: made once, linked here, given membership and one
+        # setup e-mail whose link leads back to this hospital's sign-in.
+        sub = op.result["admin_keycloak_sub"]
+        self.assertEqual(
+            self.kc.accounts,
+            {("first.admin@prov-one.example.test", str(hospital.uuid)): sub},
+        )
+        self.assertEqual(self.kc.members, [("prov-one", sub)])
+        [(sent_sub, tag, client_id, uri, seconds)] = self.kc.sent
+        self.assertEqual(
+            (sent_sub, tag, client_id), (sub, str(hospital.uuid), "ihr-h-prov-one")
+        )
+        self.assertEqual(uri, "https://prov-one.localhost/api/ihr/auth/callback/")
+        self.assertEqual(seconds, 72 * 3600)
+        self.assertIn("setup_email_sent_at", op.result)
+
+        # Running every step again changes nothing, and sends no second e-mail.
         op.steps = [dict(s, status="pending") for s in op.steps]
         op.status = "failed"
         op.save()
         runner.run(op)
         self.assertEqual(self._contents(hospital, op), counts)
+        self.assertEqual(len(self.kc.sent), 1)
+
+        # Sending again replaces the unused account (Keycloak cannot cancel a sent link,
+        # so the earlier link must die with the old account) and re-links the new one.
+        op.refresh_from_db()
+        runner.resend_setup(op)
+        op.refresh_from_db()
+        new = op.result["admin_keycloak_sub"]
+        self.assertNotEqual(new, sub)
+        self.assertEqual(list(self.kc.accounts.values()), [new])
+        self.assertEqual([s[0] for s in self.kc.sent], [sub, new])
+        self.assertEqual(self.kc.members[-1], ("prov-one", new))
+        self.assertEqual(self._contents(hospital, op), counts)  # identity follows
+
+        # The record of the e-mail lost in a crash, then the link used: a resumed run
+        # finds the account set up and carries on without sending again.
+        self.kc.set_up.add(new)
+        op.result.pop("setup_email_sent_at")
+        op.steps = [dict(s, status="pending") for s in op.steps]
+        op.status = "failed"
+        op.save()
+        runner.run(op)
+        self.assertEqual(len(self.kc.sent), 2)
+
+        # Once set up, nothing is sent, and the console is told why.
+        op.refresh_from_db()
+        with self.assertRaisesMessage(runner.ProvisioningError, "already set up"):
+            runner.resend_setup(op)
+        op.refresh_from_db()
+        self.assertIn("already set up", op.result["setup_resend_problem"])
 
         # A live hospital is never rolled back (that is offboarding).
         with self.assertRaisesMessage(runner.ProvisioningError, "has been live"):
@@ -187,7 +291,11 @@ class ProvisioningTests(SimpleTestCase):
                 admin.is_active
             )  # active only once the invitation is accepted
             self.assertFalse(admin.has_usable_password())
-            self.assertFalse(StaffIdentity.objects.filter(user=admin).exists())
+            identity = StaffIdentity.objects.get(user=admin)
+            self.assertEqual(
+                str(identity.keycloak_sub), op.result["admin_keycloak_sub"]
+            )
+            self.assertTrue(identity.awaiting_setup)  # active after their first sign-in
             self.assertTrue(
                 OrganizationUser.objects.filter(
                     user=admin, organization=state, role__name="Administrator"
@@ -240,6 +348,12 @@ class ProvisioningTests(SimpleTestCase):
         self.assertFalse(Hospital.objects.filter(slug="prov-two").exists())
         self.assertFalse(Domain.objects.filter(domain="prov-two.localhost").exists())
         self.assertEqual(self.kc.removed, [("prov-two", op.result["hospital_uuid"])])
+        # The first admin's account, never sent a link, goes too (stamp-checked).
+        self.assertEqual(
+            self.kc.removed_accounts,
+            [(op.result["admin_keycloak_sub"], op.result["hospital_uuid"])],
+        )
+        self.assertEqual(self.kc.sent, [])
         # Never served anyone: its slug and address may be used again (owner's choice).
         self.assertFalse(
             RetiredAddress.objects.filter(value__startswith="prov-two").exists()
@@ -250,6 +364,53 @@ class ProvisioningTests(SimpleTestCase):
             TenantOperation.objects.filter(kind="rollback", slug="prov-two").exists()
         )
         steps.OnboardingForm.validate(form("prov-two"))  # the slug is free again
+
+    def test_an_address_with_an_account_stops_the_run_before_anything_is_built(self):
+        self.addCleanup(self._drop, "prov-five")
+        self.kc.existing.add("taken@prov-five.example.test")
+        op = runner.start(
+            form("prov-five", admin_email="Taken@prov-five.example.test"), "test"
+        )
+        with self.assertRaisesMessage(
+            steps.StepError, "already has an IndieHR account"
+        ):
+            runner.run(op)
+        op.refresh_from_db()
+        self.assertEqual(
+            [(s["name"], s["status"]) for s in op.steps[:3]],
+            [
+                ("reserve", "succeeded"),
+                ("admin_account", "failed"),
+                ("schema", "pending"),
+            ],
+        )
+        self.assertIn("already has an IndieHR account", op.steps[1]["error"])
+        runner.rollback(op, "test")
+        self.assertFalse(Hospital.objects.filter(slug="prov-five").exists())
+        self.assertEqual((self.kc.removed, self.kc.removed_accounts), ([], []))
+
+    def test_rollback_finds_an_account_whose_id_was_never_saved(self):
+        self.addCleanup(self._drop, "prov-seven")
+        op = runner.start(form("prov-seven"), "test")
+        runner.run(op, stop_after="admin_account")
+        op.refresh_from_db()
+        sub = op.result.pop("admin_keycloak_sub")  # as if the run crashed before saving
+        op.save()
+        runner.rollback(op, "test")
+        self.assertEqual(self.kc.removed_accounts, [(sub, op.result["hospital_uuid"])])
+
+    def test_operations_recorded_before_a_step_was_added_get_it(self):
+        self.addCleanup(self._drop, "prov-six")
+        op = runner.start(form("prov-six"), "test")
+        TenantOperation.objects.filter(pk=op.pk).update(
+            steps=[s for s in op.steps if s["name"] not in ("admin_account", "invite")]
+        )
+        op.refresh_from_db()
+        runner.run(op, stop_after="admin_account")
+        op.refresh_from_db()
+        self.assertEqual([s["name"] for s in op.steps], steps.STEP_NAMES)
+        self.assertEqual(op.steps[1]["status"], "succeeded")
+        runner.rollback(op, "test")
 
     def test_deleting_a_live_hospital_still_retires_its_addresses(self):
         """The release is only for roll-backs, marked on the very instances deleted."""

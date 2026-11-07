@@ -79,6 +79,8 @@ class KeycloakSyncCommandTests(SimpleTestCase):
     def test_check_reports_drift_and_fails(self):
         with (
             mock.patch(f"{SYNC}.check_realm", return_value=[]),
+            # The operator realm (P1-T5b, IHR_CONSOLE_URL is set in test settings)
+            mock.patch("ihr_platform.keycloak.ops.check_ops_realm", return_value=[]),
             self.assertRaisesMessage(CommandError, "1 problem(s)"),
         ):
             self.run_sync("--slug", "testhosp", "--check")
@@ -98,3 +100,45 @@ class KeycloakSyncCommandTests(SimpleTestCase):
             self.assertFalse(ihr_keycloak_sync.hospital_login(self.hospital).enabled)
             self.hospital.status = Hospital.Status.ACTIVE
             self.assertTrue(ihr_keycloak_sync.hospital_login(self.hospital).enabled)
+
+
+class MailServerTests(SimpleTestCase):
+    """The realm's mail server for setup e-mails (P1-T5c)."""
+
+    SMTP = {"host": "smtp.example.test", "port": 587, "from": "no-reply@example.test"}
+
+    def test_values_reach_keycloak_as_its_own_strings(self):
+        from ihr_platform.keycloak.realm import realm_settings
+
+        smtp = realm_settings("r", {**self.SMTP, "starttls": True, "ssl": False})
+        self.assertEqual(
+            smtp["smtpServer"],
+            {
+                "host": "smtp.example.test",
+                "port": "587",
+                "from": "no-reply@example.test",
+                "starttls": "true",
+                "ssl": "false",
+            },
+        )
+        self.assertNotIn("smtpServer", realm_settings("r"))
+
+    def test_tls_outside_development_and_password_only_from_the_environment(self):
+        with (
+            override_settings(DEBUG=False, IHR_KEYCLOAK_SMTP=self.SMTP),
+            self.assertRaisesMessage(CommandError, "must use TLS"),
+        ):
+            ihr_keycloak_sync.mail_server()
+        tls = {**self.SMTP, "starttls": True}
+        with override_settings(DEBUG=False, IHR_KEYCLOAK_SMTP=tls):
+            self.assertNotIn("password", ihr_keycloak_sync.mail_server())
+            with mock.patch.dict(os.environ, {"IHR_KEYCLOAK_SMTP_PASSWORD": "pw-x"}):
+                smtp = ihr_keycloak_sync.mail_server()
+            self.assertEqual((smtp["auth"], smtp["password"]), ("true", "pw-x"))
+        with (
+            override_settings(IHR_KEYCLOAK_SMTP={**tls, "password": "in-settings"}),
+            self.assertRaisesMessage(CommandError, "IHR_KEYCLOAK_SMTP_PASSWORD"),
+        ):
+            ihr_keycloak_sync.mail_server()
+        with override_settings(IHR_KEYCLOAK_SMTP=None):
+            self.assertIsNone(ihr_keycloak_sync.mail_server())

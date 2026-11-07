@@ -8,6 +8,7 @@
     manage.py ihr_provision status [OP_ID | --slug gamma]
     manage.py ihr_provision resume OP_ID
     manage.py ihr_provision rollback OP_ID
+    manage.py ihr_provision resend-setup OP_ID     # the first admin's setup e-mail, again
     manage.py ihr_provision dev-activate-admin --slug gamma      # development only
 
 Keycloak steps need IHR_KEYCLOAK_ADMIN_CLIENT_ID/_SECRET in this process's environment
@@ -45,6 +46,8 @@ class Command(BaseCommand):
         resume.add_argument("--stop-after", choices=steps.STEP_NAMES)
         rollback = sub.add_parser("rollback")
         rollback.add_argument("op_id")
+        resend = sub.add_parser("resend-setup")
+        resend.add_argument("op_id")
         dev = sub.add_parser("dev-activate-admin")
         dev.add_argument("--slug", required=True)
 
@@ -72,13 +75,13 @@ class Command(BaseCommand):
         for record in op.steps:
             seconds = record.get("seconds")
             total += seconds or 0
-            line = f"  {record['name']:<12} {record['status']:<10}"
+            line = f"  {record['name']:<14} {record['status']:<10}"
             if seconds is not None:
                 line += f" {seconds:>7.1f} s"
             if record.get("error"):
                 line += f"  {record['error']}"
             self.stdout.write(line)
-        self.stdout.write(f"  {'total':<12} {'':<10} {total:>7.1f} s")
+        self.stdout.write(f"  {'total':<14} {'':<10} {total:>7.1f} s")
 
     def _run(self, op, stop_after):
         try:
@@ -113,9 +116,15 @@ class Command(BaseCommand):
         op = runner.rollback(self._op(op_id), self._requested_by())
         self.stdout.write(f"{op.slug}: rolled back; its address can be used again.")
 
+    def do_resend_setup(self, op_id, **options):
+        op = runner.resend_setup(self._op(op_id))
+        self.stdout.write(
+            f"{op.slug}: setup e-mail sent again to {op.input['admin_email']}."
+        )
+
     def do_dev_activate_admin(self, slug, **options):
-        """Development only: give the first admin a Keycloak login now (P1-T5c replaces
-        this with the real invitation). Prints one JSON line for scripts/care-dev.sh."""
+        """Development only: replace the first admin's e-mailed setup (P1-T5c) with a
+        ready-made dev login, for scripted demos. Prints one JSON line for care-dev.sh."""
         if not settings.DEBUG or settings.IHR_TENANT_DOMAIN_SUFFIX != "localhost":
             raise CommandError("Development only.")
         from django_tenants.utils import schema_context

@@ -22,6 +22,13 @@ IHR_SESSION_COOKIE_SECURE = False
 IHR_CONSOLE_URL = "http://console.localhost:9000"
 IHR_OPS_SESSION_COOKIE = "ihr_ops"
 IHR_OPS_LOGIN_COOKIE = "ihr_ops_login"
+# Setup e-mails go to Mailpit (inbox http://127.0.0.1:8025), never to a real mailbox.
+IHR_KEYCLOAK_SMTP = {
+    "host": "mailpit",
+    "port": "1025",
+    "from": "no-reply@indiehr.localhost",
+    "fromDisplayName": "IndieHR",
+}
 IHR_SESSION_IDLE_SECONDS = int(os.environ.get("IHR_SESSION_IDLE_SECONDS", "1800"))
 
 apply_tenancy(globals())

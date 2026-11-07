@@ -111,7 +111,8 @@ SELECT 'CREATE ROLE keycloak LOGIN' WHERE NOT EXISTS (SELECT 1 FROM pg_roles WHE
 ALTER ROLE keycloak PASSWORD :'pw';
 SELECT 'CREATE DATABASE keycloak OWNER keycloak' WHERE NOT EXISTS (SELECT 1 FROM pg_database WHERE datname='keycloak') \gexec
 SQL
-      "${COMPOSE[@]}" --profile keycloak up -d --wait keycloak
+      # Mailpit (P1-T5c) catches Keycloak's setup e-mails; nothing leaves this machine.
+      "${COMPOSE[@]}" --profile keycloak up -d --wait keycloak mailpit
       kc_manage ihr_keycloak_sync --realm --all
       # The provisioner (P1-T5b) gets only the admin client credential, in a file of its own.
       (umask 077; printf 'IHR_KEYCLOAK_ADMIN_CLIENT_ID=%s\nIHR_KEYCLOAK_ADMIN_CLIENT_SECRET=%s\n' \
@@ -120,6 +121,7 @@ SQL
       "${COMPOSE[@]}" --profile keycloak up -d provisioner
       echo "Operator console: http://console.localhost:9000/ops/ (first time: scripts/care-dev.sh keycloak seed)"
       echo "Keycloak: http://auth.localhost:8081 (next, first time: scripts/care-dev.sh keycloak seed)"
+      echo "E-mail inbox (setup links): http://127.0.0.1:8025"
       ;;
     sync) kc_manage ihr_keycloak_sync "${@:2}" ;;
     seed)
@@ -140,8 +142,8 @@ SQL
         -m http.server -d /srv 8082 >/dev/null
       for slug in "${HOSPITALS[@]}"; do echo "Token viewer: http://$slug.localhost:8082/"; done
       ;;
-    logs) "${COMPOSE[@]}" --profile keycloak logs --tail=100 keycloak provisioner ;;
-    stop) "${COMPOSE[@]}" --profile keycloak stop provisioner keycloak; docker rm -f indiehr-kc-devtools >/dev/null 2>&1 || true ;;
+    logs) "${COMPOSE[@]}" --profile keycloak logs --tail=100 keycloak provisioner mailpit ;;
+    stop) "${COMPOSE[@]}" --profile keycloak stop provisioner keycloak mailpit; docker rm -f indiehr-kc-devtools >/dev/null 2>&1 || true ;;
     *) echo "scripts/care-dev.sh keycloak <up|seed|otp USER|devtools|sync [--check|--rebuild-flows]|logs|stop>"; exit 1 ;;
   esac
 }
@@ -199,8 +201,8 @@ case "${1:-}" in
   keycloak) keycloak_cmd "${@:2}" ;;
   provision) kc_manage ihr_provision "${@:2}" ;;
   provision-demo)
-    # A synthetic hospital brought live by the provisioning engine (P1-T5a), with a dev login
-    # for its first admin (the real invitation e-mail comes in P1-T5c).
+    # A synthetic hospital brought live by the provisioning engine (P1-T5a). Its first admin's
+    # setup e-mail (P1-T5c) is replaced by a ready-made dev login for scripted demos.
     slug="${2:?slug, e.g. gamma}"
     time kc_manage ihr_provision start --slug "$slug" --name "${slug^} Health Pvt Ltd" \
       --display-name "${slug^} Test Hospital" --state-code 27 --district Pune --city Pune \

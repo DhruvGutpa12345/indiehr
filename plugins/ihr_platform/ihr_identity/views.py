@@ -150,6 +150,10 @@ def callback(request):
 
 
 def _finish_sign_in(request, state):  # noqa: PLR0911 (each exit is one outcome)
+    if state is None and not request.GET:
+        # "Back to application" after setting up an account from the e-mailed link
+        # (P1-T5c): nothing to finish, so on to the sign-in page.
+        return HttpResponseRedirect("/login")
     if state is None:
         return _to_login("expired")
     if "error" in request.GET or not request.GET.get("code"):
@@ -187,7 +191,9 @@ def _finish_sign_in(request, state):  # noqa: PLR0911 (each exit is one outcome)
         access_iat=access["iat"],
         refresh=tokens["refresh_token"],
     )
-    identity = _linked_identity(candidate)
+    identity = _linked_identity(
+        candidate, email_verified=id_claims.get("email_verified") is True
+    )
     if identity is None:
         # Not staff here (or not any more): the tokens are dropped, but the person's sign-in
         # at their other hospitals is left alone.
@@ -217,7 +223,7 @@ def _finish_sign_in(request, state):  # noqa: PLR0911 (each exit is one outcome)
     return response
 
 
-def _linked_identity(candidate):
+def _linked_identity(candidate, *, email_verified=False):
     from ihr_identity.models import StaffIdentity
 
     identity = (
@@ -227,11 +233,34 @@ def _linked_identity(candidate):
     )
     if identity is None:
         return None
+    if identity.awaiting_setup and email_verified:
+        _finish_setup(identity)
     candidate.user_id = identity.user_id
     # The same rules as every later request, apart from the "signed out since" rule, which
     # decides between a fresh sign-in and refusal above.
     probe = sessions.StaffSession(**{**vars(candidate), "created": time.time()})
     return identity if identity_for(probe) else None
+
+
+def _finish_setup(identity):
+    """First sign-in after the setup e-mail (P1-T5c): the person proved the address and
+    chose their password and authenticator (this sign-in passed both), so their account
+    here becomes active. Once only: the flag is cleared in the same update."""
+    from django.contrib.auth import get_user_model
+
+    from ihr_identity.models import StaffIdentity
+
+    if StaffIdentity.objects.filter(pk=identity.pk, awaiting_setup=True).update(
+        awaiting_setup=False
+    ):
+        get_user_model().objects.filter(
+            pk=identity.user_id,
+            deleted=False,
+            is_superuser=False,
+            is_service_account=False,
+        ).update(is_active=True)
+        identity.user.refresh_from_db()
+        logger.info("staff account %s activated by first sign-in", identity.user_id)
 
 
 @csrf_exempt  # our own header check below; Django's CSRF cookie is not used

@@ -87,6 +87,12 @@ def run(op, stop_after=None):
             msg = f"This operation is {op.status}; start a new one instead."
             raise ProvisioningError(msg)
         form = steps.OnboardingForm(**op.input)
+        # Operations recorded before a step was added get it, pending, in its place.
+        by_name = {record["name"]: record for record in op.steps}
+        op.steps = [
+            by_name.get(name, {"name": name, "status": "pending"})
+            for name in steps.STEP_NAMES
+        ]
         op.status = TenantOperation.Status.RUNNING
         op.started_at = op.started_at or timezone.now()
         op.save()
@@ -150,6 +156,11 @@ def rollback(op, requested_by):
                 # (ihr_keycloak_sync) may have created the hospital's Keycloak objects.
                 if keycloak_step["status"] != "pending" or hospital.keycloak_org_id:
                     _remove_keycloak(hospital)
+                account_step = next(
+                    (r for r in op.steps if r["name"] == "admin_account"), None
+                )
+                if account_step and account_step["status"] != "pending":
+                    _remove_first_admin_account(op, hospital)
                 for domain in Domain.objects.filter(tenant=hospital):
                     domain.ihr_release_addresses = True  # never served anyone
                     domain.delete()
@@ -184,6 +195,55 @@ def _check_rollback_target(op, hospital):
         raise ProvisioningError(
             "This hospital has been live; it can only be offboarded, not rolled back."
         )
+
+
+def resend_setup(op):
+    """E-mail a live hospital's first admin their setup link again (console, command line)."""
+    if (
+        op.kind != TenantOperation.Kind.PROVISION
+        or op.status != TenantOperation.Status.SUCCEEDED
+    ):
+        raise ProvisioningError("Only a finished provisioning has a setup e-mail.")
+    with _exclusive(op.slug):
+        op.refresh_from_db()
+        try:
+            sent = steps.resend_setup(op)
+        except Exception as exc:
+            # Shown in the console next to the setup e-mail; the worker only logs.
+            _note_resend(op, f"Sending again failed: {_safe_error(exc)}")
+            raise
+        if not sent:
+            _note_resend(op, "Nothing sent: the first admin has already set up.")
+            raise ProvisioningError(
+                "Nothing to send: the first admin has already set up their account."
+            )
+        _note_resend(op, None)
+    return op
+
+
+def _note_resend(op, problem):
+    op.refresh_from_db(fields=["result"])
+    op.result["setup_resend_problem"] = problem
+    if problem is None:
+        op.result.pop("setup_resend_problem")
+    op.save(update_fields=["result"])
+
+
+def _remove_first_admin_account(op, hospital):
+    """The account made for the first admin; never sent a link, since the hospital never
+    went live. Only an account stamped with this hospital and never set up is removed. It
+    is also found by its address and stamp, in case a crash came before its id was saved."""
+    from ihr_platform.keycloak.invite import find_invited_by_email, remove_invited_user
+    from ihr_platform.management.commands.ihr_keycloak_sync import keycloak_admin
+
+    admin = keycloak_admin()
+    tag = str(hospital.uuid)
+    email = op.input.get("admin_email", "")
+    sub = op.result.get("admin_keycloak_sub") or (
+        email and find_invited_by_email(admin, email, tag)
+    )
+    if sub:
+        remove_invited_user(admin, sub, tag)
 
 
 def _remove_keycloak(hospital):

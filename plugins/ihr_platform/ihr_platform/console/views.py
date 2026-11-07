@@ -2,7 +2,8 @@
 
     /ops/                          hospitals and recent provisioning runs
     /ops/hospitals/new/            the onboarding form -> queued for the provisioner
-    /ops/operations/<id>/          step-by-step progress (refreshes itself), retry, roll back
+    /ops/operations/<id>/          step-by-step progress (refreshes itself), retry, roll back,
+                                   the first admin's setup e-mail (sent, set up, send again)
     /ops/login/ /ops/callback/     operator sign-in (operator realm, password + code)
     /ops/logout/                   sign out (POST)
 
@@ -23,6 +24,7 @@ from django.conf import settings
 from django.http import HttpResponse, HttpResponseRedirect
 from django.shortcuts import get_object_or_404, render
 from django.utils import timezone
+from django.utils.dateparse import parse_datetime
 from django.views.decorators.http import require_GET, require_http_methods, require_POST
 from ihr_identity import oidc
 from ihr_identity.sessions import seal, unseal
@@ -324,8 +326,34 @@ def operation(request, op_id):
             "total": round(sum(s.get("seconds") or 0 for s in op.steps), 1),
             "operator": request.operator,
             "address": f"{op.slug}.{settings.IHR_TENANT_DOMAIN_SUFFIX}",
+            "setup": _first_admin_setup(op),
         },
     )
+
+
+def _first_admin_setup(op):
+    """Where the first admin's setup e-mail stands (P1-T5c), for a live hospital."""
+    if (
+        op.status != TenantOperation.Status.SUCCEEDED
+        or op.hospital is None
+        or "admin_user_id" not in op.result
+    ):
+        return None
+    from care.users.models import User
+    from django_tenants.utils import schema_context
+
+    with schema_context(op.hospital.schema_name):
+        done = User.objects.filter(
+            pk=op.result["admin_user_id"], is_active=True
+        ).exists()
+    sent_at = op.result.get("setup_email_sent_at")
+    return {
+        "done": done,
+        "sent_at": parse_datetime(sent_at) if sent_at else None,
+        "hours": op.result.get("setup_link_hours"),
+        "email": op.input.get("admin_email", ""),
+        "problem": op.result.get("setup_resend_problem"),
+    }
 
 
 @require_POST
@@ -343,6 +371,17 @@ def rollback(request, op_id):
     op = get_object_or_404(TenantOperation, pk=op_id, kind="provision")
     if op.status in ("failed", "pending", "running") and not op.queued_at:
         _queue(op, "rollback", request)
+    return HttpResponseRedirect(f"/ops/operations/{op.id}/")
+
+
+@require_POST
+@operator_required
+def resend_setup(request, op_id):
+    op = get_object_or_404(
+        TenantOperation, pk=op_id, kind="provision", status="succeeded"
+    )
+    if op.result.get("setup_email_sent_at") and not op.queued_at:
+        _queue(op, "resend_setup", request)  # the provisioner checks it is still needed
     return HttpResponseRedirect(f"/ops/operations/{op.id}/")
 
 

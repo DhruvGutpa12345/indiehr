@@ -28,6 +28,9 @@ FLOW_REALM = "ihr-realm-browser"
 FLOW_TEMPLATE = "ihr-hospital-template"
 FLOW_DENY = "ihr-deny-all"
 HOSPITAL_SCOPE = "ihr-hospital"  # marker client scope carried by every hospital client
+# User-profile attribute naming the hospital (its uuid) whose setup e-mail created an account
+# (P1-T5c). Only admins can see or change it, so a person cannot claim another hospital's.
+INVITED_FOR = "ihr_invited_for"
 HOSPITAL_DEFAULT_SCOPES = [
     "basic",
     "acr",
@@ -91,15 +94,17 @@ MESSAGES = {
 }
 
 
-def realm_settings(realm):
-    """Realm flags we own. Compared on every check; nothing here is secret."""
-    return {
+def realm_settings(realm, smtp=None):
+    """Realm flags we own. Compared on every check; nothing here is secret apart from an SMTP
+    password, which is never compared (Keycloak hides it). ``smtp``: Keycloak's
+    ``smtpServer`` fields for setup e-mails (P1-T5c); None leaves the realm's own alone."""
+    rep = {
         "realm": realm,
         "displayName": "IndieHR",
         "enabled": True,
         "organizationsEnabled": True,
         "registrationAllowed": False,
-        # No SMTP yet: self-service reset comes with invitations (P1-T5).
+        # Resetting a lost password or authenticator is done by the hospital (P1-T5e).
         "resetPasswordAllowed": False,
         "rememberMe": False,
         "loginWithEmailAllowed": True,
@@ -145,19 +150,26 @@ def realm_settings(realm):
             "adminEventsExpiration": "15552000",
         },
     }
+    if smtp:
+        # Keycloak stores every field as a string; booleans as "true"/"false".
+        rep["smtpServer"] = {
+            k: str(v).lower() if isinstance(v, bool) else str(v)
+            for k, v in smtp.items()
+        }
+    return rep
 
 
-def ensure_realm(admin, fix=True):
+def ensure_realm(admin, fix=True, smtp=None):
     """Create the realm if missing, then bring it to the baseline. Returns drift found."""
     realm = admin.realm
     exists = admin.call("GET", f"/{realm}", ok=(200, 404)).status == HTTPStatus.OK
     if not exists:
-        admin.post("/", realm_settings(realm), ok=(201,))
-    drift = [] if not exists else check_realm(admin)
+        admin.post("/", realm_settings(realm, smtp), ok=(201,))
+    drift = [] if not exists else check_realm(admin, smtp=smtp)
     if exists and not fix:
         return drift
 
-    admin.put(f"/{realm}", realm_settings(realm))
+    admin.put(f"/{realm}", realm_settings(realm, smtp))
     admin.post("localization/en", MESSAGES, ok=(204, 200))
     _ensure_role(admin, SENTINEL_ROLE, "Gate sentinel: must never be assigned")
     _ensure_marker_scope(admin)
@@ -167,18 +179,19 @@ def ensure_realm(admin, fix=True):
         {"browserFlow": FLOW_REALM, "directGrantFlow": FLOW_DENY},
     )
     _harden_built_in_clients(admin)
-    _lock_email(admin)
+    _ensure_user_profile(admin)
     return drift
 
 
-def check_realm(admin, hospital_client_ids=None):
+def check_realm(admin, hospital_client_ids=None, smtp=None):
     """Security-relevant differences from the baseline, as readable strings.
 
     ``hospital_client_ids``: every hospital client that should exist; any other client
     marked as a hospital's is then reported too (e.g. one left from a deleted hospital).
     """
     return (
-        _check_settings(admin)
+        _check_settings(admin, smtp)
+        + _check_profile(admin)
         + _check_guards(admin)
         + _check_flows(admin)
         + _check_clients(admin, hospital_client_ids)
@@ -193,14 +206,19 @@ def shape_matches(shape, want):
     )
 
 
-def _check_settings(admin):
+def _check_settings(admin, smtp=None):
     issues = []
     rep = admin.get(f"/{admin.realm}")
-    for key, want in realm_settings(admin.realm).items():
+    for key, want in realm_settings(admin.realm, smtp).items():
         if key == "attributes":
             for akey, aval in want.items():
                 if rep.get("attributes", {}).get(akey) != aval:
                     issues.append(f"realm attribute {akey} is not {aval}")
+        elif key == "smtpServer":
+            have = rep.get("smtpServer") or {}
+            for skey, sval in want.items():
+                if skey != "password" and have.get(skey) != sval:
+                    issues.append(f"realm mail server {skey} is not {sval!r}")
         elif rep.get(key) != want:
             issues.append(f"realm {key} is {rep.get(key)!r}, want {want!r}")
     if rep.get("browserFlow") != FLOW_REALM:
@@ -540,8 +558,12 @@ def _harden_built_in_clients(admin):
             admin.put(f"clients/{client['id']}", dict(client, attributes=attrs))
 
 
-def _lock_email(admin):
-    """Only admins change a user's email: it is a login name (TENANCY_DESIGN §4.5)."""
+ADMIN_ONLY = {"view": ["admin"], "edit": ["admin"]}
+
+
+def _ensure_user_profile(admin):
+    """Only admins change a user's email: it is a login name (TENANCY_DESIGN §4.5). The
+    ``ihr_invited_for`` stamp is declared admin-only (undeclared attributes are dropped)."""
     profile = admin.get("users/profile")
     changed = False
     for attr in profile["attributes"]:
@@ -550,5 +572,32 @@ def _lock_email(admin):
             if perms.get("edit") != ["admin"]:
                 perms["edit"] = ["admin"]
                 changed = True
+    stamp = next((a for a in profile["attributes"] if a["name"] == INVITED_FOR), None)
+    if stamp is None:
+        profile["attributes"].append(
+            {
+                "name": INVITED_FOR,
+                "displayName": "Invited for hospital",
+                "permissions": ADMIN_ONLY,
+                "multivalued": False,
+            }
+        )
+        changed = True
+    elif stamp.get("permissions") != ADMIN_ONLY:
+        stamp["permissions"] = ADMIN_ONLY
+        changed = True
     if changed:
         admin.put("users/profile", profile, ok=(200,))
+
+
+def _check_profile(admin):
+    issues = []
+    attrs = {a["name"]: a for a in admin.get("users/profile")["attributes"]}
+    for name in ("email", "firstName", "lastName"):
+        if (attrs.get(name, {}).get("permissions") or {}).get("edit") != ["admin"]:
+            issues.append(f"users can change their own {name}")
+    if INVITED_FOR not in attrs:
+        issues.append(f"user attribute {INVITED_FOR} is not declared")
+    elif attrs[INVITED_FOR].get("permissions") != ADMIN_ONLY:
+        issues.append(f"user attribute {INVITED_FOR} is not admin-only")
+    return issues

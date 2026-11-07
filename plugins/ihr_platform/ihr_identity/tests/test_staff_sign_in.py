@@ -507,6 +507,54 @@ class SignInFlowTests(SimpleTestCase):
         # Their sign-in at other hospitals is left alone (this is not a sign-out).
         self.assertEqual(self.calls["logout"], 0)
 
+    # --- first sign-in after the setup e-mail (P1-T5c) --------------------------------
+
+    def test_first_sign_in_after_the_setup_email_activates_the_account(self):
+        User.objects.filter(pk=self.user.pk).update(is_active=False)
+        StaffIdentity.objects.filter(pk=self.identity.pk).update(awaiting_setup=True)
+        # Without a verified address the account stays waiting.
+        response, _ = self.finish(self.start(), email_verified=False)
+        self.assertEqual(response["Location"], "/login?error=not_linked")
+        self.user.refresh_from_db()
+        self.assertFalse(self.user.is_active)
+        response, _ = self.finish(self.start(), email_verified=True)
+        self.assertEqual(response["Location"], "/patients")
+        self.assertEqual(self.browser.get(ME, HTTP_X_IHR_CSRF="1").status_code, 200)
+        self.user.refresh_from_db()
+        self.identity.refresh_from_db()
+        self.assertTrue(self.user.is_active)
+        self.assertFalse(self.identity.awaiting_setup)
+
+    def test_deactivating_a_person_cancels_their_unused_setup(self):
+        User.objects.filter(pk=self.user.pk).update(is_active=False)
+        StaffIdentity.objects.filter(pk=self.identity.pk).update(awaiting_setup=True)
+        self.user.refresh_from_db()
+        # CARE's role-cache save is not a deactivation...
+        self.user.save(update_fields=["cached_role_orgs"])
+        self.identity.refresh_from_db()
+        self.assertTrue(self.identity.awaiting_setup)
+        # ...but saving the user inactive is.
+        self.user.save(update_fields=["is_active"])
+        self.identity.refresh_from_db()
+        self.assertFalse(self.identity.awaiting_setup)
+        response, _ = self.finish(self.start(), email_verified=True)
+        self.assertEqual(response["Location"], "/login?error=not_linked")
+        self.user.refresh_from_db()
+        self.assertFalse(self.user.is_active)
+
+    def test_signing_in_never_reactivates_a_deactivated_person(self):
+        User.objects.filter(pk=self.user.pk).update(is_active=False)
+        response, _ = self.finish(self.start(), email_verified=True)
+        self.assertEqual(response["Location"], "/login?error=not_linked")
+        self.user.refresh_from_db()
+        self.assertFalse(self.user.is_active)
+
+    def test_back_to_the_app_after_setting_up_goes_to_sign_in(self):
+        response = self.browser.get("/api/ihr/auth/callback/")
+        self.assertEqual(response["Location"], "/login")
+        response = self.browser.get("/api/ihr/auth/callback/", {"code": "c"})
+        self.assertEqual(response["Location"], "/login?error=expired")
+
     def test_login_state_is_bound_to_this_hospital_and_short_lived(self):
         params = self.start()
         cookie = self.browser.cookies[settings.IHR_LOGIN_COOKIE].value

@@ -13,4 +13,9 @@ urlpatterns = [
     path("operations/<uuid:op_id>/", views.operation, name="ops-operation"),
     path("operations/<uuid:op_id>/retry/", views.retry, name="ops-retry"),
     path("operations/<uuid:op_id>/rollback/", views.rollback, name="ops-rollback"),
+    path(
+        "operations/<uuid:op_id>/resend-setup/",
+        views.resend_setup,
+        name="ops-resend-setup",
+    ),
 ]

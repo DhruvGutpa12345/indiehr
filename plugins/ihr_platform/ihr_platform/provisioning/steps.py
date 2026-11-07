@@ -113,6 +113,12 @@ def _hospital(op):
     return hospital
 
 
+def _keycloak_admin():
+    from ihr_platform.management.commands.ihr_keycloak_sync import keycloak_admin
+
+    return keycloak_admin()
+
+
 # --- steps -----------------------------------------------------------------------------
 
 
@@ -137,6 +143,28 @@ def reserve(op, form):
             schema_created_here=created,
         )
         op.save(update_fields=["hospital", "result"])
+
+
+def admin_account(op, form):
+    """The first admin's Keycloak account (P1-T5c): new, stamped with this hospital, with no
+    password or authenticator, so nobody can sign in with it until the person sets it up
+    from their e-mail. An address that already has an account stops the run here, before
+    anything else is built (joining an existing account comes with P1-T5e)."""
+    from ihr_platform.keycloak.invite import ExistingAccountError, ensure_invited_user
+
+    try:
+        sub = ensure_invited_user(
+            _keycloak_admin(),
+            form.admin_email,
+            form.admin_first_name,
+            form.admin_last_name,
+            op.result["hospital_uuid"],
+            op.result.get("admin_keycloak_sub"),
+        )
+    except ExistingAccountError as exc:
+        raise StepError(str(exc)) from None
+    op.result["admin_keycloak_sub"] = sub
+    op.save(update_fields=["result"])
 
 
 def schema(op, form):
@@ -359,8 +387,118 @@ def activate(op, form):
     Hospital.objects.filter(pk=hospital.pk).update(status=Hospital.Status.ACTIVE)
 
 
+def invite(op, form):
+    """Link the first admin's account here and send their one-time setup e-mail (P1-T5c).
+    Their account here stays inactive until they first sign in with the password and
+    authenticator they chose (ihr_identity.views). Runs once the hospital is live: the link
+    leads back to its (until then disabled) sign-in."""
+    from ihr_platform.keycloak.invite import account_state
+
+    hospital = _hospital(op)
+    admin = _keycloak_admin()
+    _link_first_admin(op, hospital, admin, op.result["admin_keycloak_sub"])
+    if op.result.get("setup_email_sent_at") or send_setup(op, hospital):
+        return
+    # Sent before a crash that lost the record, and already used: nothing left to do.
+    if (
+        account_state(admin, op.result["admin_keycloak_sub"], str(hospital.uuid))
+        != "set_up"
+    ):
+        raise StepError("the first admin's Keycloak account is missing")
+
+
+def _link_first_admin(op, hospital, admin, sub):
+    from ihr_identity.models import StaffIdentity
+
+    from ihr_platform.keycloak.hospital import ensure_member, hospital_ids
+
+    ensure_member(
+        admin, hospital_ids(admin, hospital.slug, str(hospital.keycloak_org_id)), sub
+    )
+    with schema_context(hospital.schema_name):
+        identity, _ = StaffIdentity.objects.get_or_create(
+            user_id=op.result["admin_user_id"],
+            defaults={"keycloak_sub": sub, "awaiting_setup": True},
+        )
+    if str(identity.keycloak_sub) != sub:
+        raise StepError("the first admin is linked to another account")
+
+
+def send_setup(op, hospital=None):
+    """E-mail the first admin a one-time setup link. False if there is nothing to send:
+    their account is gone or already set up."""
+    from ihr_platform.keycloak.hospital import client_id_for
+    from ihr_platform.keycloak.invite import send_setup_email
+    from ihr_platform.management.commands.ihr_keycloak_sync import hospital_login
+
+    sub = op.result.get("admin_keycloak_sub")
+    if not sub:  # a hospital provisioned before P1-T5c
+        return False
+    hospital = hospital or _hospital(op)
+    hours = settings.IHR_SETUP_LINK_HOURS
+    sent = send_setup_email(
+        _keycloak_admin(),
+        sub,
+        str(hospital.uuid),
+        client_id_for(hospital.slug),
+        # "Back to application" after setting up: our callback sends them to sign in.
+        hospital_login(hospital).redirect_uris[0],
+        hours * 3600,
+    )
+    if sent:
+        op.result.update(
+            setup_email_sent_at=timezone.now().isoformat(), setup_link_hours=hours
+        )
+        op.save(update_fields=["result"])
+    return sent
+
+
+def resend_setup(op):
+    """A fresh setup link for a first admin who has not set up yet. Keycloak cannot cancel
+    a link it has sent, so the unfinished account is replaced by a new one: every earlier
+    link names the old account and stops working. False if there is nothing to resend
+    (set up, or the hospital was made before P1-T5c)."""
+    from ihr_identity.models import StaffIdentity
+
+    from ihr_platform.keycloak.invite import (
+        account_state,
+        delete_pending,
+        ensure_invited_user,
+    )
+
+    old = op.result.get("admin_keycloak_sub")
+    if not old:
+        return False
+    hospital = _hospital(op)
+    admin = _keycloak_admin()
+    tag = str(hospital.uuid)
+    with schema_context(hospital.schema_name):
+        waiting = StaffIdentity.objects.filter(
+            user_id=op.result["admin_user_id"], awaiting_setup=True
+        ).exists()
+    if not waiting or account_state(admin, old, tag) == "set_up":
+        return False
+    if not delete_pending(admin, old, tag):
+        raise StepError("the first admin's account could not be replaced")
+    form = OnboardingForm(**op.input)
+    # Steps below are each safe to repeat: a crash part-way is fixed by sending again.
+    sub = ensure_invited_user(
+        admin, form.admin_email, form.admin_first_name, form.admin_last_name, tag
+    )
+    op.result["admin_keycloak_sub"] = sub
+    op.result.pop("setup_email_sent_at", None)
+    op.save(update_fields=["result"])
+    with schema_context(hospital.schema_name):
+        StaffIdentity.objects.filter(
+            user_id=op.result["admin_user_id"], awaiting_setup=True
+        ).update(keycloak_sub=sub)
+    _link_first_admin(op, hospital, admin, sub)
+    return send_setup(op, hospital)
+
+
 STEPS = [
     ("reserve", reserve),
+    ("admin_account", admin_account),
     ("schema", schema),
     ("domains", domains),
     ("roles", roles),
@@ -371,5 +509,6 @@ STEPS = [
     ("facility", facility),
     ("keycloak", keycloak),
     ("activate", activate),
+    ("invite", invite),
 ]
 STEP_NAMES = [name for name, _ in STEPS]

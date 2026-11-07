@@ -51,6 +51,31 @@ def keycloak_admin(realm=None):
     )
 
 
+def mail_server():
+    """Keycloak's mail server for setup e-mails (P1-T5c). Outside development it must use
+    TLS: the e-mails carry one-time setup links. Its password, like the admin credential,
+    comes from this process's environment (IHR_KEYCLOAK_SMTP_PASSWORD), never a setting
+    that every web and worker process would load."""
+    smtp = dict(settings.IHR_KEYCLOAK_SMTP or {})
+    if not smtp:
+        return None
+    if "password" in smtp:
+        msg = (
+            "Put the mail-server password in IHR_KEYCLOAK_SMTP_PASSWORD, not settings."
+        )
+        raise CommandError(msg)
+    if not settings.DEBUG:
+        tls = {str(smtp.get(k, "")).lower() for k in ("ssl", "starttls")}
+        if "true" not in tls:
+            msg = (
+                "IHR_KEYCLOAK_SMTP must use TLS (ssl or starttls) outside development."
+            )
+            raise CommandError(msg)
+    if os.environ.get("IHR_KEYCLOAK_SMTP_PASSWORD"):
+        smtp.update(auth="true", password=os.environ["IHR_KEYCLOAK_SMTP_PASSWORD"])
+    return smtp
+
+
 def hospital_login(hospital):
     """The hospital's sign-in addresses, from its own web addresses."""
     domains = list(
@@ -114,14 +139,14 @@ class Command(BaseCommand):
         issues = []
         try:
             if realm and not check:
-                for item in ensure_realm(admin):
+                for item in ensure_realm(admin, smtp=mail_server()):
                     self.stdout.write(f"fixed: {item}")
                 if getattr(settings, "IHR_CONSOLE_URL", ""):
                     self._ensure_operator_realm()
             if realm or check:
                 # With --all every hospital client is known, so leftovers are reported too.
                 known = {client_id_for(h.slug) for h in hospitals} if every else None
-                issues += check_realm(admin, known)
+                issues += check_realm(admin, known, smtp=mail_server())
                 if getattr(settings, "IHR_CONSOLE_URL", ""):
                     from ihr_platform.console.auth import console_url, redirect_uri
                     from ihr_platform.keycloak.ops import check_ops_realm

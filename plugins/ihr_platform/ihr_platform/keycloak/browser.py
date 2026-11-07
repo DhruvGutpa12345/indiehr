@@ -34,9 +34,12 @@ class _FormParser(HTMLParser):
     def __init__(self):
         super().__init__()
         self.forms = []
+        self.links = []
 
     def handle_starttag(self, tag, attrs):
         a = dict(attrs)
+        if tag == "a" and a.get("href"):
+            self.links.append(html.unescape(a["href"]))
         if tag == "form":
             self.forms.append(
                 Form(a.get("id") or "", html.unescape(a.get("action") or ""))
@@ -168,7 +171,19 @@ class Browser:
                 result.tokens = token.json()
         return result
 
-    def _walk(self, url, result, username, password, otp_secret, done):
+    def setup_account(self, link, new_password):
+        """Follow an e-mailed setup link (P1-T5c) through Keycloak's pages: "proceed", set up
+        the authenticator, choose a password. Stops on the first page it does not know (the
+        "account updated" page when all went well), kept in ``result.page``."""
+        result = LoginResult()
+        self._walk(
+            link, result, None, None, None, lambda u: False, new_password=new_password
+        )
+        return result
+
+    def _walk(
+        self, url, result, username, password, otp_secret, done, new_password=None
+    ):
         """Follow redirects and fill the forms we know until ``done(location)``; returns that
         location, or None when the run stops on a page (kept in ``result.page``)."""
         resp = self.fetch("GET", url)
@@ -200,6 +215,30 @@ class Browser:
                 form = forms["kc-otp-login-form"]
                 data = dict(form.inputs, otp=_fresh_code(otp_secret))
                 result.pages.append("otp")
+            elif (
+                "kc-passwd-update-form" in forms
+                and new_password
+                and "new-password" not in result.pages
+            ):
+                form = forms["kc-passwd-update-form"]
+                data = dict(
+                    form.inputs,
+                    **{"password-new": new_password, "password-confirm": new_password},
+                )
+                result.pages.append("new-password")
+            elif (
+                new_password
+                and "proceed" not in result.pages
+                and any("/login-actions/action-token" in link for link in parser.links)
+            ):
+                # "Perform the following actions: ... Click here to proceed"
+                link = next(
+                    x for x in parser.links if "/login-actions/action-token" in x
+                )
+                result.pages.append("proceed")
+                url = urljoin(url, link)
+                resp = self.fetch("GET", url)
+                continue
             elif (
                 "kc-totp-settings-form" in forms and "configure-otp" not in result.pages
             ):

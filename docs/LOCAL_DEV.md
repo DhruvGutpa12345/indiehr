@@ -32,6 +32,7 @@ scripts/keycloak-test.sh               # live tests in a throwaway realm (~45 s)
 - Secrets are in `deploy/dev/keycloak.env` (git-ignored, created on first use).
 - Every staff sign-in needs a password **and** a 6-digit code (decision in ADR-008).
 - Short of memory? Run `scripts/care-dev.sh keycloak stop` when you are done.
+- E-mail: `keycloak up` also starts **Mailpit**, which catches every e-mail Keycloak sends (setup links for new hospitals' first admins, P1-T5c). Inbox: http://127.0.0.1:8025. Nothing reaches a real mailbox.
 
 ## Staff sign-in through the backend (P1-T4a)
 

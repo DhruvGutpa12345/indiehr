@@ -274,16 +274,20 @@ jobs:
       # Same image as deploy/dev/keycloak.override.yaml (docs/VERSIONS.md)
       KEYCLOAK_IMAGE: quay.io/keycloak/keycloak:26.8.2@sha256:3879c623248408de29a5303178b5816c77e8dfef3890c361f8c0bbeaa979ba3b
       POSTGRES_IMAGE: postgres:18.6-alpine@sha256:123b17998ccaf47e53b502e8c6a1e79afd8f579c6f3eec83c563da026f957395
+      # Catches the setup e-mails (P1-T5c); same image as the dev stack
+      MAILPIT_IMAGE: axllent/mailpit:v1.33.0@sha256:9b3a463be15354c0f0eba91697d80e3e0d8a5623ef0e627cacc836bc17fd5231
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
-      - name: Start Postgres and Keycloak (throwaway secrets)
+      - name: Start Postgres, Mailpit and Keycloak (throwaway secrets)
         run: |
           DB_PW="$(openssl rand -hex 16)"
           ADMIN_SECRET="$(openssl rand -hex 24)"
           echo "::add-mask::$ADMIN_SECRET"
           echo "IHR_KC_TEST_ADMIN_SECRET=$ADMIN_SECRET" >> "$GITHUB_ENV"
           docker network create kc
+          docker run -d --name mailpit --network kc -p 127.0.0.1:8025:8025 \
+            -e MP_DISABLE_VERSION_CHECK=true "$MAILPIT_IMAGE"
           docker run -d --name kc-db --network kc -e POSTGRES_USER=keycloak \
             -e POSTGRES_PASSWORD="$DB_PW" -e POSTGRES_DB=keycloak "$POSTGRES_IMAGE"
           docker run -d --name kc --network kc -p 127.0.0.1:8081:8080 -p 127.0.0.1:9002:9000 \
@@ -312,6 +316,8 @@ jobs:
         env:
           IHR_KC_TEST_URL: http://auth.localhost:8081
           IHR_KC_TEST_ADMIN_ID: ihr-ci
+          IHR_KC_TEST_SMTP_HOST: mailpit
+          IHR_KC_TEST_MAILPIT: http://127.0.0.1:8025
         run: scripts/keycloak-test.sh
 
       - name: Keycloak log on failure

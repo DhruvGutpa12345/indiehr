@@ -50,6 +50,8 @@ def work_once():
     try:
         if action == "rollback":
             runner.rollback(op, who)
+        elif action == "resend_setup":
+            runner.resend_setup(op)
         else:
             runner.run(op)
     except runner.ProvisioningError as exc:
