@@ -5,6 +5,8 @@ Applied last on purpose: CARE's test settings redefine CACHES, which would drop 
 """
 
 import os
+import sys
+from pathlib import Path
 
 from django.core.exceptions import ImproperlyConfigured
 
@@ -15,7 +17,17 @@ SHARED_APPS = [
 ]
 PLATFORM_ONLY_APPS = {"django_tenants", "ihr_platform"}
 # Our apps that live in every hospital's schema (TENANCY_DESIGN.md §3).
-IHR_TENANT_APPS = ["ihr_tenant_settings", "ihr_identity"]
+IHR_TENANT_APPS = ["ihr_tenant_settings", "ihr_identity", "ihr_audit"]
+
+
+def process_name():
+    """IHR_PROCESS_NAME, else what is running: manage:<command>, celery, gunicorn..."""
+    if name := os.environ.get("IHR_PROCESS_NAME"):
+        return name[:63]
+    program = Path(sys.argv[0]).name if sys.argv and sys.argv[0] else "python"
+    if program == "manage.py" and len(sys.argv) > 1:
+        return f"manage:{sys.argv[1]}"[:63]
+    return program[:63]
 
 
 def apply_tenancy(settings):  # noqa: PLR0915 (one flat list of settings)
@@ -30,6 +42,10 @@ def apply_tenancy(settings):  # noqa: PLR0915 (one flat list of settings)
     settings["ROOT_URLCONF"] = "ihr_platform.urls_tenant"
 
     settings["DATABASES"]["default"]["ENGINE"] = "django_tenants.postgresql_backend"
+    # Writes made outside a request or task are named after the process in the audit trail
+    # ("system:manage:ihr_create_tenant", "system:celery"; P1-T6a).
+    options = settings["DATABASES"]["default"].setdefault("OPTIONS", {})
+    options.setdefault("application_name", process_name())
     settings["DATABASE_ROUTERS"] = ("django_tenants.routers.TenantSyncRouter",)
 
     settings["TENANT_MODEL"] = "ihr_platform.Hospital"
@@ -42,13 +58,15 @@ def apply_tenancy(settings):  # noqa: PLR0915 (one flat list of settings)
         "django_tenants.middleware.main.TenantMainMiddleware",
         # Platform hosts (the operator console): before CARE's session/auth middleware
         "ihr_platform.console.middleware.PlatformHostMiddleware",
+        # Who did what, outside CARE's per-request transaction (P1-T6a)
+        "ihr_audit.middleware.AuditMiddleware",
         *middleware,
     ]
 
     # Periodic jobs run once per active hospital, in its schema (ihr_platform/beat.py).
     settings["CELERY_BEAT_SCHEDULER"] = "ihr_platform.beat.ActiveTenantScheduler"
     # CARE's own audit log keeps the last request in a thread-local that GET requests never reset,
-    # so it could attribute one hospital's change to another hospital's user. Off until P1-T6.
+    # so it could attribute one hospital's change to another hospital's user. Ours: ihr_audit.
     settings["AUDIT_LOG_ENABLED"] = False
 
     # Hospital web addresses: <slug>.<suffix>, e.g. alpha.app.example.in (dev: alpha.localhost).

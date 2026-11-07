@@ -1,0 +1,40 @@
+# CARE clinical-app models with no link to a patient, reviewed for P1-T6a: configuration,
+# catalogues, staff, devices and stock. A model missing here that has no patient link fails
+# test_care_models_without_a_patient_link_were_reviewed: decide whether it shows patients
+# (then teach reads.py how to reach them) or list it here with the reason.
+emr.ActivityDefinition                  # configuration or catalogue
+emr.Availability                        # timetable
+emr.AvailabilityException               # timetable
+emr.ChargeItemDefinition                # configuration or catalogue
+emr.DeviceLocationHistory               # device moves
+emr.DeviceServiceHistory                # device servicing
+emr.FacilityLocationOrganization        # configuration or catalogue
+emr.FacilityMonetoryConfig              # configuration or catalogue
+emr.FacilityOrganization                # configuration or catalogue
+emr.FacilityOrganizationUser            # staff membership
+emr.HealthcareService                   # configuration or catalogue
+emr.InventoryItem                       # stock
+emr.ObservationDefinition               # configuration or catalogue
+emr.Organization                        # configuration or catalogue
+emr.OrganizationUser                    # staff membership
+emr.PatientIdentifierConfig             # configuration or catalogue
+emr.Product                             # configuration or catalogue
+emr.ProductKnowledge                    # configuration or catalogue
+emr.Questionnaire                       # configuration or catalogue
+emr.QuestionnaireFacilityOrganization   # configuration or catalogue
+emr.QuestionnaireOrganization           # configuration or catalogue
+emr.QuestionnaireResponseTemplate       # configuration or catalogue
+emr.RequestOrder                        # stock order between stores
+emr.ResourceCategory                    # configuration or catalogue
+emr.SchedulableResource                 # staff/room for appointments
+emr.Schedule                            # timetable
+emr.SpecimenDefinition                  # configuration or catalogue
+emr.SupplyRequest                       # stock request
+emr.TagConfig                           # configuration or catalogue
+emr.Template                            # report template
+emr.TokenCategory                       # queue category
+emr.TokenQueue                          # queue (no patient)
+emr.TokenSlot                           # appointment slot (no patient)
+emr.UserResourceFavorites               # staff favourites (catalogue items)
+emr.UserValueSetPreference              # staff preference
+emr.ValueSet                            # configuration or catalogue

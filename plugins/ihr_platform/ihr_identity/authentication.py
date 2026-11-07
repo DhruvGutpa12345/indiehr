@@ -11,8 +11,10 @@ import logging
 import time
 
 from django.conf import settings
+from django.contrib.auth import get_user_model
 from django.db import connection
 from django.utils import timezone
+from ihr_audit import context as audit
 from ihr_platform.links import hospital_origins
 from ihr_platform.models import Hospital
 from rest_framework.authentication import BaseAuthentication, TokenAuthentication
@@ -95,6 +97,8 @@ def end_session(request, session, *, everywhere):
     """Delete the session. For sign-out and idle time-out (owner's decision) also end the
     person's Keycloak single sign-on and refuse their other sessions at this hospital; the
     next sign-in then needs the password and code again. True if Keycloak confirmed."""
+    if user := get_user_model().objects.filter(pk=session.user_id).first():
+        audit.bind_actor(user)  # the sign-out's writes are theirs
     sessions.delete(session.cookie)
     _clear_cookie_later(request)
     if not everywhere:
@@ -107,6 +111,7 @@ def end_session(request, session, *, everywhere):
 
 def revoke(sub):
     """Refuse every session of ``sub`` here that started before now."""
+    audit.resync()  # runs after the view's transaction, which may have been rolled back
     StaffIdentity.objects.filter(keycloak_sub=sub).update(
         sessions_valid_after=timezone.now()
     )
@@ -153,6 +158,7 @@ class StaffSessionAuthentication(BaseAuthentication):
             _clear_cookie_later(request)
             return None
         user = identity.user
+        audit.bind_actor(user)  # before our own write below, not only after DRF returns
         if (
             user.last_login is None
             or now - user.last_login.timestamp() > LAST_LOGIN_EVERY

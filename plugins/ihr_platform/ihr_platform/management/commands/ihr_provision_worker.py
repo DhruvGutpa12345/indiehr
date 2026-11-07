@@ -21,6 +21,7 @@ import time
 from django.core.management.base import BaseCommand, CommandError
 from django.db import close_old_connections, connection, transaction
 from django.utils import timezone
+from ihr_audit import context as audit
 
 from ihr_platform import invitations
 from ihr_platform.models import TenantOperation
@@ -80,12 +81,16 @@ def run_one_operation():
         return False
     op, action, who = claimed
     try:
-        if action == "rollback":
-            runner.rollback(op, who)
-        elif action == "resend_setup":
-            runner.resend_setup(op)
-        else:
-            runner.run(op)
+        with audit.job(
+            {"job": "provisioning", "operation": op.pk, "action": action},
+            f"worker:for {who}",
+        ):
+            if action == "rollback":
+                runner.rollback(op, who)
+            elif action == "resend_setup":
+                runner.resend_setup(op)
+            else:
+                runner.run(op)
     except runner.ProvisioningError as exc:
         if runner.is_busy(op.slug):
             # Another run (the command line, another provisioner) holds this hospital:

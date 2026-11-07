@@ -7,3 +7,21 @@ care.emr.tests.test_totp
 care.emr.tests.test_reset_password_api
 care.emr.tests.test_otp_reset_password_api
 care.users.tests.test_change_password
+# Single CARE tests that create staff with a password set by an admin (P1-T5e1: staff always
+# choose their own from the invitation e-mail; ihr_identity/invitations.py refuses a password).
+# Creating staff, its validation and permissions are covered by ihr_identity's invitation tests.
+care.emr.tests.test_user_api.UserCreatePasswordEmailTestCase.test_create_user_without_password_delivers_email
+care.emr.tests.test_user_api.UserCreatePasswordEmailTestCase.test_create_user_with_password_does_not_send_email
+care.emr.tests.test_user_api.UserviewTestCase.test_create_user_as_super_user
+care.emr.tests.test_user_api.UserviewTestCase.test_create_user_as_user_with_permission
+care.emr.tests.test_user_api.UserviewTestCase.test_create_user_as_user_without_permission
+care.emr.tests.test_user_api.UserviewTestCase.test_create_user_invalid_password
+care.emr.tests.test_user_api.UserviewTestCase.test_create_user_with_existing_email
+care.emr.tests.test_user_api.UserviewTestCase.test_create_user_with_existing_phone_number
+care.emr.tests.test_user_api.UserviewTestCase.test_create_user_with_existing_username
+care.emr.tests.test_user_api.UserviewTestCase.test_create_user_with_invalid_email
+care.emr.tests.test_user_api.UserviewTestCase.test_create_user_with_invalid_username
+care.emr.tests.test_managing_organizations.UserCreationWithRoleOrgsTestCase.test_create_user_with_empty_role_orgs
+care.emr.tests.test_managing_organizations.UserCreationWithRoleOrgsTestCase.test_create_user_with_role_orgs_as_superuser
+care.emr.tests.test_managing_organizations.UserCreationWithRoleOrgsTestCase.test_create_user_with_role_orgs_authorized_via_managing_org
+care.emr.tests.test_managing_organizations.UserCreationWithRoleOrgsTestCase.test_create_user_with_role_orgs_requires_permission

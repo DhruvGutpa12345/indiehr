@@ -56,6 +56,25 @@ _TWO_KEY_WRITES = {
 }
 
 
+def _exists(label):
+    """A test module, or a class or test method inside one."""
+    parts = label.split(".")
+    for cut in range(len(parts), 0, -1):
+        module = ".".join(parts[:cut])
+        try:
+            found = importlib.util.find_spec(module) is not None
+        except ModuleNotFoundError:
+            found = False
+        if found:
+            target = importlib.import_module(module)
+            for name in parts[cut:]:
+                if not hasattr(target, name):
+                    return False
+                target = getattr(target, name)
+            return True
+    return False
+
+
 def _text(value):
     return value.decode(errors="replace") if isinstance(value, bytes) else str(value)
 
@@ -153,12 +172,14 @@ class TenantTestRunner(DiscoverRunner):
             if line.split("#")[0].strip()
         ]
         for label in excluded:
-            if importlib.util.find_spec(label) is None:
+            if not _exists(label):
                 msg = f"care_tests_excluded.txt lists {label}, which no longer exists."
                 raise RuntimeError(msg)
         kept, dropped = unittest.TestSuite(), 0
         for test in _flatten(suite):
-            if test.id().startswith(tuple(f"{label}." for label in excluded)):
+            if test.id() in excluded or test.id().startswith(
+                tuple(f"{label}." for label in excluded)
+            ):
                 dropped += 1
             else:
                 kept.addTest(test)

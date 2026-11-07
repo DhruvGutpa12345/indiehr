@@ -25,6 +25,7 @@ from django.utils.http import url_has_allowed_host_and_scheme
 from django.views.decorators.cache import never_cache
 from django.views.decorators.csrf import csrf_exempt
 from django.views.decorators.http import require_GET, require_POST
+from ihr_audit import context as audit
 from ihr_platform.links import frontend_base_url
 from ihr_platform.models import Domain
 from rest_framework.exceptions import PermissionDenied
@@ -239,6 +240,7 @@ def _linked_identity(candidate, *, email_verified=False):
     )
     if identity is None:
         return None
+    audit.bind_actor(identity.user)  # whatever this sign-in writes is theirs
     if identity.awaiting_setup and email_verified:
         _finish_setup(identity)
     candidate.user_id = identity.user_id

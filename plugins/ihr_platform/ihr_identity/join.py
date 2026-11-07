@@ -25,6 +25,7 @@ from django.utils.html import format_html
 from django.views.decorators.cache import never_cache
 from django.views.decorators.csrf import csrf_exempt
 from django.views.decorators.http import require_GET, require_http_methods
+from ihr_audit import context as audit
 from ihr_platform.links import hospital_origins
 from ihr_platform.models import StaffInvitation
 
@@ -198,6 +199,8 @@ def confirm(request):
         str(request.POST.get("nonce", "")), state["nonce"]
     ):
         return HttpResponse("Refused.", status=403, content_type="text/plain")
+    if person := get_user_model().objects.filter(pk=state["user"]).first():
+        audit.bind_actor(person)  # the person confirming, known from the sealed state
     with transaction.atomic():
         joined = StaffIdentity.objects.filter(
             user_id=state["user"],

@@ -21,6 +21,7 @@ from django.core.mail import send_mail
 from django.db import transaction
 from django.utils import timezone
 from django_tenants.utils import schema_context
+from ihr_audit import context as audit
 
 from ihr_platform.models import Hospital, StaffInvitation
 
@@ -72,7 +73,10 @@ def deliver_once():
     if inv is None:
         return False
     try:
-        deliver(inv)
+        with audit.job(
+            {"job": "invitation", "invitation": inv.pk}, f"worker:for {inv.invited_by}"
+        ):
+            deliver(inv)
     except WaitForSetup:
         _wait(inv)
     except InvitationError as exc:
@@ -334,7 +338,11 @@ def handle_request_once():
         req.save(update_fields=["status"])
     status, error = StaffAccessRequest.Status.DONE, ""
     try:
-        handle_request(req)
+        with audit.job(
+            {"job": "staff_access", "request": str(req.pk), "action": req.action},
+            f"worker:for {req.requested_by}",
+        ):
+            handle_request(req)
     except (RequestError, InvitationError) as exc:
         status, error = StaffAccessRequest.Status.FAILED, str(exc)
     except Exception as exc:
@@ -555,7 +563,10 @@ def expire_due(now=None):
                     expires_at=now + SET_UP_GRACE
                 )
                 continue
-            _withdraw(admin, inv, StaffInvitation.Status.EXPIRED)
+            with audit.job(
+                {"job": "invitation_expiry", "invitation": inv.pk}, "worker:expiry"
+            ):
+                _withdraw(admin, inv, StaffInvitation.Status.EXPIRED)
             expired += 1
         except Exception:  # the next sweep tries again
             logger.exception("invitation %s could not be expired", inv.pk)
