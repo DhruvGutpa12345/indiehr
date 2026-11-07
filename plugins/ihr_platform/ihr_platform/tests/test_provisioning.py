@@ -111,7 +111,7 @@ class ProvisioningTests(SimpleTestCase):
             ),
             mock.patch(
                 "ihr_platform.management.commands.ihr_keycloak_sync.keycloak_admin",
-                lambda: object(),
+                lambda *args, **kwargs: object(),
             ),
             *(
                 mock.patch(

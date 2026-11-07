@@ -95,6 +95,14 @@ kc_manage() {
     backend python manage.py "$@"
 }
 
+# One worker's narrow Keycloak secret into its own git-ignored env file (P1-T5f).
+write_worker_env() {
+  local secret
+  secret="$(kc_manage ihr_keycloak_service_secret "$1" | tail -1)"
+  [[ -n "$secret" ]] || { echo "no secret for the $1 worker" >&2; exit 1; }
+  (umask 077; printf '%s=%s\n' "$3" "$secret" > "$ROOT/deploy/dev/$2"; chmod 600 "$ROOT/deploy/dev/$2")
+}
+
 keycloak_cmd() {
   case "${1:-help}" in
     up)
@@ -114,11 +122,11 @@ SQL
       # Mailpit (P1-T5c) catches Keycloak's setup e-mails; nothing leaves this machine.
       "${COMPOSE[@]}" --profile keycloak up -d --wait keycloak mailpit
       kc_manage ihr_keycloak_sync --realm --all
-      # The provisioner (P1-T5b) gets only the admin client credential, in a file of its own.
-      (umask 077; printf 'IHR_KEYCLOAK_ADMIN_CLIENT_ID=%s\nIHR_KEYCLOAK_ADMIN_CLIENT_SECRET=%s\n' \
-        "$KC_BOOTSTRAP_ADMIN_CLIENT_ID" "$KC_BOOTSTRAP_ADMIN_CLIENT_SECRET" > "$ROOT/deploy/dev/provisioner.env"
-        chmod 600 "$ROOT/deploy/dev/provisioner.env")
-      "${COMPOSE[@]}" --profile keycloak up -d provisioner
+      # The two workers (P1-T5f) each get only their own narrow service-account secret, in a
+      # file of their own; never the bootstrap admin credential.
+      write_worker_env onboarding provisioner.env IHR_KEYCLOAK_ONBOARDING_SECRET
+      write_worker_env staff staff-worker.env IHR_KEYCLOAK_STAFF_SECRET
+      "${COMPOSE[@]}" --profile keycloak up -d --force-recreate provisioner staff-worker
       echo "Operator console: http://console.localhost:9000/ops/ (first time: scripts/care-dev.sh keycloak seed)"
       echo "Keycloak: http://auth.localhost:8081 (next, first time: scripts/care-dev.sh keycloak seed)"
       echo "E-mail inbox (setup links): http://127.0.0.1:8025"
@@ -142,8 +150,8 @@ SQL
         -m http.server -d /srv 8082 >/dev/null
       for slug in "${HOSPITALS[@]}"; do echo "Token viewer: http://$slug.localhost:8082/"; done
       ;;
-    logs) "${COMPOSE[@]}" --profile keycloak logs --tail=100 keycloak provisioner mailpit ;;
-    stop) "${COMPOSE[@]}" --profile keycloak stop provisioner keycloak mailpit; docker rm -f indiehr-kc-devtools >/dev/null 2>&1 || true ;;
+    logs) "${COMPOSE[@]}" --profile keycloak logs --tail=100 keycloak provisioner staff-worker mailpit ;;
+    stop) "${COMPOSE[@]}" --profile keycloak stop provisioner staff-worker keycloak mailpit; docker rm -f indiehr-kc-devtools >/dev/null 2>&1 || true ;;
     *) echo "scripts/care-dev.sh keycloak <up|seed|otp USER|devtools|sync [--check|--rebuild-flows]|logs|stop>"; exit 1 ;;
   esac
 }

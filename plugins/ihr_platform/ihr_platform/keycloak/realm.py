@@ -49,7 +49,9 @@ LOA_MAX_AGE = "43200"  # 12 h, the longest session (seconds)
 OUR_KINDS = {
     "hospital",
     "console",
+    "service",  # the workers' narrow admin accounts (P1-T5f, keycloak/accounts.py)
 }  # client attribute ihr.kind of the clients we create
+SERVICE_ACCOUNT_IDS = {"ihr-onboarding", "ihr-staff-worker"}
 BUILT_IN_CLIENTS = {
     "account",
     "account-console",
@@ -345,13 +347,15 @@ def _check_clients(admin, hospital_client_ids):
             issues.append(f"built-in client {cid} does not demand MFA")
         if cid in BUILT_IN_CLIENTS and client.get("authenticationFlowBindingOverrides"):
             issues.append(f"built-in client {cid} has its own login flow")
-        if cid not in BUILT_IN_CLIENTS and attrs.get("ihr.kind") not in OUR_KINDS:
+        kind = attrs.get("ihr.kind")
+        if cid in BUILT_IN_CLIENTS:
+            continue
+        if kind not in OUR_KINDS:
             issues.append(f"client {cid} is neither built in nor a hospital client")
-        elif (
-            cid not in BUILT_IN_CLIENTS
-            and hospital_client_ids is not None
-            and cid not in hospital_client_ids
-        ):
+        elif kind == "service":
+            if cid not in SERVICE_ACCOUNT_IDS:
+                issues.append(f"client {cid} is an unknown service account")
+        elif hospital_client_ids is not None and cid not in hospital_client_ids:
             issues.append(f"client {cid} belongs to no current hospital")
     return issues
 

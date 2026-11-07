@@ -134,7 +134,7 @@ class FakeKeycloak:
             "ihr_platform.keycloak.invite.reset_sign_in": self.reset_sign_in,
             "ihr_platform.keycloak.hospital.remove_member": self.remove_member,
             "ihr_platform.management.commands.ihr_keycloak_sync.keycloak_admin": (
-                lambda: admin
+                lambda *args, **kwargs: admin
             ),
         }
         return [mock.patch(t, v) for t, v in targets.items()]

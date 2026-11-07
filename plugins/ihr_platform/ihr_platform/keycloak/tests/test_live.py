@@ -445,6 +445,160 @@ class KeycloakLiveTest(unittest.TestCase):
         self.assertEqual(check_hospital(self.admin, h, ids.org_id), [])
         self._drop_hospital(ids)
 
+    # --- the workers' narrow accounts (P1-T5f) -------------------------------------------
+
+    def narrow(self, client_id):
+        from ihr_platform.keycloak.accounts import secret_of
+
+        secret = secret_of(self.admin, client_id)
+        return KeycloakAdmin(
+            URL, client_id, secret, self.realm, account_realm=self.realm
+        )
+
+    def test_each_worker_account_does_its_job_and_nothing_else(self):  # noqa: PLR0915 (one story)
+        from ihr_platform.keycloak.accounts import (
+            check_service_accounts,
+            ensure_service_accounts,
+        )
+
+        ensure_service_accounts(self.admin)
+        ensure_service_accounts(self.admin)  # repeatable
+        self.assertEqual(check_service_accounts(self.admin), [])
+        self.assertEqual(check_realm(self.admin, smtp=SMTP), [])
+        onboarding = self.narrow("ihr-onboarding")
+        staff = self.narrow("ihr-staff-worker")
+
+        # Onboarding builds a hospital.
+        h = hospital("svc")
+        ids = ensure_hospital(onboarding, h)
+        self.assertEqual(check_hospital(self.admin, h, ids.org_id), [])
+        # The staff worker does the staff work...
+        tag = str(uuid.uuid4())
+        address = f"svc.{secrets.token_hex(4)}@example.test"
+        sub = ensure_invited_user(staff, address, "S", "W", tag)
+        ensure_member(staff, ids, sub)
+        self.assertTrue(
+            send_setup_email(staff, sub, tag, ids.client_id, h.redirect_uris[0], 600)
+        )
+        remove_member(staff, ids, sub)
+        self.assertTrue(delete_pending(staff, sub, tag))
+        user_id, *_ = self.user([])
+        reset_sign_in(staff, user_id, ids.client_id, h.redirect_uris[0], 600)
+        # ...and nothing more: no realm settings, no clients, no own roles, no other realm.
+        rm = self.admin.get("clients?clientId=realm-management")[0]["id"]
+        own = self.admin.get(
+            f"clients/{self.admin.get('clients?clientId=ihr-staff-worker')[0]['id']}"
+            "/service-account-user"
+        )["id"]
+        realm_admin = [
+            r
+            for r in self.admin.get(f"clients/{rm}/roles")
+            if r["name"] == "realm-admin"
+        ]
+        client = self.admin.get(f"clients/{ids.client_uuid}")
+        for label, call in (
+            (
+                "realm settings",
+                lambda: staff.put(f"/{self.realm}", {"resetPasswordAllowed": False}),
+            ),
+            (
+                "a hospital client",
+                lambda: staff.put(
+                    f"clients/{ids.client_uuid}",
+                    dict(client, redirectUris=["https://evil.test/*"]),
+                ),
+            ),
+            (
+                "its own roles",
+                lambda: staff.post(
+                    f"users/{own}/role-mappings/clients/{rm}", realm_admin, ok=(204,)
+                ),
+            ),
+            (
+                "flows",
+                lambda: staff.post(
+                    "authentication/flows/ihr-core/copy", {"newName": "x"}
+                ),
+            ),
+            ("another realm", lambda: staff.get("/master/users")),
+        ):
+            with (
+                self.subTest(staff=label),
+                self.assertRaisesRegex(KeycloakError, "40[13]"),
+            ):
+                call()
+        onboarding_sa = self.admin.get(
+            f"clients/{self.admin.get('clients?clientId=ihr-onboarding')[0]['id']}"
+            "/service-account-user"
+        )["id"]
+        for label, call in (
+            ("another realm", lambda: onboarding.get("/master/users")),
+            (
+                "its own roles",
+                lambda: onboarding.post(
+                    f"users/{onboarding_sa}/role-mappings/clients/{rm}",
+                    realm_admin,
+                    ok=(204,),
+                ),
+            ),
+        ):
+            with (
+                self.subTest(onboarding=label),
+                self.assertRaisesRegex(KeycloakError, "40[13]"),
+            ):
+                call()
+        # A person made an admin with a worker's secret is reported (never unnoticed).
+        from ihr_platform.keycloak.accounts import check_admin_holders
+
+        self.assertEqual(check_admin_holders(self.admin), [])
+        human, *_ = self.user([])
+        manage_users = [
+            r
+            for r in self.admin.get(f"clients/{rm}/roles")
+            if r["name"] == "manage-users"
+        ]
+        staff.post(f"users/{human}/role-mappings/clients/{rm}", manage_users, ok=(204,))
+        held = check_admin_holders(self.admin)
+        self.assertTrue(any("realm-management manage-users" in i for i in held), held)
+        self.admin.call(
+            "DELETE",
+            f"users/{human}/role-mappings/clients/{rm}",
+            body=manage_users,
+            ok=(204,),
+        )
+
+        # Widening either account is drift, and the sync takes it back.
+        staff_client = self.admin.get("clients?clientId=ihr-staff-worker")[0]
+        self.admin.post(
+            f"users/{own}/role-mappings/clients/{rm}", realm_admin, ok=(204,)
+        )
+        self.admin.put(
+            f"clients/{staff_client['id']}", dict(staff_client, fullScopeAllowed=True)
+        )
+        scopes = {x["name"]: x["id"] for x in self.admin.get("client-scopes")}
+        self.admin.put(
+            f"clients/{staff_client['id']}/default-client-scopes/{scopes['roles']}"
+        )
+        issues = check_service_accounts(self.admin)
+        self.assertTrue(any("holds" in i for i in issues), issues)
+        self.assertTrue(any("fullScopeAllowed" in i for i in issues), issues)
+        self.assertTrue(any("client scopes" in i for i in issues), issues)
+        member = self.admin.get(f"clients/{ids.client_uuid}/roles/member")
+        self.admin.post(
+            f"users/{own}/role-mappings/clients/{ids.client_uuid}", [member], ok=(204,)
+        )
+        current = self.admin.get(f"clients/{staff_client['id']}")
+        self.admin.put(
+            f"clients/{staff_client['id']}",
+            dict(current, clientAuthenticatorType="client-jwt"),
+        )
+        issues = check_service_accounts(self.admin)
+        self.assertTrue(any("holds roles of" in i for i in issues), issues)
+        self.assertTrue(any("clientAuthenticatorType" in i for i in issues), issues)
+        ensure_service_accounts(self.admin)
+        self.assertEqual(check_service_accounts(self.admin), [])
+        self._drop_hospital(ids)
+
     # --- first-admin setup e-mail (P1-T5c) ----------------------------------------------
 
     def setup_email(self, address):

@@ -16,6 +16,12 @@ import uuid
 from django.conf import settings
 from django.core.management.base import BaseCommand, CommandError
 
+from ihr_platform.keycloak.accounts import (
+    PURPOSES,
+    check_admin_holders,
+    check_service_accounts,
+    ensure_service_accounts,
+)
 from ihr_platform.keycloak.hospital import (
     HospitalLogin,
     check_hospital,
@@ -35,20 +41,38 @@ INACTIVE = {
 }
 
 
-def keycloak_admin(realm=None):
+def keycloak_admin(realm=None, purpose=None):
+    """A Keycloak admin client.
+
+    ``purpose`` ("onboarding" or "staff", P1-T5f): the worker's own narrow service account of
+    the hospitals' realm, from IHR_KEYCLOAK_ONBOARDING_SECRET / IHR_KEYCLOAK_STAFF_SECRET.
+    Without ``purpose``, or on an operator's command line that has no narrow secret, the
+    operator's bootstrap credential (IHR_KEYCLOAK_ADMIN_CLIENT_ID/_SECRET). The workers'
+    processes are given only their own narrow secret, never the bootstrap one."""
+    base_url = getattr(settings, "IHR_KEYCLOAK_URL", None)
+    if not base_url:
+        raise CommandError("Keycloak is not configured: set IHR_KEYCLOAK_URL.")
+    realm = realm or settings.IHR_KEYCLOAK_REALM
+    if purpose is not None:
+        secret = os.environ.get(f"IHR_KEYCLOAK_{purpose.upper()}_SECRET")
+        if secret:
+            if realm != settings.IHR_KEYCLOAK_REALM:
+                msg = f"The {purpose} account works in {settings.IHR_KEYCLOAK_REALM} only."
+                raise CommandError(msg)
+            return KeycloakAdmin(
+                base_url, PURPOSES[purpose], secret, realm, account_realm=realm
+            )
     try:
         client_id = os.environ["IHR_KEYCLOAK_ADMIN_CLIENT_ID"]
         secret = os.environ["IHR_KEYCLOAK_ADMIN_CLIENT_SECRET"]
-        base_url = settings.IHR_KEYCLOAK_URL
-    except (KeyError, AttributeError) as exc:
+    except KeyError as exc:
+        wanted = f"IHR_KEYCLOAK_{purpose.upper()}_SECRET" if purpose else ""
         msg = (
-            f"Keycloak is not configured ({exc}): set IHR_KEYCLOAK_URL in settings and "
-            "IHR_KEYCLOAK_ADMIN_CLIENT_ID/_SECRET in the environment."
+            f"No Keycloak credential in this process's environment ({wanted or exc}): "
+            "workers get their own narrow secret; operators the bootstrap one."
         )
         raise CommandError(msg) from exc
-    return KeycloakAdmin(
-        base_url, client_id, secret, realm or settings.IHR_KEYCLOAK_REALM
-    )
+    return KeycloakAdmin(base_url, client_id, secret, realm)
 
 
 def mail_server():
@@ -123,6 +147,13 @@ class Command(BaseCommand):
         parser.add_argument("--check", action="store_true", help="Report drift only")
         parser.add_argument("--rebuild-flows", action="store_true")
 
+    def _ensure_realm(self, admin):
+        for item in ensure_realm(admin, smtp=mail_server()):
+            self.stdout.write(f"fixed: {item}")
+        for item in check_service_accounts(admin):
+            self.stdout.write(f"fixed: {item}")
+        ensure_service_accounts(admin)  # the workers' narrow accounts (P1-T5f)
+
     def handle(self, *args, realm, slug, every, check, rebuild_flows, **options):
         admin = keycloak_admin()
         # Hospitals still being provisioned belong to the provisioning engine (P1-T5a).
@@ -140,14 +171,15 @@ class Command(BaseCommand):
         issues = []
         try:
             if realm and not check:
-                for item in ensure_realm(admin, smtp=mail_server()):
-                    self.stdout.write(f"fixed: {item}")
+                self._ensure_realm(admin)
                 if getattr(settings, "IHR_CONSOLE_URL", ""):
                     self._ensure_operator_realm()
             if realm or check:
                 # With --all every hospital client is known, so leftovers are reported too.
                 known = {client_id_for(h.slug) for h in hospitals} if every else None
                 issues += check_realm(admin, known, smtp=mail_server())
+                issues += check_service_accounts(admin)
+                issues += check_admin_holders(admin)
                 if getattr(settings, "IHR_CONSOLE_URL", ""):
                     from ihr_platform.console.auth import console_url, redirect_uri
                     from ihr_platform.keycloak.ops import check_ops_realm

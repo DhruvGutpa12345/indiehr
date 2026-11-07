@@ -62,7 +62,7 @@ Keycloak must be running (`scripts/care-dev.sh keycloak up`). The first admin is
 - http://console.localhost:9000/ops/ — sign in as `op.owner` (password and authenticator key in `deploy/seed/TEST_USERS.md`; code: `scripts/care-dev.sh keycloak otp op.owner`).
 - "New hospital" queues a provisioning run; the `provisioner` container (started by `scripts/care-dev.sh keycloak up`) runs it and the page refreshes itself until it is live (~70 s).
 - Operators are on two lists: role `ihr-operator` in realm `indiehr-ops`, and ours: `manage.py ihr_operator add|list|remove`.
-- Only the provisioner gets the Keycloak admin credential (`deploy/dev/provisioner.env`, git-ignored); the web app and worker never do.
+- Two workers (P1-T5f): `provisioner` (hospital runs, secret in `deploy/dev/provisioner.env`) and `staff-worker` (invitations, resets, expiry; `deploy/dev/staff-worker.env`). Each file holds only that worker's own narrow Keycloak service-account secret, written by `keycloak up`; neither holds the bootstrap admin credential, and the web app and CARE worker hold none. Logs: `scripts/care-dev.sh keycloak logs`.
 
 ## Stop or inspect
 

@@ -81,6 +81,9 @@ class KeycloakSyncCommandTests(SimpleTestCase):
             mock.patch(f"{SYNC}.check_realm", return_value=[]),
             # The operator realm (P1-T5b, IHR_CONSOLE_URL is set in test settings)
             mock.patch("ihr_platform.keycloak.ops.check_ops_realm", return_value=[]),
+            # The workers' accounts (P1-T5f): checked live in keycloak/tests
+            mock.patch(f"{SYNC}.check_service_accounts", return_value=[]),
+            mock.patch(f"{SYNC}.check_admin_holders", return_value=[]),
             self.assertRaisesMessage(CommandError, "1 problem(s)"),
         ):
             self.run_sync("--slug", "testhosp", "--check")
@@ -142,3 +145,50 @@ class MailServerTests(SimpleTestCase):
             ihr_keycloak_sync.mail_server()
         with override_settings(IHR_KEYCLOAK_SMTP=None):
             self.assertIsNone(ihr_keycloak_sync.mail_server())
+
+
+@override_settings(
+    IHR_KEYCLOAK_URL="http://keycloak.invalid", IHR_KEYCLOAK_REALM="indiehr"
+)
+class WorkerCredentialTests(SimpleTestCase):
+    """P1-T5f: each worker uses only its own narrow account of the hospitals' realm."""
+
+    def test_purpose_picks_the_workers_own_account(self):
+        env = {"IHR_KEYCLOAK_STAFF_SECRET": "staff-x", **ENV}
+        with mock.patch.dict(os.environ, env, clear=True):
+            staff = ihr_keycloak_sync.keycloak_admin(purpose="staff")
+            operator = ihr_keycloak_sync.keycloak_admin()
+            with self.assertRaisesMessage(CommandError, "works in indiehr only"):
+                ihr_keycloak_sync.keycloak_admin("indiehr-ops", purpose="staff")
+        self.assertEqual(
+            (staff._client, staff._account_realm, staff.realm),
+            (("ihr-staff-worker", "staff-x"), "indiehr", "indiehr"),
+        )
+        self.assertEqual(operator._account_realm, "master")  # the bootstrap one
+        with (
+            mock.patch.dict(os.environ, {}, clear=True),
+            self.assertRaisesMessage(CommandError, "IHR_KEYCLOAK_ONBOARDING_SECRET"),
+        ):
+            ihr_keycloak_sync.keycloak_admin(purpose="onboarding")
+
+    def test_a_worker_refuses_to_run_with_the_wrong_credentials(self):
+        for env, message in (
+            ({}, "IHR_KEYCLOAK_STAFF_SECRET"),
+            (
+                {"IHR_KEYCLOAK_STAFF_SECRET": "s", **ENV},
+                "bootstrap admin credential",
+            ),
+            (
+                {
+                    "IHR_KEYCLOAK_STAFF_SECRET": "s",
+                    "IHR_KEYCLOAK_ONBOARDING_SECRET": "o",
+                },
+                "IHR_KEYCLOAK_ONBOARDING_SECRET is in the staff worker",
+            ),
+        ):
+            with (
+                self.subTest(message),
+                mock.patch.dict(os.environ, env, clear=True),
+                self.assertRaisesMessage(CommandError, message),
+            ):
+                call_command("ihr_provision_worker", role="staff", once=True)

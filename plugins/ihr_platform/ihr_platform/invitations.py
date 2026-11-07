@@ -137,11 +137,12 @@ def deliver(inv):
 
 
 def keycloak_admin():
+    """The staff worker's own narrow account (P1-T5f): accounts, memberships, e-mails."""
     from ihr_platform.management.commands.ihr_keycloak_sync import (
         keycloak_admin as admin,
     )
 
-    return admin()
+    return admin(purpose="staff")
 
 
 def _account_for(admin, inv, tag):

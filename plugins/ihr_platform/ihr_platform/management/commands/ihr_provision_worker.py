@@ -1,21 +1,24 @@
 """The provisioner: runs what operators queue in the console (P1-T5b).
 
-    manage.py ihr_provision_worker [--once] [--interval 3]
+    manage.py ihr_provision_worker --role onboarding|staff [--once] [--interval 3]
 
 It also delivers staff invitations queued by hospitals' "Add user" (P1-T5e1), carries out
 hospital admins' requests (reset a lost authenticator, resend or cancel an invitation) and
 withdraws invitations nobody accepted in time (P1-T5e2).
 
-A process of its own, the only one holding the Keycloak admin credential (from its
-environment, IHR_KEYCLOAK_ADMIN_CLIENT_ID/_SECRET): the console and the hospitals' web app and
-worker never do (TENANCY_DESIGN §4.5, review of P1-T5). It claims one queued operation at a
-time (row lock, skip locked), so several provisioners can never take the same one.
+Two processes (P1-T5f, owner): ``--role onboarding`` (hospital runs, its secret
+IHR_KEYCLOAK_ONBOARDING_SECRET) and ``--role staff`` (everything about staff accounts,
+IHR_KEYCLOAK_STAFF_SECRET), each a narrow service account of the hospitals' realm
+(keycloak/accounts.py). Neither may hold the bootstrap admin credential, and the console and
+the hospitals' web app and worker hold none. Work is claimed with row locks (skip locked), so
+several workers never take the same item.
 """
 
 import logging
+import os
 import time
 
-from django.core.management.base import BaseCommand
+from django.core.management.base import BaseCommand, CommandError
 from django.db import close_old_connections, connection, transaction
 from django.utils import timezone
 
@@ -46,11 +49,18 @@ def claim_next():
     return op, action, who
 
 
-def work_once():
-    """Run one queued operation, else deliver one due staff invitation (P1-T5e1). True if
+ROLES = ("onboarding", "staff")
+
+
+def work_once(role=None):
+    """One unit of work. ``role`` (P1-T5f): "onboarding" runs queued hospital operations,
+    "staff" delivers invitations, carries out admins' requests and expires invitations;
+    None does both (tests). Each role's process holds only its own Keycloak secret. True if
     there was something to do."""
-    if run_one_operation():
+    if role in (None, "onboarding") and run_one_operation():
         return True
+    if role == "onboarding":
+        return False
     try:
         return (
             invitations.deliver_once()
@@ -98,14 +108,31 @@ class Command(BaseCommand):
     help = "Run the provisioning operations queued from the operator console."
 
     def add_arguments(self, parser):
+        parser.add_argument("--role", choices=ROLES, required=True)
         parser.add_argument("--once", action="store_true")
         parser.add_argument("--interval", type=float, default=3.0)
 
-    def handle(self, *args, once, interval, **options):
-        self.stdout.write("provisioner ready")
+    def handle(self, *args, role, once, interval, **options):
+        secret = f"IHR_KEYCLOAK_{role.upper()}_SECRET"
+        if not os.environ.get(secret):
+            msg = f"Set {secret}: each worker uses only its own account."
+            raise CommandError(msg)
+        if os.environ.get("IHR_KEYCLOAK_ADMIN_CLIENT_SECRET"):
+            raise CommandError(
+                "The bootstrap admin credential is in this worker's environment: "
+                "workers get only their own narrow secret (P1-T5f)."
+            )
+        for other in ROLES:
+            if other != role and os.environ.get(f"IHR_KEYCLOAK_{other.upper()}_SECRET"):
+                msg = (
+                    f"IHR_KEYCLOAK_{other.upper()}_SECRET is in the {role} worker's "
+                    "environment: each worker holds only its own account (P1-T5f)."
+                )
+                raise CommandError(msg)
+        self.stdout.write(f"provisioner ready ({role})")
         while True:
             close_old_connections()
-            did = work_once()
+            did = work_once(role)
             if once:
                 return
             if not did:

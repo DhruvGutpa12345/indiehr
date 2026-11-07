@@ -116,7 +116,7 @@ def _hospital(op):
 def _keycloak_admin():
     from ihr_platform.management.commands.ihr_keycloak_sync import keycloak_admin
 
-    return keycloak_admin()
+    return keycloak_admin(purpose="onboarding")
 
 
 # --- steps -----------------------------------------------------------------------------
@@ -364,7 +364,9 @@ def keycloak(op, form):
 
     hospital = _hospital(op)
     stored = str(hospital.keycloak_org_id) if hospital.keycloak_org_id else None
-    ids = ensure_hospital(keycloak_admin(), hospital_login(hospital), stored)
+    ids = ensure_hospital(
+        keycloak_admin(purpose="onboarding"), hospital_login(hospital), stored
+    )
     if stored is None:
         Hospital.objects.filter(pk=hospital.pk).update(keycloak_org_id=ids.org_id)
     op.result["keycloak_org_id"] = ids.org_id
@@ -380,7 +382,9 @@ def activate(op, form):
 
     hospital = _hospital(op)
     login = replace(hospital_login(hospital), enabled=True)
-    ensure_hospital(keycloak_admin(), login, str(hospital.keycloak_org_id))
+    ensure_hospital(
+        keycloak_admin(purpose="onboarding"), login, str(hospital.keycloak_org_id)
+    )
     Hospital.objects.filter(pk=hospital.pk, activated_at__isnull=True).update(
         activated_at=timezone.now()
     )

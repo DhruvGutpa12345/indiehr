@@ -236,7 +236,7 @@ def _remove_first_admin_account(op, hospital):
     from ihr_platform.keycloak.invite import find_invited_by_email, remove_invited_user
     from ihr_platform.management.commands.ihr_keycloak_sync import keycloak_admin
 
-    admin = keycloak_admin()
+    admin = keycloak_admin(purpose="onboarding")
     tag = str(hospital.uuid)
     email = op.input.get("admin_email", "")
     sub = op.result.get("admin_keycloak_sub") or (
@@ -261,4 +261,4 @@ def _remove_keycloak(hospital):
         login = HospitalLogin(
             hospital.slug, hospital.name, ("",), (), uuid=str(hospital.uuid)
         )
-    remove_hospital(keycloak_admin(), login)
+    remove_hospital(keycloak_admin(purpose="onboarding"), login)
