@@ -22,6 +22,9 @@ PUBLIC_TABLE_ALLOW_LIST = {
     "ihr_platform_staffinvitation",
     # P1-T5e2: hospital admins' requests (reset a sign-in, resend/cancel an invitation)
     "ihr_platform_staffaccessrequest",
+    # P1-T7a: India Post's public PIN directory, the same for every hospital (no patients)
+    "ihr_platform_postoffice",
+    "ihr_platform_pindirectoryload",
 }
 SECOND_DOMAIN = "second.testserver"
 

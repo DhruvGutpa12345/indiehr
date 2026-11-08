@@ -2,19 +2,24 @@
 
 ``bootstrap`` and ``bootstrap.js`` are public: the login page needs the hospital's name, colour
 and logo before anyone signs in. They return branding only. The full profile (GSTIN, address,
-registration numbers) is for signed-in staff.
+registration numbers) is for signed-in staff, as is the PIN code lookup (P1-T7a).
 """
 
 import json
 
 from django.conf import settings
 from django.http import HttpResponse, JsonResponse
+from ihr_platform import pincodes
+from ihr_platform.models import PostOffice
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
+from ihr_tenant_settings import geography
 from ihr_tenant_settings.branding import default_logo_svg
+from ihr_tenant_settings.india import GST_STATE_CODES
 from ihr_tenant_settings.models import HospitalProfile
+from ihr_tenant_settings.validators import PIN_RE
 
 PLATFORM_NAME = "IndieHR"
 PROFILE_FIELDS = (
@@ -119,3 +124,66 @@ class ProfileView(APIView):
         data["state_name"] = profile.state_name
         data["branding"] = _branding(profile)
         return Response(data)
+
+
+class PinCodeView(APIView):
+    """Where a PIN code is: its state and district(s), the matching geography of this
+    hospital (to fill an address form) and its post offices. From our own copy of India
+    Post's directory (P1-T7a); signed-in staff only."""
+
+    permission_classes = (IsAuthenticated,)
+
+    def get(self, request, pincode):
+        if not PIN_RE.match(pincode):
+            return Response(
+                {"detail": "PIN code must be 6 digits and cannot start with 0."},
+                status=400,
+            )
+        loaded = pincodes.current()
+        if loaded is None:
+            return Response({"detail": "The PIN directory is not loaded."}, status=503)
+        offices = list(
+            PostOffice.objects.filter(pincode=pincode).order_by(
+                "state_code", "district", "name"
+            )
+        )
+        if not offices:
+            return Response({"detail": "Unknown PIN code."}, status=404)
+        places = []
+        for code, district in dict.fromkeys(
+            (o.state_code, o.district) for o in offices
+        ):
+            state_org, district_org = geography.find(code, district)
+            places.append(
+                {
+                    "state_code": code,
+                    "state": GST_STATE_CODES[code],
+                    "district": district,
+                    "state_organization": str(state_org.external_id)
+                    if state_org
+                    else None,
+                    "geo_organization": str(district_org.external_id)
+                    if district_org
+                    else None,
+                }
+            )
+        return Response(
+            {
+                "pincode": pincode,
+                "places": places,
+                "post_offices": [
+                    {
+                        "name": o.name,
+                        "type": o.office_type,
+                        "delivery": o.delivery,
+                        "district": o.district,
+                        "state_code": o.state_code,
+                    }
+                    for o in offices
+                ],
+                "source": {
+                    "name": "India Post, All India Pincode Directory (data.gov.in, GODL-India)",
+                    "released_on": loaded.released_on,
+                },
+            }
+        )

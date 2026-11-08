@@ -108,6 +108,12 @@ Backend lock fully re-resolved on 2026-11-04 (latest compatible for every packag
 | tenant-schemas-celery | 5.0.0 (2026-08-01; requires celery>=5) | 2026-11-06 |
 | ruff (pre-commit, plugins/) | v0.14.8 (same as CARE's config) | 2026-11-06 |
 
+## Reference data — P1-T7a
+
+| Data | Source | Licence | Loaded |
+|---|---|---|---|
+| India Post PIN code directory | data.gov.in, "All India Pincode Directory" (Department of Posts; resource `5c2f62fe-5afa-4119-a499-fec9d604d5bd`) — downloaded by hand (name, e-mail, captcha) | Government Open Data License – India (attribution: the lookup API names the source) | Not yet: only the 10-office test sample in dev. Record the release date and sha256 (`ihr_load_pincodes --show`) here when loaded |
+
 ## Identity — P1-T3
 
 | Item | Version | Checked |

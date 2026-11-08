@@ -2,7 +2,7 @@
 # Run upstream CARE locally with the IndieHR low-memory override (P0-T5), in tenant mode with
 # two synthetic demo hospitals at http://alpha.localhost:8080 and http://beta.localhost:8080
 # (P1-T2b), and Keycloak on demand (P1-T3: `scripts/care-dev.sh keycloak help`).
-# Usage: scripts/care-dev.sh <up|down|ps|logs|seed|reset-passwords|frontend|shell|keycloak|provision|provision-demo|audit-anchors>
+# Usage: scripts/care-dev.sh <up|down|ps|logs|seed|reset-passwords|frontend|shell|keycloak|provision|provision-demo|audit-anchors|pincodes>
 set -euo pipefail
 ROOT="$(git -C "$(dirname "$0")" rev-parse --show-toplevel)"
 BACKEND="$ROOT/apps/backend"
@@ -258,6 +258,24 @@ case "${1:-}" in
     json="$(kc_manage ihr_provision dev-activate-admin --slug "$slug" | tail -1)"
     python3 "$ROOT/scripts/keycloak_test_users.py" --provisioned "$ROOT/deploy/seed/TEST_USERS.md" <<<"$json"
     echo "Sign in: http://$slug.localhost:8080/api/ihr/auth/login/?next=/api/ihr/auth/session/ (login in deploy/seed/TEST_USERS.md)"
+    ;;
+  pincodes)
+    # India Post's PIN directory from data.gov.in (P1-T7a): load it, then give every
+    # hospital its states and districts. Without a file: show what is loaded.
+    if [[ -z "${2:-}" ]]; then
+      "${COMPOSE[@]}" exec -T backend python manage.py ihr_load_pincodes --show
+      exit 0
+    fi
+    [[ -f "$2" ]] || { echo "No such file: $2" >&2; exit 1; }
+    tmp="$("${COMPOSE[@]}" exec -T backend mktemp /tmp/ihr-pincodes.XXXXXX)"
+    # shellcheck disable=SC2016 # $1 is expanded by the container's shell
+    "${COMPOSE[@]}" exec -T backend sh -c 'cat > "$1"' sh "$tmp" < "$2"
+    status=0
+    "${COMPOSE[@]}" exec -T backend python manage.py ihr_load_pincodes "$tmp" \
+      --source-name "$(basename "$2")" "${@:3}" || status=$?
+    "${COMPOSE[@]}" exec -T backend rm -f "$tmp"
+    [[ $status -eq 0 ]] || exit "$status"
+    "${COMPOSE[@]}" exec -T backend python manage.py ihr_load_geography --all
     ;;
   *) sed -n '3,4p' "$0"; exit 1 ;;
 esac

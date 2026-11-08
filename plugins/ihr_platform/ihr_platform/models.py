@@ -316,3 +316,44 @@ class StaffAccessRequest(models.Model):
 
     def __str__(self):
         return f"{self.action} at {self.hospital_id} ({self.status})"
+
+
+class PinDirectoryLoad(models.Model):
+    """One load of India Post's All India Pincode Directory (data.gov.in, GODL-India; P1-T7a).
+
+    The directory is the same for every hospital, so it lives here in ``public``. The newest
+    row describes the offices in ``PostOffice``; older rows are the load history.
+    """
+
+    source_name = models.CharField(max_length=255)
+    sha256 = models.CharField(max_length=64)
+    released_on = models.DateField(null=True, blank=True)  # the date data.gov.in shows
+    offices = models.PositiveIntegerField()
+    pincodes = models.PositiveIntegerField()
+    skipped = models.PositiveIntegerField(default=0)
+    loaded_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ("-loaded_at", "-id")
+
+    def __str__(self):
+        return f"{self.source_name} ({self.pincodes} PIN codes)"
+
+
+class PostOffice(models.Model):
+    """A post office from the PIN directory: which state and district a PIN code is in."""
+
+    pincode = models.CharField(max_length=6, db_index=True)
+    name = models.CharField(max_length=255)
+    office_type = models.CharField(max_length=8, blank=True)  # B.O, S.O, H.O
+    delivery = models.BooleanField(default=True)
+    district = models.CharField(max_length=100)
+    state_code = models.CharField(
+        max_length=2
+    )  # GST state code (ihr_tenant_settings.india)
+
+    class Meta:
+        indexes = [models.Index(fields=["state_code", "district"])]
+
+    def __str__(self):
+        return f"{self.pincode} {self.name}"

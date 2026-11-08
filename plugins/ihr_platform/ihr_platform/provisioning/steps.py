@@ -61,11 +61,14 @@ class OnboardingForm:
     def validate(self):
         from care.facility.models.facility import REVERSE_REVERSE_FACILITY_TYPES
         from care.utils.models.validators import mobile_or_landline_number_validator
+        from ihr_tenant_settings.geography import district_problem
         from ihr_tenant_settings.india import GST_STATE_CODES
 
         problems = self._address_problems()
         if self.state_code not in GST_STATE_CODES:
             problems.append("state_code: not an Indian GST state code")
+        elif problem := district_problem(self.state_code, self.district):
+            problems.append(f"district: {problem}")
         if not PIN_RE.match(self.pin_code):
             problems.append("pin_code: six digits, not starting with 0")
         if not EMAIL_RE.match(self.admin_email):
@@ -225,51 +228,16 @@ def profile(op, form):
 
 
 def geography(op, form):
-    """The hospital's state and district as CARE government organisations (the start of our
-    own state loader, TENANCY_DESIGN §5)."""
-    from care.emr.models.organization import Organization
-    from ihr_tenant_settings.india import GST_STATE_CODES
+    """The hospital's state and district as CARE government organisations, plus every
+    other state and district in the PIN directory once it is loaded (P1-T7a)."""
+    from ihr_tenant_settings import geography as geo
 
-    # The same shape as CARE's own loader (load_govt_organization_csv), so a later full
-    # geography load finds these rows instead of adding duplicates.
-    state_meta = {
-        "country": "India",
-        "govt_org_type": "state",
-        "govt_org_children_type": "district",
-    }
-    district_meta = {
-        "country": "India",
-        "govt_org_type": "district",
-        "govt_org_children_type": "local_body",
-    }
     with schema_context(_hospital(op).schema_name), transaction.atomic():
-        state, _ = Organization.objects.filter(
-            name__iexact=GST_STATE_CODES[form.state_code],
-            org_type="govt",
-            parent=None,
-            metadata=state_meta,
-        ).get_or_create(
-            defaults={
-                "name": GST_STATE_CODES[form.state_code],
-                "org_type": "govt",
-                "system_generated": True,
-                "metadata": state_meta,
-            }
+        state = geo.ensure_state(form.state_code)
+        district, _ = geo.ensure_district(
+            state, geo.directory_district(form.state_code, form.district)
         )
-        district, _ = Organization.objects.filter(
-            name__iexact=form.district,
-            parent=state,
-            org_type="govt",
-            metadata=district_meta,
-        ).get_or_create(
-            defaults={
-                "name": form.district,
-                "org_type": "govt",
-                "parent": state,
-                "system_generated": True,
-                "metadata": district_meta,
-            }
-        )
+        geo.load_all()
         op.result["state_org_id"] = state.id
         op.result["district_org_id"] = district.id
         op.save(update_fields=["result"])  # committed together with the rows
@@ -374,6 +342,8 @@ def keycloak(op, form):
 
 def activate(op, form):
     """Live: the sign-in client turned on, then status ACTIVE and the go-live time (once)."""
+    from ihr_tenant_settings import geography as geo
+
     from ihr_platform.keycloak.hospital import ensure_hospital
     from ihr_platform.management.commands.ihr_keycloak_sync import (
         hospital_login,
@@ -381,6 +351,10 @@ def activate(op, form):
     )
 
     hospital = _hospital(op)
+    # ihr_load_geography skips hospitals being provisioned: a directory loaded after the
+    # geography step (a resumed run skips that step) is picked up here, before going live.
+    with schema_context(hospital.schema_name):
+        geo.load_all()
     login = replace(hospital_login(hospital), enabled=True)
     ensure_hospital(
         keycloak_admin(purpose="onboarding"), login, str(hospital.keycloak_org_id)

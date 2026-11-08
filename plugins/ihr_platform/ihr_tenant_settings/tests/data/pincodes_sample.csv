@@ -1,0 +1,13 @@
+circlename,regionname,divisionname,officename,pincode,officetype,delivery,district,statename,latitude,longitude
+Maharashtra Circle,Pune Region,Pune City East Division,Pune H.O,411001,H.O,Delivery,PUNE,MAHARASHTRA,18.5196,73.8553
+Maharashtra Circle,Pune Region,Pune City East Division,Pune Cantonment S.O,411001,S.O,Non-Delivery,PUNE,MAHARASHTRA,NA,NA
+Karnataka Circle,Bangalore HQ Region,Bangalore GPO Division,Bangalore G.P.O.,560001,H.O,Delivery,BENGALURU URBAN,KARNATAKA,12.9791,77.5913
+Gujarat Circle,Vadodara Region,Valsad Division,Daman B.O,396210,B.O,Delivery,DAMAN,DAMAN & DIU,20.4,72.8
+Tamilnadu Circle,Chennai City Region,Pondicherry Division,Pondicherry H.O,605001,H.O,Delivery,PONDICHERRY,PONDICHERRY,11.93,79.83
+Odisha Circle,Bhubaneswar HQ Region,Bhubaneswar Division,Bhubaneswar G.P.O.,751001,H.O,Delivery,KHORDA,ORISSA,20.27,85.84
+Andhra Pradesh Circle,Kurnool Region,Kadapa Division,Kadapa H.O,516001,H.O,Delivery,Y.S.R. KADAPA,ANDHRA PRADESH,14.47,78.82
+Delhi Circle,Delhi Region,New Delhi GPO Division,Connaught Place S.O,110001,S.O,Delivery,NEW DELHI,DELHI,28.63,77.21
+Delhi Circle,Delhi Region,New Delhi Central Division,Sample Border S.O,110001,S.O,Delivery,CENTRAL DELHI,DELHI,NA,NA
+Ladakh Circle,Leh Region,Leh Division,Leh H.O,194101,H.O,Delivery,LEH,LADAKH,34.16,77.58
+Bad Circle,Bad Region,Bad Division,Broken Row,0110,B.O,Delivery,NOWHERE,DELHI,NA,NA
+Bad Circle,Bad Region,Bad Division,No District,110002,B.O,Delivery,NA,DELHI,NA,NA
