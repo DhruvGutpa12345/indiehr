@@ -1,46 +1,5 @@
-import { format } from "date-fns";
-import * as React from "react";
+// IndieHR P1-T7b: upstream's browser datetime-local box (mm/dd/yyyy or 24-hour, depending on
+// the browser) is replaced by our DD-MM-YYYY + 12-hour AM/PM box. Same props, same ISO values.
+import { IndiaDateTimeInput } from "@/components/ihr/IndiaDateTimeInput";
 
-import { Input } from "@/components/ui/input";
-
-function toISOWithTimezone(localVal: string): string | undefined {
-  if (!localVal) return undefined;
-  const localDate = new Date(localVal);
-  if (isNaN(localDate.getTime())) return undefined;
-  return localDate.toISOString();
-}
-
-function toLocalDateTimeString(
-  isoString: string | undefined,
-): string | undefined {
-  if (!isoString) return undefined;
-  const date = new Date(isoString);
-  if (isNaN(date.getTime())) return undefined;
-  return format(date, "yyyy-MM-dd'T'HH:mm");
-}
-
-type DateTimeInputProps = React.ComponentProps<typeof Input> & {
-  onDateChange: (val: string | undefined) => void;
-} & React.InputHTMLAttributes<HTMLInputElement>;
-
-export function DateTimeInput({
-  value,
-  onDateChange,
-  ...props
-}: DateTimeInputProps & React.ComponentProps<"input">) {
-  const localValue =
-    !value || typeof value !== "string"
-      ? undefined
-      : toLocalDateTimeString(value);
-
-  return (
-    <Input
-      {...props}
-      type="datetime-local"
-      value={localValue}
-      onChange={(e) => {
-        onDateChange(toISOWithTimezone(e.target.value));
-      }}
-    />
-  );
-}
+export const DateTimeInput = IndiaDateTimeInput;

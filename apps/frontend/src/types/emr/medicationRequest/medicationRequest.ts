@@ -7,6 +7,7 @@ import { InventoryRead } from "@/types/inventory/product/inventory";
 import { ProductKnowledgeBase } from "@/types/inventory/productKnowledge/productKnowledge";
 import { UserReadMinimal } from "@/types/user/user";
 import { add, divide, isZero, multiply } from "@/Utils/decimal";
+import { indiaDate } from "@/Utils/ihr/indiaDateFormats"; // IndieHR P1-T7b
 import Decimal from "decimal.js";
 
 export const MEDICATION_REQUEST_STATUS_COLORS = {
@@ -211,11 +212,7 @@ function periodBoundToLocalDate(iso: string, endOfDay = false): Date {
 
 function formatBoundDate(iso?: string): string {
   if (!iso) return "—";
-  return periodBoundToLocalDate(iso).toLocaleDateString("en-US", {
-    day: "2-digit",
-    month: "short",
-    year: "numeric",
-  });
+  return indiaDate(periodBoundToLocalDate(iso));
 }
 
 export interface MedicationActiveWindow {

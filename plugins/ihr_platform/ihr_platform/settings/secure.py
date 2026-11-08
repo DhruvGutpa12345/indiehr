@@ -107,6 +107,12 @@ def problems(settings, environ):  # noqa: PLR0912 (one flat list of rules)
             "SECURE_PROXY_SSL_HEADER must trust X-Forwarded-Proto from the proxy."
         )
 
+    # Every "day" on the server (date filters, beat jobs, slots) is an IST day (P1-T7b).
+    if settings.get("TIME_ZONE") != "Asia/Kolkata":
+        found.append("TIME_ZONE must be Asia/Kolkata (India Standard Time).")
+    if settings.get("USE_TZ") is not True:
+        found.append("USE_TZ must be on (times stored with their zone).")
+
     terminology = str(settings.get("SNOWSTORM_DEPLOYMENT_URL", ""))
     if terminology and not re.match(r"^https://|^http://127\.0\.0\.1:9/", terminology):
         # CARE's default points at a third party over plain HTTP (P1-T10).

@@ -13,6 +13,7 @@ import {
   SheetTitle,
 } from "@/components/ui/sheet";
 
+import { indiaDate } from "@/Utils/ihr/indiaDateFormats"; // IndieHR P1-T7b
 import query from "@/Utils/request/query";
 import { getPermissions } from "@/common/Permissions";
 import { usePermissions } from "@/context/PermissionContext";
@@ -171,13 +172,7 @@ export function AccountSheetButton({
                         <span className="font-medium">
                           {accounts[0].service_period &&
                           accounts[0].service_period.start
-                            ? new Date(
-                                accounts[0].service_period.start,
-                              ).toLocaleDateString(undefined, {
-                                day: "numeric",
-                                month: "long",
-                                year: "numeric",
-                              })
+                            ? indiaDate(accounts[0].service_period.start)
                             : "-"}
                         </span>
 
@@ -185,13 +180,7 @@ export function AccountSheetButton({
                         <span className="font-medium">
                           {accounts[0].service_period &&
                           accounts[0].service_period.end
-                            ? new Date(
-                                accounts[0].service_period.end,
-                              ).toLocaleDateString(undefined, {
-                                day: "numeric",
-                                month: "long",
-                                year: "numeric",
-                              })
+                            ? indiaDate(accounts[0].service_period.end)
                             : "-"}
                         </span>
                       </div>

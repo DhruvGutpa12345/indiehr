@@ -2,21 +2,26 @@
 
 ``bootstrap`` and ``bootstrap.js`` are public: the login page needs the hospital's name, colour
 and logo before anyone signs in. They return branding only. The full profile (GSTIN, address,
-registration numbers) is for signed-in staff, as is the PIN code lookup (P1-T7a).
+registration numbers) is for signed-in staff, as is the PIN code lookup (P1-T7a; also a patient
+signed in by OTP on the appointment page, P1-T7b).
 """
 
 import json
 
+from care.emr.resources.organization.spec import OrganizationReadSpec
+from config.patient_otp_authentication import JWTTokenPatientAuthentication
 from django.conf import settings
 from django.http import HttpResponse, JsonResponse
 from ihr_platform import pincodes
 from ihr_platform.models import PostOffice
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
+from rest_framework.settings import api_settings
 from rest_framework.views import APIView
 
 from ihr_tenant_settings import geography
 from ihr_tenant_settings.branding import default_logo_svg
+from ihr_tenant_settings.device_time import WARNING_SCRIPT
 from ihr_tenant_settings.india import GST_STATE_CODES
 from ihr_tenant_settings.models import HospitalProfile
 from ihr_tenant_settings.validators import PIN_RE
@@ -87,6 +92,8 @@ def bootstrap_js(request):
         f"window.__IHR_AUTH__ = {auth};\n"
         "document.title = window.__IHR_BRANDING__.short_name;\n"
     )
+    # A bar until the computer is set to India Standard Time (P1-T7b).
+    body += WARNING_SCRIPT
     response = HttpResponse(body, content_type="text/javascript; charset=utf-8")
     response["X-Content-Type-Options"] = "nosniff"
     return _private_no_cache(response)
@@ -129,8 +136,18 @@ class ProfileView(APIView):
 class PinCodeView(APIView):
     """Where a PIN code is: its state and district(s), the matching geography of this
     hospital (to fill an address form) and its post offices. From our own copy of India
-    Post's directory (P1-T7a); signed-in staff only."""
+    Post's directory (P1-T7a).
 
+    Open to signed-in staff and to a patient signed in by OTP on this hospital's public
+    appointment page (P1-T7b), as CARE's own organisation list is. A patient token is bound
+    to the hospital that issued it (``tid``, config/patient_otp_token.py), so another
+    hospital's token is refused; anonymous callers are refused. Each place carries the
+    full state and district organisations, so the address form needs no second request."""
+
+    authentication_classes = [
+        JWTTokenPatientAuthentication,
+        *api_settings.DEFAULT_AUTHENTICATION_CLASSES,
+    ]
     permission_classes = (IsAuthenticated,)
 
     def get(self, request, pincode):
@@ -165,6 +182,8 @@ class PinCodeView(APIView):
                     "geo_organization": str(district_org.external_id)
                     if district_org
                     else None,
+                    "state_organization_object": _organization(state_org),
+                    "geo_organization_object": _organization(district_org),
                 }
             )
         return Response(
@@ -187,3 +206,8 @@ class PinCodeView(APIView):
                 },
             }
         )
+
+
+def _organization(org):
+    """An organisation as CARE's organisation list returns it (with its parent chain)."""
+    return OrganizationReadSpec.serialize(org).to_json() if org else None

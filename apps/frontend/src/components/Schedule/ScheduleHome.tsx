@@ -35,6 +35,7 @@ import {
   ScheduleTemplate,
 } from "@/types/scheduling/schedule";
 import scheduleApi from "@/types/scheduling/scheduleApi";
+import { indiaDate } from "@/Utils/ihr/indiaDateFormats"; // IndieHR P1-T7b
 import query from "@/Utils/request/query";
 import {
   dateQueryString,
@@ -303,13 +304,7 @@ function DayDetailsPopover({
   return (
     <PopoverContent className="p-6" align="center" sideOffset={5}>
       <div className="flex items-center justify-between">
-        <p className="text-sm text-gray-600">
-          {date.toLocaleDateString("default", {
-            day: "numeric",
-            month: "short",
-            year: "numeric",
-          })}
-        </p>
+        <p className="text-sm text-gray-600">{indiaDate(date)}</p>
         {!dayjs(date).isBefore(dayjs(), "day") && canWriteSchedule && (
           <Button
             variant="outline"

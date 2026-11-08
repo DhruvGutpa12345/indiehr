@@ -657,7 +657,7 @@ const DrugChartTable = ({
                                             new Date(
                                               admin.occurrence_period_start,
                                             ),
-                                            "HH:mm",
+                                            "hh:mm a", // IndieHR P1-T7b
                                           )}
                                         </span>
                                         <span className="text-xs text-gray-600">

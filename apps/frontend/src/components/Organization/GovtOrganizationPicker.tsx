@@ -6,6 +6,9 @@ import { useTranslation } from "react-i18next";
 import Autocomplete from "@/components/ui/autocomplete";
 import { Label } from "@/components/ui/label";
 
+import { IhrPincodeDistrictChoice } from "@/components/ihr/IhrPincodeDistrictChoice"; // IndieHR P1-T7b
+
+import { usePincodeAutofill } from "@/Utils/ihr/pincode"; // IndieHR P1-T7b
 import query from "@/Utils/request/query";
 import {
   Organization,
@@ -24,6 +27,8 @@ interface GovtOrganizationPickerProps {
   requiredDepth?: number;
   /** Bearer token for unauthenticated (public) usage. */
   authToken?: string;
+  /** IndieHR P1-T7b: a PIN code the user typed; fills state and district. */
+  pincode?: number | string | null;
 
   ref?: React.RefCallback<HTMLButtonElement | null>;
 
@@ -120,6 +125,7 @@ export default function GovtOrganizationPicker({
   required,
   requiredDepth,
   authToken,
+  pincode,
   ref,
   ...props
 }: GovtOrganizationPickerProps) {
@@ -140,6 +146,14 @@ export default function GovtOrganizationPicker({
     }
     setSelectedLevels(levels);
   }, [value]);
+
+  // IndieHR P1-T7b: fill state and district from the PIN code
+  const { districts } = usePincodeAutofill({
+    pincode,
+    authToken,
+    value,
+    onChange,
+  });
 
   const handleSelect = (index: number, organization: Organization | null) => {
     // Clearing a level removes it and every deeper level.
@@ -174,6 +188,8 @@ export default function GovtOrganizationPicker({
           onSelect={(organization) => handleSelect(index, organization)}
         />
       ))}
+      {/* IndieHR P1-T7b: district quick-pick for a multi-district PIN */}
+      <IhrPincodeDistrictChoice districts={districts} onPick={onChange} />
     </>
   );
 }

@@ -14,6 +14,7 @@ import {
 } from "@/components/ui/sheet";
 
 import CareIcon from "@/CAREUI/icons/CareIcon";
+import { indiaDateTime } from "@/Utils/ihr/indiaDateFormats"; // IndieHR P1-T7b
 import query from "@/Utils/request/query";
 import { formatName } from "@/Utils/utils";
 import diagnosticReportApi from "@/types/emr/diagnosticReport/diagnosticReportApi";
@@ -93,9 +94,7 @@ export function ObservationHistorySheet({
                         <p className="text-gray-500">{t("modified_date")}</p>
                         <p>
                           {observation.effective_datetime
-                            ? new Date(
-                                observation.effective_datetime,
-                              ).toLocaleString()
+                            ? indiaDateTime(observation.effective_datetime)
                             : "-"}
                         </p>
                       </div>

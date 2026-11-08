@@ -48,6 +48,7 @@ import accountApi from "@/types/billing/account/accountApi";
 import { EncounterListRead, Period } from "@/types/emr/encounter/encounter";
 import encounterApi from "@/types/emr/encounter/encounterApi";
 import { PatientRead } from "@/types/emr/patient/patient";
+import { indiaDate } from "@/Utils/ihr/indiaDateFormats"; // IndieHR P1-T7b
 import mutate from "@/Utils/request/mutate";
 import query from "@/Utils/request/query";
 import { PaginatedResponse } from "@/Utils/request/types";
@@ -357,7 +358,7 @@ function AccountSheet({
                                 key={encounter.id}
                                 value={encounter.id}
                               >
-                                {`${t(encounter.encounter_class)} - ${t(encounter.status)} (${new Date(encounter.period.start || "").toLocaleDateString("en-IN")})`}
+                                {`${t(encounter.encounter_class)} - ${t(encounter.status)} (${indiaDate(encounter.period.start || "")})`}
                               </SelectItem>
                             ))}
                           </SelectContent>

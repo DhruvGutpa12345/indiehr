@@ -21,6 +21,7 @@ import { careConsoleArt } from "./plugins/careConsoleArt";
 import { fixSonnerPackageJson } from "./plugins/fixSonnerPackageJson";
 import { treeShakeCareIcons } from "./plugins/treeShakeCareIcons";
 import validateEnv from "./scripts/validate-env";
+import { indiaDateFnsPlugin } from "./src/Utils/ihr/indiaDateFnsVite"; // IndieHR P1-T7b
 
 const LOCAL_PLUGIN_MODULE_ID = "virtual:care-local-plugins";
 const RESOLVED_LOCAL_PLUGIN_MODULE_ID = `\0${LOCAL_PLUGIN_MODULE_ID}`;
@@ -425,6 +426,7 @@ export default defineConfig(async ({ mode }): Promise<UserConfig> => {
       ),
     },
     plugins: [
+      indiaDateFnsPlugin(path.resolve(__dirname, "src")), // IndieHR P1-T7b: India date formats
       careConsoleArt(),
       fixSonnerPackageJson(),
       localPluginDevSupport(),

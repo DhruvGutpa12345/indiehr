@@ -44,6 +44,10 @@ import {
 import { TableSkeleton } from "@/components/Common/SkeletonLoading";
 import TagAssignmentSheet from "@/components/Tags/TagAssignmentSheet";
 
+import {
+  indiaDateString,
+  indiaDateTimeString,
+} from "@/Utils/ihr/indiaDateFormats"; // IndieHR P1-T7b
 import mutate from "@/Utils/request/mutate";
 import query from "@/Utils/request/query";
 import { getPermissions } from "@/common/Permissions";
@@ -82,7 +86,7 @@ import ChargeItemsTable from "./components/ChargeItemsTable";
 
 function formatDate(date?: string) {
   if (!date) return "-";
-  return new Date(date).toLocaleDateString("en-IN", {
+  return indiaDateString(new Date(date), {
     month: "short",
     day: "numeric",
     year: "numeric",
@@ -685,7 +689,7 @@ function AccountShow({
             {account.calculated_at && (
               <span
                 className="text-xs text-gray-500 cursor-default"
-                title={new Date(account.calculated_at).toLocaleString("en-IN", {
+                title={indiaDateTimeString(account.calculated_at, {
                   month: "short",
                   day: "numeric",
                   year: "numeric",

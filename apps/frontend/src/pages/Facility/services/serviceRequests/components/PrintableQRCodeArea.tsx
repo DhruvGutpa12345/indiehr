@@ -6,6 +6,8 @@ import { cn } from "@/lib/utils";
 
 import { SpecimenRead } from "@/types/emr/specimen/specimen";
 
+import { indiaDate } from "@/Utils/ihr/indiaDateFormats"; // IndieHR P1-T7b
+
 interface PrintableQRCodeAreaProps {
   specimens: SpecimenRead[];
   logoSize: number;
@@ -85,7 +87,7 @@ export function PrintableQRCodeArea({
       {/* Footer */}
       <div className="mt-8 space-y-1 pt-2 text-[10px] text-gray-500 flex justify-between print:text-gray-600">
         <p>
-          {t("generated_on")} {new Date().toLocaleDateString()}
+          {t("generated_on")} {indiaDate(new Date())}
         </p>
         <p className="print:hidden">
           {t("total_qr_codes")}: {specimens.length}

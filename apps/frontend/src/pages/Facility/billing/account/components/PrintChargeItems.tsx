@@ -56,6 +56,7 @@ import { PatientIdentifierUse } from "@/types/patient/patientIdentifierConfig/pa
 import useFilters from "@/hooks/useFilters";
 
 import { add, multiply, round } from "@/Utils/decimal";
+import { indiaDate } from "@/Utils/ihr/indiaDateFormats"; // IndieHR P1-T7b
 import query from "@/Utils/request/query";
 import { formatDateTime, formatName, formatPatientAge } from "@/Utils/utils";
 import BackButton from "@/components/Common/BackButton";
@@ -506,9 +507,9 @@ export const PrintChargeItems = (props: {
                                 value={
                                   account?.primary_encounter &&
                                   account?.primary_encounter.period.start &&
-                                  new Date(
+                                  indiaDate(
                                     account?.primary_encounter.period.start,
-                                  ).toLocaleDateString("en-IN")
+                                  )
                                 }
                                 width="w-24"
                               />
@@ -517,9 +518,9 @@ export const PrintChargeItems = (props: {
                                 value={
                                   account?.primary_encounter &&
                                   account?.primary_encounter.period.end &&
-                                  new Date(
+                                  indiaDate(
                                     account?.primary_encounter.period.end,
-                                  ).toLocaleDateString("en-IN")
+                                  )
                                 }
                                 width="w-24"
                               />

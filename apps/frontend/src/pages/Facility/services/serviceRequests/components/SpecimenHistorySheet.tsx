@@ -20,6 +20,7 @@ import {
   SpecimenRead,
 } from "@/types/emr/specimen/specimen";
 import { round } from "@/Utils/decimal";
+import { indiaDateTime } from "@/Utils/ihr/indiaDateFormats"; // IndieHR P1-T7b
 
 // Processing entries are embedded values without IDs. Count identical signatures
 // separately so duplicate events retain unique keys without depending on list order.
@@ -90,9 +91,9 @@ export function SpecimenHistorySheet({
                         <p className="text-gray-500">{t("collected_at")}</p>
                         <p>
                           {specimen.collection?.collected_date_time
-                            ? new Date(
+                            ? indiaDateTime(
                                 specimen.collection.collected_date_time,
-                              ).toLocaleString()
+                              )
                             : "-"}
                         </p>
                       </div>

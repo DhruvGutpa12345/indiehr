@@ -1,6 +1,7 @@
 """Who is acting, handed to the row triggers through two database session settings.
 
-    ihr.audit_ctx    JSON: request id, client address, method, path, purpose, how (web, task)
+    ihr.audit_ctx    JSON: request id, client address, method, path, purpose, how (web, task),
+                     and the device's time zone when it is not IST (``tz``, P1-T7b)
     ihr.audit_actor  the signed-in actor, set as soon as the person is known
 
 Both are session-level and are overwritten at the start of every request and task and cleared
@@ -109,6 +110,25 @@ _UUID = re.compile(
 _KEY = re.compile(r"^[A-Za-z0-9_.\[\]-]{1,40}$")
 _PHONE = re.compile(r"^\+?[\d -]{10,}$")  # phone-length: last 4 kept, like stored ones
 
+# The device's time zone, sent by our web app as X-IHR-TZ (P1-T7b): an IANA name, or
+# "UTC+hh:mm" when the browser cannot name it. Staff computers must be on IST; a change made
+# from any other zone is noted in the trail (the times typed in may be off). Only recorded,
+# never trusted for anything else: anything that does not look like a zone is "invalid".
+IST_ZONES = frozenset(("Asia/Kolkata", "Asia/Calcutta", "UTC+05:30"))
+MAX_ZONE = 64
+_ZONE = re.compile(r"^[A-Za-z0-9_+\-/:]{1,64}$")
+
+
+def device_zone(request):
+    """The zone to note for this request: None when IST or not sent (scripts, old pages)."""
+    value = request.META.get("HTTP_X_IHR_TZ")
+    if value is None:
+        return None
+    value = value.strip()
+    if len(value) > MAX_ZONE or not _ZONE.match(value):
+        return "invalid"
+    return None if value in IST_ZONES else value
+
 
 def _mask(name, value):
     """Kept: values of known paging/filter parameters, and record ids (UUIDs) anywhere.
@@ -147,6 +167,8 @@ def request_context(request, purpose):
         ctx["fwd"] = forwarded[:200]
     if query:
         ctx["query"] = query[:MAX_QUERY]
+    if zone := device_zone(request):
+        ctx["tz"] = zone  # also on every row this request changes
     return ctx
 
 

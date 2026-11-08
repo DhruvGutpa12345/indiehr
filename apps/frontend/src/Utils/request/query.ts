@@ -1,5 +1,6 @@
 import careConfig from "@careConfig";
 
+import { addTimeZoneHeader } from "@/Utils/ihr/deviceTimeZone";
 import { addSessionHeaders } from "@/Utils/ihr/staffSession";
 import {
   ApiCallOptions,
@@ -27,6 +28,7 @@ export async function callApi<Route extends ApiRoute<unknown, unknown>>(
 
   const headers = makeHeaders(noAuth ?? false, options?.headers, isFormData);
   addSessionHeaders(url, headers); // IndieHR (P1-T4b): CSRF + idle headers, own API only
+  addTimeZoneHeader(url, headers); // IndieHR P1-T7b: device time zone, own API only
   const fetchOptions: RequestInit = {
     method,
     headers,

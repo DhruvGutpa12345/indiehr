@@ -27,6 +27,7 @@ import { PrintTemplateType } from "@/types/facility/printTemplate";
 import { PatientIdentifierUse } from "@/types/patient/patientIdentifierConfig/patientIdentifierConfig";
 
 import { round } from "@/Utils/decimal";
+import { indiaDate } from "@/Utils/ihr/indiaDateFormats"; // IndieHR P1-T7b
 import query from "@/Utils/request/query";
 import { PaginatedResponse } from "@/Utils/request/types";
 import { formatPatientAge } from "@/Utils/utils";
@@ -105,9 +106,7 @@ const DispenseOrderContent = ({
                       "dd/MM/yyyy",
                     )
                   : "-",
-                prepared_date: new Date(
-                  dispense.when_prepared,
-                ).toLocaleDateString(),
+                prepared_date: indiaDate(dispense.when_prepared),
               };
             })}
           />

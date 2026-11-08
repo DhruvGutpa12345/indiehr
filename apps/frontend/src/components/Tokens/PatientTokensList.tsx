@@ -22,6 +22,7 @@ import {
   TOKEN_STATUS_COLORS,
   TokenRetrieve,
 } from "@/types/tokens/token/token";
+import { indiaDate } from "@/Utils/ihr/indiaDateFormats"; // IndieHR P1-T7b
 import query from "@/Utils/request/query";
 import { dateQueryString } from "@/Utils/utils";
 import { ChevronsDownUp, ChevronsUpDown, TicketIcon } from "lucide-react";
@@ -100,11 +101,7 @@ export default function PatientTokensList({
             className="border-gray-300"
             dateFormat={
               selectedDate.toDateString() === new Date().toDateString()
-                ? `'Today (${selectedDate.toLocaleDateString("default", {
-                    day: "2-digit",
-                    month: "short",
-                    year: "numeric",
-                  })})'`
+                ? `'Today (${indiaDate(selectedDate)})'`
                 : "dd MMM yyyy"
             }
           />

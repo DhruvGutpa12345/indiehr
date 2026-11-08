@@ -25,6 +25,7 @@ import {
 import useFilters from "@/hooks/useFilters";
 
 import { isLessThan, round } from "@/Utils/decimal";
+import { indiaDate } from "@/Utils/ihr/indiaDateFormats"; // IndieHR P1-T7b
 import { getExpiryBadgeVariant, getExpiryStatus } from "@/Utils/inventory";
 import query from "@/Utils/request/query";
 import { dateQueryString, parseValidISO } from "@/Utils/utils";
@@ -248,9 +249,7 @@ export function InventoryList({ facilityId, locationId }: InventoryListProps) {
                     {inventory.product.expiration_date ? (
                       <div className="flex items-center gap-2">
                         <span>
-                          {new Date(
-                            inventory.product.expiration_date,
-                          ).toLocaleDateString()}
+                          {indiaDate(inventory.product.expiration_date)}
                         </span>
                         <ExpiryStatusBadge
                           expirationDate={inventory.product.expiration_date}

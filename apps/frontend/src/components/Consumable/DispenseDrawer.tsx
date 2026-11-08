@@ -86,6 +86,7 @@ import {
   round,
   zodDecimal,
 } from "@/Utils/decimal";
+import { formatInr } from "@/Utils/ihr/money";
 import { isLotAllowedForDispensing } from "@/Utils/inventory";
 import { ShortcutBadge } from "@/Utils/keyboardShortcutComponents";
 
@@ -798,6 +799,7 @@ export default function DispenseDrawer({
                                               key={lot.selectedInventoryId}
                                               className="py-2.5 text-gray-950 font-normal text-base"
                                             >
+                                              {/* IndieHR P1-T7b: ₹ with Indian grouping */}
                                               {selectedInventory?.product.charge_item_definition?.price_components
                                                 .filter(
                                                   (c) =>
@@ -806,7 +808,7 @@ export default function DispenseDrawer({
                                                 )
                                                 .map(
                                                   (c) =>
-                                                    `${c.code?.display || t("inr")} ${c.amount} `,
+                                                    `${c.code?.display || ""} ${formatInr(c.amount)} `,
                                                 )
                                                 .join(" ") || "-"}
                                             </div>

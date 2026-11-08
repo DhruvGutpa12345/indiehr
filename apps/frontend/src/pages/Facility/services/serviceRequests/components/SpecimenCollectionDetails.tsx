@@ -18,6 +18,7 @@ import {
 
 import { cn } from "@/lib/utils";
 import { SpecimenRead } from "@/types/emr/specimen/specimen";
+import { indiaDateTime } from "@/Utils/ihr/indiaDateFormats"; // IndieHR P1-T7b
 import { formatName } from "@/Utils/utils";
 
 import { formatQuantity } from "./specimenQuantity";
@@ -77,9 +78,7 @@ export function SpecimenCollectionDetails({
                     {t("collected_time")}
                   </TableHead>
                   <TableCell className="text-gray-950 font-semibold">
-                    {new Date(
-                      specimen.collection.collected_date_time,
-                    ).toLocaleString()}
+                    {indiaDateTime(specimen.collection.collected_date_time)}
                   </TableCell>
                 </TableRow>
               )}

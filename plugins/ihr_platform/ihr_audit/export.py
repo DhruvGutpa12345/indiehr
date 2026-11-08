@@ -53,6 +53,7 @@ CSV_HEADER = (
     "path",
     "query",
     "task",
+    "device_tz",  # IndieHR P1-T7b: zone of a non-IST device
     "status",
     "table",
     "operation",
@@ -232,6 +233,7 @@ class Export:
                                 context.get("path"),
                                 mask_query(context.get("query")),
                                 context.get("task"),
+                                context.get("tz"),
                                 status,
                                 tbl,
                                 OP_NAMES.get(op),

@@ -181,6 +181,7 @@ def summary(row, patients, limit=PATIENTS_PER_ROW):
         "query": mask_query(ctx.get("query")),
         "task": ctx.get("task"),
         "request_id": ctx.get("rid"),
+        "device_tz": ctx.get("tz"),  # set only when the device was not on IST (P1-T7b)
         "table": row["tbl"],
         "op": OP_NAMES.get(row["op"]),
         "record": row["row_pk"],

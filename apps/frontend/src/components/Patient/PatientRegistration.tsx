@@ -894,6 +894,12 @@ const AdditionalDetailsContent = ({
                   required={minGeoOrganizationLevelsRequired == null}
                   requiredDepth={minGeoOrganizationLevelsRequired}
                   value={form.watch("_selected_levels")[0] ?? null}
+                  // IndieHR P1-T7b: only a PIN the user changed fills the address
+                  pincode={
+                    form.formState.dirtyFields.pincode
+                      ? form.watch("pincode")
+                      : undefined
+                  }
                   onChange={(organization) => {
                     form.setValue(
                       "_selected_levels",

@@ -371,6 +371,12 @@ export default function FacilityForm({
                         aria-invalid={!!fieldState.error}
                         required
                         value={selectedGeoOrg}
+                        // IndieHR P1-T7b: only a PIN the user changed fills the address
+                        pincode={
+                          form.formState.dirtyFields.pincode
+                            ? form.watch("pincode")
+                            : undefined
+                        }
                         onChange={(organization) => {
                           setSelectedGeoOrg(organization);
                           const isValid =

@@ -287,7 +287,8 @@ export const TokenSlotButton = ({
       )}
     >
       <span className="font-semibold">
-        {format(slot.start_datetime, "HH:mm")}
+        {/* IndieHR P1-T7b: 12-hour time */}
+        {format(slot.start_datetime, "hh:mm a")}
       </span>
       <span
         className={cn(

@@ -245,8 +245,9 @@ class DirectoryTests(SimpleTestCase):
             data = response.json()
             connection.set_schema(TEST_SCHEMA)
             new_delhi = Organization.objects.get(name="New Delhi")
+            ids = ("state_code", "state", "district", "state_organization")
             self.assertEqual(
-                data["places"],
+                [{k: p[k] for k in (*ids, "geo_organization")} for p in data["places"]],
                 [
                     {
                         "state_code": "07",
@@ -266,6 +267,19 @@ class DirectoryTests(SimpleTestCase):
                     },
                 ],
             )
+            # Full organisations for the address form (P1-T7b), as CARE's list returns them
+            district = data["places"][1]["geo_organization_object"]
+            self.assertEqual(
+                (district["id"], district["name"], district["level_cache"]),
+                (str(new_delhi.external_id), "New Delhi", 1),
+            )
+            self.assertFalse(district["has_children"])
+            self.assertEqual(
+                district["parent"]["id"], str(new_delhi.parent.external_id)
+            )
+            state = data["places"][0]["state_organization_object"]
+            self.assertEqual((state["name"], state["level_cache"]), ("Delhi", 0))
+            self.assertTrue(state["has_children"])
             self.assertEqual(
                 [o["name"] for o in data["post_offices"]],
                 ["Sample Border S.O", "Connaught Place S.O"],
@@ -275,3 +289,40 @@ class DirectoryTests(SimpleTestCase):
             connection.set_schema(TEST_SCHEMA)
             StaffIdentity.objects.filter(user=user).delete()
             user.delete()
+
+    def test_lookup_from_the_patient_page(self):
+        """A patient signed in by OTP on this hospital's appointment page may look up a PIN
+        (P1-T7b); a token issued by another hospital, or none, is refused."""
+        from config.patient_otp_token import PatientToken
+
+        url = "/api/ihr/pincode/110001/"
+        self._load()
+        connection.set_schema(TEST_SCHEMA)
+        geography.load_all()
+        token = PatientToken()  # bound to this hospital's schema ("tid")
+        token["phone_number"] = "+919999999999"  # synthetic
+        self.assertEqual(token["tid"], TEST_SCHEMA)
+        other = PatientToken()
+        other["phone_number"] = "+919999999999"
+        other["tid"] = "h_otherhosp01"  # as minted by another hospital
+
+        patient = APIClient(HTTP_HOST="testserver")
+        patient.credentials(HTTP_AUTHORIZATION=f"Bearer {token}")
+        response = patient.get(url)
+        self.assertEqual(response.status_code, 200, response.content[:300])
+        places = response.json()["places"]
+        # 110001 spans two districts: both are offered, each with its organisation
+        self.assertEqual(
+            [p["geo_organization_object"]["name"] for p in places],
+            ["Central Delhi", "New Delhi"],
+        )
+        self.assertEqual(
+            {p["state_organization_object"]["name"] for p in places}, {"Delhi"}
+        )
+
+        foreign = APIClient(HTTP_HOST="testserver")
+        foreign.credentials(HTTP_AUTHORIZATION=f"Bearer {other}")
+        self.assertIn(foreign.get(url).status_code, (401, 403))
+        self.assertIn(
+            APIClient(HTTP_HOST="testserver").get(url).status_code, (401, 403)
+        )

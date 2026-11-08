@@ -23,6 +23,7 @@ from ihr_platform.test_runner import TEST_SCHEMA
 from rest_framework.test import APIClient
 
 from ihr_tenant_settings.branding import initials
+from ihr_tenant_settings.device_time import WARNING_SCRIPT
 from ihr_tenant_settings.models import HospitalProfile
 from ihr_tenant_settings.validators import (
     gstin_check_character,
@@ -243,7 +244,8 @@ class HospitalProfileTests(SimpleTestCase):
         self.assertIn(
             'window.__IHR_AUTH__ = {"idle_seconds": 1800, "warn_seconds": 120};', body
         )
-        self.assertNotIn("<", body)
+        self.assertNotIn("<", body)  # the time-zone warning included (P1-T7b)
+        self.assertTrue(body.endswith(WARNING_SCRIPT))
         self.assertEqual(response["Content-Type"], "text/javascript; charset=utf-8")
         self.assertEqual(response["X-Content-Type-Options"], "nosniff")
 

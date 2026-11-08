@@ -1,5 +1,5 @@
 from datetime import date, datetime
-from decimal import Decimal
+from decimal import ROUND_HALF_UP, Decimal, InvalidOperation
 
 from django.utils.timezone import is_aware, localtime, make_aware
 from jinja2 import BaseLoader, Environment, StrictUndefined, TemplateSyntaxError
@@ -98,15 +98,20 @@ class TemplateEngine:
     def _filter_currency(value: int | float | str, symbol: str = "₹") -> str:
         if value is None or value == "":
             return ""
+        # IndieHR P1-T7b: round to paise (half up) before splitting; floats via
+        # str() so 1.995 stays 1.995; always two decimals (₹1,00,000.00).
         try:
-            amount = Decimal(value)
-        except (ValueError, TypeError):
+            amount = Decimal(str(value) if isinstance(value, float) else value)
+            amount = amount.quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+        except (ValueError, TypeError, InvalidOperation):
+            return str(value)
+        if amount.is_nan():
             return str(value)
 
         negative = amount < 0
         amount = abs(amount)
         rupees = int(amount)
-        paise = round((amount - rupees) * 100)
+        paise = int((amount - rupees) * 100)
 
         rupees_str = str(rupees)
         if len(rupees_str) <= 3:  # noqa: PLR2004
@@ -121,8 +126,7 @@ class TemplateEngine:
                 formatted = digit + formatted
             formatted = formatted + "," + last_three
 
-        if paise > 0:
-            formatted = f"{formatted}.{paise:02d}"
+        formatted = f"{formatted}.{paise:02d}"
 
         result = f"{symbol}{formatted}"
         if negative:

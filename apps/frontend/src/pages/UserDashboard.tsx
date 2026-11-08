@@ -27,6 +27,7 @@ import { useAccessibleRoleOrganizationsList } from "@/hooks/useAccessibleRoleOrg
 import useAuthUser, { useAuthContext } from "@/hooks/useAuthUser";
 import useBreakpoints from "@/hooks/useBreakpoints";
 
+import { indiaDateString } from "@/Utils/ihr/indiaDateFormats"; // IndieHR P1-T7b
 import { formatName } from "@/Utils/utils";
 import { EmptyState } from "@/components/ui/empty-state";
 import { Input } from "@/components/ui/input";
@@ -106,7 +107,7 @@ export default function UserDashboard() {
               })}
             </h1>
             <p className="text-sm md:text-base text-gray-500">
-              {new Date().toLocaleDateString("en-US", {
+              {indiaDateString(new Date(), {
                 weekday: "long",
                 year: "numeric",
                 month: "long",

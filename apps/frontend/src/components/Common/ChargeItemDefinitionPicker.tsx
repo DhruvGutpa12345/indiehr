@@ -289,8 +289,8 @@ export function ChargeItemDefinitionPicker({
                                   amount={definition.price_components[0].amount}
                                 />
                               )}{" "}
-                              {definition.price_components[0].code?.code ||
-                                "INR"}
+                              {/* IndieHR P1-T7b: no "INR" after the ₹ amount */}
+                              {definition.price_components[0].code?.code}
                             </div>
                           )}
                         </div>

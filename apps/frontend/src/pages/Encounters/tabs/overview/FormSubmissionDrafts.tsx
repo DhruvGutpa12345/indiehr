@@ -14,6 +14,7 @@ import { FormSubmissionRead } from "@/types/questionnaire/formSubmission";
 import formSubmissionApi from "@/types/questionnaire/formSubmissionApi";
 import { Question } from "@/types/questionnaire/question";
 import { QuestionnaireRead } from "@/types/questionnaire/questionnaire";
+import { indiaDateTime } from "@/Utils/ihr/indiaDateFormats"; // IndieHR P1-T7b
 import mutate from "@/Utils/request/mutate";
 import query from "@/Utils/request/query";
 
@@ -92,9 +93,9 @@ export function FormSubmissionDrafts({
                 <CardTitle className="text-base flex items-center justify-between">
                   <span className="text-muted-foreground text-sm">
                     {questionnaire.title} - {t("saved_on")}{" "}
-                    {new Date(
+                    {indiaDateTime(
                       submission.modified_date || submission.created_date,
-                    ).toLocaleString()}
+                    )}
                   </span>
                   <div className="flex gap-2">
                     <Button

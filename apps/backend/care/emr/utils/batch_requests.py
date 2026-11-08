@@ -14,6 +14,7 @@ HEADERS_TO_INCLUDE = [
     "HTTP_COOKIE",
     "HTTP_X_IHR_CSRF",
     "HTTP_X_IHR_IDLE",
+    "HTTP_X_IHR_TZ",  # IndieHR P1-T7b: the device's time zone, for the audit trail
     "HTTP_ORIGIN",
     "HTTP_SEC_FETCH_SITE",
 ]

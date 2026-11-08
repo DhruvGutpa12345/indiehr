@@ -52,6 +52,7 @@ import {
 import accountApi from "@/types/billing/account/accountApi";
 import { TagConfig, TagResource } from "@/types/emr/tagConfig/tagConfig";
 import useTagConfigs from "@/types/emr/tagConfig/useTagConfig";
+import { indiaDateString } from "@/Utils/ihr/indiaDateFormats"; // IndieHR P1-T7b
 import query from "@/Utils/request/query";
 import { dateTimeQueryString } from "@/Utils/utils";
 
@@ -60,7 +61,7 @@ import AccountSheet from "./AccountSheet";
 
 function formatDate(date?: string) {
   if (!date) return "-";
-  return new Date(date).toLocaleDateString("en-IN", {
+  return indiaDateString(new Date(date), {
     month: "short",
     day: "numeric",
     year: "numeric",

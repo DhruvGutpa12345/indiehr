@@ -21,7 +21,7 @@ import { round } from "@/Utils/decimal";
 import mutate from "@/Utils/request/mutate";
 import query from "@/Utils/request/query";
 import BackButton from "@/components/Common/BackButton";
-import { getCurrencySymbol } from "@/components/ui/monetary-display";
+import { MonetaryDisplay } from "@/components/ui/monetary-display";
 import { ConditionOperationSummary } from "@/types/base/condition/condition";
 import {
   MonetaryComponent,
@@ -103,8 +103,8 @@ export function ChargeItemDefinitionDetail({
         <div className="text-right">
           {component.amount ? (
             <p className="font-medium">
-              {getCurrencySymbol()}
-              {round(component.amount)}
+              {/* IndieHR P1-T7b: Indian grouping */}
+              <MonetaryDisplay amount={component.amount} />
             </p>
           ) : component.factor ? (
             <p className="font-medium">{round(component.factor)}%</p>

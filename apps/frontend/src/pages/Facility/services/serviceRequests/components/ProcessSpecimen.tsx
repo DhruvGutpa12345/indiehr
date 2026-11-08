@@ -23,6 +23,7 @@ import {
   ProcessingReadSpec,
   ProcessingSpec,
 } from "@/types/emr/specimen/specimen";
+import { indiaDateTimeString } from "@/Utils/ihr/indiaDateFormats"; // IndieHR P1-T7b
 import { ShortcutBadge } from "@/Utils/keyboardShortcutComponents";
 import { formatName } from "@/Utils/utils";
 
@@ -148,7 +149,7 @@ export function ProcessSpecimen({
                 <div className="text-sm text-gray-600 mt-0.5">
                   {t("performed_on")}:{" "}
                   {process.time_date_time
-                    ? new Date(process.time_date_time).toLocaleString("en-US", {
+                    ? indiaDateTimeString(process.time_date_time, {
                         year: "numeric",
                         month: "short",
                         day: "2-digit",

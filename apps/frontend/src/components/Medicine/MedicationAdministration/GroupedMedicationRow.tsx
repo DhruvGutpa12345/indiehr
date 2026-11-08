@@ -36,6 +36,8 @@ import {
   ProductKnowledgeType,
 } from "@/types/inventory/productKnowledge/productKnowledge";
 
+import { indiaTime } from "@/Utils/ihr/indiaDateFormats"; // IndieHR P1-T7b
+
 import {
   getGroupActiveWindow,
   getGroupAdministrationsForTimeSlot,
@@ -242,10 +244,7 @@ const IndividualMedicationRow: React.FC<{
                     onClick={() => onEditAdministration(medication, admin)}
                   >
                     <CareIcon icon="l-check-circle" className="size-3" />
-                    {new Date(admin.occurrence_period_start).toLocaleTimeString(
-                      "en-US",
-                      { hour: "numeric", minute: "2-digit", hour12: true },
-                    )}
+                    {indiaTime(admin.occurrence_period_start)}
                   </button>
                 );
               })}
@@ -520,13 +519,7 @@ export const GroupedMedicationRow: React.FC<GroupedMedicationRowProps> = ({
                           if (med) onEditAdministration(med, admin);
                         }}
                       >
-                        {new Date(
-                          admin.occurrence_period_start,
-                        ).toLocaleTimeString("en-US", {
-                          hour: "numeric",
-                          minute: "2-digit",
-                          hour12: true,
-                        })}
+                        {indiaTime(admin.occurrence_period_start)}
                       </button>
                     );
                   })}

@@ -11,6 +11,7 @@ import { formatValue } from "@/components/Facility/ConsultationDetails/Questionn
 import { useEncounter } from "@/pages/Encounters/utils/EncounterProvider";
 import { ObservationListRead } from "@/types/emr/observation/observation";
 import observationApi from "@/types/emr/observation/observationApi";
+import { indiaDateString, indiaTimeString } from "@/Utils/ihr/indiaDateFormats"; // IndieHR P1-T7b
 import query from "@/Utils/request/query";
 import { HTTPError, PaginatedResponse } from "@/Utils/request/types";
 import { formatName } from "@/Utils/utils";
@@ -34,7 +35,7 @@ function formatDisplayDate(dateStr: string) {
   yesterday.setHours(0, 0, 0, 0);
   date.setHours(0, 0, 0, 0);
 
-  const formattedDate = date.toLocaleDateString("default", {
+  const formattedDate = indiaDateString(date, {
     year: "numeric",
     month: "long",
     day: "numeric",
@@ -49,7 +50,7 @@ function formatDisplayDate(dateStr: string) {
 }
 
 function formatDisplayTime(dateStr: string) {
-  return new Date(dateStr).toLocaleTimeString("en-US", {
+  return indiaTimeString(dateStr, {
     hour: "2-digit",
     minute: "2-digit",
   });

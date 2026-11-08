@@ -7,6 +7,7 @@ import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Drawer, DrawerContent } from "@/components/ui/drawer";
 import { Input } from "@/components/ui/input";
+import { MonetaryDisplay } from "@/components/ui/monetary-display";
 import {
   Popover,
   PopoverContent,
@@ -45,7 +46,6 @@ import {
   ChargeItemDefinitionRead,
 } from "@/types/billing/chargeItemDefinition/chargeItemDefinition";
 import { UserReadMinimal } from "@/types/user/user";
-import { round } from "@/Utils/decimal";
 import mutate from "@/Utils/request/mutate";
 
 interface AddMultipleChargeItemsSheetProps {
@@ -265,12 +265,13 @@ export default function AddMultipleChargeItemsSheet({
                         </label>
                         <div className="flex items-center gap-1">
                           <span>
-                            {round(
-                              item.charge_item_definition_object
-                                .price_components?.[0]?.amount || 0,
-                            )}{" "}
-                            {item.charge_item_definition_object
-                              .price_components?.[0]?.code?.code || "INR"}
+                            {/* IndieHR P1-T7b: Indian grouping */}
+                            <MonetaryDisplay
+                              amount={
+                                item.charge_item_definition_object
+                                  .price_components?.[0]?.amount || 0
+                              }
+                            />
                           </span>
                           {item.charge_item_definition_object.price_components
                             ?.length > 0 && (
@@ -329,12 +330,13 @@ export default function AddMultipleChargeItemsSheet({
                       <TableCell>
                         <div className="flex items-center gap-1">
                           <span>
-                            {round(
-                              item.charge_item_definition_object
-                                .price_components?.[0]?.amount || 0,
-                            )}{" "}
-                            {item.charge_item_definition_object
-                              .price_components?.[0]?.code?.code || "INR"}
+                            {/* IndieHR P1-T7b: Indian grouping */}
+                            <MonetaryDisplay
+                              amount={
+                                item.charge_item_definition_object
+                                  .price_components?.[0]?.amount || 0
+                              }
+                            />
                           </span>
                           {item.charge_item_definition_object.price_components
                             ?.length > 0 && (

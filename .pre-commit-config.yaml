@@ -56,3 +56,18 @@ repos:
         language: system
         files: ^scripts/(merge-locale|test_merge_locale)\.py$
         pass_filenames: false
+  # India date style in the web app (P1-T7b): every date display pattern is mapped or allowed.
+  - repo: local
+    hooks:
+      - id: india-date-formats
+        name: web app date formats are in the India date tables
+        entry: python3 scripts/check-date-formats.py
+        language: system
+        files: ^(apps/frontend/src/|scripts/(check-date-formats|test_check_date_formats)\.py$)
+        pass_filenames: false
+      - id: india-date-formats-tests
+        name: check-date-formats tests
+        entry: python3 -m unittest scripts/test_check_date_formats.py
+        language: system
+        files: ^scripts/(check-date-formats|test_check_date_formats)\.py$
+        pass_filenames: false

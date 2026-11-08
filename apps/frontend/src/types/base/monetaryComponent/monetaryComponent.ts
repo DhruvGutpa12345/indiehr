@@ -2,6 +2,7 @@ import { CURRENCY_SYMBOL } from "@/components/ui/monetary-display";
 import { Code } from "@/types/base/code/code";
 import { Condition } from "@/types/base/condition/condition";
 import {
+  ACCOUNTING_PRECISION,
   add,
   decimal,
   divide,
@@ -9,6 +10,7 @@ import {
   multiply,
   round,
 } from "@/Utils/decimal";
+import { formatInr } from "@/Utils/ihr/money";
 import Decimal from "decimal.js";
 
 export enum MonetaryComponentType {
@@ -98,9 +100,10 @@ export function formatComponentValue(
   currencySymbol = CURRENCY_SYMBOL,
 ): string {
   const value = getComponentNumericValue(component);
+  // IndieHR P1-T7b: Indian grouping, e.g. ₹1,00,000.00
   return isPercentageBased(component)
     ? `${round(value)}%`
-    : `${currencySymbol}${round(value)}`;
+    : formatInr(value, currencySymbol, ACCOUNTING_PRECISION);
 }
 
 /**

@@ -44,6 +44,8 @@ GOOD_SETTINGS = {
     "SECURE_PROXY_SSL_HEADER": ("HTTP_X_FORWARDED_PROTO", "https"),
     "SNOWSTORM_DEPLOYMENT_URL": "http://127.0.0.1:9/fhir",
     "SENTRY_DSN": "",
+    "TIME_ZONE": "Asia/Kolkata",
+    "USE_TZ": True,
 }
 
 
@@ -83,6 +85,8 @@ class SecureRulesTests(SimpleTestCase):
                 "SNOWSTORM_DEPLOYMENT_URL": "http://165.22.211.144/fhir"
             },
             "SENTRY_DSN must stay unset": {"SENTRY_DSN": "https://x@sentry.io/1"},
+            "TIME_ZONE must be Asia/Kolkata": {"TIME_ZONE": "UTC"},
+            "USE_TZ must be on": {"USE_TZ": False},
         }
         for expected, change in cases.items():
             with self.subTest(expected=expected):

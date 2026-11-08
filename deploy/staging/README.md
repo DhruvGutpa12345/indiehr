@@ -27,7 +27,29 @@ password and first-start admin, which `staging.sh` passes only to one-off comman
 
 **Settings** (`ihr_platform.settings.deployment`): the server refuses to start, naming every
 problem, without its own secret key, signing keys, hosts, https addresses, secure cookies, HSTS,
-production mode, or with CARE's terminology default or Sentry (`settings/secure.py`).
+production mode, or with CARE's terminology default or Sentry (`settings/secure.py`). It also
+refuses any `TIME_ZONE` other than `Asia/Kolkata`, or `USE_TZ` off (P1-T7b).
+
+## Staff computers must use India Standard Time (P1-T7b)
+
+The web app shows and takes every date and time in the computer's own time zone. A computer on
+another zone (a laptop set up abroad, a cloud desktop in a non-India region) shows wrong times
+and saves wrong ones. So every staff computer must be set to **India Standard Time**:
+
+| System | How (as an administrator) |
+|---|---|
+| Windows | `tzutil /s "India Standard Time"` (or Settings > Time & language > Date & time > Time zone "(UTC+05:30) Chennai, Kolkata, Mumbai, New Delhi"); Group Policy or Intune for many machines |
+| Linux (kiosk, thin client, cloud desktop) | `sudo timedatectl set-timezone Asia/Kolkata`; for one browser only, start it with `TZ=Asia/Kolkata` |
+| ChromeOS (managed) | Admin console: Devices > Settings > `SystemTimezone` = `Asia/Kolkata`, automatic detection off |
+| macOS | `sudo systemsetup -settimezone Asia/Kolkata` |
+
+Check it: open the hospital's address. On a computer that is not on IST a red bar (English and
+Hindi) stays at the top of every page, naming the computer's zone, until the zone is fixed; it
+re-checks every minute. Work is never blocked. The audit trail notes the computer's zone (`tz`
+in the entry's context, "device_tz" in the viewer and the CSV export) on every request and changed row made from a
+computer that is not on IST; a zone that only shares the offset (Asia/Colombo) also counts as
+not IST. Cause: `/api/ihr/bootstrap.js` (`ihr_tenant_settings/device_time.py`) and the
+`X-IHR-TZ` header the app sends to its own API.
 
 **Not yet** (P1-T8b–d): the VM, DNS and Let's Encrypt certificates (`compose.acme.yaml`), S3
 buckets and mail, NTP to NIC/NPL and 180-day journald retention on the host, backups and a

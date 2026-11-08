@@ -28,6 +28,7 @@ import {
   FileReadMinimal,
   getVideoMimeType,
 } from "@/types/files/file";
+import { indiaDateTime } from "@/Utils/ihr/indiaDateFormats"; // IndieHR P1-T7b
 import { ShortcutBadge } from "@/Utils/keyboardShortcutComponents";
 import { Printer } from "lucide-react";
 
@@ -237,12 +238,7 @@ export default function FilePreviewDialog(props: FilePreviewProps) {
                   uploadedFiles[index].created_date && (
                     <p className="mt-1 text-sm text-gray-600">
                       {t("created_on")}{" "}
-                      {new Date(
-                        uploadedFiles[index].created_date!,
-                      ).toLocaleString("en-US", {
-                        dateStyle: "long",
-                        timeStyle: "short",
-                      })}
+                      {indiaDateTime(uploadedFiles[index].created_date!)}
                     </p>
                   )}
               </div>
