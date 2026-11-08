@@ -1,0 +1,1545 @@
+key,english,why we think nothing shows it
+APPETITE__CANNOT_BE_ASSESSED,Cannot be assessed,"grep -F of key, prefix 'APPETITE' and value part over src/ plugins/ tests/ (non-locale) and apps/backend: 0 hits; no t(`APPETITE__${}`) template"
+APPETITE__INCREASED,Increased,no key or 'APPETITE' prefix anywhere in src/plugins/backend; no template
+APPETITE__NO_TASTE_FOR_FOOD,No taste for food,"no key, prefix or value NO_TASTE_FOR_FOOD in src/plugins/backend"
+APPETITE__REDUCED,Reduced,no key or 'APPETITE' prefix in src/plugins/backend
+APPETITE__SATISFACTORY,Satisfactory,no key or 'APPETITE' prefix in src/plugins/backend
+BLADDER_DRAINAGE__CONDOM_CATHETER,Condom Catheter,"no key, prefix 'BLADDER_DRAINAGE' or value CONDOM_CATHETER in src/plugins/backend"
+BLADDER_DRAINAGE__CONTINUOUS_INDWELLING_CATHETER,Continuous Indwelling Catheter,no key or 'BLADDER_DRAINAGE' prefix in src/plugins/backend
+BLADDER_DRAINAGE__CONTINUOUS_SUPRAPUBIC_CATHETER,Continuous Suprapubic Catheter,no key or 'BLADDER_DRAINAGE' prefix in src/plugins/backend
+BLADDER_DRAINAGE__DIAPER,Diaper,no key or 'BLADDER_DRAINAGE' prefix in src/plugins/backend
+BLADDER_DRAINAGE__INTERMITTENT_CATHETER,Intermittent Catheter,no key or 'BLADDER_DRAINAGE' prefix in src/plugins/backend
+BLADDER_DRAINAGE__NORMAL,Normal,no key or 'BLADDER_DRAINAGE' prefix in src/plugins/backend
+BLADDER_DRAINAGE__UROSTOMY,Urostomy,no key or 'BLADDER_DRAINAGE' prefix in src/plugins/backend
+BLADDER_ISSUE__HESITANCY,Hesitancy,no key or 'BLADDER_ISSUE' prefix in src/plugins/backend
+BLADDER_ISSUE__INCONTINENCE,Incontinence,no key or 'BLADDER_ISSUE' prefix in src/plugins/backend
+BLADDER_ISSUE__NO_ISSUES,No issues,no key or 'BLADDER_ISSUE' prefix in src/plugins/backend
+BLADDER_ISSUE__RETENTION,Retention,no key or 'BLADDER_ISSUE' prefix in src/plugins/backend
+BOWEL_ISSUE__CONSTIPATION,Constipation,no key or 'BOWEL_ISSUE' prefix in src/plugins/backend
+BOWEL_ISSUE__DIARRHOEA,Diarrhoea,no key or 'BOWEL_ISSUE' prefix in src/plugins/backend
+BOWEL_ISSUE__NO_DIFFICULTY,No difficulty,no key or 'BOWEL_ISSUE' prefix in src/plugins/backend
+DOMESTIC_HEALTHCARE_SUPPORT__FAMILY_MEMBER,Family member,no key or 'DOMESTIC_HEALTHCARE' prefix in src/plugins/backend
+DOMESTIC_HEALTHCARE_SUPPORT__NO_SUPPORT,No support,no key or 'DOMESTIC_HEALTHCARE' prefix in src/plugins/backend
+DOMESTIC_HEALTHCARE_SUPPORT__PAID_CAREGIVER,Paid caregiver,"no key, prefix or value PAID_CAREGIVER in src/plugins/backend"
+LOG_UPDATE_CREATED_NOTIFICATION,{{ roundType }} created successfully,no 'LOG_UPDATE' substring anywhere in src/plugins/backend (daily-rounds log update UI removed upstream)
+LOG_UPDATE_FIELD_LABEL__action,Action,no 'LOG_UPDATE' substring in src/plugins/backend; no template
+LOG_UPDATE_FIELD_LABEL__appetite,Appetite,no 'LOG_UPDATE' substring in src/plugins/backend
+LOG_UPDATE_FIELD_LABEL__bladder_drainage,Drainage,no 'LOG_UPDATE' substring in src/plugins/backend
+LOG_UPDATE_FIELD_LABEL__bladder_issue,Issues,no 'LOG_UPDATE' substring in src/plugins/backend
+LOG_UPDATE_FIELD_LABEL__blood_sugar_level,Blood Sugar Level,no 'LOG_UPDATE' substring in src/plugins/backend
+LOG_UPDATE_FIELD_LABEL__bowel_issue,Bowel,no 'LOG_UPDATE' substring in src/plugins/backend
+LOG_UPDATE_FIELD_LABEL__bp,Blood Pressure,no 'LOG_UPDATE' substring in src/plugins/backend
+LOG_UPDATE_FIELD_LABEL__consciousness_level,Level of Consciousness,no 'LOG_UPDATE' substring in src/plugins/backend
+LOG_UPDATE_FIELD_LABEL__is_experiencing_dysuria,Experiences Dysuria?,no 'LOG_UPDATE' substring in src/plugins/backend
+LOG_UPDATE_FIELD_LABEL__nutrition_route,Nutrition Route,no 'LOG_UPDATE' substring in src/plugins/backend
+LOG_UPDATE_FIELD_LABEL__oral_issue,Oral issues,no 'LOG_UPDATE' substring in src/plugins/backend
+LOG_UPDATE_FIELD_LABEL__other_details,Other details,no 'LOG_UPDATE' substring in src/plugins/backend
+LOG_UPDATE_FIELD_LABEL__patient_category,Category,no 'LOG_UPDATE' substring in src/plugins/backend
+LOG_UPDATE_FIELD_LABEL__physical_examination_info,Physical Examination Info,no 'LOG_UPDATE' substring in src/plugins/backend
+LOG_UPDATE_FIELD_LABEL__pulse,Pulse,no 'LOG_UPDATE' substring in src/plugins/backend
+LOG_UPDATE_FIELD_LABEL__resp,Respiratory Rate,no 'LOG_UPDATE' substring in src/plugins/backend
+LOG_UPDATE_FIELD_LABEL__review_interval,Review after,no 'LOG_UPDATE' substring in src/plugins/backend
+LOG_UPDATE_FIELD_LABEL__rhythm,Heartbeat Rhythm,no 'LOG_UPDATE' substring in src/plugins/backend
+LOG_UPDATE_FIELD_LABEL__rhythm_detail,Rhythm Description,no 'LOG_UPDATE' or 'rhythm_detail' in src/plugins/backend
+LOG_UPDATE_FIELD_LABEL__rounds_type,Rounds Type,no 'LOG_UPDATE' substring in src/plugins/backend
+LOG_UPDATE_FIELD_LABEL__sleep,Sleep,no 'LOG_UPDATE' substring in src/plugins/backend
+LOG_UPDATE_FIELD_LABEL__temperature,Temperature,no 'LOG_UPDATE' substring in src/plugins/backend
+LOG_UPDATE_FIELD_LABEL__urination_frequency,Frequency of Urination,no 'LOG_UPDATE' substring in src/plugins/backend
+LOG_UPDATE_FIELD_LABEL__ventilator_spo2,SpO₂,no 'LOG_UPDATE' substring in src/plugins/backend
+LOG_UPDATE_UPDATED_NOTIFICATION,{{ roundType }} updated successfully,no 'LOG_UPDATE' substring in src/plugins/backend
+NURSING_CARE_PROCEDURE__ascitic_tapping,Ascitic Tapping,no 'NURSING_CARE' prefix or value 'ascitic_tapping' in src/plugins/backend
+NURSING_CARE_PROCEDURE__bed_bath,Bed Bath,no 'NURSING_CARE' prefix in src/plugins/backend
+NURSING_CARE_PROCEDURE__catheter_change,Catheter Change,no 'NURSING_CARE' prefix in src/plugins/backend
+NURSING_CARE_PROCEDURE__colostomy_care,Colostomy Care,no 'NURSING_CARE' prefix in src/plugins/backend
+NURSING_CARE_PROCEDURE__colostomy_change,Colostomy Change,no 'NURSING_CARE' prefix in src/plugins/backend
+NURSING_CARE_PROCEDURE__eye_care,Eye Care,no 'NURSING_CARE' prefix in src/plugins/backend
+NURSING_CARE_PROCEDURE__hair_care,Hair Care,no 'NURSING_CARE' prefix in src/plugins/backend
+NURSING_CARE_PROCEDURE__lymphedema_care,Lymphedema Care,no 'NURSING_CARE' prefix in src/plugins/backend
+NURSING_CARE_PROCEDURE__oral_care,Oral Care,no 'NURSING_CARE' prefix in src/plugins/backend
+NURSING_CARE_PROCEDURE__perineal_care,Perineal Care,no 'NURSING_CARE' prefix in src/plugins/backend
+NURSING_CARE_PROCEDURE__pre_enema,P.R.E. Enema,no 'NURSING_CARE' prefix in src/plugins/backend
+NURSING_CARE_PROCEDURE__ryles_tube_change,Ryle's Tube Change,no 'NURSING_CARE' prefix in src/plugins/backend
+NURSING_CARE_PROCEDURE__skin_care,Skin Care,no 'NURSING_CARE' prefix in src/plugins/backend
+NURSING_CARE_PROCEDURE__tracheostomy_tube_change,Tracheostomy Tube Change,no 'NURSING_CARE' prefix in src/plugins/backend
+NURSING_CARE_PROCEDURE__wound_dressing,Wound Dressing,no 'NURSING_CARE' prefix in src/plugins/backend
+NUTRITION_ROUTE__GASTROSTOMY_OR_JEJUNOSTOMY,Gastrostomy / Jejunostomy,no 'NUTRITION_ROUTE' prefix in src/plugins/backend
+NUTRITION_ROUTE__ORAL,Oral,no 'NUTRITION_ROUTE' prefix in src/plugins/backend
+NUTRITION_ROUTE__PARENTERAL_TUBING_FLUID,Parenteral Tubing (Fluid),no 'NUTRITION_ROUTE' prefix in src/plugins/backend
+NUTRITION_ROUTE__PARENTERAL_TUBING_TPN,Parenteral Tubing (TPN),no 'NUTRITION_ROUTE' prefix in src/plugins/backend
+NUTRITION_ROUTE__PEG,PEG,no 'NUTRITION_ROUTE' prefix in src/plugins/backend
+NUTRITION_ROUTE__RYLES_TUBE,Ryle's Tube,no 'NUTRITION_ROUTE' prefix in src/plugins/backend
+ORAL_ISSUE__DYSPHAGIA,Dysphagia,no 'ORAL_ISSUE' prefix in src/plugins/backend
+ORAL_ISSUE__NO_ISSUE,No issues,no 'ORAL_ISSUE' prefix in src/plugins/backend
+ORAL_ISSUE__ODYNOPHAGIA,Odynophagia,no 'ORAL_ISSUE' prefix in src/plugins/backend
+OXYGEN_MODALITY__HIGH_FLOW_NASAL_CANNULA_short,HFNC,no 'OXYGEN_MODALITY' prefix or HIGH_FLOW_NASAL in src/plugins/backend; only `_short` template is age_${unit}_short (Utils/utils.ts:158)
+OXYGEN_MODALITY__NASAL_PRONGS_short,NP,no 'OXYGEN_MODALITY' prefix in src/plugins/backend
+OXYGEN_MODALITY__NON_REBREATHING_MASK_short,NRM,no 'OXYGEN_MODALITY' prefix in src/plugins/backend
+OXYGEN_MODALITY__SIMPLE_FACE_MASK_short,SFM,no 'OXYGEN_MODALITY' prefix in src/plugins/backend
+PRINTABLE_QR_CODE__print_title,QR Code - {{title}},"only PRINTABLE_QR_CODE__print_button (components/PrintableQRCode.tsx:71) and __print_error (Encounters/ReportViewer.tsx:369) are used, both literal; no 'print_title' anywhere, no template"
+ROUNDS_TYPE__AUTOMATED,Virtual Nursing Assistant,no 'ROUNDS_TYPE' prefix in src/plugins/backend
+ROUNDS_TYPE__COMMUNITY_NURSES_LOG,Community Nurse's Log,no 'ROUNDS_TYPE' prefix or COMMUNITY_NURSES_LOG in src/plugins/backend
+ROUNDS_TYPE__DOCTORS_LOG,Progress Note,no 'ROUNDS_TYPE' prefix in src/plugins/backend
+ROUNDS_TYPE__NORMAL,Brief Update,no 'ROUNDS_TYPE' prefix in src/plugins/backend
+ROUNDS_TYPE__TELEMEDICINE,Tele-medicine Log,no 'ROUNDS_TYPE' prefix in src/plugins/backend
+ROUNDS_TYPE__VENTILATOR,Detailed Update,no 'ROUNDS_TYPE' prefix in src/plugins/backend
+SCHEDULE_EXCEPTION_TYPE__MODIFY_SCHEDULE,Modify Schedule,no 'SCHEDULE_EXCEPTION' or MODIFY_SCHEDULE in src/plugins/backend; Scheduling templates only use SCHEDULE_AVAILABILITY_TYPE__${} (e.g. pages/Scheduling/ScheduleTemplates.tsx:203)
+SCHEDULE_EXCEPTION_TYPE__UNAVAILABLE,Unavailable,no 'SCHEDULE_EXCEPTION' prefix in src/plugins/backend; only SCHEDULE_AVAILABILITY_TYPE__ templates exist
+SLEEP__EXCESSIVE,Excessive,no 'SLEEP__' prefix in src/plugins/backend
+SLEEP__NO_SLEEP,No sleep,no 'SLEEP__' prefix in src/plugins/backend
+SLEEP__SATISFACTORY,Satisfactory,no 'SLEEP__' prefix in src/plugins/backend
+SLEEP__UNSATISFACTORY,Unsatisfactory,no 'SLEEP__' prefix in src/plugins/backend
+SOCIOECONOMIC_STATUS__MIDDLE_CLASS,Middle Class,no 'SOCIOECONOMIC' prefix or MIDDLE_CLASS in src/plugins/backend
+SOCIOECONOMIC_STATUS__POOR,Poor,no 'SOCIOECONOMIC' prefix in src/plugins/backend
+SOCIOECONOMIC_STATUS__VERY_POOR,Very Poor,no 'SOCIOECONOMIC' prefix in src/plugins/backend
+SOCIOECONOMIC_STATUS__WELL_OFF,Well Off,no 'SOCIOECONOMIC' prefix in src/plugins/backend
+SPO2_LEVEL_MILD_HYPOXEMIA,Mild Hypoxemia,no 'SPO2_LEVEL' or MILD_HYPOXEMIA in src/plugins/backend
+SPO2_LEVEL_MODERATE_HYPOXEMIA,Moderate Hypoxemia,no 'SPO2_LEVEL' prefix in src/plugins/backend
+SPO2_LEVEL_NORMAL,Normal,no 'SPO2_LEVEL' prefix in src/plugins/backend
+SPO2_LEVEL_SEVERE_HYPOXEMIA,Severe Hypoxemia,no 'SPO2_LEVEL' prefix in src/plugins/backend
+SRD__action,Action,no 'SRD' substring (as SRD__/SRD_ or `SRD template) in src/plugins/backend
+SRD__action_cancelled,"Request Cancelled,",no 'SRD__' prefix in src/plugins/backend; no t(`SRD__action_${status}`) template
+SRD__action_delivered,Delivered,no 'SRD__' prefix in src/plugins/backend
+SRD__action_draft,"Draft Request,",no 'SRD__' prefix in src/plugins/backend
+SRD__action_entered_in_error,Request entered in error,no 'SRD__' prefix in src/plugins/backend
+SRD__action_send,Send,no 'SRD__' prefix in src/plugins/backend
+SRD__action_sent,Sent,no 'SRD__' prefix in src/plugins/backend
+SRD__action_suspended,"Request Suspended,",no 'SRD__' prefix in src/plugins/backend
+SRD__add_item,Add Item,no 'SRD__' prefix in src/plugins/backend
+SRD__confirm_dispatch,Confirm Dispatch,no 'SRD__' prefix in src/plugins/backend
+SRD__device,Device,no 'SRD__' prefix in src/plugins/backend
+SRD__dispatch_details,Dispatch Details,no 'SRD__' prefix in src/plugins/backend
+SRD__dispatch_item,Dispatch Item,no 'SRD__' prefix in src/plugins/backend
+SRD__dispatch_quantity,Dispatch Quantity,no 'SRD__' prefix in src/plugins/backend
+SRD__dispatched_items,Dispatched Items,no 'SRD__' prefix in src/plugins/backend
+SRD__dispatched_to,Dispatched To,no 'SRD__' prefix in src/plugins/backend
+SRD__fulfill_request_confirmation_message,You have dispatched enough items to fulfill the request. Do you want to mark it as fully dispatched and proceed?,no 'SRD__' prefix in src/plugins/backend
+SRD__fulfill_request_title,Fulfill Request?,no 'SRD__' prefix in src/plugins/backend
+SRD__item_to_dispatch,Item to dispatch,no 'SRD__' prefix in src/plugins/backend
+SRD__item_type,Item Type:,no 'SRD__' prefix in src/plugins/backend
+SRD__lot_template,(Lot #{{lotNumber}}),no 'SRD__' prefix or 'lot_template' in src/plugins/backend
+SRD__mark_and_proceed,Mark as fulfilled and proceed,no 'SRD__' prefix in src/plugins/backend
+SRD__marked_as_fully_dispatched,Mark as Fully Dispatched,no 'SRD__' prefix in src/plugins/backend
+SRD__marked_as_fully_dispatched_description,Tick if all items have been dispatched. You will not be able to dispatch any more new deliveries for this request.,no 'SRD__' prefix in src/plugins/backend
+SRD__page_description_end,Review and fill in the dispatch details below.,no 'SRD__' prefix in src/plugins/backend
+SRD__page_description_template,{{action}} items from {{from}} to {{to}} as per the request.,no 'SRD__' prefix in src/plugins/backend
+SRD__page_title,Dispatch Items,no 'SRD__' prefix in src/plugins/backend
+SRD__proceed_without_marking,Proceed without marking,no 'SRD__' prefix in src/plugins/backend
+SRD__product,Product,no 'SRD__' prefix in src/plugins/backend
+SRD__qty_to_dispatch,Qty to Dispatch,no 'SRD__' prefix in src/plugins/backend
+SRD__select_and_dispatch_items,Select and Dispatch Items,no 'SRD__' prefix in src/plugins/backend
+SRD__select_item_from_lot,Select Item from Lot,no 'SRD__' prefix in src/plugins/backend
+SRD__select_product_placeholder,Select product,no 'SRD__' prefix in src/plugins/backend
+URINATION_FREQUENCY__DECREASED,Decreased,no 'URINATION_FREQUENCY' prefix in src/plugins/backend
+URINATION_FREQUENCY__INCREASED,Increased,no 'URINATION_FREQUENCY' prefix in src/plugins/backend
+URINATION_FREQUENCY__NORMAL,Normal,no 'URINATION_FREQUENCY' prefix in src/plugins/backend
+VENTILATOR_MODE__CMV_short,CMV,no 'VENTILATOR_MODE' prefix in src/plugins/backend
+VENTILATOR_MODE__PCV_short,PCV,no 'VENTILATOR_MODE' prefix in src/plugins/backend
+VENTILATOR_MODE__PC_SIMV_short,PC-SIMV,no 'VENTILATOR_MODE' prefix or PC_SIMV in src/plugins/backend
+VENTILATOR_MODE__PSV_short,C-PAP/PSV,no 'VENTILATOR_MODE' prefix in src/plugins/backend
+VENTILATOR_MODE__SIMV_short,SIMV,no 'VENTILATOR_MODE' prefix in src/plugins/backend
+VENTILATOR_MODE__VCV_short,VCV,no 'VENTILATOR_MODE' prefix in src/plugins/backend
+VENTILATOR_MODE__VC_SIMV_short,VC-SIMV,no 'VENTILATOR_MODE' prefix in src/plugins/backend
+View_Facility,View Facility,grep -F 'View_Facility' and `View_ templates over src/plugins/backend: 0 hits
+aadhaar_number,Aadhaar Number,no 'aadhaar' substring anywhere in src/plugins/tests (non-locale) or backend error strings; no `aadhaar_${}` template
+aadhaar_number_will_not_be_stored,Aadhaar number will not be stored by CARE,no 'aadhaar' substring in src/plugins/backend
+aadhaar_otp_send_error,Failed to send OTP. Please try again later.,no 'aadhaar' substring in src/plugins/backend
+aadhaar_otp_send_success,OTP has been sent to the mobile number registered with the Aadhar number.,no 'aadhaar' substring in src/plugins/backend
+aadhaar_validation_length_error,Should be a 12-digit aadhaar number or 16-digit virtual ID,no 'aadhaar' substring in src/plugins/backend
+aadhaar_validation_space_error,Aadhaar number should not contain spaces,no 'aadhaar' substring in src/plugins/backend
+accept_all,Accept All,grep -F 'accept_all' over src/plugins/backend: 0 hits; no `accept_${}` template
+access_level,Access Level,grep -F 'access_level' over src/plugins/backend: 0 hits; no `access_${}` template
+account_closed_failed,Failed to close account,grep -F over src/plugins/backend (incl. backend error strings): 0 hits; no `account_${}` template
+account_id,Account ID,grep -F 'account_id' over src/plugins/backend: 0 hits
+account_information,Account Information,grep -F over src/plugins/backend: 0 hits
+account_management,Account Management,grep -F over src/plugins/backend: 0 hits
+activate_this_request,activate this request,grep -F over src/plugins/backend: 0 hits; no `activ...${}` template
+active_location_cannot_be_in_future,Active location cannot be in the future,grep -F over src/plugins and apps/backend (possible error code): 0 hits
+activity_definitions_can_only_be_added_to_leaf_categories,Activity definitions can only be added to leaf categories,grep -F over src/plugins and apps/backend: 0 hits
+activity_log,Activity Log,grep -F 'activity_log' over src/plugins/backend: 0 hits
+add_another_diagnosis,Add another Diagnosis,grep -F over src/plugins: 0 hits; no `add_${}` template (only add_medication_lot_${} at AddDispenseMedicationRow.tsx:91)
+add_another_item,Add Another Item,grep -F over src/plugins: 0 hits; no add_ template
+add_another_medication,Add another Medication,grep -F over src/plugins: 0 hits
+add_another_symptom,Add another Symptom,grep -F over src/plugins: 0 hits
+add_attachments,Add Attachments,grep -F over src/plugins: 0 hits
+add_beds_to_configure_presets,Add beds to this location to configure presets for them.,grep -F over src/plugins: 0 hits
+add_care_team_members,Add Care Team Members,grep -F over src/plugins: 0 hits
+add_charge_items_description,Add items to the patient's bill quickly using packages or search for individual items.,grep -F over src/plugins: 0 hits
+add_child_tags_to_organize_better,Add child tags to organize better,grep -F over src/plugins: 0 hits
+add_column,Add Column,grep -F over src/plugins: 0 hits
+add_consultation,Add consultation,grep -F over src/plugins: 0 hits
+add_consultation_update,Add Consultation Update,grep -F over src/plugins: 0 hits
+add_custom_environment,Add custom environment,grep -F over src/plugins: 0 hits
+add_datetime,Add Date/Time,grep -F over src/plugins: 0 hits
+add_dosage_step,Add Dosage Step,grep -F over src/plugins: 0 hits
+add_element,Add element,grep -F over src/plugins: 0 hits
+add_encounter,Add Encounter,grep -F over src/plugins: 0 hits
+add_field,Add Field,grep -F over src/plugins: 0 hits
+add_image,Add Image,grep -F over src/plugins: 0 hits
+add_individual_item,Add Individual Item,grep -F over src/plugins: 0 hits
+add_insurance_details,Add Insurance Details,grep -F over src/plugins: 0 hits
+add_lot_expiry,Add Lot & Expiry,grep -F over src/plugins: 0 hits
+add_lot_expiry_link_charge_item_description,Add lot number and expiry date to the item and link it to a charge item for billing.,grep -F over src/plugins: 0 hits
+add_medication_to_template_description,"Select a template to add ""{{medication}}"" to:",grep -F over src/plugins: 0 hits
+add_medications_after_creating,"You can add medications to this template after creating it, by using the 'Add to template' option in the medication row actions.",grep -F over src/plugins: 0 hits
+add_medications_to_prefill,Add medications to prefill,grep -F over src/plugins: 0 hits
+add_member,Add Member,grep -F 'add_member' over src/plugins: 0 hits
+add_new_beds,Add New Bed(s),grep -F over src/plugins: 0 hits
+add_new_items,Add New Items,grep -F over src/plugins: 0 hits
+add_new_location,Add New Location,grep -F over src/plugins: 0 hits
+add_new_medications,Add New Medications,grep -F over src/plugins: 0 hits
+add_new_product,Add New Product,grep -F over src/plugins: 0 hits
+add_notes_about_symptom,Add notes about the symptom...,grep -F over src/plugins: 0 hits
+add_notes_about_the_allergy,Add notes about the allergy,grep -F over src/plugins: 0 hits
+add_point,Add Point,grep -F over src/plugins: 0 hits
+add_policy,Add Insurance Policy,grep -F over src/plugins: 0 hits
+add_preset,Add preset,grep -F over src/plugins: 0 hits
+add_price_component,Add Price Component,grep -F over src/plugins: 0 hits
+add_price_component_instruction,Click the Add Price Component button to add pricing information,grep -F over src/plugins: 0 hits
+add_products_to_receive,Add products to receive,no match
+add_questionnaire,Add Questionnaire,no match
+add_range,Add Range,no match
+add_remarks,Add remarks,no match
+add_remarks_if_quantity_is_less_or_items_are_damaged,Add remarks if quantity is less or items are damaged,no match
+add_role_organization_access_hint,Add an organization assignment and choose the user's designation there.,no match
+add_row,Add Row,no match
+add_section,Add Section,no match
+add_skill,Add Skill,no match
+add_spoke,Add Spoke Facility,no match
+add_supply_request,Add Supply Request,no match
+add_text,Add Text,no match
+add_this_activity_definition,Add this activity definition,no match
+add_this_medication,Add this medication,no match
+add_this_service_request,Add this service request,no match
+add_to_list,Add to list,no match
+additional_information,Additional Information,no match
+additional_item_other,Additional Items,"no t(""additional_item"") or any additional_item reference in src"
+additional_item_zero,Additional Item,"no t(""additional_item"") or any additional_item reference in src"
+adjust_activity_definition_filters,Adjust activity definition filters to find what you're looking for,no match
+adjust_charge_item_definition_filters,Adjust charge item definition filters to find what you're looking for,no match
+adjust_filters,Try adjusting your filters,no match
+adjust_filters_or_add_new_items,Adjust your filters or add new items,no match
+adjust_healthcare_service_filters,Try adjusting your filters or create a new healthcare service,no match
+adjust_invoice_filters,Adjust invoice filters,no match
+administered_at,Administered at,no match
+administered_at_site,at {{site}},no match
+administered_by,Administered by,no match
+administered_through_route,through {{route}},no match
+administered_via_method,via {{method}},no match
+admitted_on,Admitted On,no match
+after_adjustments,After Adjustments,no match
+align_center,Center,no match
+align_left,Left,no match
+align_right,Right,no match
+all_accounts,All Accounts,no match
+all_billing_statuses,All Billing Statuses,no match
+all_discounts_cleared,All discounts cleared,no match
+all_items_dispatched_successfully,All items dispatched successfully,no match
+all_patients,All Patients,no match
+all_prescriptions_description,View medications from all prescriptions,no match
+all_priorities,All Priorities,no match
+all_published_apps,All published apps,no match
+all_published_apps_description,Browse every available plugin across categories and developers.,no match
+all_role_organizations,All Responsibilities,no match
+all_role_organizations_description,Browse every responsibility in one place and open one to edit its details or governance links.,no match
+all_supply_deliveries,All Supply Deliveries,no match
+allergies_empty_message,No allergies recorded,no match
+allergy_history,Allergy History,no match
+allow_transfer,Allow Transfer,no match
+alternate_phone_number,Alternate Phone Number,no match
+alternatives_coming_soon,Alternatives coming soon,no match
+ambulatory,Ambulatory,"no match; only a comment in types/emr/encounter/encounter.ts:168, not passed to t()"
+amount_must_be_greater_than_or_equal_to_0,Amount must be greater than or equal to 0,no match
+amount_outstanding,Amount Outstanding,no match
+and_more_activity_definitions,+{{count}} more activity definition(s),no match
+and_more_medications,+{{count}} more medication(s),no match
+and_more_service_requests,+{{count}} more service request(s),no match
+and_the_status_of_request_is,and the status of request is,no match
+any_additional_information,Any Additional Information,no match
+app_base_url,App base URL,no match
+app_base_url_description,Base URL where the frontend plug is served.,no match
+app_definition_unavailable,App definition is unavailable,no match
+app_definition_unavailable_description,The selected app definition could not be loaded from the App Store index.,no match
+app_details_unavailable,App details are unavailable,no match
+app_details_unavailable_description,The selected app definition could not be loaded from the App Store index.,no match
+app_install_failed,Failed to install app,no match
+app_installed_successfully,App installed successfully,no match
+app_readme,App README,no match
+app_readme_description,Documentation published alongside the app source.,no match
+app_readme_unavailable,README is unavailable for this app.,no match
+app_settings,App Settings,no match
+app_store_catalog_description,"Try, evaluate, and configure plugins from a curated catalog of CARE extensions.",no match; no app_store/AppStore code in src
+app_store_collection_description,Browse apps curated for this collection and continue to their setup pages.,no match; no app_store/AppStore code in src
+app_store_collection_explore_description,Explore published apps in this collection.,no match; no app_store/AppStore code in src
+app_store_hero_description,"Tools from the community and partners to simplify tasks, extend CARE, and automate healthcare workflows.",no match; no app_store/AppStore code in src
+app_store_hero_title,Enhance your workflow with extensions,no match; no app_store/AppStore code in src
+app_store_not_configured,App Store is not configured,no match; no app_store/AppStore code in src
+app_store_not_configured_description,Set REACT_APP_STORE_INDEX_URL to a published root index JSON to browse apps by category or developer.,no match; no app_store/AppStore code in src
+app_store_search_placeholder,"Search for apps, actions, and models",no match; no app_store/AppStore code in src
+app_store_subtitle,CARE App Store,no match; no app_store/AppStore code in src
+app_uninstall_failed,Failed to uninstall app,no match
+app_uninstalled_successfully,App uninstalled successfully,no match
+application_successfully_updated,Application successfully updated!,no match
+applied_last_in_calculation,Applied last in the calculation,no match
+applies_at_end,Applies at end,no match
+applies_before_tax,Applies before tax,no match
+applies_before_taxes,Applied before taxes,no match
+appointment_management_actions,Manage appointment status and actions,no match
+appointment_rescheduled,Appointment has been rescheduled!,no match
+appointment_rescheduled_successfully,Appointment rescheduled successfully,no match
+appointment_type,Appointment Type,no match
+approve_diagnostic_results_confirmation,Are you sure you want to approve these diagnostic results? This action cannot be undone.,no match
+approve_external_supply_deliveries,Approve External Supply Deliveries,no match
+approve_order,Approve Order,no match
+approve_request,Approve Request,no match
+are_non_editable_fields,are non-editable fields,no match
+are_you_sure_you_want_to_delete_user,Are you sure you want to delete this user: ,no match
+are_you_sure_you_want_to_mark_as_received,Are you sure you want to mark as received?,no match
+assets,Assets,no match
+assign_a_volunteer_to,Assign a volunteer to {{name}},no match
+assign_to_volunteer,Assign to a Volunteer,no match
+assigned_doctor,Assigned Doctor,no match
+assigned_volunteer,Assigned Volunteer,no match
+associate_device_confirmation,This device is currently linked to another encounter. Proceeding with this association will unlink it from the previous encounter.,no match
+association_end_date,Association end date,no match
+association_start_date,Association start date,no match
+at_least_one_price_component_required,At least one price component is required,no match
+at_least_one_result,At least one result value or conclusion must be provided,no match
+at_time,at <strong>{{time}}</strong>,no match
+attach_result_files,Attach Result Files,no match
+atypical_presentation_details,Atypical presentation details,no match
+auth_method_unsupported,"This authentication method is not supported, please try a different method",no match in frontend src or backend .py
+autofilled_fields,Autofilled Fields,no match
+available_at_count_locations,Available at {{count}} locations,no match
+available_in_store,Available in store,no match
+available_reports,Available Reports,no match
+available_tags,Available Tags,no match
+back_to_app_store,Back to App Store,no match
+back_to_dispense_queue,Back to Dispense Queue,no match
+back_to_home,Back to Home,no match
+back_to_prescription_queue,Back to Prescription Queue,no match
+back_to_queues,Back to Queues,no match
+back_to_requests,Back to Requests,no match
+back_to_tags,Back to tags,no match
+bank_transfer,Bank Transfer,no match in frontend or backend
+barcode_number,Barcode Number,no match
+barcode_scanned_successfully,Barcode Scanned Successfully,no match
+base_price_explanation,The starting point for pricing calculation,no match
+basic_settings,Basic Settings,no match
+batch_select,Batch,no match
+bed_active_removed_due_to_error,Active bed assignment has been marked as an error and removed successfully.,no match
+bed_count_validation_error,Number of beds must be greater than 0,no match
+bed_currently_reserved,Bed is currently reserved for another patient,no match
+bed_history,Bed History,no match
+bed_not_linked_to_camera,This bed has not been linked to this camera.,no match
+bed_planned_cancelled,Planned bed assignment has been cancelled.,no match
+bed_type__100,ICU Bed,no `bed_type__${}` template or bed_type reference anywhere in src
+bed_type__200,Ordinary Bed,no `bed_type__${}` template or bed_type reference anywhere in src
+bed_type__300,Oxygen Supported Bed,no `bed_type__${}` template or bed_type reference anywhere in src
+bed_type__400,Isolation Bed,no `bed_type__${}` template or bed_type reference anywhere in src
+bed_type__500,Others,no `bed_type__${}` template or bed_type reference anywhere in src
+beds_creation_failed,Failed to create beds,no match
+beta,beta,no match
+bill_all_pending_prescriptions,Bill All Pending Prescriptions,no match
+bill_this,Bill This,no match
+billable_items_for_account,Billing Items for Account,no match
+billing_pending,Billing Pending,no match
+billing_statements,Billing Statements,no match
+billing_status_inactive_warning,This will set the account status as inactive.,no match
+billing_summary,Billing Summary,no match
+bladder,Bladder,no match
+blood_group_is_required,Blood group is required,no match
+blood_pressure_error,"{""missing"": ""Field is required. Either specify both or clear both."", ""exceed"": ""Value cannot exceed 250 mmHg."", ""systolic_less_than_diastolic"": ""Systolic must be greater than diastolic.""}",no match
+book_a_new_appointment,Book a new appointment,no match
+browse_and_filter,Browse & Filter,no match
+browse_app_store,Browse App Store,no match
+by_developer,by {{name}},no match
+calculation_preview,Calculation Preview,no match
+call_patient,Call Patient,no match
+camera_bed_link_success,Camera linked to bed successfully.,no match
+camera_was_linked_to_bed,This camera was linked to this bed,no match
+can_be_factor_of_reference_value,Can be a factor of a reference value,no match
+can_be_fixed_amount,Can be a fixed amount,no match
+cancel_invoice_confirmation,Are you sure you want to cancel invoice {{invoiceNumber}}? This action cannot be undone and the charge items will become unbilled.,no match
+cancel_request,Cancel Request,no match
+cancel_this_request,cancel this request,no match
+cannot_cancel_invoice,Cannot Cancel Invoice,no match in frontend or backend
+cannot_complete_unpaid_medication,Cannot complete unpaid medication. Please ensure payment is completed first.,no match
+cannot_delete_organization_with_children,Cannot delete an organization with children,no match in frontend or backend
+cannot_mark_as_entered_in_error,Cannot Mark as Entered in Error,no match in frontend or backend
+cannot_save_draft_multiple_questionnaires,"You're editing multiple Questionnaires, you can only draft one",no match
+cannot_save_draft_structured_questions,Cannot save draft since the form contains structured questions: {{questions}},no match
+cannot_select_date_out_of_range,Cannot select date out of range,no match
+cannot_select_month_out_of_range,Cannot select month out of range,no match
+cannot_select_year_out_of_range,Cannot select year out of range,no match
+cardiology,Cardiology,no match
+cart_empty,Your cart is empty,no match
+change_status,Change Status,no match
+charge_item_details,Charge Item Details,no match
+charge_item_for_billing,Charge Item for Billing,no match
+charge_item_for_billing_description,Select or create a charge item to link with this product.,no match
+charge_items_can_only_be_added_to_leaf_categories,Charge items can only be added to leaf categories,no match
+check_browser_settings,Check your browser's address bar for permission settings,no match
+check_eligibility,Check Eligibility,no match
+check_item_condition_and_verify_receipt,Check item condition and verify receipt,no match
+check_policy_eligibility,Check Policy Eligibility,no match
+check_status,Check Status,"grep src (excl. Locale): no quoted key, no t() prefix/template, no plugin"
+checking_eligibility,Checking Eligibility,"grep src (excl. Locale): no quoted key, no t() prefix/template, no plugin"
+checking_policy_eligibility,Checking Policy Eligibility,"grep src (excl. Locale): no quoted key, no t() prefix/template, no plugin"
+choose_date_time,Choose Date and Time,"grep src (excl. Locale): no quoted key, no t() prefix/template, no plugin"
+choose_district,Choose District,"grep src (excl. Locale): no quoted key, no t() prefix/template, no plugin"
+choose_file_or_drag,Choose file or drag & drop it here,"grep src (excl. Locale): no quoted key, no t() prefix/template, no plugin"
+choose_form,Choose Form,"grep src (excl. Locale): no quoted key, no t() prefix/template, no plugin"
+choose_localbody,Choose Local Body,"grep src (excl. Locale): no quoted key, no t() prefix/template, no plugin"
+choose_service_point_to_call_patient,Choose a service point to call {{patientName}} ({{tokenNumber}}) to.,"grep src (excl. Locale): no quoted key, no t() prefix/template, no plugin"
+choose_state,Choose State,"grep src (excl. Locale): no quoted key, no t() prefix/template, no plugin"
+chronic_condition_one,Chronic Condition,"""chronic_condition"" only appears as a DIAGNOSIS_CATEGORY value (types/emr/diagnosis/diagnosis.ts:18) and API filter; category is shown via t(`Diagnosis_${category}__title`) (DiagnosisQuestion.tsx:792), never t(""chronic_condition"",{count})."
+chronic_condition_other,Chronic Conditions,"""chronic_condition"" only appears as a DIAGNOSIS_CATEGORY value (types/emr/diagnosis/diagnosis.ts:18) and API filter; category is shown via t(`Diagnosis_${category}__title`) (DiagnosisQuestion.tsx:792), never t(""chronic_condition"",{count})."
+claim__add_item,Add Item,"grep src (excl. Locale): no quoted key, no t() prefix/template, no plugin"
+claim__create_claim,Create Claim,"grep src (excl. Locale): no quoted key, no t() prefix/template, no plugin"
+claim__create_preauthorization,Create Pre Authorization,"grep src (excl. Locale): no quoted key, no t() prefix/template, no plugin"
+claim__creating_claim,Creating Claim,"grep src (excl. Locale): no quoted key, no t() prefix/template, no plugin"
+claim__creating_preauthorization,Creating Pre Authorization,"grep src (excl. Locale): no quoted key, no t() prefix/template, no plugin"
+claim__error_fetching_claim_approval_results,Error Fetching Claim Approval Results,"grep src (excl. Locale): no quoted key, no t() prefix/template, no plugin"
+claim__failed_to_create_claim,Failed to create Claim,"grep src (excl. Locale): no quoted key, no t() prefix/template, no plugin"
+claim__failed_to_create_preauthorization,Failed to create Pre Authorization,"grep src (excl. Locale): no quoted key, no t() prefix/template, no plugin"
+claim__fetched_claim_approval_results,Fetched Claim Approval Results,"grep src (excl. Locale): no quoted key, no t() prefix/template, no plugin"
+claim__item,Item,"grep src (excl. Locale): no quoted key, no t() prefix/template, no plugin"
+claim__item__add_at_least_one,Add at least one item,"grep src (excl. Locale): no quoted key, no t() prefix/template, no plugin"
+claim__item__category,Category,"grep src (excl. Locale): no quoted key, no t() prefix/template, no plugin"
+claim__item__fill_all_details,Fill all the item details,"grep src (excl. Locale): no quoted key, no t() prefix/template, no plugin"
+claim__item__id,ID,"grep src (excl. Locale): no quoted key, no t() prefix/template, no plugin"
+claim__item__id__example,PROC001,"grep src (excl. Locale): no quoted key, no t() prefix/template, no plugin"
+claim__item__name,Name,"grep src (excl. Locale): no quoted key, no t() prefix/template, no plugin"
+claim__item__name__example,Knee Replacement,"grep src (excl. Locale): no quoted key, no t() prefix/template, no plugin"
+claim__item__price,Price,"grep src (excl. Locale): no quoted key, no t() prefix/template, no plugin"
+claim__item__price__example,100.00,"grep src (excl. Locale): no quoted key, no t() prefix/template, no plugin"
+claim__item__procedure,Procedure,"grep src (excl. Locale): no quoted key, no t() prefix/template, no plugin"
+claim__items,Items,"grep src (excl. Locale): no quoted key, no t() prefix/template, no plugin"
+claim__request_claim,Request Claim,"grep src (excl. Locale): no quoted key, no t() prefix/template, no plugin"
+claim__requesting_claim,Requesting Claim,"grep src (excl. Locale): no quoted key, no t() prefix/template, no plugin"
+claim__status__approved,Approved,"grep src (excl. Locale): no quoted key, no t() prefix/template, no plugin"
+claim__status__pending,Pending,"grep src (excl. Locale): no quoted key, no t() prefix/template, no plugin"
+claim__status__rejected,Rejected,"grep src (excl. Locale): no quoted key, no t() prefix/template, no plugin"
+claim__total_approved_amount,Total Approved Amount,"grep src (excl. Locale): no quoted key, no t() prefix/template, no plugin"
+claim__total_claim_amount,Total Claim Amount,"grep src (excl. Locale): no quoted key, no t() prefix/template, no plugin"
+claim__use,Use,"grep src (excl. Locale): no quoted key, no t() prefix/template, no plugin"
+claim__use__claim,Claim,"grep src (excl. Locale): no quoted key, no t() prefix/template, no plugin"
+claim__use__preauthorization,Pre Authorization,"grep src (excl. Locale): no quoted key, no t() prefix/template, no plugin"
+claims,Claims,"grep src (excl. Locale): no quoted key, no t() prefix/template, no plugin"
+clear_filters,Clear filters,"grep src (excl. Locale): no quoted key, no t() prefix/template, no plugin"
+clear_form,Clear Form,"grep src (excl. Locale): no quoted key, no t() prefix/template, no plugin"
+clear_home_facility_confirm,Are you sure you want to clear the home facility,"grep src (excl. Locale): no quoted key, no t() prefix/template, no plugin"
+clear_home_facility_error,Error while clearing home facility. Try again later.,"grep src (excl. Locale): no quoted key, no t() prefix/template, no plugin"
+clear_skill,Clear Skill,"grep src (excl. Locale): no quoted key, no t() prefix/template, no plugin"
+click_add_department_team,Click <strong>Add Department/Team</strong> to create a new department/team.,"grep src (excl. Locale): no quoted key, no t() prefix/template, no plugin"
+click_add_main_location,Click <strong>Add Location</strong> to add a main location.,"grep src (excl. Locale): no quoted key, no t() prefix/template, no plugin"
+click_manage_create_users,Click <strong>See Details</strong><CareIcon /> to create or manage users and departments/teams within the corresponding dept/team.,"grep src (excl. Locale): no quoted key, no t() prefix/template, no plugin"
+click_manage_create_users_mobile,Click <CareIcon /> to create or manage users and departments/teams within the corresponding dept/team.,"grep src (excl. Locale): no quoted key, no t() prefix/template, no plugin"
+click_manage_sub_locations,Click <strong>See Details</strong><ArrowIcon/> to manage sub-locations.,"grep src (excl. Locale): no quoted key, no t() prefix/template, no plugin"
+click_manage_sub_locations_mobile,Click <PenLine/>to edit and <ArrowIcon/> to manage sub-locations.,"grep src (excl. Locale): no quoted key, no t() prefix/template, no plugin"
+click_to_add_all_items,Click to add all items,"grep src (excl. Locale): no quoted key, no t() prefix/template, no plugin"
+click_to_add_dosage_instructions,Click to add dosage instructions,"grep src (excl. Locale): no quoted key, no t() prefix/template, no plugin"
+click_to_edit,Click to edit,"grep src (excl. Locale): no quoted key, no t() prefix/template, no plugin"
+clone_role,Clone Role,"grep src (excl. Locale): no quoted key, no t() prefix/template, no plugin"
+close_account_description,Closing the account will also set the account to inactive.,"grep src (excl. Locale): no quoted key, no t() prefix/template, no plugin"
+collapse_all,Collapse All,"grep src (excl. Locale): no quoted key, no t() prefix/template, no plugin"
+collapse_sidebar,Collapse Sidebar,"grep src (excl. Locale): no quoted key, no t() prefix/template, no plugin"
+collection_information,Collection Information,"grep src (excl. Locale): no quoted key, no t() prefix/template, no plugin"
+columns_required_for_table_sections,Columns are required for table sections,"grep src (excl. Locale): no quoted key, no t() prefix/template, no plugin"
+communication__sent_to_hcx,Sent communication to HCX,"grep src (excl. Locale): no quoted key, no t() prefix/template, no plugin"
+comperator,Comperator,"grep src (excl. Locale): no quoted key, no t() prefix/template, no plugin"
+complete_all,Complete all,"grep src (excl. Locale): no quoted key, no t() prefix/template, no plugin"
+complete_all_tokens,Complete all tokens,"grep src (excl. Locale): no quoted key, no t() prefix/template, no plugin"
+complete_all_tokens_confirmation,Are you sure you want to mark all tokens in this sub-queue as completed? This action cannot be undone.,"grep src (excl. Locale): no quoted key, no t() prefix/template, no plugin"
+complete_billing,Complete Billing,"grep src (excl. Locale): no quoted key, no t() prefix/template, no plugin"
+complete_billing_description,Update the billing status of this account to reflect the current stage of billing.,"grep src (excl. Locale): no quoted key, no t() prefix/template, no plugin"
+complete_billing_help_billing,Billing is in progress. Invoices are being generated and payments are being collected.,"grep src (excl. Locale): no quoted key, no complete_billing_help_ template; AccountShow.tsx:105-109 maps statuses only to close_account_help_* keys"
+complete_billing_help_carecomplete_notbilled,Care has been completed but the billing process has not yet started.,"grep src (excl. Locale): no quoted key, no complete_billing_help_ template; AccountShow.tsx:105-109 maps statuses only to close_account_help_* keys"
+complete_delivery,Complete Delivery,"grep src (excl. Locale): no quoted key, no t() prefix/template, no plugin"
+complete_encounter,Complete Encounter,"grep src (excl. Locale): no quoted key, no t() prefix/template, no plugin"
+complete_token,Complete Token,"grep src (excl. Locale): no quoted key, no t() prefix/template, no plugin"
+complete_token_confirmation,Are you sure you want to complete the token {{tokenNumber}} for {{patientName}}?,"grep src (excl. Locale): no quoted key, no t() prefix/template, no plugin"
+completed_date,Completed Date,"grep src (excl. Locale): no quoted key, no t() prefix/template, no plugin"
+component_conditions,Component Conditions,"grep src (excl. Locale): no quoted key, no t() prefix/template, no plugin"
+config_create_failed,Failed to create configuration,"grep src (excl. Locale): no quoted key, no t() prefix/template, no plugin"
+config_delete_failed,Failed to delete configuration,"grep src (excl. Locale): no quoted key, no t() prefix/template, no plugin"
+config_deleted_successfully,Configuration deleted successfully,"grep src (excl. Locale): no quoted key, no t() prefix/template, no plugin"
+config_update_failed,Failed to update configuration,"grep src (excl. Locale): no quoted key, no t() prefix/template, no plugin"
+confirm_add_lot,Confirm & Add Lot,"grep src (excl. Locale): no quoted key, no t() prefix/template, no plugin"
+confirm_approval,Confirm Approval,"grep src (excl. Locale): no quoted key, no t() prefix/template, no plugin"
+confirm_bed_assignment,Confirm Bed Assignment,"grep src (excl. Locale): no quoted key, no t() prefix/template, no plugin"
+confirm_cancel_prescription,Are you sure you want to cancel this prescription? This action cannot be undone.,"grep src (excl. Locale): no quoted key, no t() prefix/template, no plugin"
+confirm_completion,Confirm Completion,"grep src (excl. Locale): no quoted key, no t() prefix/template, no plugin"
+confirm_discharge,Confirm Patient Discharge,"grep src (excl. Locale): no quoted key, no t() prefix/template, no plugin"
+confirm_mark_prescription_as_completed,Are you sure you want to mark this prescription as completed?,"grep src (excl. Locale): no quoted key, no t() prefix/template, no plugin"
+confirm_submission,Confirm Submission,"grep src (excl. Locale): no quoted key, no t() prefix/template, no plugin"
+consent_attachments,Consent Attachments,"grep src (excl. Locale): no quoted key, no t() prefix/template, no plugin"
+consent_expired,Consent has expired,"grep src (excl. Locale): no quoted key, no t() prefix/template; backend errors are shown raw (Utils/request/errorHandler.ts), not via t()"
+consent_form,Consent Form,"grep src (excl. Locale): no quoted key, no t() prefix/template, no plugin"
+consent_not_active,Consent is not active,"grep src (excl. Locale): no quoted key, no t() prefix/template; backend errors are shown raw (Utils/request/errorHandler.ts), not via t()"
+consent_option,Choose an option,"grep src (excl. Locale): no quoted key, no t() prefix/template, no plugin"
+consent_verification_type,Verification Type,"grep src (excl. Locale): no quoted key; verification_type only a field in types/consent/consent.ts:42, no t(`consent_verification_type__${}`) anywhere"
+consent_verification_type__family,Family,no t(`consent_verification_type__${}`) template in src; only consent_status__/consent_category__/consent_decision__ templates exist
+consent_verification_type__family_description,Verification by a family member or representative.,no t(`consent_verification_type__${}`) template in src; only consent_status__/consent_category__/consent_decision__ templates exist
+consent_verification_type__validation,Validation,no t(`consent_verification_type__${}`) template in src; only consent_status__/consent_category__/consent_decision__ templates exist
+consent_verification_type__validation_description,Confirmation provided by the individual themselves.,no t(`consent_verification_type__${}`) template in src; only consent_status__/consent_category__/consent_decision__ templates exist
+consultation_history,Consultation History,"grep src (excl. Locale): no quoted key, no t() prefix/template, no plugin"
+consultation_missing_warning,You have not created a consultation for the patient in,"grep src (excl. Locale): no quoted key, no t() prefix/template, no plugin"
+consultation_not_filed,You have not filed a consultation for this patient yet.,"grep src (excl. Locale): no quoted key, no t() prefix/template, no plugin"
+consultation_not_filed_description,Please file a consultation for this patient to continue.,"grep src (excl. Locale): no quoted key, no t() prefix/template, no plugin"
+contact_use_home,Home,no 'contact_use' anywhere in src; only t(`contact_system_${system}`) at DeviceForm.tsx:478
+contact_use_mobile,Mobile,no 'contact_use' anywhere in src; only t(`contact_system_${system}`) at DeviceForm.tsx:478
+contact_use_old,Old,no 'contact_use' anywhere in src; only t(`contact_system_${system}`) at DeviceForm.tsx:478
+contact_use_temp,Temporary,no 'contact_use' anywhere in src; only t(`contact_system_${system}`) at DeviceForm.tsx:478
+contact_use_work,Work,no 'contact_use' anywhere in src; only t(`contact_system_${system}`) at DeviceForm.tsx:478
+contact_with_confirmed_carrier,Contact with confirmed carrier,"grep src (excl. Locale): no quoted key, no t() prefix/template, no plugin"
+contact_with_suspected_carrier,Contact with suspected carrier,"grep src (excl. Locale): no quoted key, no t() prefix/template, no plugin"
+contact_your_admin_to_add_facilities,Contact your admin to add facilities,"grep src (excl. Locale): no quoted key, no t() prefix/template, no plugin"
+copilot_thinking,Copilot is thinking...,"grep src (excl. Locale): no quoted key, no t() prefix/template, no plugin"
+copy_phone_number,Copy Phone Number,"grep src (excl. Locale): no quoted key, no t() prefix/template, no plugin"
+copying_is_not_allowed,Copying is not allowed,"grep src (excl. Locale): no quoted key, no t() prefix/template, no plugin"
+covid_19_death_reporting_form_1,Covid-19 Death Reporting : Form 1,no 'covid' anywhere in src (excl. Locale)
+covid_details,Covid Details,no 'covid' anywhere in src (excl. Locale)
+create_consent,Create Consent,"grep src (excl. Locale): no quoted key, no t() prefix/template, no plugin"
+create_consultation,Create Consultation,"grep src (excl. Locale): no quoted key, no t() prefix/template, no plugin"
+create_empty_template,Create Empty Template,"grep src (excl. Locale): no quoted key, no t() prefix/template, no plugin"
+create_empty_template_description,Start fresh and add medications later,"grep src (excl. Locale): no quoted key, no t() prefix/template, no plugin"
+create_encounter_description,Create a new encounter to start the process,"grep src (excl. Locale): no quoted key, no t() prefix/template, no plugin"
+create_location_association,Create Location Association,"grep src (excl. Locale): no quoted key, no t() prefix/template, no plugin"
+create_new_batch,Create New Batch,"grep src (excl. Locale): no quoted key, no t() prefix/template, no plugin"
+create_new_consent,Create New Consent,"grep src (excl. Locale): no quoted key, no t() prefix/template, no plugin"
+create_new_consent_description,Create a new consent record for this encounter,"grep src (excl. Locale): no quoted key, no t() prefix/template, no plugin"
+create_new_encounter,Create a new encounter to get started,"grep src (excl. Locale): no quoted key, no t() prefix/template, no plugin"
+create_new_lot_expiry,Create new lot/expiry,"grep src (excl. Locale): no quoted key, no t() prefix/template, no plugin"
+create_new_product_instead,Create new product instead,"grep src (excl. Locale): no quoted key, no t() prefix/template, no plugin"
+create_new_report,Create New Report,"grep src (excl. Locale): no quoted key, no t() prefix/template, no plugin"
+create_position_preset,Create a new position preset,"grep src (excl. Locale): no quoted key, no t() prefix/template, no plugin"
+create_position_preset_description,Creates a new position preset in Care from the current position of the camera for the given name,"grep src (excl. Locale): no quoted key, no t() prefix/template, no plugin"
+create_preset_prerequisite,"To create presets for this bed, you'll need to link the camera to the bed first.","grep src (excl. Locale): no quoted key, no t() prefix/template, no plugin"
+create_product_description,Create a new product that will be available in your facility's inventory.,"grep src (excl. Locale): no quoted key, no t() prefix/template, no plugin"
+create_purchase_order,Create Purchase Order,"grep src (excl. Locale): no quoted key, no t() prefix/template, no plugin"
+create_request_order,Create Request Order,"grep src (excl. Locale): no quoted key, no t() prefix/template, no plugin"
+create_summaries,Create Summaries,"grep src (excl. Locale): no quoted key, no t() prefix/template, no plugin"
+create_supply_delivery,Create Supply Delivery,"grep src (excl. Locale): no quoted key, no t() prefix/template, no plugin"
+create_supply_request,Create Supply Request,"grep src (excl. Locale): no quoted key, no t() prefix/template, no plugin"
+create_template_add_later,Add medications later using row actions,grep src (excl. Locale): no quoted key; only create_template / create_template_with_item are used
+create_template_first,Create a template first to add medications,grep src (excl. Locale): no quoted key; only create_template / create_template_with_item are used
+create_template_to_prefill_forms,Create a template to quickly prefill forms,grep src (excl. Locale): no quoted key; only create_template / create_template_with_item are used
+create_templates_in_settings,Create templates using the Templates button,"grep src (excl. Locale): no quoted key, no t() prefix/template, no plugin"
+current_balance,Current Balance,"grep src (excl. Locale): no quoted key, no t() prefix/template, no plugin"
+current_location_description,The current location of this device,"grep src (excl. Locale): no quoted key, no t() prefix/template, no plugin"
+current_order,Current Order,"grep src (excl. Locale): no quoted key, no t() prefix/template, no plugin"
+current_position,Current position,"grep src (excl. Locale): no quoted key, no t() prefix/template, no plugin"
+custom_environments,Custom environments,no 'environments' anywhere in src (excl. Locale)
+custom_environments_description,Add your own environment keys and values for this app.,no 'environments' anywhere in src (excl. Locale)
+daily_rounds,Daily Rounds,"grep src (excl. Locale): no quoted key, no t() prefix/template, no plugin"
+danger_zone_description,These actions cannot be undone. Please proceed with caution.,"grep src (excl. Locale): no quoted key, no t() prefix/template, no plugin"
+data_source,Data Source,"grep src (excl. Locale): no quoted key, no t() prefix/template, no plugin"
+date_declared_positive,Date of declaring positive,"grep src (excl. Locale): no quoted key, no t() prefix/template, no plugin"
+date_format_validation,Date must be in YYYY-MM-DD format,"grep src (excl. Locale): no quoted key, no t() prefix/template, no plugin"
+date_of_birth_must_be_present,Date of birth must be present,"grep src (excl. Locale): no quoted key, no t() prefix/template, no plugin"
+date_of_result,Covid confirmation date,"grep src (excl. Locale): no quoted key, no t() prefix/template, no plugin"
+date_of_return,Date of Return,"grep src (excl. Locale): no quoted key, no t() prefix/template, no plugin"
+date_range_from_till,From {{from}} till {{till}},"grep src (excl. Locale): no quoted key, no t() prefix/template, no plugin"
+dates_and_identifiers,Dates & Identifiers,"grep src (excl. Locale): no quoted key, no t() prefix/template, no plugin"
+deceased_details,Deceased Details,"grep src (excl. Locale): no quoted key, no t() prefix/template, no plugin"
+deceased_disclaimer,Please provide the date and time of death for record-keeping purposes. This information is handled with utmost sensitivity and respect.,"grep src (excl. Locale): no quoted key, no t() prefix/template, no plugin"
+default_environments,Default environments,no 'environments' anywhere in src (excl. Locale)
+default_environments_description,Pre-filled values you can override for this installation.,no 'environments' anywhere in src (excl. Locale)
+delete_account_btn,"Yes, delete this account","grep src (excl. Locale): no quoted key, no t() prefix/template, no plugin"
+delivered_at,Delivered At,"grep src (excl. Locale): no quoted key, no t() prefix/template, no plugin"
+delivered_by,Delivered By,"grep src (excl. Locale): no quoted key, no t() prefix/template, no plugin"
+delivered_to,Delivered To,"grep src (excl. Locale): no quoted key, no t() prefix/template, no plugin"
+deliveries_approved,Deliveries approved successfully,"grep src (excl. Locale): no quoted key, no t() prefix/template, no plugin"
+delivery_conditions,Delivery conditions,"grep src (excl. Locale): no quoted key, no t() prefix/template, no plugin"
+delivery_details,Delivery Details,"grep src (excl. Locale): no quoted key, no t() prefix/template, no plugin"
+denied_on,Denied On,"grep src (excl. Locale): no quoted key, no t() prefix/template, no plugin"
+device_association_exist,Device association exist!,"grep src (excl. Locale): no quoted key, no t() prefix/template; backend errors shown raw"
+device_location_history,Device Location History,"grep src (excl. Locale): no quoted key, no t() prefix/template, no plugin"
+diagnosis_at_discharge,Diagnosis at Discharge,"grep src (excl. Locale): no quoted key, no t() prefix/template, no plugin"
+diagnosis_empty_message,No diagnoses recorded,"grep src (excl. Locale): no quoted key, no t() prefix/template, no plugin"
+diagnostic_report_approved_description,{{name}} report approved and finalized,grep src (excl. Locale): no quoted key; only diagnostic_report_*_successfully keys used
+diagnostic_report_created_description,{{name}} report created,grep src (excl. Locale): no quoted key; only diagnostic_report_*_successfully keys used
+diagnostic_report_in_progress,Diagnostic Report In Progress,"grep src (excl. Locale): no quoted key, no t() prefix/template, no plugin"
+diagnostic_report_in_progress_description,{{name}} report created and pending approval,"grep src (excl. Locale): no quoted key, no t() prefix/template, no plugin"
+diagnostic_results_confirm_approval_description,Are you sure you want to approve these diagnostic results? This action cannot be undone.,"grep src (excl. Locale): no quoted key, no t() prefix/template, no plugin"
+differential_diagnosis,Differential diagnosis,"grep src (excl. Locale): no quoted key, no t() prefix/template, no plugin"
+disable_transfer,Disable Transfer,"grep src (excl. Locale): no quoted key, no t() prefix/template, no plugin"
+discard_damaged_item,Discard Damaged Item,"grep src (excl. Locale): no quoted key, no t() prefix/template, no plugin"
+discharge_confirmation_date,Discharge date and time will be automatically set to current date and time,no 'discharge_confirmation' anywhere in src (excl. Locale)
+discharge_confirmation_message,You are about to mark this patient as discharged.,no 'discharge_confirmation' anywhere in src (excl. Locale)
+discharge_confirmation_status_change,The encounter status will be changed to 'Discharged',no 'discharge_confirmation' anywhere in src (excl. Locale)
+discharge_confirmation_summary_required,You will have an option to provide discharge summary advice details,no 'discharge_confirmation' anywhere in src (excl. Locale)
+discharge_disposition_required,Discharge disposition is required,"grep src (excl. Locale): no quoted key, no t() prefix/template, no plugin"
+discharge_patient_description,Ready to discharge? This will update the patient's status and require discharge summary details.,"grep src (excl. Locale): no quoted key, no t() prefix/template, no plugin"
+discharge_summaries,Discharge Summaries,"grep src (excl. Locale): no quoted key, no t() prefix/template, no plugin"
+discharge_this_action_is_permanent_and_cannot_be_undone,This action is <strong>permanent and cannot be undone</strong>.,"grep src (excl. Locale): no quoted key/i18nKey, no t() prefix/template, no plugin"
+discharged_on,Discharged On,"grep src (excl. Locale): no quoted key, no t() prefix/template, no plugin"
+discharged_to,Discharged to,"grep src (excl. Locale): no quoted key, no t() prefix/template, no plugin"
+disclaimer_computer_generated_summary,Disclaimer: This is a computer generated summary and may not be 100% accurate. Please verify the details before using it.,"grep src (excl. Locale): no quoted key, no t() prefix/template, no plugin"
+discount_amount_range_description,Min. amount must be 0,"grep src (excl. Locale): no quoted key, no t() prefix/template, no plugin"
+discount_explanation,Reductions applied before taxes,"grep src (excl. Locale): no quoted key, no t() prefix/template, no plugin"
+discount_factor_applies_to_subtotal_before_discounts,Factor applies to subtotal before discounts,No quoted or whole-word match in src *.ts/*.tsx (locale JSON excluded); no dynamic t() prefix builder yields it; not in plugins/
+discount_factor_range_description,Value must be between 0 and 100%,No quoted or whole-word match in src *.ts/*.tsx (locale JSON excluded); no dynamic t() prefix builder yields it; not in plugins/
+discounted_price,Disc. Price/Unit,No quoted or whole-word match in src *.ts/*.tsx (locale JSON excluded); no dynamic t() prefix builder yields it; not in plugins/
+dispatch_in_progress_from,Dispatch in progress from,No quoted or whole-word match in src *.ts/*.tsx (locale JSON excluded); no dynamic t() prefix builder yields it; not in plugins/
+dispatched_at,Dispatched At,No quoted or whole-word match in src *.ts/*.tsx (locale JSON excluded); no dynamic t() prefix builder yields it; not in plugins/
+dispatched_from,Dispatched From,No quoted or whole-word match in src *.ts/*.tsx (locale JSON excluded); no dynamic t() prefix builder yields it; not in plugins/
+dispense_medications,Dispense Medications,No quoted or whole-word match in src *.ts/*.tsx (locale JSON excluded); no dynamic t() prefix builder yields it; not in plugins/
+dispense_order_cannot_be_edited_due_to_invoice,Cancel the related invoice before editing this dispense order.,No quoted or whole-word match in src *.ts/*.tsx (locale JSON excluded); no dynamic t() prefix builder yields it; not in plugins/
+dispense_order_items_placeholder,Dispense Order Items,No quoted or whole-word match in src *.ts/*.tsx (locale JSON excluded); no dynamic t() prefix builder yields it; not in plugins/
+dispense_order_items_placeholder_description,Items for this dispense order will appear here,No quoted or whole-word match in src *.ts/*.tsx (locale JSON excluded); no dynamic t() prefix builder yields it; not in plugins/
+dispense_order_status_updated_successfully,Dispense order status updated successfully,"No quoted or whole-word match; only dispense_order_status__${status} builder exists (double underscore, cannot yield this); not in plugins/"
+dispense_order_updated_successfully,Dispense order updated successfully.,No quoted or whole-word match in src *.ts/*.tsx (locale JSON excluded); no dynamic t() prefix builder yields it; not in plugins/
+dispense_selected,Dispense Selected,No quoted or whole-word match in src *.ts/*.tsx (locale JSON excluded); no dynamic t() prefix builder yields it; not in plugins/
+display_as_table,Display as Table,No quoted or whole-word match in src *.ts/*.tsx (locale JSON excluded); no dynamic t() prefix builder yields it; not in plugins/
+display_help_short,A user-friendly label for this identifier.,No quoted or whole-word match in src *.ts/*.tsx (locale JSON excluded); no dynamic t() prefix builder yields it; not in plugins/
+display_style,Display Style,No quoted or whole-word match in src *.ts/*.tsx (locale JSON excluded); no dynamic t() prefix builder yields it; not in plugins/
+distributor,Distributor,No quoted or whole-word match in src *.ts/*.tsx (locale JSON excluded); no dynamic t() prefix builder yields it; not in plugins/
+district_is_required_when_state_is_selected,District is required when state is selected,No quoted or whole-word match in src *.ts/*.tsx (locale JSON excluded); no dynamic t() prefix builder yields it; not in plugins/
+do_you_want_to_complete_this_encounter,Do you want to complete the encounter?,No quoted or whole-word match in src *.ts/*.tsx (locale JSON excluded); no dynamic t() prefix builder yields it; not in plugins/
+dob_format,Please enter date in DD/MM/YYYY format,No quoted or whole-word match in src *.ts/*.tsx (locale JSON excluded); no dynamic t() prefix builder yields it; not in plugins/
+doctor_experience_error,Please enter a valid number between 0 and 100.,No quoted or whole-word match in src *.ts/*.tsx (locale JSON excluded); no dynamic t() prefix builder yields it; not in plugins/
+doctor_experience_required,Years of experience is required,No quoted or whole-word match in src *.ts/*.tsx (locale JSON excluded); no dynamic t() prefix builder yields it; not in plugins/
+doctor_not_found,Doctor not found,No quoted or whole-word match in src *.ts/*.tsx (locale JSON excluded) or backend; no dynamic t() prefix builder yields it
+doctor_s_medical_council_registration,Doctor's Medical Council Registration,No quoted or whole-word match in src *.ts/*.tsx (locale JSON excluded); no dynamic t() prefix builder yields it; not in plugins/
+doctors_name,Doctor's Name,No quoted or whole-word match in src; 'doctors_' substring not found anywhere in src *.ts/*.tsx
+doctors_progress_note,Doctor's Progress Note,No quoted or whole-word match in src; 'doctors_' substring not found anywhere in src *.ts/*.tsx
+domestic_healthcare_support,Domestic healthcare support,"No match in frontend src; only hit is legacy backend migration 0457 field name, never passed to t()"
+domestic_international_travel,Domestic/international Travel (within last 28 days),No match in frontend src; 'domestic_' substring absent from src *.ts/*.tsx
+download_latest_report,Download Latest Report,No quoted or whole-word match in src *.ts/*.tsx (locale JSON excluded); no dynamic t() prefix builder yields it; not in plugins/
+downloading_abha_card,"Generating ABHA Card, Please hold on",No quoted or whole-word match in src *.ts/*.tsx (locale JSON excluded); no dynamic t() prefix builder yields it; not in plugins/
+due_date,Due Date,No quoted or whole-word match in src *.ts/*.tsx (locale JSON excluded); no dynamic t() prefix builder yields it; not in plugins/
+duration_input_placeholder,"Type eg. 5 days, 2 weeks",No quoted or whole-word match in src *.ts/*.tsx (locale JSON excluded); no dynamic t() prefix builder yields it; not in plugins/
+duration_period_title,Fixed dates,No quoted or whole-word match in src *.ts/*.tsx (locale JSON excluded); no dynamic t() prefix builder yields it; not in plugins/
+edit_basic_information,Edit Basic Information,No quoted or whole-word match; no `edit_${...}` builder in src; not in plugins/
+edit_charge_item_description,Edit this charge item,No quoted or whole-word match; no `edit_${...}` builder in src; not in plugins/
+edit_device,Edit Device,No quoted or whole-word match; no `edit_${...}` builder in src; not in plugins/
+edit_device_description,Edit the details of the device,No quoted or whole-word match; no `edit_${...}` builder in src; not in plugins/
+edit_dispense_order,Edit,No quoted or whole-word match; no `edit_${...}` builder in src; not in plugins/
+edit_dosage_instructions,Edit Dosage Instructions,No quoted or whole-word match; no `edit_${...}` builder in src; not in plugins/
+edit_invoice_number_expression,Edit Invoice Number Expression,No quoted or whole-word match; no `edit_${...}` builder in src; not in plugins/
+edit_policy,Edit Insurance Policy,No quoted or whole-word match; no `edit_${...}` builder in src; not in plugins/
+edit_policy_description,Add or edit patient's insurance details,No quoted or whole-word match; no `edit_${...}` builder in src; not in plugins/
+edit_purchase_order,Edit Purchase Order,No quoted or whole-word match; no `edit_${...}` builder in src; not in plugins/
+edit_stock_request,Edit Stock Request,No quoted or whole-word match; no `edit_${...}` builder in src; not in plugins/
+edit_supply_delivery,Edit Supply Delivery,No quoted or whole-word match; no `edit_${...}` builder in src; not in plugins/
+edit_supply_request,Edit Supply Request,No quoted or whole-word match; no `edit_${...}` builder in src; not in plugins/
+edit_user_profile,Edit Profile,No quoted or whole-word match; no `edit_${...}` builder in src; not in plugins/
+emergency_contact_person_name_details,"Emergency contact person (Father, Mother, Spouse, Sibling, Friend)","No quoted or whole-word match in src; only `${code.display}_details` builder exists and code.display is a display string, not this key"
+emergency_contact_person_name_volunteer,Emergency Contact Person Name (Volunteer),No quoted or whole-word match in src *.ts/*.tsx (locale JSON excluded); no dynamic t() prefix builder yields it; not in plugins/
+emergency_contact_volunteer,Emergency Contact (Volunteer),No quoted or whole-word match in src *.ts/*.tsx (locale JSON excluded); no dynamic t() prefix builder yields it; not in plugins/
+enabled_only_for_partially_dispensed,Enabled only for partially dispensed medications,No quoted or whole-word match in src *.ts/*.tsx (locale JSON excluded); no dynamic t() prefix builder yields it; not in plugins/
+encounter_locations,Encounter Locations,No quoted or whole-word match; encounter_* builders are encounter_class__/status__/priority__ etc. only
+encounter_manage_organization_description,Add or remove organizations from this encouter,No quoted or whole-word match in src *.ts/*.tsx (locale JSON excluded); no dynamic t() prefix builder yields it; not in plugins/
+encounter_questionnaire_logs,Encounter Questionnaire Logs,No quoted or whole-word match in src *.ts/*.tsx (locale JSON excluded); no dynamic t() prefix builder yields it; not in plugins/
+encounter_re_admission__false,No,"No `encounter_re_admission__${...}` builder; re_admission shown only via t(""re_admission"") badge in hospitalisation.tsx:51 and summary-panel-encounter-details.tsx"
+encounter_re_admission__true,Yes,"No `encounter_re_admission__${...}` builder; re_admission shown only via t(""re_admission"") badge in hospitalisation.tsx:51 and summary-panel-encounter-details.tsx"
+encounter_settings,Encounter Settings,No quoted or whole-word match in src *.ts/*.tsx (locale JSON excluded); no dynamic t() prefix builder yields it; not in plugins/
+encounter_type,Encounter Type,No quoted or whole-word match in src *.ts/*.tsx (locale JSON excluded); no dynamic t() prefix builder yields it; not in plugins/
+end_actions,End Actions,No quoted or whole-word match in src *.ts/*.tsx (locale JSON excluded); no dynamic t() prefix builder yields it; not in plugins/
+end_time_required,End time is required,No quoted or whole-word match in src *.ts/*.tsx (locale JSON excluded); no dynamic t() prefix builder yields it; not in plugins/
+enter_category_name,Enter category name,No quoted or whole-word match; no `enter_${...}` builder in src; not in plugins/
+enter_comma_separated_values,Enter comma-separated values,No quoted or whole-word match; no `enter_${...}` builder in src; not in plugins/
+enter_contact_value,Enter contact value,No quoted or whole-word match; no `enter_${...}` builder in src; not in plugins/
+enter_custom_text,Enter custom text,No quoted or whole-word match; no `enter_${...}` builder in src; not in plugins/
+enter_latitude,Enter latitude,No quoted or whole-word match; no `enter_${...}` builder in src; not in plugins/
+enter_longitude,Enter longitude,No quoted or whole-word match; no `enter_${...}` builder in src; not in plugins/
+enter_max_value,Enter maximum value,No quoted or whole-word match; no `enter_${...}` builder in src; not in plugins/
+enter_message,Start typing...,No quoted or whole-word match; no `enter_${...}` builder in src; not in plugins/
+enter_min_value,Enter minimum value,No quoted or whole-word match; no `enter_${...}` builder in src; not in plugins/
+enter_mobile_number,Enter Mobile Number,No quoted or whole-word match; no `enter_${...}` builder in src; not in plugins/
+enter_mobile_otp,Enter OTP sent to the given mobile number,No quoted or whole-word match; no `enter_${...}` builder in src; not in plugins/
+enter_notes_optional,Enter Notes (Optional),No quoted or whole-word match; no `enter_${...}` builder in src; not in plugins/
+enter_quantity,Enter quantity,No quoted or whole-word match; no `enter_${...}` builder in src; not in plugins/
+enter_re_visit_allowed_days,Enter re-visit allowed days,No quoted or whole-word match; no `enter_${...}` builder in src; not in plugins/
+enter_section_title,Enter section title,No quoted or whole-word match; no `enter_${...}` builder in src; not in plugins/
+enter_valid_amount,Please enter a valid amount,No quoted or whole-word match; no `enter_${...}` builder in src; not in plugins/
+enter_valid_dob,Enter a valid date of birth,No quoted or whole-word match; no `enter_${...}` builder in src; not in plugins/
+enter_valid_dob_age,Please enter an age greater than 15 years,No quoted or whole-word match; no `enter_${...}` builder in src; not in plugins/
+enter_value,Enter value,No quoted or whole-word match; no `enter_${...}` builder in src; not in plugins/
+enter_year_of_birth_to_verify,Enter year of birth to verify,No quoted or whole-word match; no `enter_${...}` builder in src; not in plugins/
+enter_your_valid_email_address_to_receive_the_discharge_summary,Enter your valid email address to receive the discharge summary,No quoted or whole-word match; no `enter_${...}` builder in src; not in plugins/
+entry_date,Entry Date,"No match in frontend src; only hit is legacy backend migration 0001_initial_squashed field name, never passed to t()"
+environment_key,Environment key,No quoted or whole-word match in src *.ts/*.tsx (locale JSON excluded); no dynamic t() prefix builder yields it; not in plugins/
+environment_value,Environment value,No quoted or whole-word match in src *.ts/*.tsx (locale JSON excluded); no dynamic t() prefix builder yields it; not in plugins/
+error_approving_deliveries,Error approving deliveries,No quoted or whole-word match; no `error_${...}` builder in src; not in plugins/ or backend
+error_calculating_price,Error calculating price,No quoted or whole-word match; no `error_${...}` builder in src; not in plugins/ or backend
+error_completing_medication_return_items,Error completing medication return items,No quoted or whole-word match; no `error_${...}` builder in src; not in plugins/ or backend
+error_creating_product,Error creating product,No quoted or whole-word match; no `error_${...}` builder in src; not in plugins/ or backend
+error_creating_supply_delivery,Error creating supply delivery,No quoted or whole-word match; no `error_${...}` builder in src; not in plugins/ or backend
+error_dispensing_medications,Failed to dispense medications. Please try again.,No quoted or whole-word match; no `error_${...}` builder in src; not in plugins/ or backend
+error_fetching_user_details,Error while fetching user details: ,No quoted or whole-word match; no `error_${...}` builder in src; not in plugins/ or backend
+error_generating_discharge_summary,Error generating discharge summary,No quoted or whole-word match; no `error_${...}` builder in src; not in plugins/ or backend
+error_generating_svg,Error generating SVG,No quoted or whole-word match; no `error_${...}` builder in src; not in plugins/ or backend
+error_in_createUpload,Error in createUpload,No quoted or whole-word match; no `error_${...}` builder in src; not in plugins/ or backend
+error_loading_purchase_order,Error loading purchase order,No quoted or whole-word match; no `error_${...}` builder in src; not in plugins/ or backend
+error_processing_items,Error processing items,No quoted or whole-word match; no `error_${...}` builder in src; not in plugins/ or backend
+error_receiving_stock,Error receiving stock,No quoted or whole-word match; no `error_${...}` builder in src; not in plugins/ or backend
+error_removing_bed_assignment,Error while removing the bed assignment. Please try again later.,No quoted or whole-word match; no `error_${...}` builder in src; not in plugins/ or backend
+error_saving_file,Error saving file,No quoted or whole-word match; no `error_${...}` builder in src; not in plugins/ or backend
+error_updating_charge_item,Error updating the charge item,No quoted or whole-word match; no `error_${...}` builder in src; not in plugins/ or backend
+error_updating_delivery,Error updating delivery,No quoted or whole-word match; no `error_${...}` builder in src; not in plugins/ or backend
+error_updating_encounter,Error to Updating Encounter,No quoted or whole-word match; no `error_${...}` builder in src; not in plugins/ or backend
+error_updating_location,Error updating location,No quoted or whole-word match; no `error_${...}` builder in src; not in plugins/ or backend
+error_updating_status,Failed to update status,No quoted or whole-word match; no `error_${...}` builder in src; not in plugins/ or backend
+error_updating_supply_delivery,Error updating supply delivery,No quoted or whole-word match; no `error_${...}` builder in src; not in plugins/ or backend
+error_updating_supply_request,Failed to update supply request,No quoted or whole-word match; no `error_${...}` builder in src; not in plugins/ or backend
+error_uploading_files,Error uploading files,No quoted or whole-word match; no `error_${...}` builder in src; not in plugins/ or backend
+error_verifying_otp,"Error while verifying OTP, Please request a new OTP",No quoted or whole-word match; no `error_${...}` builder in src; not in plugins/ or backend
+etiology_identified,Etiology identified,No match in frontend src ('etiology' absent); only hit is legacy backend migration field name
+evening_slots,Evening Slots,No quoted or whole-word match; 'evening' absent from src *.ts/*.tsx
+example_email_address,example@email.com,No quoted or whole-word match in src *.ts/*.tsx (locale JSON excluded); no dynamic t() prefix builder yields it; not in plugins/
+exception_for_non_schedulable_resource_warning,Exceptions can be created only after creating a schedule,No quoted or whole-word match in src *.ts/*.tsx (locale JSON excluded); no dynamic t() prefix builder yields it; not in plugins/
+exclude_if_all,exclude if all,'exclude_if' substring absent from src *.ts/*.tsx; no builder
+exclude_if_any,exclude if any,'exclude_if' substring absent from src *.ts/*.tsx; no builder
+existing_requests,Existing Requests,No quoted or whole-word match in src *.ts/*.tsx (locale JSON excluded); no dynamic t() prefix builder yields it; not in plugins/
+expand_all,Expand All,No quoted or whole-word match in src *.ts/*.tsx (locale JSON excluded); no dynamic t() prefix builder yields it; not in plugins/
+expand_sidebar,Expand Sidebar,No quoted or whole-word match in src *.ts/*.tsx (locale JSON excluded); no dynamic t() prefix builder yields it; not in plugins/
+expires_on,Expires On,No quoted or whole-word match in src *.ts/*.tsx (locale JSON excluded); no dynamic t() prefix builder yields it; not in plugins/
+export_live_patients,Export Live Patients,No quoted or whole-word match in src *.ts/*.tsx (locale JSON excluded); no dynamic t() prefix builder yields it; not in plugins/
+exporting,Exporting,No quoted or whole-word match in src *.ts/*.tsx (locale JSON excluded); no dynamic t() prefix builder yields it; not in plugins/
+external_prescriptions,External prescriptions,No quoted or whole-word match in src *.ts/*.tsx (locale JSON excluded); no dynamic t() prefix builder yields it; not in plugins/
+facility_actions,Facility Actions,No quoted or whole-word match; only facility_organization_type__${} builder exists
+facility_actions_menu,Facility action menu,No quoted or whole-word match; only facility_organization_type__${} builder exists
+facility_assign_request,What facility would you like to assign the request to?,No quoted or whole-word match; only facility_organization_type__${} builder exists
+facility_consent_requests_page_title,Patient Consent List,No quoted or whole-word match; only facility_organization_type__${} builder exists
+facility_delete_error,Error while deleting Facility,No quoted or whole-word match; only facility_organization_type__${} builder exists
+facility_district_name,Facility/District Name,No quoted or whole-word match; only facility_organization_type__${} builder exists
+facility_district_pincode,Facility/District/Pincode,No quoted or whole-word match; only facility_organization_type__${} builder exists
+facility_linked_success,Facility linked successfully,No quoted or whole-word match; only facility_organization_type__${} builder exists
+failed_to_archive_child_tag,Failed to archive child tag,No quoted or whole-word match; no `failed_${...}` builder in src; not in plugins/
+failed_to_cancel_payment,Failed to cancel payment,No quoted or whole-word match; no `failed_${...}` builder in src; not in plugins/
+failed_to_capture_image,Failed to capture image,No quoted or whole-word match; no `failed_${...}` builder in src; not in plugins/
+failed_to_create_appointment,Failed to create an appointment,No quoted or whole-word match; no `failed_${...}` builder in src; not in plugins/
+failed_to_create_invoice,Failed to create invoice,No quoted or whole-word match; no `failed_${...}` builder in src; not in plugins/
+failed_to_create_queue,Failed to create queue,No quoted or whole-word match; no `failed_${...}` builder in src; not in plugins/
+failed_to_delete_template,Failed to delete template,No quoted or whole-word match; no `failed_${...}` builder in src; not in plugins/
+failed_to_dispatch_some_items,Failed to dispatch {{failed}} of {{total}} items.,No quoted or whole-word match; no `failed_${...}` builder in src; not in plugins/
+failed_to_generate_token,Failed to generate token,No quoted or whole-word match; no `failed_${...}` builder in src; not in plugins/
+failed_to_issue_invoice,Failed to issue invoice,No quoted or whole-word match; no `failed_${...}` builder in src; not in plugins/
+failed_to_link_abha_number,Failed to link ABHA Number. Please try again later.,No quoted or whole-word match; no `failed_${...}` builder in src; not in plugins/
+failed_to_load_activity_definition,Failed to load activity definition: {{slug}},No quoted or whole-word match; no `failed_${...}` builder in src; not in plugins/
+failed_to_load_definitions,Failed to load definitions,No quoted or whole-word match; no `failed_${...}` builder in src; not in plugins/
+failed_to_revoke_token,Failed to revoke token,No quoted or whole-word match; no `failed_${...}` builder in src; not in plugins/
+failed_to_send_message,Failed to send message,No quoted or whole-word match; no `failed_${...}` builder in src; not in plugins/
+failed_to_stop_camera,Failed to stop camera,No quoted or whole-word match; no `failed_${...}` builder in src; not in plugins/
+failed_to_update_order,Failed to update location order,No quoted or whole-word match; no `failed_${...}` builder in src; not in plugins/
+failed_to_update_queue,Failed to update queue,No quoted or whole-word match; no `failed_${...}` builder in src; not in plugins/
+fast_track_testing_reason,Fast track testing reason,'fast_track' substring absent from src *.ts/*.tsx
+favorite_forms,Favorite Forms,No quoted or whole-word match in src *.ts/*.tsx (locale JSON excluded); no dynamic t() prefix builder yields it; not in plugins/
+featured,Featured,'featured' absent from src *.ts/*.tsx; not in plugins/
+featured_apps,Featured apps,'featured' absent from src *.ts/*.tsx; not in plugins/
+featured_apps_for_workflow,Featured apps for your workflow,'featured' absent from src *.ts/*.tsx; not in plugins/
+feed_configurations,Feed Configurations,No quoted or whole-word match in src *.ts/*.tsx (locale JSON excluded); no dynamic t() prefix builder yields it; not in plugins/
+fetched_attachments_successfully,Fetched attachments successfully,No quoted or whole-word match in src *.ts/*.tsx (locale JSON excluded); no dynamic t() prefix builder yields it; not in plugins/
+fields_columns,Fields & Columns,No quoted or whole-word match in src *.ts/*.tsx (locale JSON excluded); no dynamic t() prefix builder yields it; not in plugins/
+fields_required_for_custom_sections,Fields are required for custom sections,No quoted or whole-word match in src *.ts/*.tsx (locale JSON excluded); no dynamic t() prefix builder yields it; not in plugins/
+fields_required_for_structured_sections,Fields are required for structured sections,No quoted or whole-word match in src *.ts/*.tsx (locale JSON excluded); no dynamic t() prefix builder yields it; not in plugins/
+file_saved_successfully,File saved successfully,No quoted or whole-word match in src *.ts/*.tsx (locale JSON excluded); no dynamic t() prefix builder yields it; not in plugins/
+file_success__upload_complete,File upload complete,'file_success' substring absent from src; no file_success__${} builder
+file_upload_success,File uploaded successfully,No quoted or whole-word match in src *.ts/*.tsx (locale JSON excluded); no dynamic t() prefix builder yields it; not in plugins/
+fill_color,Fill Color,No quoted or whole-word match in src *.ts/*.tsx (locale JSON excluded); no dynamic t() prefix builder yields it; not in plugins/
+filter_by_date,Filter by Date,No quoted or whole-word match; no `filter_${...}` builder in src; not in plugins/
+filter_by_delivery,Filter by delivery,No quoted or whole-word match; no `filter_${...}` builder in src; not in plugins/
+filter_by_department_or_team_name,Filter by department or team name,No quoted or whole-word match; no `filter_${...}` builder in src; not in plugins/
+filter_by_locations,Filter by Locations,No quoted or whole-word match; no `filter_${...}` builder in src; not in plugins/
+filter_deliveries,Filter deliveries,No quoted or whole-word match; no `filter_${...}` builder in src; not in plugins/
+filter_selected_count_one,{{count}} filter selected,Base key filter_selected_count not found quoted or as word in src; no builder
+filter_selected_count_other,{{count}} filters selected,Base key filter_selected_count not found quoted or as word in src; no builder
+filtered_by,Filtered by,No quoted or whole-word match in src *.ts/*.tsx (locale JSON excluded); no dynamic t() prefix builder yields it; not in plugins/
+filtering_by,Filtering by {{name}},No quoted or whole-word match in src *.ts/*.tsx (locale JSON excluded); no dynamic t() prefix builder yields it; not in plugins/
+final_price,Final price,No quoted or whole-word match in src *.ts/*.tsx (locale JSON excluded); no dynamic t() prefix builder yields it; not in plugins/
+financial_overview,Financial Overview,No quoted or whole-word match in src *.ts/*.tsx (locale JSON excluded); no dynamic t() prefix builder yields it; not in plugins/
+fixed_amount,Fixed Amount,No quoted or whole-word match in src *.ts/*.tsx (locale JSON excluded); no dynamic t() prefix builder yields it; not in plugins/
+font_family,Font Family,No quoted or whole-word match in src *.ts/*.tsx (locale JSON excluded); no dynamic t() prefix builder yields it; not in plugins/
+font_size,Font Size,No quoted or whole-word match in src *.ts/*.tsx (locale JSON excluded); no dynamic t() prefix builder yields it; not in plugins/
+form_submissions,Form Submissions,No quoted or whole-word match in src *.ts/*.tsx (locale JSON excluded); no dynamic t() prefix builder yields it; not in plugins/
+from_package,From Package,No quoted or whole-word match in src *.ts/*.tsx (locale JSON excluded); no dynamic t() prefix builder yields it; not in plugins/
+from_user,from User,No quoted or whole-word match in src *.ts/*.tsx (locale JSON excluded); no dynamic t() prefix builder yields it; not in plugins/
+fulfill_request_confirmation_message,Dispatching this quantity is/already sufficient to complete the request. How would you like to proceed?,No quoted or whole-word match in src *.ts/*.tsx (locale JSON excluded); no dynamic t() prefix builder yields it; not in plugins/
+fulfill_request_title,Complete the Supply Request?,No quoted or whole-word match in src *.ts/*.tsx (locale JSON excluded); no dynamic t() prefix builder yields it; not in plugins/
+general_info_detail,"Provide the patient's personal details, including name, date of birth, gender, and contact information for accurate identification and communication.",No quoted or whole-word match in src *.ts/*.tsx (locale JSON excluded); no dynamic t() prefix builder yields it; not in plugins/
+general_op,GENERAL OP,'general_op'/'GENERAL_OP' absent from src *.ts/*.tsx
+generate_a_new_token,Generate a new token,No quoted or whole-word match in src *.ts/*.tsx (locale JSON excluded); no dynamic t() prefix builder yields it; not in plugins/
+generate_discharge_summary,Generate Discharge Summary,No quoted or whole-word match in src *.ts/*.tsx (locale JSON excluded); no dynamic t() prefix builder yields it; not in plugins/
+generate_link_abha,Generate/Link ABHA Number,No quoted or whole-word match in src *.ts/*.tsx (locale JSON excluded); no dynamic t() prefix builder yields it; not in plugins/
+geo_organization_required,Geo organization is required,No quoted or whole-word match in src *.ts/*.tsx (locale JSON excluded); no dynamic t() prefix builder yields it; not in plugins/
+got_it,Got it!,No quoted or whole-word match in src *.ts/*.tsx (locale JSON excluded); no dynamic t() prefix builder yields it; not in plugins/
+granted_on,Granted On,grep -w in src (no Locale): none; no prefix/template/backend source
+handed_over_on,Handed over on,grep -w in src (no Locale): none; no prefix/template/backend source
+has_allergies,Has Allergies,grep -w in src (no Locale): none; no prefix/template/backend source
+has_domestic_healthcare_support,Has domestic healthcare support?,grep -w in src (no Locale): none; no prefix/template/backend source
+has_medications,{{count}} medication(s) already added,grep -w in src (no Locale): none; no prefix/template/backend source
+has_sari,Has SARI (Severe Acute Respiratory illness)?,"grep -w in src (no Locale): none; only a legacy backend migration field, never passed to t()"
+header_description,Configure header elements and layout,grep -w in src (no Locale): none; no prefix/template/backend source
+header_error,There are errors in the Header tab. Please fix the errors before saving.,grep -w in src (no Locale): none; no prefix/template/backend source
+health_check_failed,Health check failed,grep -w in src (no Locale): none; no prefix/template/backend source
+health_check_not_required,Health check not required,grep -w in src (no Locale): none; no prefix/template/backend source
+health_check_passed,Health check passed,grep -w in src (no Locale): none; no prefix/template/backend source
+health_check_unreachable,Health check unreachable,grep -w in src (no Locale): none; no prefix/template/backend source
+health_check_unreachable_message,Health check could not reach the configured API. Verify networking and CORS before enabling the plug.,grep -w in src (no Locale): none; no prefix/template/backend source
+healthy,Healthy,grep -w in src (no Locale): none; no prefix/template/backend source
+hearing,We are hearing you...,grep -w in src (no Locale): none; no prefix/template/backend source
+hide_items,Hide Items,grep -w in src (no Locale): none; no prefix/template/backend source
+hide_role_organization_directory,Hide directory,grep -w in src (no Locale): none; no prefix/template/backend source
+high_to_low,High to Low,grep -w in src (no Locale): none; no prefix/template/backend source
+home_facility_cleared_success,Home Facility cleared successfully,grep -w in src (no Locale): none; no prefix/template/backend source
+home_facility_updated_error,Error while updating Home Facility,grep -w in src (no Locale): none; no prefix/template/backend source
+home_facility_updated_success,Home Facility updated successfully,grep -w in src (no Locale): none; no prefix/template/backend source
+home_health,Home Health,grep -w in src (no Locale): none; no prefix/template/backend source
+hover_focus_reveal,Hover or focus to reveal,grep -w in src (no Locale): none; no prefix/template/backend source
+how_does_this_work,How does this work?,grep -w in src (no Locale): none; no prefix/template/backend source
+hubs,Hub Facilities,"grep -w in src (no Locale): none; only a backend related_name, never passed to t()"
+i_declare,I hereby declare that:,grep -w in src (no Locale): none; no prefix/template/backend source
+icmr_specimen_referral_form,ICMR Specimen Referral Form,grep -w in src (no Locale): none; no prefix/template/backend source
+image_uploaded_successfully,Image uploaded successfully!,grep -w in src (no Locale): none; no prefix/template/backend source
+immunisation-records,Immunisation,grep -w in src (no Locale): none; no prefix/template/backend source
+in_cart,In Cart,grep -w in src (no Locale): none; no prefix/template/backend source
+incoming_orders,Incoming Orders,grep -w in src (no Locale): none; no prefix/template/backend source
+incomplete_patient_details_warning,Patient details are incomplete. Please update the details before proceeding.,grep -w in src (no Locale): none; no prefix/template/backend source
+information_source_patient,Patient,"grep in src: none; MedicationStatementQuestion.tsx:829 uses t(source.value) = patient/practitioner/related_person, not information_source_*"
+information_source_related_person,Related Person,"grep in src: none; MedicationStatementQuestion.tsx:829 uses t(source.value), not information_source_*"
+information_source_user,Hospital Staff,grep in src: none; no information_source_ prefix template anywhere
+informational_explanation,Display-only components that don't affect the final price,grep -w in src (no Locale): none; no prefix/template/backend source
+installed_apps,Installed apps,grep -w in src (no Locale): none; no prefix/template/backend source
+installed_apps_description,Apps configured on this instance.,grep -w in src (no Locale): none; no prefix/template/backend source
+installed_label,Installed,grep -w in src (no Locale): none; no prefix/template/backend source
+insurance__insurer_id,Insurer ID,grep in src: no insurance__ key or template prefix
+insurance__insurer_name,Insurer Name,grep in src: no insurance__ key or template prefix
+insurance__member_id,Member ID,grep in src: no insurance__ key or template prefix
+insurance__policy_name,Policy ID / Policy Name,grep in src: no insurance__ key or template prefix
+insurance_details_detail,Include details of all the Insurance Policies held by the Patient for smooth insurance processing,grep -w in src (no Locale): none; no prefix/template/backend source
+insurer_name_required,Insurer Name is required,grep -w in src (no Locale): none; no prefix/template/backend source
+internal_requests,Internal Requests,grep -w in src (no Locale): none; no prefix/template/backend source
+inv_no,Inv. No,grep -w in src (no Locale): none; no prefix/template/backend source
+invalid_date_format,"Invalid date format, expected {{format}}",grep -w in src (no Locale): none; no prefix/template/backend source
+invalid_ip_address,Invalid IP Address,grep -w in src (no Locale): none; no prefix/template/backend source
+invalid_meta_json,Invalid meta JSON,grep -w in src (no Locale): none; no prefix/template/backend source
+invalid_patient_data,Invalid Patient Data,grep -w in src (no Locale): none; not in backend either
+invalid_url_format,Invalid URL format,grep -w in src (no Locale): none; no prefix/template/backend source
+invalid_url_http_https,URL should start with http:// or https://,grep -w in src (no Locale): none; no prefix/template/backend source
+invalid_url_javascript,"URL should not include javascript, please enter a valid URL.",grep -w in src (no Locale): none; no prefix/template/backend source
+investigation_report,Investigation Report,grep -w in src (no Locale): none; no prefix/template/backend source
+investigation_report_for_{{name}},Investigation Report for {{name}},grep -F in src (no Locale): none
+investigation_report_of_{{name}},Investigation Report of : {{name}},grep -F in src (no Locale): none
+investigations_summary,Investigations Summary,grep -w in src (no Locale): none; no prefix/template/backend source
+invoice title,Invoice Title,grep -F in src (no Locale): none
+invoice_actions,Invoice Actions,grep -w in src (no Locale): none; no prefix/template/backend source
+invoice_activity,Invoice Activity,grep -w in src (no Locale): none; no prefix/template/backend source
+invoice_balanced_with_pending_amount,Outstanding amount moved to account balance,grep -w in src (no Locale): none; no prefix/template/backend source
+invoice_entered_in_error,Invoice entered in error,grep -w in src (no Locale): none; only invoice_status__ template exists
+invoice_number_expression_example_label,Example:,grep -w in src (no Locale): none; no prefix/template/backend source
+invoice_timeline,Invoice Timeline,grep -w in src (no Locale): none; no prefix/template/backend source
+invoice_title,Invoice Title,grep -w in src (no Locale): none; no prefix/template/backend source
+invoice_title_placeholder,Enter Invoice Title,grep -w in src (no Locale): none; no prefix/template/backend source
+ip_encounter,IP Encounter,grep -w in src (no Locale): none; no prefix/template/backend source
+is_atypical_presentation,Is Atypical presentation,grep -w in src: none; only a legacy backend migration field
+is_declared_positive,Whether declared positive,grep -w in src: none; only a legacy backend migration field
+is_fully_dispensed,Is Fully Dispensed,grep -w in src (no Locale): none; no prefix/template/backend source
+is_phone_a_whatsapp_number,Is the phone number a WhatsApp number?,grep -w in src (no Locale): none; no prefix/template/backend source
+is_pregnant,Is pregnant,grep -w in src (no Locale): none; no prefix/template/backend source
+is_substituted_with,is substituted with,grep -w in src (no Locale): none; no prefix/template/backend source
+is_the_patient_deceased,Is the patient deceased,grep -w in src (no Locale): none; no prefix/template/backend source
+is_this_an_emergency_request,Is this an emergency request?,grep -w in src (no Locale): none; no prefix/template/backend source
+is_unusual_course,Is unusual course,grep -w in src: none; only a legacy backend migration field
+is_vaccinated,Whether vaccinated,grep -w in src: none; only a legacy backend migration field
+item_location,Item Location,grep -w in src (no Locale): none; no prefix/template/backend source
+item_marked_as_abandoned,Item marked as abandoned successfully,grep -w in src (no Locale): none; no prefix/template/backend source
+item_marked_as_entered_in_error,Item marked as entered in error successfully,grep -w in src (no Locale): none; no prefix/template/backend source
+item_marked_as_received,Item marked as received successfully,grep -w in src (no Locale): none; no prefix/template/backend source
+item_name,Item Name,grep -w in src (no Locale): none; no prefix/template/backend source
+item_purchase_price,Item Purchase Price,grep -w in src (no Locale): none; no prefix/template/backend source
+item_received,Item Received,grep -w in src (no Locale): none; no prefix/template/backend source
+item_requested,Item Requested,grep -w in src (no Locale): none; no prefix/template/backend source
+items_section,Items,grep -w in src (no Locale): none; no prefix/template/backend source
+items_to_request,Items to Request,grep -w in src (no Locale): none; no prefix/template/backend source
+lab_tests,Lab Tests,grep -w in src (no Locale): none; no prefix/template/backend source
+landmark,Landmark,grep -w in src (no Locale): only the lucide Landmark icon import; no t() source
+languages,Languages,"grep -w in src (no Locale): none (LANGUAGES const is codes, not t() key)"
+last_discharge_reason,Last Discharge Reason,grep -w in src (no Locale): none; no prefix/template/backend source
+last_vaccinated_on,Last Vaccinated on,grep -w in src (no Locale): none; no prefix/template/backend source
+last_week_short,Last wk,grep -w in src (no Locale): none; no prefix/template/backend source
+layout_description,"Configure page size, margins, numbering and text settings",grep -w in src (no Locale): none; no prefix/template/backend source
+layout_error,There are errors in the Layout tab. Please fix the errors before saving.,grep -w in src (no Locale): none; no prefix/template/backend source
+leaf_category,Leaf Category,grep -w in src (no Locale): none; no prefix/template/backend source
+link_abha_number,Link ABHA Number,grep -w in src (no Locale): none; no prefix/template/backend source
+link_abha_profile,Link ABHA Profile,grep -w in src (no Locale): none; no prefix/template/backend source
+link_camera_and_bed,Link bed to Camera,grep -w in src (no Locale): none; no prefix/template/backend source
+link_consent,Link Consent,grep -w in src (no Locale): none; no prefix/template/backend source
+link_consent_description,Create a new consent for this encounter,grep -w in src (no Locale): none; no prefix/template/backend source
+link_existing_abha_profile,Already have an ABHA number,grep -w in src (no Locale): none; no prefix/template/backend source
+link_facility_error,Error while linking facility. Try again later.,grep -w in src (no Locale): none; no prefix/template/backend source
+link_id_placeholder,Unique identifier for this question,grep -w in src (no Locale): none; no prefix/template/backend source
+link_to_request_order,Link to Request Order,grep -w in src (no Locale): none; no prefix/template/backend source
+linked_facilities_note,Add or remove facilities and set or change the Home Facility,grep -w in src (no Locale): none; no prefix/template/backend source
+linked_skills,Linked Skills,grep -w in src (no Locale): none; no prefix/template/backend source
+linked_skills_note,Search and select skills to add to the skill set,grep -w in src (no Locale): none; no prefix/template/backend source
+live_patients_total_beds,Live Patients / Total beds,grep -w in src (no Locale): none; no prefix/template/backend source
+loading_queues,Loading queues...,grep -w in src (no Locale): none; no prefix/template/backend source
+local_ip_address_example,e.g. 192.168.0.123,grep -w in src (no Locale): none; no prefix/template/backend source
+location_association_created_successfully,Location association created successfully,grep -w in src (no Locale): none; no prefix/template/backend source
+location_association_updated_successfully,Location association updated successfully,grep -w in src (no Locale): none; no prefix/template/backend source
+location_beds_empty,No beds available in this location,grep -w in src (no Locale): none; no prefix/template/backend source
+location_name,Location Name,grep -w in src (no Locale): none; no prefix/template/backend source
+location_status,Location Status,grep -w in src (no Locale): none; no prefix/template/backend source
+location_status__active,Active,grep in src: no location_status__ template; only location_form__ templates exist
+location_status__inactive,Inactive,grep in src: no location_status__ template; only location_form__ templates exist
+location_status__unknown,Unknown,grep in src: no location_status__ template; only location_form__ templates exist
+location_will_appear_here,Patient location will appear here when assigned,grep -w in src (no Locale): none; no prefix/template/backend source
+locations_selected,locations selected,grep -w in src (no Locale): none; no prefix/template/backend source
+lock_ratios,Lock Ratios,grep -w in src (no Locale): none; no prefix/template/backend source
+log_update,Log Update,grep -w in src (no Locale): none; no prefix/template/backend source
+log_updates,Log Updates,grep -w in src (no Locale): none; no prefix/template/backend source
+logged_in_as,Logged in as,grep -w in src (no Locale): none; no prefix/template/backend source
+lot_batch_no,Lot/Batch No.,grep -w in src (no Locale): none; no prefix/template/backend source
+low_stock,Low Stock,grep -w in src (no Locale): none; no prefix/template/backend source
+low_to_high,Low to High,grep -w in src (no Locale): none; no prefix/template/backend source
+manage_activity_definitions,Manage Activity Definitions,grep -w in src (no Locale): none; no prefix/template/backend source
+manage_bed_presets,Manage Presets of Bed,grep -w in src (no Locale): none; no prefix/template/backend source
+manage_charge_item_definitions,Manage pricing definitions for services and items,grep -w in src (no Locale): none; no prefix/template/backend source
+manage_consents_description,View and manage consents for the patient,grep -w in src (no Locale): none; no prefix/template/backend source
+manage_patient_identifiers,Manage patient identifiers,grep -w in src (no Locale): none; no prefix/template/backend source
+manage_patient_location_and_transfers,Manage patient location and transfers,grep -w in src (no Locale): none; no prefix/template/backend source
+manage_preset,Manage preset {{ name }},grep -w in src (no Locale): none; no prefix/template/backend source
+manage_product_knowledge,Manage Product Knowledge,grep -w in src (no Locale): none; no prefix/template/backend source
+manage_response_templates_description,Create and manage templates to quickly prefill questionnaire responses,grep -w in src (no Locale): none; no prefix/template/backend source
+manage_service_accounts_description,Manage service accounts,grep -w in src (no Locale): none; no prefix/template/backend source
+manage_service_requests,View and manage service requests,grep -w in src (no Locale): none; no prefix/template/backend source
+manage_tags_for_entity,Manage tags for {{entity}},grep -w in src (no Locale): none; no prefix/template/backend source
+manage_templates,Manage Templates,grep -w in src (no Locale): none; no prefix/template/backend source
+manage_templates_description,"Create, edit and delete your prescription templates",grep -w in src (no Locale): none; no prefix/template/backend source
+managed_role_organizations_add_hint,Choose a responsibility that should be governed by this one.,grep -w in src (no Locale): none; no prefix/template/backend source
+managing_organizations_add_hint,Choose a responsibility that should govern this one.,grep -w in src (no Locale): none; no prefix/template/backend source
+mandatory_environments,Mandatory environments,grep -w in src (no Locale): none; no prefix/template/backend source
+mandatory_environments_description,Required values the app needs before it can be enabled.,grep -w in src (no Locale): none; no prefix/template/backend source
+manual_setup,Manual setup,grep -w in src (no Locale): none; no prefix/template/backend source
+manufactured,Manufactured,grep -w in src (no Locale): none; no prefix/template/backend source
+mark_care_complete,Mark Care Complete,grep -w in src (no Locale): none; no prefix/template/backend source
+mark_this_as_error,mark this as an error,grep -w in src (no Locale): none; mark_as_${s} template yields mark_as_* only
+mark_token_fulfilled,Mark Token Fulfilled,grep -w in src (no Locale): none; mark_as_${s} template yields mark_as_* only
+mark_token_fulfilled_description,Close token only,grep -w in src (no Locale): none; no prefix/template/backend source
+measured_after,Measured after,grep -w in src (no Locale): none; no prefix/template/backend source
+measured_before,Measured before,grep -w in src (no Locale): none; no prefix/template/backend source
+medical_council_registration_required,Medical Council Registration is required,grep -w in src (no Locale): none; no prefix/template/backend source
+medical_records,Medical Records,grep -w in src (no Locale): none; no prefix/template/backend source
+medication_already_marked_as_error,Medication already marked as entered in error,grep -w in src (no Locale): none; not in backend
+medication_dispense_details,Medication Dispense Details,grep -w in src (no Locale): none; no prefix/template/backend source
+medication_dispense_status__cancelled,Cancelled,"grep in src: no medication_dispense_status__ template (only dispense_order_status__, medication_status__)"
+medication_dispense_status__completed,Completed,grep in src: no medication_dispense_status__ template
+medication_dispense_status__declined,Declined,grep in src: no medication_dispense_status__ template
+medication_dispense_status__entered_in_error,Entered in Error,grep in src: no medication_dispense_status__ template
+medication_dispense_status__in_progress,In Progress,grep in src: no medication_dispense_status__ template
+medication_dispense_status__on_hold,On Hold,grep in src: no medication_dispense_status__ template
+medication_dispense_status__preparation,Preparation,grep in src: no medication_dispense_status__ template
+medication_dispense_status__stopped,Stopped,grep in src: no medication_dispense_status__ template
+medication_dispense_updated,Medication dispenses have been updated,grep -w in src (no Locale): none; no prefix/template/backend source
+medications_billed_and_prescriptions_completed,Medications billed and prescriptions completed successfully,grep -w in src (no Locale): none; no prefix/template/backend source
+medications_with_product,Medications with Product,grep -w in src (no Locale): none; no prefix/template/backend source
+medicine_dispensed,Medicine Dispensed,grep -w in src (no Locale): none; no prefix/template/backend source
+medicine_prescription,Medicine Prescription,grep -w in src (no Locale): none; no prefix/template/backend source
+member_id_required,Member Id is required,grep -w in src (no Locale): none; no prefix/template/backend source
+middleware_hostname_example,e.g. example.ohc.network,grep -w in src (no Locale): none; no prefix/template/backend source
+middleware_hostname_sourced_from,Middleware hostname sourced from {{ source }},grep -w in src (no Locale): none; no prefix/template/backend source
+minimize,Minimize,grep -w in src (no Locale): none; no prefix/template/backend source
+mobile_number_validation_error,Enter a valid mobile number,grep -w in src (no Locale): none; no prefix/template/backend source
+mobile_otp_send_error,Failed to send OTP. Please try again later.,grep -w in src (no Locale): none; no prefix/template/backend source
+mobile_otp_send_success,OTP has been sent to the given mobile number.,grep -w in src (no Locale): none; no prefix/template/backend source
+mobile_otp_verify_error,Failed to verify mobile number. Please try again later.,grep -w in src (no Locale): none; no prefix/template/backend source
+mobile_otp_verify_success,Mobile number has been verified successfully.,grep -w in src (no Locale): none; no prefix/template/backend source
+morning_slots,Morning Slots,grep -w in src (no Locale): none; no prefix/template/backend source
+move_questions_count,Move <strong>{{count}}</strong> questions,grep -w in src (no Locale): none; no prefix/template/backend source
+move_this_to_draft,move this to draft,grep -w in src (no Locale): none; no prefix/template/backend source
+move_to_draft,Move to Draft,grep -w in src (no Locale): none; no prefix/template/backend source
+move_to_onvif_preset,Move to an ONVIF Preset,grep -w in src (no Locale): none; no prefix/template/backend source
+moved_to_account_balance,has been moved to the account balance.,grep -w in src (no Locale): none; no prefix/template/backend source
+must_be_greater_than_value,Must be greater than {{value}},grep -w in src (no Locale): none; no prefix/template/backend source
+my_doctors,My Doctors,grep -w in src (no Locale): none; no prefix/template/backend source
+my_profile,My Profile,grep -w in src (no Locale): none; no prefix/template/backend source
+nationality_is_required,Nationality is required,grep -w in src (no Locale): none; no prefix/template/backend source
+new_admission,New admission,No quoted or whole-word hit in src (locale JSON excluded); no t() template prefix builds it; not in plugins/
+new_batch,New Batch,No quoted or whole-word hit in src (locale JSON excluded); no t() template prefix builds it; not in plugins/
+new_section,New Section,No quoted or whole-word hit in src (locale JSON excluded); no t() template prefix builds it; not in plugins/
+new_service_request,New Request,No quoted or whole-word hit in src (locale JSON excluded); no t() template prefix builds it; not in plugins/
+new_status,New Status,No quoted or whole-word hit in src (locale JSON excluded); no t() template prefix builds it; not in plugins/
+new_text,New Text,No quoted or whole-word hit in src (locale JSON excluded); no t() template prefix builds it; not in plugins/
+next_week_short,Next wk,No quoted or whole-word hit in src (locale JSON excluded); no t() template prefix builds it; not in plugins/
+normal/critical/abnormal_coded_value_sets,Normal/Critical/Abnormal Coded Value Sets,No hit for the key or 'normal/' in src (locale JSON excluded); no template prefix builds it
+not_eligible,Not Eligible,No quoted or whole-word hit in src (locale JSON excluded); no t() template prefix builds it; not in plugins/
+not_included_in_actual_calculation,Not included in the actual calculation,No quoted or whole-word hit in src (locale JSON excluded); no t() template prefix builds it; not in plugins/
+notes__be_first_to_send,Be the first to send a message,notes__ keys are only used as literals (NoteManager.tsx); no t(`notes__${..}`) template; this key has no hit
+notes__failed_send_message,Failed to send message,notes__ keys are only used as literals (NoteManager.tsx); no t(`notes__${..}`) template; this key has no hit
+notes__inactive_encounter,You cannot start a new discussion for this encounter as it is {{encounterStatus}}.,notes__ keys are only used as literals (NoteManager.tsx); no t(`notes__${..}`) template; this key has no hit
+notes__start_conversation,Start the Conversation,notes__ keys are only used as literals (NoteManager.tsx); no t(`notes__${..}`) template; this key has no hit
+notice_board,Notice Board,No quoted or whole-word hit in src (locale JSON excluded); no t() template prefix builds it; not in plugins/
+notification_cancelled,Notification cancelled,No quoted or whole-word hit in src (locale JSON excluded); no t() template prefix builds it; not in plugins/
+number_of_aged_dependents,Number of Aged Dependents (Above 60),No quoted or whole-word hit in src (locale JSON excluded); no t() template prefix builds it; not in plugins/
+number_of_covid_vaccine_doses,Number of Covid vaccine doses,No quoted or whole-word hit in src (locale JSON excluded); no t() template prefix builds it; not in plugins/
+numeric_ranges,Numeric Ranges,No quoted or whole-word hit in src (locale JSON excluded); no t() template prefix builds it; not in plugins/
+nurses_form,Nurse's Form,No quoted or whole-word hit in src (locale JSON excluded); no t() template prefix builds it; not in plugins/
+nursing_care,Nursing Care,No hit for 'nursing' with t()/template in src; no quoted or whole-word hit for the key
+nursing_home,Nursing Home,No hit for 'nursing' with t()/template in src; no quoted or whole-word hit for the key
+nursing_information,Nursing Information,No hit for 'nursing' with t()/template in src; no quoted or whole-word hit for the key
+nutrition_product,Nutrition Product,No quoted or whole-word hit in src (locale JSON excluded); no t() template prefix builds it; not in plugins/
+observation_delete_confirmation,Are you sure you want to delete this observation? This action cannot be undone.,No quoted or whole-word hit in src (locale JSON excluded); no t() template prefix builds it; not in plugins/
+observation_deleted,Observation has been deleted successfully,No quoted or whole-word hit in src (locale JSON excluded); no t() template prefix builds it; not in plugins/
+occupation,Occupation,No whole-word 'occupation' anywhere in src outside locale JSON; no template builds it
+occupied_beds,Occupied beds,No quoted or whole-word hit in src (locale JSON excluded); no t() template prefix builds it; not in plugins/
+on_or_before,On or before,No quoted or whole-word hit in src (locale JSON excluded); no t() template prefix builds it; not in plugins/
+once_delivery_is_completed_you_can_not_change_the_status,"Once delivery is completed, you can not change the status.",No quoted or whole-word hit in src (locale JSON excluded); no t() template prefix builds it; not in plugins/
+ongoing_medicines,Ongoing Medicines,No quoted or whole-word hit in src (locale JSON excluded); no t() template prefix builds it; not in plugins/
+only_if_applicable,Only if applicable,No quoted or whole-word hit in src (locale JSON excluded); no t() template prefix builds it; not in plugins/
+only_indian_mobile_numbers_supported,Currently only Indian numbers are supported,No quoted or whole-word hit in src (locale JSON excluded); no t() template prefix builds it; not in plugins/
+only_mark_if_applicable,Only mark if applicable,No quoted or whole-word hit in src (locale JSON excluded); no t() template prefix builds it; not in plugins/
+op_encounter,OP Encounter,No quoted or whole-word hit in src; no t(`op_${..}`) template exists
+op_file_closed,OP file closed,No quoted or whole-word hit in src; no t(`op_${..}`) template exists
+operate,Operate,No whole-word 'operate' in src outside locale JSON (only a Python comment in plugins/ihr_tenant_settings/models.py)
+optional_environments,Optional environments,No quoted or whole-word hit in src (locale JSON excluded); no t() template prefix builds it; not in plugins/
+optional_environments_description,Additional environment values you may configure.,No quoted or whole-word hit in src (locale JSON excluded); no t() template prefix builds it; not in plugins/
+or_enter_manually_below,or enter the ID manually,No quoted or whole-word hit in src (locale JSON excluded); no t() template prefix builds it; not in plugins/
+oral_issue_for_non_oral_nutrition_route_error,Can be specified only if nutrition route is set to Oral,No quoted or whole-word hit in src (locale JSON excluded); no t() template prefix builds it; not in plugins/
+organization_for_care_support,Organization for Care Support,No quoted or whole-word hit in src (locale JSON excluded); no t() template prefix builds it; not in plugins/
+organization_permission_info,The selected department will be granted access to view and manage this encounter,No quoted or whole-word hit in src (locale JSON excluded); no t() template prefix builds it; not in plugins/
+organizations_fetch_error,Error while fetching organizations,No quoted or whole-word hit in src (locale JSON excluded); no t() template prefix builds it; not in plugins/
+original_medication,Original Medication,No quoted or whole-word hit in src (locale JSON excluded); no t() template prefix builds it; not in plugins/
+other_consultants,Other Consultants,No quoted or whole-word hit in src (locale JSON excluded); no t() template prefix builds it; not in plugins/
+other_deliveries_for_this_request,Other deliveries for this request,No quoted or whole-word hit in src (locale JSON excluded); no t() template prefix builds it; not in plugins/
+other_details,Other details,No quoted or whole-word hit in src (locale JSON excluded); no t() template prefix builds it; not in plugins/
+other_medications,Other Medications,No quoted or whole-word hit in src (locale JSON excluded); no t() template prefix builds it; not in plugins/
+otp_verification_error,Failed to verify OTP. Please try again later.,No hit for 'otp_verification' anywhere in src outside locale JSON
+otp_verification_success,OTP has been verified successfully.,No hit for 'otp_verification' anywhere in src outside locale JSON
+out_of_range_error,Value must be between {{ start }} and {{ end }}.,No quoted or whole-word hit in src (locale JSON excluded); no t() template prefix builds it; not in plugins/
+outgoing_deliveries_description,These deliveries are being sent from <strong>{{location}}</strong> to other locations.,"No quoted or whole-word hit in src (locale JSON excluded, incl. i18nKey/Trans); no template builds it"
+outgoing_orders,Outgoing Orders,No quoted or whole-word hit in src (locale JSON excluded); no t() template prefix builds it; not in plugins/
+page_number_format,Page number format,No hit for 'page_number' in src outside locale JSON
+page_number_format_help,Use {page} for current page number and {total} for total pages,No hit for 'page_number' in src outside locale JSON
+page_numbering,Page Numbering,No quoted or whole-word hit in src (locale JSON excluded); no t() template prefix builds it; not in plugins/
+paid_via,Paid via,No quoted or whole-word hit in src (locale JSON excluded); no t() template prefix builds it; not in plugins/
+parent_category_help,Choose a parent category to create a subcategory,No quoted or whole-word hit in src (locale JSON excluded); no t() template prefix builds it; not in plugins/
+parent_category_locked,Parent category is locked for this context,No quoted or whole-word hit in src (locale JSON excluded); no t() template prefix builds it; not in plugins/
+partially_billed,Partially Billed,No quoted or whole-word hit in src (locale JSON excluded); no t() template prefix builds it; not in plugins/
+partially_completed_medication_return,Partially completed medication return,No quoted or whole-word hit in src (locale JSON excluded); no t() template prefix builds it; not in plugins/
+password_update_error,Error while updating password. Try again later.,No quoted or whole-word hit in src (locale JSON excluded); no t() template prefix builds it; not in plugins/
+passwords_match,Passwords match.,No quoted or whole-word hit in src (locale JSON excluded); no t() template prefix builds it; not in plugins/
+past_allergies,Past Allergies,No quoted or whole-word hit in src (locale JSON excluded); no t() template prefix builds it; not in plugins/
+patient-notes,Notes,No hit for 'patient-notes' in src outside locale JSON
+patient_and_billing_details,Patient and billing details,No quoted or whole-word hit in src (locale JSON excluded); no t() template prefix builds it; not in plugins/
+patient_body,Patient Body,No quoted or whole-word hit in src (locale JSON excluded); no t() template prefix builds it; not in plugins/
+patient_dashboard,Patient Dashboard,No quoted or whole-word hit in src (locale JSON excluded); no t() template prefix builds it; not in plugins/
+patient_details_incomplete,Patient Details Incomplete,No quoted or whole-word hit in src (locale JSON excluded); no t() template prefix builds it; not in plugins/
+patient_encounters,Patient Encounters,No quoted or whole-word hit in src (locale JSON excluded); no t() template prefix builds it; not in plugins/
+patient_face,Patient Face,No quoted or whole-word hit in src (locale JSON excluded); no t() template prefix builds it; not in plugins/
+patient_files,Patient Files,"No quoted or whole-word hit in src; only template is t(`patient__${subtab.id}`) (double underscore), which cannot build it"
+patient_id_abha,Patient Id (ABHA),No quoted or whole-word hit in src (locale JSON excluded); no t() template prefix builds it; not in plugins/
+patient_is_deceased,Patient is deceased,No quoted or whole-word hit in src (locale JSON excluded); no t() template prefix builds it; not in plugins/
+patient_name_uhid,Patient Name/UHID,No quoted or whole-word hit in src (locale JSON excluded); no t() template prefix builds it; not in plugins/
+patient_notes_thread__Doctors,Doctor's Discussions,"No hit for 'patient_notes_thread', 'Doctors' or 'Nurses' in src outside locale JSON"
+patient_notes_thread__Nurses,Nurse's Discussions,"No hit for 'patient_notes_thread', 'Doctors' or 'Nurses' in src outside locale JSON"
+patient_registration_error,Could not register patient,No quoted or whole-word hit in src (locale JSON excluded); no t() template prefix builds it; not in plugins/
+patient_update_error,Could not update patient,No quoted or whole-word hit in src (locale JSON excluded); no t() template prefix builds it; not in plugins/
+pause_request,Pause Request,No quoted or whole-word hit in src (locale JSON excluded); no t() template prefix builds it; not in plugins/
+payment_cancelled_successfully,Payment cancelled successfully,No quoted or whole-word hit in src; payment_ keys only used as literals; no t(`payment_${..}`) template
+payment_collected_now_or_later,Payment can be collected now or later.,No quoted or whole-word hit in src; payment_ keys only used as literals; no t(`payment_${..}`) template
+payment_due,Payment Due,No quoted or whole-word hit in src; payment_ keys only used as literals; no t(`payment_${..}`) template
+payment_due_message,A payment of {{amount}} is due by {{date}},No quoted or whole-word hit in src; payment_ keys only used as literals; no t(`payment_${..}`) template
+payment_due_to_account_warning,"If not collected, the amount will be marked as due to the patient account.",No quoted or whole-word hit in src; payment_ keys only used as literals; no t(`payment_${..}`) template
+payment_history,Payment History,No quoted or whole-word hit in src; payment_ keys only used as literals; no t(`payment_${..}`) template
+payment_received,Payment received,No quoted or whole-word hit in src; payment_ keys only used as literals; no t(`payment_${..}`) template
+payment_reconciliation_management,Payment Reconciliation Management,No quoted or whole-word hit in src; payment_ keys only used as literals; no t(`payment_${..}`) template
+payment_terms_and_note,Payment Terms & Note,No quoted or whole-word hit in src; payment_ keys only used as literals; no t(`payment_${..}`) template
+payment_transfer_failed,Failed to transfer payment,No quoted or whole-word hit in src; payment_ keys only used as literals; no t(`payment_${..}`) template
+pending_deliveries,Pending Deliveries,No quoted or whole-word hit in src (locale JSON excluded); no t() template prefix builds it; not in plugins/
+pending_pos,Pending POs,No quoted or whole-word hit in src (locale JSON excluded); no t() template prefix builds it; not in plugins/
+percentage_of_base,Percentage of Base,No hit for 'percentage_of' or 'percentage' with t()/template in src
+percentage_of_subtotal,Percentage of Subtotal,No hit for 'percentage_of' or 'percentage' with t()/template in src
+percentage_of_total,Percentage of Total,No hit for 'percentage_of' or 'percentage' with t()/template in src
+permanant_address_is_required,Permanant address is required,No quoted or whole-word hit in src (locale JSON excluded); no t() template prefix builds it; not in plugins/
+personal_details,Personal Details,No quoted or whole-word hit in src (locale JSON excluded); no t() template prefix builds it; not in plugins/
+pharmacy_medications,Pharmacy Medications,No quoted or whole-word hit in src (locale JSON excluded); no t() template prefix builds it; not in plugins/
+phone_number_min_error,Phone number must be at least 10 characters long,No quoted or whole-word hit in src (locale JSON excluded); no t() template prefix builds it; not in plugins/
+pin_page_success,Page pinned to dashboard successfully,No quoted or whole-word hit in src (locale JSON excluded); no t() template prefix builds it; not in plugins/
+pincode_autofill,State and District auto-filled from Pincode,"No quoted or whole-word hit in src; pincode keys only literal ('pincode','enter_pincode'); no template"
+pincode_district_auto_fill_error,Failed to auto-fill district information,No quoted or whole-word hit in src; pincode keys only literal; no template
+pincode_state_auto_fill_error,Failed to auto-fill state and district information,No quoted or whole-word hit in src; pincode keys only literal; no template
+planned_reserved_cannot_be_in_past,Planned/Reserved cannot be in the past,No quoted or whole-word hit in src (locale JSON excluded); no t() template prefix builds it; not in plugins/
+please_assign_bed_to_patient,Please assign a bed to this patient,No quoted or whole-word hit in src (locale JSON excluded); no t() template prefix builds it; not in plugins/
+please_confirm_password,Please confirm your new password.,No quoted or whole-word hit in src (locale JSON excluded); no t() template prefix builds it; not in plugins/
+please_enter_email_address,Please enter email address,No quoted or whole-word hit; please_enter_* used only as literals; no t(`please_enter_${..}`) template
+please_enter_new_password,Please enter your new password.,No quoted or whole-word hit; please_enter_* used only as literals; no template
+please_enter_organization_name,Please enter an organization name,No quoted or whole-word hit; please_enter_* used only as literals; no template
+please_enter_username,Please enter the username,No quoted or whole-word hit; please_enter_* used only as literals; no template
+please_enter_valid_days_supply_for_medications,Days supply should be greater than 0 for medications: {{medications}},No quoted or whole-word hit; please_enter_* used only as literals; no template
+please_fill_all_required_fields,Please fill all the required fields,No quoted or whole-word hit in src (locale JSON excluded); no t() template prefix builds it; not in plugins/
+please_select_a_consent,Please select a consent,No quoted or whole-word hit; please_select_* used only as literals; no t(`please_select_${..}`) template (select_${entityType} cannot produce 'please_' prefix)
+please_select_district,Please select the district,No quoted or whole-word hit; please_select_* used only as literals; no template
+please_select_gender,Please select the Gender,No quoted or whole-word hit; please_select_* used only as literals; no template
+please_select_inventory_for_medications,Please select inventory for medications: {{medications}},No quoted or whole-word hit; please_select_* used only as literals; no template
+please_select_inventory_item,Please select inventory item,No quoted or whole-word hit; please_select_* used only as literals; no template
+please_select_localbody,Please select the local body,No quoted or whole-word hit; please_select_* used only as literals; no template
+please_select_medications,Please select medications to dispense,No quoted or whole-word hit; please_select_* used only as literals; no template
+please_select_quantity_for_medications,Quantity cannot be zero for medications: {{medications}},No quoted or whole-word hit; please_select_* used only as literals; no template
+please_select_state,Please select the state,No quoted or whole-word hit; please_select_* used only as literals; no template
+please_select_user_type,Please select the User Type,No quoted or whole-word hit; please_select_* used only as literals; no template
+please_upload_a_file,Please upload a file,No quoted or whole-word hit in src (locale JSON excluded); no t() template prefix builds it; not in plugins/
+po_number,PO Number,No quoted or whole-word hit in src (locale JSON excluded); no t() template prefix builds it; not in plugins/
+po_supplier,PO-Supplier,No quoted or whole-word hit in src (locale JSON excluded); no t() template prefix builds it; not in plugins/
+policy,Policy,No whole-word 'policy' in src outside locale JSON (only backend Python in plugins/); no template builds it
+policy__insurer,Insurer,"No hit for 'policy__' in src; 'insurer' only as enum value in types/billing/paymentReconciliation/paymentReconciliation.ts:35, never prefixed with policy__"
+policy__insurer__example,GICOFINDIA,No hit for 'policy__' in src outside locale JSON; no template builds it
+policy__insurer_id,Insurer ID,No hit for 'policy__' or 'insurer_id' in src outside locale JSON
+policy__insurer_id__example,GICOFINDIA,No hit for 'policy__' in src outside locale JSON
+policy__insurer_name,Insurer Name,No hit for 'policy__' or 'insurer_name' in src outside locale JSON
+policy__insurer_name__example,GIC OF INDIA,No hit for 'policy__' in src outside locale JSON
+policy__policy_id,Policy ID / Policy Name,No hit for 'policy__' in src outside locale JSON
+policy__policy_id__example,POL001,No hit for 'policy__' in src outside locale JSON
+policy__subscriber_id,Member ID,No hit for 'policy__' or 'subscriber_id' in src outside locale JSON
+policy__subscriber_id__example,SUB001,No hit for 'policy__' or 'subscriber_id' in src outside locale JSON
+policy_id_required,Policy Id or Policy Name is required,No quoted or whole-word hit in src (locale JSON excluded); no template builds it
+post_partum,Post-partum,No hit for post_partum/POST_PARTUM in src outside locale JSON
+practitioner_information,Practitioner Information,No quoted or whole-word hit in src (locale JSON excluded); no t() template prefix builds it; not in plugins/
+pre_op,Pre-op,No hit for pre_op/PRE_OP/pre-op in src outside locale JSON
+predefined_valueset_interpretations,Predefined valueset interpretations,No quoted or whole-word hit in src (locale JSON excluded); no t() template prefix builds it; not in plugins/
+prepared_on,Prepared on,No quoted or whole-word hit in src (locale JSON excluded); no t() template prefix builds it; not in plugins/
+prescription_details_not_found,Prescription details not found,No quoted or whole-word hit; only template is t(`prescription_status__${key}`) which cannot build it
+prescription_marking_complete_failed,Failed to mark prescription as completed,No quoted or whole-word hit; only template is t(`prescription_status__${key}`) which cannot build it
+prescription_not_found,Prescription not found,No quoted or whole-word hit; only template is t(`prescription_status__${key}`) which cannot build it
+prescription_status_updated_successfully,Prescription status updated successfully,No quoted or whole-word hit; t(`prescription_status__${key}`) uses double underscore so cannot build it
+prescription_tags,Prescription Tags,No quoted or whole-word hit; no template builds it
+prescription_templates,Prescription Templates,No quoted or whole-word hit; no template builds it
+present_health,Present Health,No quoted or whole-word hit in src (locale JSON excluded); no t() template prefix builds it; not in plugins/
+preset_count_one,{{count}} preset,No hit for 'preset_count' in src outside locale JSON; no base key called with count
+preset_count_other,{{count}} presets,No hit for 'preset_count' in src outside locale JSON; no base key called with count
+preset_deleted,Preset deleted,No quoted or whole-word hit in src (locale JSON excluded); no t() template prefix builds it; not in plugins/
+preset_name_placeholder,Specify an identifiable name for the new preset,No quoted or whole-word hit in src (locale JSON excluded); no t() template prefix builds it; not in plugins/
+preset_updated,Preset updated,No quoted or whole-word hit in src (locale JSON excluded); no t() template prefix builds it; not in plugins/
+preview_form,Preview form,No quoted or whole-word hit in src (locale JSON excluded); no t() template prefix builds it; not in plugins/
+preview_of_proportions,Preview of proportions,No quoted or whole-word hit in src (locale JSON excluded); no t() template prefix builds it; not in plugins/
+preview_proportions_error,The sum of the ratios does not equal the total ratio. Please adjust either the total ratio or the ratios of the elements to enable preview.,No hit for 'preview_proportions' in src outside locale JSON
+preview_proportions_zero_error,One or more of the elements have a size ratio of 0. Please adjust the ratios of the elements to enable preview.,No hit for 'preview_proportions' in src outside locale JSON
+price_calculation_preview,Price Calculation Preview,No quoted or whole-word hit; price_ keys only literal; no t(`price_${..}`) template
+price_component_calculation_rules,Price Component Calculation Rules,No quoted or whole-word hit; price_ keys only literal; no template
+price_per_unit,Price/Unit,No quoted or whole-word hit; price_ keys only literal; no template
+pricing_details,Pricing Details,No quoted or whole-word hit in src (locale JSON excluded); no t() template prefix builds it; not in plugins/
+primary_ph_no,Primary Ph No.,No quoted or whole-word hit in src (locale JSON excluded); no t() template prefix builds it; not in plugins/
+primary_phone_no,Primary ph. no.,No quoted or whole-word hit in src (locale JSON excluded); no t() template prefix builds it; not in plugins/
+primary_treating_consultant,Primary Treating Consultant,No quoted or whole-word hit in src (locale JSON excluded); no t() template prefix builds it; not in plugins/
+primary_treating_doctor,Primary Treating Doctor,No quoted or whole-word hit in src (locale JSON excluded); no t() template prefix builds it; not in plugins/
+print_header,Print Header,No quoted or whole-word hit; print_ keys only literal; no t(`print_${..}`) template
+print_header_placeholder,Enter the text to display as the header when printing documents for this facility,No quoted or whole-word hit; print_ keys only literal; no template
+print_prescriptions,Print Prescriptions,No quoted or whole-word hit; print_ keys only literal; no template
+procedures_select_placeholder,Select procedures to add details,No quoted or whole-word hit in src (locale JSON excluded); no t() template prefix builds it; not in plugins/
+process_specimen__dialog_text_area_placeholder,Describe the processing step in detail...,process_specimen__ keys only literal in ProcessSpecimen.tsx (uses process_specimen__textarea_placeholder); no template; no hit for this key
+product_is_already_in_the_list,Product is already added in the list,No quoted or whole-word hit; no t(`product_${..}`) template
+product_name,Product Name,No quoted or whole-word hit; no t(`product_${..}`) template
+product_status,Product Status,No quoted or whole-word hit; no t(`product_${..}`) template
+products_can_only_be_added_to_leaf_categories,Products can only be added to leaf categories,No quoted or whole-word hit in src (locale JSON excluded); no t() template prefix builds it; not in plugins/
+professional_info,Professional Information,No hit for 'professional_info' in src outside locale JSON
+professional_info_note,View or update user's professional information,No hit for 'professional_info' in src outside locale JSON
+professional_info_note_self,View or update your professional information,No hit for 'professional_info' in src outside locale JSON
+professional_info_note_view,View user's professional information,No hit for 'professional_info' in src outside locale JSON
+published,Published,No whole-word 'published' in src outside locale JSON; no status template builds a bare 'published'
+purchase_order_details,Purchase Order Details,No quoted or whole-word hit; purchase_order keys only literal ('purchase_orders'); no template
+purchase_order_id,Purchase Order ID,No quoted or whole-word hit; no template
+purchase_order_not_found,Purchase order not found,No quoted or whole-word hit; no template
+purchase_order_updated,Purchase order updated,No quoted or whole-word hit; no template
+purchase_orders_by_supplier,Purchase Orders by Supplier,No quoted or whole-word hit; no template
+purchase_orders_created,Purchase order created,No quoted or whole-word hit; no template
+qty_requested,Qty Requested,No quoted or whole-word hit in src (locale JSON excluded); no t() template prefix builds it; not in plugins/
+qualification_required,Qualification is required,No quoted or whole-word hit in src (locale JSON excluded); no t() template prefix builds it; not in plugins/
+quantity_approved,Quantity Approved,No quoted or whole-word hit; quantity_ keys only literal; no t(`quantity_${..}`) template
+quantity_for_medication_selected_exceeds_available_stock,"For {{medication}} (Lot #{{lot}}), requested quantity ({{requested}}) exceeds available stock ({{available}}).",No quoted or whole-word hit; quantity_ keys only literal; no template
+quantity_received,Quantity Received,No quoted or whole-word hit; quantity_ keys only literal; no template
+quantity_requested,Quantity Requested,No quoted or whole-word hit; quantity_ keys only literal; no template
+queue_date,Queue Date,No quoted or whole-word hit; queue_ keys only literal; no t(`queue_${..}`) template
+queue_is_required,Please select a token queue,No quoted or whole-word hit; queue_ keys only literal; no template
+queues_active_today,queues active today,No quoted or whole-word hit in src (locale JSON excluded); no t() template prefix builds it; not in plugins/
+queues_for_date,Queues for {{date}},"no quoted/whole-word match in src (ts/tsx/js/jsx, excl. Locale); no t() template prefix builds it; no plugins (pluginMap empty, REACT_ENABLED_APPS empty)"
+quick_access,Quick Access,no quoted/whole-word match in src; no t() template prefix builds it; no plugins
+quick_actions_description,Schedule an appointment or create a new encounter,"no quoted/whole-word match in src (only t(""quick_actions"") exists); no prefix builds it; no plugins"
+quick_actions_description_create_appointment,Schedule an appointment,no quoted/whole-word match in src; no `quick_actions_description_${}` template; no plugins
+quick_actions_description_create_encounter,Create a new encounter,no quoted/whole-word match in src; no `quick_actions_description_${}` template; no plugins
+quick_fill_templates,Quick Fill Templates,no quoted/whole-word match in src; no prefix builds it; no plugins
+raise_dispatch_request,All requests below are to be dispatched from <strong>{{location}}</strong>  to other units.,"no quoted literal, i18nKey or Trans in src; no prefix builds it; no plugins"
+ration_card_category,Ration Card Category,no quoted/whole-word match in src; no prefix builds it; no plugins
+raw_setup_available,Raw setup available,no match in src incl. pages/Apps/PlugConfig*; no prefix builds it; no plugins
+raw_setup_hint,Fine-tune the raw plug configuration manually.,no match in src incl. pages/Apps/PlugConfig*; no prefix builds it; no plugins
+reason_for_reschedule_placeholder,Enter reason for rescheduling the appointment,no quoted/whole-word match in src; no prefix builds it; no plugins
+receive_item,Receive Item,no quoted/whole-word match in src; no `receive_${}` template; no plugins
+receive_item_quantity_mismatch_message,You are marking the request as fully received. You will not be able to receive any more new deliveries for this request.,no quoted/whole-word match in src; no prefix builds it; no plugins
+receive_item_quantity_mismatch_title,Quantity Mismatch,no quoted/whole-word match in src; no prefix builds it; no plugins
+receive_items,Receive Items,no quoted/whole-word match in src; no prefix builds it; no plugins
+receive_stock,Receive Stock,no quoted/whole-word match in src; no prefix builds it; no plugins
+receive_stock_description,Receive stock from external vendors,no quoted/whole-word match in src; no prefix builds it; no plugins
+receive_stock_empty_hint,"If a Purchase Order has been sent to a distributor, select the distributor from the dropdown above. If not, start adding items manually by clicking the Add Item button to match the received stock.",no quoted/whole-word match in src; no prefix builds it; no plugins
+received_quantity,Received Quantity:,no quoted/whole-word match in src; no prefix builds it; no plugins
+received_quantity_is_different_from_requested_quantity,Received quantity is different from requested quantity,no quoted/whole-word match in src; no prefix builds it; no plugins
+receiving_item,Receiving item,no quoted/whole-word match in src; no prefix builds it; no plugins
+recommend_discharge,Recommend Discharge,no quoted/whole-word match in src; no prefix builds it; no plugins
+reference_details,Reference Details,no quoted/whole-word match in src; no prefix builds it; no plugins
+reference_number_description_cash,Reference number for cash transactions,no quoted/whole-word match in src; no `reference_number_description_${}` template; no plugins
+refund_recorded_successfully,Refund recorded successfully,no quoted/whole-word match in src; no prefix builds it; no plugins
+regenerate_discharge_summary,Regenerate Discharge Summary,no quoted/whole-word match in src; no prefix builds it; no plugins
+regex_help_short,Pattern for valid identifier values.,no quoted/whole-word match in src; no prefix builds it; no plugins
+related_invoices,Related Invoices,no quoted/whole-word match in src; no prefix builds it; no plugins
+remote_entry,Remote entry,no quoted/whole-word match in src; no prefix builds it; no plugins
+remove_datetime,Remove Date/Time,no quoted/whole-word match in src; no `remove_${}` template; no plugins
+remove_image,Remove Image,no quoted/whole-word match in src; no `remove_${}` template; no plugins
+remove_questions_count,Remove {{count}} questions,no quoted/whole-word match in src; no prefix builds it; no plugins
+remove_row,Remove Row,no quoted/whole-word match in src; no prefix builds it; no plugins
+remove_row_confirmation,Are you sure you want to remove this row?,no quoted/whole-word match in src; no prefix builds it; no plugins
+remove_rule,Remove Separator,no quoted/whole-word match in src; no prefix builds it; no plugins
+remove_text,Remove Text,no quoted/whole-word match in src; no prefix builds it; no plugins
+reopen_order,Reopen Order,no quoted/whole-word match in src; no prefix builds it; no plugins
+replace_home_facility,Replace Home Facility,"no quoted/whole-word match in src; `replace_${}` only used as referenceId (EditDispenseSheet.tsx:257), not t(); no plugins"
+replace_home_facility_confirm,Are you sure you want to replace,no quoted/whole-word match in src; no prefix builds it; no plugins
+replace_home_facility_confirm_as,as home facility for user,no quoted/whole-word match in src; no prefix builds it; no plugins
+reply,Reply,no quoted/whole-word 'reply' in src; no prefix builds it; no plugins
+report_builder,Report Builder,no quoted/whole-word match in src; no prefix builds it; no plugins
+report_builder_title,Report Template Builder,no quoted/whole-word match in src; no prefix builds it; no plugins
+report_builder_will_be_generated,Report for template: {{reportSlug}} will be generated shortly.,no quoted/whole-word match in src; no prefix builds it; no plugins
+report_created_by,Report created by,no quoted/whole-word match in src; no prefix builds it; no plugins
+report_details,Report Details,no quoted/whole-word match in src; no prefix builds it; no plugins
+report_template_description,Report templates help you create standardized formats for patient reports and clinical documentation.,no quoted/whole-word match in src; no prefix builds it; no plugins
+repository,Repository,no quoted/whole-word 'repository' in src; no prefix builds it; no plugins
+request-sample-test,Service Request,no match for 'request-sample' in src; no prefix builds it; no plugins
+request_consent,Request Consent,no quoted/whole-word match in src; no prefix builds it; no plugins
+request_initiated_by,Request initiated by {{name}},no quoted/whole-word match in src; no prefix builds it; no plugins
+request_raised,Request Raised,no quoted/whole-word match in src; no prefix builds it; no plugins
+request_raised_by,Request raised by,no quoted/whole-word match in src; no prefix builds it; no plugins
+request_sample_test,Request Sample Test,no quoted/whole-word match in src; no prefix builds it; no plugins
+request_stock_from_another_store_or_pharmacy_within_the_facility,Request stock from another store or pharmacy within the facility,no quoted/whole-word match in src; no prefix builds it; no plugins
+request_stock_from_vendor,Request stock from external vendor,no quoted/whole-word match in src; no prefix builds it; no plugins
+request_updated_successfully,Request updated successfully,no quoted/whole-word match in src; no prefix builds it; no plugins
+reset_password_note_self,"Enter your current password, then create and confirm your new password",no quoted/whole-word match in src; no prefix builds it; no plugins
+resource_approving_facility,Resource approving facility,no match; resource_ templates are resource_type__/resource_request_status__/resource_request_category__/resource_type_description__ only; no plugins
+resource_details,Resource details,no quoted/whole-word match; no resource_ template produces it; no plugins
+resource_information,Resource Information,no quoted/whole-word match; no resource_ template produces it; no plugins
+resource_origin_facility,Origin Facility,no quoted/whole-word match; no resource_ template produces it; no plugins
+resource_status,Request Status,no quoted/whole-word match; no resource_ template produces it; no plugins
+resource_type_help,Choose the type of resource this category will organize,"no quoted/whole-word match; resource_type__ template uses double underscore, not _help; no plugins"
+respiratory_status,Respiratory Status,no quoted/whole-word match in src; no prefix builds it; no plugins
+response_templates_description,Configure templates for quick form filling,no quoted/whole-word match in src; no prefix builds it; no plugins
+result_on,Result on,no quoted/whole-word match in src; no prefix builds it; no plugins
+retake_recording,Retake Recording,no quoted/whole-word match in src; no prefix builds it; no plugins
+return_excess_stock,Return Excess Stock,no quoted/whole-word match in src; no prefix builds it; no plugins
+returned_items,Returned items,no quoted/whole-word match in src; no prefix builds it; no plugins
+review_before,Review Before,no quoted/whole-word match in src; no `review_${}` template; no plugins
+review_missed,Review Missed,no quoted/whole-word match in src; no `review_${}` template; no plugins
+revoked_on,Revoked On,no quoted/whole-word match in src; no prefix builds it; no plugins
+role_organization_access_form_description,Choose the responsibilities this user is assigned to and the designation they hold in each one. This is separate from permission roles.,no quoted/whole-word match in src; no `role_org*${}` template; no plugins
+role_organization_access_label,Assignment {{count}},no quoted/whole-word match in src; no prefix builds it; no plugins
+role_organization_access_row_description,Choose the responsibility and designation for this assignment.,no quoted/whole-word match in src; no prefix builds it; no plugins
+role_organization_card_description,Use this responsibility to group staff designations and manage its governance links.,no quoted/whole-word match in src; no prefix builds it; no plugins
+role_organization_directory,Responsibility Directory,no quoted/whole-word match in src; no prefix builds it; no plugins
+role_organization_directory_description,Browse and search responsibilities.,no quoted/whole-word match in src; no prefix builds it; no plugins
+role_organization_directory_hint,Switch to another responsibility only when you need to.,no quoted/whole-word match in src; no prefix builds it; no plugins
+role_organizations_admin_empty_description,Select a responsibility from the directory or create a new one to start managing its details and governance links.,no quoted/whole-word match in src; no prefix builds it; no plugins
+role_organizations_admin_empty_title,Select a responsibility,no quoted/whole-word match in src; no prefix builds it; no plugins
+role_organizations_are_flat,Responsibilities are flat and do not use child records.,no quoted/whole-word match in src; no prefix builds it; no plugins
+room_apt,Room/Apt & Time,no quoted/whole-word match in src; no prefix builds it; no plugins
+run_health_check,Run health check,no 'health_check' anywhere in src; no plugins
+sample_base_amount,Sample Base Amount,no quoted/whole-word match in src; no `sample${}` template; no plugins
+sample_identification,Sample Identification,no quoted/whole-word match in src; no prefix builds it; no plugins
+sample_test,Sample Test,no quoted/whole-word match in src; no prefix builds it; no plugins
+sample_test_details,Sample Test Details,no quoted/whole-word match in src; no prefix builds it; no plugins
+sample_test_history,Sample Test History,no quoted/whole-word match in src; no prefix builds it; no plugins
+sample_type_description,Sample Type Description,no quoted/whole-word match in src; no prefix builds it; no plugins
+sari,SARI - Severe Acute Respiratory illness,no 'sari' occurrence in src; no prefix builds it; no plugins
+save_and_exit,Save & Exit,no quoted/whole-word match in src; no prefix builds it; no plugins
+save_and_go_back,Save & Go Back,no quoted/whole-word match in src; no prefix builds it; no plugins
+save_as_received,Save as Received,no quoted/whole-word match in src; no prefix builds it; no plugins
+save_current_as_template,Save Current as Template,no quoted/whole-word match in src; no `save_current${}` template; no plugins
+save_current_items_as_template,Create a reusable template from your current items,no quoted/whole-word match in src; no prefix builds it; no plugins
+save_current_items_count,{{count}} item(s) will be saved,no quoted/whole-word match in src; no prefix builds it; no plugins
+save_current_medications_as_template,Create a reusable template from your current medications,no quoted/whole-word match in src; no prefix builds it; no plugins
+save_current_medications_count,{{count}} medication(s) will be saved,no quoted/whole-word match in src; no prefix builds it; no plugins
+save_current_service_requests_count,{{count}} service request(s) will be saved,no quoted/whole-word match in src; no prefix builds it; no plugins
+saved_templates,Saved Templates,no quoted/whole-word match in src; no prefix builds it; no plugins
+saving_with_dots,Saving...,no quoted/whole-word match in src; no prefix builds it; no plugins
+schedule_an_appointment_or_create_a_new_encounter,Schedule an appointment or create a new encounter,no quoted/whole-word match in src; no `schedule_${}` template; no plugins
+schedule_bed,Schedule Bed,no quoted/whole-word match in src; no `schedule_${}` template; no plugins
+schedule_calendar,Schedule Calendar,no quoted/whole-word match in src; no `schedule_${}` template; no plugins
+schedule_end_time,End Time,no quoted/whole-word match in src; no `schedule_${}` template; no plugins
+schedule_remarks,Remarks,no quoted/whole-word match in src; no `schedule_${}` template; no plugins
+schedule_remarks_placeholder,Any additional notes about this session,no quoted/whole-word match in src; no `schedule_${}` template; no plugins
+schedule_session_time,Session Time,no quoted/whole-word match in src; no `schedule_${}` template; no plugins
+schedule_session_type,Session Type,no quoted/whole-word match in src; no `schedule_${}` template; no plugins
+schedule_start_time,Start Time,no quoted/whole-word match in src; no `schedule_${}` template; no plugins
+scribe__reviewing_field,Reviewing field {{currentField}} / {{totalFields}},"no 'scribe_' in src (only Scribe plugin type in pluginTypes.ts); REACT_ENABLED_APPS empty, pluginMap empty so no Scribe plugin loads"
+scribe_error,Could not autofill fields,"no 'scribe_' in src; no Scribe plugin enabled (REACT_ENABLED_APPS empty, pluginMap empty)"
+section_allergy,Allergies,no quoted/whole-word match; no `section_${}` template in src; no plugins
+section_care_team,Care Team,no quoted/whole-word match; no `section_${}` template; no plugins
+section_custom,Custom Section,no quoted/whole-word match; no `section_${}` template; no plugins
+section_diagnosis,Active Diagnoses,no quoted/whole-word match; no `section_${}` template; no plugins
+section_discharge_advice,Discharge Summary Advice,no quoted/whole-word match; no `section_${}` template; no plugins
+section_encounter,Encounter Details,no quoted/whole-word match; no `section_${}` template; no plugins
+section_file_upload,Files & Documents,no quoted/whole-word match; no `section_${}` template; no plugins
+section_medication,Medications,no quoted/whole-word match; no `section_${}` template; no plugins
+section_observation,Observations,no quoted/whole-word match; no `section_${}` template; no plugins
+section_patient_info,Patient Information,no quoted/whole-word match; no `section_${}` template; no plugins
+section_symptom,Symptoms Reported,no quoted/whole-word match; no `section_${}` template; no plugins
+section_title,Section Title,no quoted/whole-word match; no `section_${}` template; no plugins
+sections,Sections,no quoted/whole-word 'sections' key literal in src; no prefix builds it; no plugins
+sections_count,{{count}} section(s) added,no quoted/whole-word match in src; no prefix builds it; no plugins
+sections_description,"Configure, reorder and customize report sections",no quoted/whole-word match in src; no prefix builds it; no plugins
+sections_error,There are errors in the Sections tab. Please fix the errors before saving.,no quoted/whole-word match in src; no prefix builds it; no plugins
+secure_connection,Secure connection • Your privacy is protected,no quoted/whole-word match in src; no prefix builds it; no plugins
+see_attachments,See Attachments,no quoted/whole-word match in src; no `see_${}` template; no plugins
+see_less,See less...,no quoted/whole-word match in src; no `see_${}` template; no plugins
+see_more,See more...,no quoted/whole-word match in src; no `see_${}` template; no plugins
+see_prescription,See Prescription,no quoted/whole-word match in src; no `see_${}` template; no plugins
+selected_encounter,Selected Encounter,no quoted/whole-word match in src; no prefix builds it; no plugins
+selected_for_approval,Selected for Approval,no quoted/whole-word match in src; no prefix builds it; no plugins
+selected_locations,Selected Locations,no quoted/whole-word match in src; no prefix builds it; no plugins
+selected_substitute,Selected Substitute,no quoted/whole-word match in src; no prefix builds it; no plugins
+self_booked,Self-booked,no quoted/whole-word match in src; no prefix builds it; no plugins
+send_message,Send Message,no quoted/whole-word match in src; no prefix builds it; no plugins
+send_sample_to_collection_centre_description,Are you sure you want to send the sample to Collection Centre?,no quoted/whole-word match in src; no prefix builds it; no plugins
+send_sample_to_collection_centre_title,Send sample to collection centre,no quoted/whole-word match in src; no prefix builds it; no plugins
+sending,Sending,no quoted/whole-word 'sending' in src; no prefix builds it; no plugins
+server_health_check,Server health check,no 'health_check' in src; `server-${}` is not a t() key; no plugins
+server_health_check_description,Verify that the server-side component is reachable before enabling the plug.,no 'health_check' in src; no plugins
+server_health_check_not_configured,Server health check is not configured for this app.,no 'health_check' in src; no plugins
+service_locations,Service Locations,no quoted/whole-word match in src; no prefix builds it; no plugins
+service_records_none_description,No service history for this device,no quoted/whole-word match in src; no prefix builds it; no plugins
+service_request_completion_confirmation,Are you sure you want to mark this service request as complete? This action cannot be undone.,no quoted/whole-word match in src; no `service_re${}` template; no plugins
+service_request_created,Service Request Created,no quoted/whole-word match in src; no prefix builds it; no plugins
+service_request_detail_page_description_prefix,{{count}} deliveries have been received,no quoted/whole-word match in src; no prefix builds it; no plugins
+service_request_details,Service Request Details,no quoted/whole-word match in src; no prefix builds it; no plugins
+service_request_templates_coming_soon,Service request templates coming soon,no quoted/whole-word match in src; no prefix builds it; no plugins
+service_requests_to_include,Service requests to include,no quoted/whole-word match in src; no prefix builds it; no plugins
+set_as_primary_description,Mark this queue as the primary queue for the resource,no quoted/whole-word match in src; no prefix builds it; no plugins
+set_home_facility,Set as home facility,no quoted/whole-word match in src; no prefix builds it; no plugins
+shift_key,shift,no quoted/whole-word match in src; no `${}_key` template; no plugins
+shifting_history,Shifting History,no quoted/whole-word match in src; no prefix builds it; no plugins
+show_abha_profile,Show ABHA Profile,no quoted/whole-word match in src; no prefix builds it; no plugins
+show_all_slots,Show all slots,no quoted/whole-word match in src; no prefix builds it; no plugins
+showing_all_appointments,Showing all appointments,no quoted/whole-word match in src; no prefix builds it; no plugins
+showing_count_templates,Showing {{count}} template(s),no quoted/whole-word match in src; no prefix builds it; no plugins
+size_large,Large,no quoted/whole-word match; no `size_${}` template in src; no plugins
+size_medium,Medium,no quoted/whole-word match; no `size_${}` template; no plugins
+size_ratio,Size Ratio,no quoted/whole-word match; no `size_${}` template; no plugins
+size_ratio_help,Size ratio relative to other elements in this row,no quoted/whole-word match; no `size_${}` template; no plugins
+size_small,Small,no quoted/whole-word match; no `size_${}` template; no plugins
+skill_add_error,Error while adding skill,no 'skill' key literal in src; no prefix builds it; no plugins
+skill_added_successfully,Skill added successfully,no quoted/whole-word match in src; no prefix builds it; no plugins
+skills,Skills,no quoted/whole-word 'skills' in src; no plugins
+social_profile,Social Profile,no quoted/whole-word match in src; no prefix builds it; no plugins
+social_profile_detail,"Include occupation, ration card category, socioeconomic status, and domestic healthcare support for a complete profile.",no quoted/whole-word match in src; no prefix builds it; no plugins
+socioeconomic_status,Socioeconomic status,no quoted/whole-word match in src; no prefix builds it; no plugins
+sorry_there_was_an_error,Sorry.. there was an error,no quoted/whole-word match in src; no prefix builds it; no plugins
+sort_by_locations,Number of Locations,no quoted/whole-word match; sort_by_ keys used are token_no/title/lowest_net_content/highest_net_content only (InventoryList.tsx:53-54); no plugins
+sort_by_name,Sort by name,no quoted/whole-word match; no `sort_by_${}` template; no plugins
+sort_by_net_content,Sort by net content,no quoted/whole-word match; InventoryList.tsx:53-54 maps to sort_by_lowest/highest_net_content instead; no plugins
+specimen_collect_error,Failed to collect specimen,no quoted/whole-word match; no `specimen_${}` t() template (only `specimen-${}` ids); no plugins
+specimen_collect_success,Specimen collected successfully,no quoted/whole-word match; no `specimen_${}` template; no plugins
+specimen_collected_description,{{specimen}} collected,no quoted/whole-word match; no `specimen_${}` template; no plugins
+specimen_draft_create_success,Draft specimen created successfully,no quoted/whole-word match; no `specimen_${}` template; no plugins
+specimen_generate_failed,Failed to generate barcode,no quoted/whole-word match; no `specimen_${}` template; no plugins
+specimen_generating,Generating barcode...,no quoted/whole-word match; no `specimen_${}` template; no plugins
+specimen_processed,Specimen Processed,no quoted/whole-word match; no `specimen_${}` template; no plugins
+specimen_processed_description,{{specimen}} processed,no quoted/whole-word match; no `specimen_${}` template; no plugins
+specimen_qrcode_scan_info,QR code scanning to be implemented,no quoted/whole-word match; no `specimen_${}` template; no plugins
+specimen_update_success,Specimen updated successfully,no quoted/whole-word match; no `specimen_${}` template; no plugins
+spokes,Spoke Facilities,no 'spokes' anywhere in src; no plugins
+start_a_new_clinical_encounter,Start a new clinical encounter,no quoted/whole-word match in src; no `start_${}` template; no plugins
+start_new_clinical_encounter,Start a new clinical encounter,no quoted/whole-word match in src; no `start_${}` template; no plugins
+start_review,Start Review,no quoted/whole-word match in src; no `start_${}` template; no plugins
+start_setup,Start setup,no quoted/whole-word match in src; no `start_${}` template; no plugins
+start_time_required,Start time is required,no quoted/whole-word match in src; no prefix builds it; no plugins
+stock_received,Stock received,no quoted/whole-word match in src; no prefix builds it; no plugins
+stop_recording,Stop Recording,no quoted/whole-word match in src; no prefix builds it; no plugins
+stream_uuid,Stream UUID,"Whole-word search of src (ts/tsx/js/json, excl. locale) found nothing; no t()/i18nKey prefix template or concatenation builds it; not a backend/plugin value"
+style_list,List,Whole-word search of src found nothing; no `style_${}` or other prefix template builds it
+style_text,Text,Whole-word search of src found nothing; no `style_${}` prefix template builds it
+submit_request,Submit Request,Whole-word search of src found nothing; no prefix template builds it
+subscribed_successfully,Subscribed Successfully,Whole-word search of src found nothing; no prefix template builds it
+subscription_failed,Subscription Failed,Whole-word search of src found nothing; no prefix template builds it
+substitution_details,Substitution Details,Whole-word search of src found nothing; no `${x}_details` used with t()
+subtotal_after_discounts,Subtotal After Discounts,Whole-word search of src found nothing; no prefix template builds it
+subtotal_before_discounts,Subtotal Before Discounts,Whole-word search of src found nothing; no prefix template builds it
+supply_deliveries_created,Supply deliveries created,Whole-word search of src found nothing; no prefix template builds it
+supply_delivery_created,Supply Delivery Created,Whole-word search of src found nothing; no prefix template builds it
+supply_delivery_deleted,Supply Delivery Deleted,Whole-word search of src found nothing; no prefix template builds it
+supply_delivery_description,Create or edit supply delivery details,Whole-word search of src found nothing; no prefix template builds it
+supply_delivery_details,Supply Delivery Details,Whole-word search of src found nothing; no prefix template builds it
+supply_delivery_id,Supply Delivery ID,Whole-word search of src found nothing; no prefix template builds it
+supply_delivery_updated,Supply Delivery Updated,Whole-word search of src found nothing; no prefix template builds it
+supply_request_created,Supply request created successfully,Whole-word search of src found nothing; no prefix template builds it
+supply_request_details,Supply Request Details,Whole-word search of src found nothing; no prefix template builds it
+supply_request_not_loaded,Supply request not loaded,Whole-word search of src found nothing; no prefix template builds it
+supply_request_updated,Supply request updated,Whole-word search of src found nothing; no prefix template builds it
+suspend_this_request,suspend this request,Whole-word search of src found nothing; no prefix template builds it
+switch_bed,Switch Bed,Whole-word search of src found nothing; no prefix template builds it
+switch_role_organization,Switch responsibility,Whole-word search of src found nothing; no prefix template builds it
+symptoms_empty_message,No symptoms recorded,Whole-word search of src found nothing; no prefix template builds it
+system_help_short,A globally unique URI for the identifier system.,Whole-word search of src found nothing; no prefix template builds it
+system_information,System Information,Whole-word search of src found nothing; no prefix template builds it
+systolic_blood_pressure,Systolic Blood Pressure,Whole-word search of src found nothing; no prefix template builds it
+tags_removed_successfully,Tags removed successfully,Whole-word search of src found nothing; no prefix template builds it
+tax_explanation,Taxes applied to the price after discounts,Whole-word search of src found nothing; no prefix template builds it
+tax_factor_applies_to_subtotal_after_discounts,Factor applies to subtotal after discounts,Whole-word search of src found nothing; no prefix template builds it
+template_permission_notice,You don't have permission to create templates. Please contact your administrator.,Whole-word search of src found nothing; no prefix template builds it
+templates_help_text,Save your commonly used prescriptions as templates for quick reuse,Whole-word search of src found nothing; no prefix template builds it
+tender_amount_tooltip,Amount given by the customer,Whole-word search of src found nothing; no prefix template builds it
+tested_on,Tested on,Whole-word search of src found nothing; no prefix template builds it
+text_or_fields_required_for_non_table_sections,Text or fields are required for non-table sections,Whole-word search of src found nothing (incl. TemplateBuilder validators); no prefix template builds it
+text_required_for_custom_sections,Text is required for custom sections,Whole-word search of src found nothing; no prefix template builds it
+text_settings,Text Settings,Whole-word search of src found nothing; no prefix template builds it
+thank_you_for_your_payment,Thank you for your payment,Whole-word search of src found nothing; no prefix template builds it
+the_request_for_resources_placed_by_yourself_is,The request for resource (details below) placed by yourself is,Whole-word search of src found nothing; no prefix template builds it
+this_field_will_be_auto_generated,This field will be auto-generated,Whole-word search of src found nothing; no prefix template builds it
+this_month,This Month,Whole-word search of src found nothing; no `this_${}` or date-preset template builds it
+this_week,This Week,Whole-word search of src found nothing; no `this_${}` template builds it
+this_year,This Year,Whole-word search of src found nothing; no `this_${}` template builds it
+tick_if_all_items_are_received_the_request_will_be_cleared_from_the_pending_list,Tick if all items are received. The request will be cleared from the pending list.,Whole-word search of src found nothing; no prefix template builds it
+title_of_request,Title of Request,Whole-word search of src found nothing; no prefix template builds it
+to_edit,to edit,Whole-word search of src found nothing; no prefix template builds it
+to_proceed_with_registration,"To proceed with registration, please create a new patient.",Whole-word search of src found nothing; no prefix template builds it
+to_view_available_slots_select_resource_and_date,"To view available slots, select a preferred resource and date.",Whole-word search of src found nothing; no prefix template builds it
+todays_queues,Today's Queues,Whole-word search of src found nothing; no prefix template builds it
+toggle_filters,Toggle Filters,Whole-word search of src found nothing; no prefix template builds it
+token_assigned_to_service_point,Token has been assigned to service point,"Whole-word search of src found nothing; only token_status__${} template exists, which cannot build it"
+token_closed_successfully,Token closed successfully,Whole-word search of src found nothing; token_status__${} cannot build it
+token_creation_not_configured,Token creation is not configured for this facility. Please contact your administrator.,Whole-word search of src found nothing; no prefix template builds it
+token_details,Token Details,Whole-word search of src found nothing; no prefix template builds it
+token_information,Token Information,Whole-word search of src found nothing; no prefix template builds it
+token_not_found,Token not found,Whole-word search of src found nothing; not a backend string in apps/backend
+token_number_not_generated,Token number not generated,Whole-word search of src found nothing; no prefix template builds it
+total_base_price,Total Base price,Whole-word search of src found nothing (not an object key fed to PrintTable t(key)); no prefix template
+total_discounts,Total discounts,Whole-word search of src found nothing; no prefix template builds it
+total_locations,Total locations,Whole-word search of src found nothing; no prefix template builds it
+total_medicines,Total Medicines,Whole-word search of src found nothing; no prefix template builds it
+total_number_of_beds,Total number of beds,Whole-word search of src found nothing; no prefix template builds it
+total_ratio,Total Ratio,Whole-word search of src found nothing; no prefix template builds it
+total_staff,Total Staff,Whole-word search of src found nothing; no prefix template builds it
+total_taxes,Total taxes,Whole-word search of src found nothing; no prefix template builds it
+total_units,Total Units,Whole-word search of src found nothing; no prefix template builds it
+total_value,Total Value,Whole-word search of src found nothing; no prefix template builds it
+transfer_allowed,Transfer Allowed,Whole-word search of src found nothing; not in apps/backend; no prefix template
+transfer_blocked,Transfer Blocked,Whole-word search of src found nothing; not in apps/backend; no prefix template
+transfer_status_updated,Transfer Status Updated,Whole-word search of src found nothing; no prefix template builds it
+triage_category,Triage Category,Whole-word search of src found nothing; no prefix template builds it
+try_different_abha_linking_option,"Want to try a different linking option, here are some more:",Whole-word search of src found nothing; no prefix template builds it
+two_factor_authentication_note,"Two-factor authentication enhances your account security by requiring more than just a password, making it harder for unauthorised access.",Whole-word search of src found nothing; no prefix template builds it
+two_factor_authentication_regenerate_codes_tooltip,Generate new backup codes. Your old backup codes will no longer work.,Whole-word search of src found nothing; no prefix template builds it
+type_at_least_3_characters_to_search,Type at least 3 characters to search,Whole-word search of src found nothing; no prefix template builds it
+uhid,UHID,Whole-word search of src found nothing; no prefix template builds it
+unable_to_get_current_position,Unable to get current position.,Whole-word search of src found nothing; no prefix template builds it
+unable_to_get_location: ,Unable to get location: ,Search for unable_to_get_location (with or without colon) in src found nothing; no template builds it
+unassign,Unassign,Whole-word search of src found nothing; no prefix template builds it
+unbilled_items,Unbilled Items,Whole-word search of src found nothing; no prefix template builds it
+unexpected_error,An unexpected error occurred,Whole-word search of src found nothing; not a backend string in apps/backend; t(error) sites use local validator keys
+unhealthy,Unhealthy,Whole-word search of src found nothing; not a backend value; no prefix template
+unknown_patient,High Priority,Whole-word search of src found nothing; no prefix template builds it
+unknown_service_request,Unknown service request,Whole-word search of src found nothing; no prefix template builds it
+unlink_asset_bed_and_presets,Delete linked presets and unlink bed,Whole-word search of src found nothing; no `unlink_${}` template exists
+unlink_asset_bed_caution,This action will also delete all presets that are associated to this camera and bed.,Whole-word search of src found nothing; no `unlink_${}` template exists
+unlink_camera_and_bed,Unlink this bed from this camera,Whole-word search of src found nothing; no `unlink_${}` template exists
+unlink_facility,Unlink Facility,Whole-word search of src found nothing; no `unlink_${}` template exists
+unlink_facility_access,The user will lose access to the facility,Whole-word search of src found nothing; no `unlink_${}` template exists
+unlink_facility_confirm,Are you sure you want to unlink the facility,Whole-word search of src found nothing; no `unlink_${}` template exists
+unlink_facility_error,Error while unlinking facility. Try again later.,Whole-word search of src found nothing; no `unlink_${}` template exists
+unlink_facility_success,Facility unlinked successfully,Whole-word search of src found nothing; no `unlink_${}` template exists
+unlink_home_facility_error,Error while unlinking home facility. Try again later.,Whole-word search of src found nothing; no `unlink_${}` template exists
+unlink_home_facility_success,Home Facility cleared successfully,Whole-word search of src found nothing; no `unlink_${}` template exists
+unlink_skill,Unlink Skill,Whole-word search of src found nothing; no `unlink_${}` template exists
+unlink_skill_access,The user will not have the skill associated anymore.,Whole-word search of src found nothing; no `unlink_${}` template exists
+unlink_skill_confirm,Are you sure you want to unlink the skill,Whole-word search of src found nothing; no `unlink_${}` template exists
+unlink_skill_error,Error while unlinking skill. Try again later.,Whole-word search of src found nothing; no `unlink_${}` template exists
+unlink_skill_success,Skill unlinked successfully,Whole-word search of src found nothing; no `unlink_${}` template exists
+unlink_this_facility,Unlink Facility,Whole-word search of src found nothing; no `unlink_${}` template exists
+unsubscribed_successfully,Unsubscribed Successfully.,Whole-word search of src found nothing; no prefix template builds it
+update_billing_status,Update Billing Status,Whole-word search of src found nothing; no `update_${}` template exists
+update_delivery,Update Delivery,Whole-word search of src found nothing; no `update_${}` template exists
+update_details,Update Details,Whole-word search of src found nothing; no `update_${}` template exists
+update_discharge_details,Update Discharge Details,Whole-word search of src found nothing; no `update_${}` template exists
+update_hospitalisation_details,Update Hospitalisation Details,Whole-word search of src found nothing; no `update_${}` template exists
+update_preset,Update Preset,Whole-word search of src found nothing; no `update_${}` template exists
+update_preset_position_to_current,Update preset's position to camera's current position,Whole-word search of src found nothing; no `update_${}` template exists
+update_request,Update Request,Whole-word search of src found nothing; no `update_${}` template exists
+update_volunteer,Reassign Volunteer,Whole-word search of src found nothing; no `update_${}` template exists
+updated_by_user,Updated By: {{name}},Whole-word search of src found nothing; no prefix template builds it
+updated_on,Updated On,Whole-word search of src found nothing; no prefix template builds it
+updating_application,Updating application...,Whole-word search of src found nothing; no prefix template builds it
+upload_report,Upload Report,Whole-word search of src found nothing; no prefix template builds it
+use_existing_consent,Use Existing Consent,Whole-word search of src found nothing; no prefix template builds it
+useful_for_reference_only,Useful for reference only,Whole-word search of src found nothing; no prefix template builds it
+user_add_error,Error while adding User,Whole-word search of src found nothing; no `user_${}` template exists
+user_details,User Details,Whole-word search of src found nothing; no `user_${}` template exists
+user_details_update_error,Error while updating user details,Whole-word search of src found nothing; no `user_${}` template exists
+user_details_update_success,User details updated successfully,Whole-word search of src found nothing; no `user_${}` template exists
+user_qualifications,Qualifications,Whole-word search of src found nothing; no `user_${}` template exists
+user_qualifications_note,Enter appropriate qualifications for this user,Whole-word search of src found nothing; no `user_${}` template exists
+username_already_exists,This username already exists,Whole-word search of src found nothing (t(usernameError) in ForgotPasswordPanel uses other keys); not in apps/backend
+username_userdetails_not_found,Unable to fetch details as username or user details not found,Whole-word search of src found nothing; no prefix template builds it
+username_valid,Username is valid,Whole-word search of src found nothing; no prefix template builds it
+vacant,Vacant,Whole-word search of src found nothing; not a backend status value in apps/backend
+vaccinated,Vaccinated,Whole-word search of src found nothing; no prefix template builds it
+vaccine_name,Vaccine name,Whole-word search of src found nothing; no prefix template builds it
+valid_integer_required,Please enter a valid integer,Whole-word search of src found nothing; not in apps/backend
+valid_otp_found,"Valid OTP found, Navigating to Appointments",Whole-word search of src found nothing; no prefix template builds it
+value_set_search_placeholder,Type to search and select from the list,Whole-word search of src found nothing; no prefix template builds it
+ventilator_interface,Respiratory Support Type,Whole-word search of src found nothing; no `ventilator_${}` template exists
+ventilator_log,Ventilator Log,Whole-word search of src found nothing; no `ventilator_${}` template exists
+ventilator_modality,Modality,Whole-word search of src found nothing; no `ventilator_${}` template exists
+ventilator_mode,Ventilator Mode,Whole-word search of src found nothing; no `ventilator_${}` template exists
+ventilator_oxygen_modality,Oxygen Modality,Whole-word search of src found nothing; no `ventilator_${}` template exists
+ventilator_oxygen_modality_oxygen_rate,Oxygen Flow Rate,Whole-word search of src found nothing; no `ventilator_${}` template exists
+ventilator_spo2,SpO₂,Whole-word search of src found nothing; no `ventilator_${}` template exists
+verify_and_link,Verify and Link,Whole-word search of src found nothing; no `verify_${}` template exists
+verify_otp_error,Failed to verify OTP. Please try again later.,Whole-word search of src found nothing; no `verify_${}` template exists
+verify_otp_success,OTP has been verified successfully.,Whole-word search of src found nothing; no `verify_${}` template exists
+verify_otp_success_login,OTP has been verified successfully. Logging in.,Whole-word search of src found nothing; no `verify_${}` template exists
+verify_patient_identifier,Please verify the patient identifier,Whole-word search of src found nothing; no `verify_${}` template exists
+verify_received_items,Verify Received Items,Whole-word search of src found nothing; no `verify_${}` template exists
+verify_using,Verify Using,Whole-word search of src found nothing; no `verify_${}` template exists
+video_call,Video Call,Whole-word search of src found nothing; no prefix template builds it
+video_conference_link,Video Conference Link,Whole-word search of src found nothing; no prefix template builds it
+view_all_details,View All Details,Whole-word search of src found nothing; no `view_${}` template exists
+view_and_manage_accounts,View and manage patient accounts,Whole-word search of src found nothing; no `view_${}` template exists
+view_and_manage_patient_encounters,View and manage patient encounters,Whole-word search of src found nothing; no `view_${}` template exists
+view_associated_encounter,View associated encounter,Whole-word search of src found nothing; no `view_${}` template exists
+view_cns,View CNS,Whole-word search of src found nothing; no `view_${}` template exists
+view_completed_encounters,View completed encounters,Whole-word search of src found nothing; no `view_${}` template exists
+view_config,View config,Whole-word search of src found nothing; no `view_${}` template exists
+view_consent,View Consent,Whole-word search of src found nothing; no `view_${}` template exists
+view_consultation,View Latest Encounter,Whole-word search of src found nothing; no `view_${}` template exists
+view_consultation_and_log_updates,View Consultation / Log Updates,Whole-word search of src found nothing; no `view_${}` template exists
+view_contents,View contents,Whole-word search of src found nothing; no `view_${}` template exists
+view_dispensed,View Dispensed,Whole-word search of src found nothing; no `view_${}` template exists
+view_dispenses,View Dispenses,Whole-word search of src found nothing; no `view_${}` template exists
+view_draft_delivery_orders,View Draft Delivery Orders,Whole-word search of src found nothing; no `view_${}` template exists
+view_files,View Files,Whole-word search of src found nothing; no `view_${}` template exists
+view_note,View note,Whole-word search of src found nothing; no `view_${}` template exists
+view_patient_account_or_invoice_dialog,View the patient <strong>account</strong> or the <strong>invoice</strong> for <strong>{{patientName}}</strong>.,Whole-word search of src found nothing (incl. Trans i18nKey); no `view_${}` template exists
+view_payments,View Payments,Whole-word search of src found nothing; no `view_${}` template exists
+view_real_time_bed_status,View real-time bed status across all wards,Whole-word search of src found nothing; no `view_${}` template exists
+view_request_order,View Request Order,Whole-word search of src found nothing; no `view_${}` template exists
+view_service_details,View Details,Whole-word search of src found nothing; no `view_${}` template exists
+view_template_contents,View {{name}} template contents,Whole-word search of src found nothing; no `view_${}` template exists
+view_update_patient_files,View/Update patient files,Whole-word search of src found nothing; no `view_${}` template exists
+view_updates,View Updates,Whole-word search of src found nothing; no `view_${}` template exists
+view_user,View User,Whole-word search of src found nothing; no `view_${}` template exists
+view_user_profile,View Profile,Whole-word search of src found nothing; no `view_${}` template exists
+village,Village,Whole-word search of src found nothing; no prefix template builds it
+vitals_monitor,Vitals Monitor,Whole-word search of src found nothing; no prefix template builds it
+vitals_present,Vitals Monitor present,Whole-word search of src found nothing; no prefix template builds it
+volunteer_assigned,Volunteer assigned successfully,Whole-word search of src found nothing; no `volunteer_${}` template exists
+volunteer_contact,Volunteer Contact,Whole-word search of src found nothing; no `volunteer_${}` template exists
+volunteer_contact_detail,Provide the name and contact details of a volunteer who can assist the patient in emergencies. This should be someone outside the family.,Whole-word search of src found nothing; no `volunteer_${}` template exists
+volunteer_unassigned,Volunteer unassigned successfully,Whole-word search of src found nothing; no `volunteer_${}` template exists
+volunteer_update,Volunteer updated successfully,Whole-word search of src found nothing; no `volunteer_${}` template exists
+weekly_working_hours_error,Average weekly working hours must be a number between 0 and 168,Whole-word search of src found nothing; no prefix template builds it
+whatsapp_number,Whatsapp Number,Whole-word search of src found nothing; no prefix template builds it
+whatsapp_number_same_as_phone_number,WhatsApp number is same as phone number,Whole-word search of src found nothing; no prefix template builds it
+workflow_progress,Workflow Progress,Whole-word search of src found nothing; no prefix template builds it
+year_of_birth_format,Year of birth must be in YYYY format,Whole-word search of src found nothing; no prefix template builds it
+year_of_birth_must_be_present,Year of birth must be present,Whole-word search of src found nothing; no prefix template builds it
+years_of_experience,Years of Experience,Whole-word search of src found nothing; no prefix template builds it
+years_of_experience_of_the_doctor,Years of Experience of the Doctor,Whole-word search of src found nothing; no prefix template builds it
+yes_cancel_invoice,"Yes, Cancel Invoice",Whole-word search of src found nothing; no `yes_${}` template exists
+yes_cancel_payment,"Yes, Cancel Payment",Whole-word search of src found nothing; no `yes_${}` template exists
+yes_mark_as_balanced,"Yes, Mark as Balanced",Whole-word search of src found nothing; no `yes_${}` template exists
+you_have_unsaved_changes_what_would_you_like_to_do,You have unsaved changes. What would you like to do?,Whole-word search of src found nothing; no prefix template builds it
+your_request_order_list,Your Request Order List,Whole-word search of src found nothing; no prefix template builds it

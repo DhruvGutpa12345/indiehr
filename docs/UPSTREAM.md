@@ -29,6 +29,14 @@ scripts/sync-upstream.sh backend <full-40-char-sha> --task P2-T4
 
 Every edit we make inside `apps/` must be listed in [UPSTREAM_PATCHES.md](UPSTREAM_PATCHES.md).
 
+## After a frontend sync: translations (P1-T7f)
+
+New upstream strings arrive in English only. After merging, list the strings the app now
+uses that have no Hindi (`apps/frontend/public/locale/en.json` minus upstream `hi.json`,
+`deploy/locale/hi.json` and `docs/i18n/unused-strings.csv`, checked against the code as in
+P1-T7f), translate them with the glossary (`docs/i18n/hi-glossary.md`) and add a review
+sheet. A string listed as unused that the new code now shows moves out of that list.
+
 ## Conflict runbook
 
 A sync stops with "MERGE CONFLICT" when upstream changed lines we also changed. `upstream.lock` is left untouched until the merge is finished.
