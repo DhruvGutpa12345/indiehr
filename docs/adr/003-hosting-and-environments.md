@@ -1,6 +1,6 @@
 # ADR-003: Hosting and environments
 
-- **Status:** Accepted. **Amendment 1 (owner, 2026-11-08):** cloud = **AWS Mumbai** (ap-south-1), backups to Hyderabad (ap-south-2); the owner's own domain; until GitHub Actions works, staging is deployed from the owner's machine over SSH (images built on the VM), then from CI
+- **Status:** Accepted. **Amendment 1 (owner, 2026-11-08):** cloud = **AWS Mumbai** (ap-south-1), backups to Hyderabad (ap-south-2); the owner's own domain; until GitHub Actions works, staging is deployed from the owner's machine over SSH (images built on the VM), then from CI. **Amendment 2 (owner, 2026-11-08): superseded by ADR-011** — provider-neutral layout; target E2E Networks Delhi NCR (backups to Chennai), AWS Mumbai/Hyderabad as alternative, trials on this machine; domain amhcloud.in
 - **Date:** 2026-11-03
 - **Decided by:** product owner (Q-D5, Q-E1, Q-E4, Q-E5 default)
 
