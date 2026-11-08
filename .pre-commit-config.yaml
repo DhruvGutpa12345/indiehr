@@ -41,3 +41,18 @@ repos:
       - id: ruff-format
         files: ^plugins/
         args: ["--config", "plugins/ruff.toml"]
+  # Our translations (P1-T7c): same placeholders and tags as English, merge rules tested.
+  - repo: local
+    hooks:
+      - id: locale-overlay
+        name: translations match English (placeholders, tags)
+        entry: python3 scripts/merge-locale.py --check
+        language: system
+        files: ^(deploy/locale/|scripts/(merge-locale|test_merge_locale)\.py$)
+        pass_filenames: false
+      - id: locale-overlay-tests
+        name: merge-locale tests
+        entry: python3 -m unittest scripts/test_merge_locale.py
+        language: system
+        files: ^scripts/(merge-locale|test_merge_locale)\.py$
+        pass_filenames: false

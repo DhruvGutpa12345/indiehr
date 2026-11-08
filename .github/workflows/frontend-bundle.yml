@@ -32,6 +32,10 @@ jobs:
 
       - run: npm ci
 
+      - name: Our translations (deploy/locale, P1-T7c)
+        working-directory: .
+        run: python3 scripts/merge-locale.py
+
       - name: Build bundle (IndieHR settings, not OHC defaults)
         env:
           API_URL: ${{ inputs.api_url }}

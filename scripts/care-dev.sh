@@ -2,7 +2,7 @@
 # Run upstream CARE locally with the IndieHR low-memory override (P0-T5), in tenant mode with
 # two synthetic demo hospitals at http://alpha.localhost:8080 and http://beta.localhost:8080
 # (P1-T2b), and Keycloak on demand (P1-T3: `scripts/care-dev.sh keycloak help`).
-# Usage: scripts/care-dev.sh <up|down|ps|logs|seed|reset-passwords|frontend|shell|keycloak|provision|provision-demo|audit-anchors|pincodes>
+# Usage: scripts/care-dev.sh <up|down|ps|logs|seed|reset-passwords|frontend|shell|keycloak|provision|provision-demo|audit-anchors|pincodes|locale-preview>
 set -euo pipefail
 ROOT="$(git -C "$(dirname "$0")" rev-parse --show-toplevel)"
 BACKEND="$ROOT/apps/backend"
@@ -276,6 +276,18 @@ case "${1:-}" in
     "${COMPOSE[@]}" exec -T backend rm -f "$tmp"
     [[ $status -eq 0 ]] || exit "$status"
     "${COMPOSE[@]}" exec -T backend python manage.py ihr_load_geography --all
+    ;;
+  locale-preview)
+    # Our translations (deploy/locale, P1-T7c) in the running web app, without a rebuild:
+    # the merged files replace the bundle's own until the container is recreated.
+    out="$(mktemp -d)"
+    python3 "$ROOT/scripts/merge-locale.py" --out-dir "$out"
+    for file in "$out"/*.json; do
+      chmod 644 "$file"
+      docker cp "$file" "indiehr-frontend:/usr/share/nginx/html/locale/$(basename "$file")"
+    done
+    rm -rf "$out"
+    echo "Reload the web app (Ctrl+Shift+R) and pick हिन्दी in the language menu."
     ;;
   *) sed -n '3,4p' "$0"; exit 1 ;;
 esac

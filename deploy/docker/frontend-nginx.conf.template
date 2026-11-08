@@ -44,6 +44,14 @@ server {
     expires 6h;
   }
 
+  # Translations keep the same file name across releases: revalidate on every load, so a
+  # corrected string reaches staff at once (P1-T7c). "expires", not add_header, which would
+  # drop the security headers above.
+  location /locale/ {
+    expires -1;
+    try_files $uri =404;
+  }
+
   location / {
     expires 7d;
     try_files $uri $uri/ /index.html;
