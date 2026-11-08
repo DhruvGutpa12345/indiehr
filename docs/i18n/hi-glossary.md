@@ -154,6 +154,11 @@ translations follow in the next batch (and are corrected in earlier ones).
 | draft | ड्राफ़्ट | |
 | completed (status) / complete (button) | पूरा हुआ / पूरा करें | |
 | pending | बाकी | |
+| on hold | होल्ड पर | a medicine on hold: अस्थायी रूप से रोकी गई (paused, may restart; never "stopped") |
+| stopped / discontinued | बंद की गई / बीच में बंद की गई | |
+| physical examination (exam) | शारीरिक परीक्षण | not जाँच, which is a lab test |
+| substitute (a medicine) | दूसरी दवा दें | |
+| clinician abbreviations | STAT (तुरंत), PRN, SOS, DNR, LAMA, CBC | Latin letters, Hindi in brackets where useful, as IV/IM |
 | in progress | जारी है | |
 | required / optional | ज़रूरी / वैकल्पिक | |
 | error | त्रुटि | |
