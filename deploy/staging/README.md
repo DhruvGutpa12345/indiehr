@@ -1,7 +1,8 @@
 # Staging stack (P1-T8a)
 
-One VM in AWS Mumbai (ap-south-1), Docker Compose, Traefik in front (ADR-003 and its
-Amendment 1). Everything runs through `scripts/staging.sh`.
+One VM in an Indian region (provider-neutral, ADR-011), Docker Compose, Traefik in front
+(ADR-003). Everything runs through `scripts/staging.sh`; the server itself is set up by
+`deploy/host/bootstrap.sh` and the stack reaches it through `scripts/deploy.sh` (P1-T8b1).
 
 | Command | What it does |
 |---|---|
@@ -10,6 +11,13 @@ Amendment 1). Everything runs through `scripts/staging.sh`.
 | `scripts/staging.sh smoke` | 20 checks through Traefik: what is public and what is not, TLS redirect, HSTS, token issuer, production mode, no query strings in logs |
 | `scripts/staging.sh manage <args>` | One-off `manage.py` (never logged; no Keycloak admin credential) |
 | `scripts/staging.sh local-proof` | All of the above on this machine (127.0.0.1, self-signed certificate) |
+| `scripts/deploy.sh --host ihr@<address>` | From this machine to a bootstrapped server: builds our two images (web app from the CI bundle), sends them with `docker save \| ssh docker load` (skipped when the server has that build), sends the tracked stack files and, as a tar stream over SSH, `.env` + `secrets/` (mode 600), then runs `staging.sh up` and `smoke` there, removes the images it replaced (`docker image prune`) and writes `/srv/indiehr/DEPLOYED` (commit and dirty flag as labelled on the images, image IDs, web bundle id). `/srv/indiehr/DEPLOYING` is written first and removed only on success: if it is still there, the last deploy failed part-way. The backend image is built from the committed files (`git archive`), never from git-ignored ones. Refuses a dirty git tree without `--allow-dirty`, images built from another commit with `--no-build` unless `--allow-dirty`, and a server whose host key is not yet in `known_hosts` |
+| `scripts/deploy.sh --local-proof` | The same into the throwaway VM of `scripts/local-vm.sh` (settings from `staging.sh init app.ihr-proof.in --vm`, kept in `~/.cache/indiehr/vm/staging`); runs `staging.sh local-proof` there (hospital `alpha` + smoke). Runbook: `deploy/host/README.md` |
+
+**On the server** the layout mirrors the repository (compose.yaml uses `../keycloak` and
+`../docker`): `/srv/indiehr/{deploy/staging,deploy/keycloak,deploy/docker,scripts/staging.sh}`.
+`staging.sh` works there without a git checkout. Smoke checks on a server without DNS yet:
+`IHR_SMOKE_RESOLVE=127.0.0.1 scripts/staging.sh smoke`.
 
 **Public addresses** (`traefik/routes.yml`, a fixed file: Traefik has no Docker socket, runs as
 nobody with no capabilities):
@@ -51,6 +59,8 @@ computer that is not on IST; a zone that only shares the offset (Asia/Colombo) a
 not IST. Cause: `/api/ihr/bootstrap.js` (`ihr_tenant_settings/device_time.py`) and the
 `X-IHR-TZ` header the app sends to its own API.
 
-**Not yet** (P1-T8b–d): the VM, DNS and Let's Encrypt certificates (`compose.acme.yaml`), S3
-buckets and mail, NTP to NIC/NPL and 180-day journald retention on the host, backups and a
-restore drill, Keycloak's own hardening.
+**Done in P1-T8b1:** the host (`deploy/host/bootstrap.sh`: firewall incl. Docker's published
+ports, key-only SSH, NTP to NIC/NPL, journald one year, pinned Docker) and deploy over SSH.
+
+**Not yet** (P1-T8b2–d): DNS and Let's Encrypt certificates (`compose.acme.yaml`), S3 buckets
+and mail, backups and a restore drill, Keycloak's own hardening.

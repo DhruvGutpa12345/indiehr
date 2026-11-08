@@ -52,6 +52,9 @@
 | Q-T10 | **Packs auto-update unedited rows**; edited rows need admin OK | §5 |
 | Q-R1 | **Repository public, view-only licence** (owner, 2026-11-08): all rights reserved to Dhruv Gupta; no use, copying, modification, distribution or AI training without written permission; CARE parts stay MIT. Issues/Wiki/Projects off; outside contributors' CI needs approval; private vulnerability reporting on | LICENSE, SECURITY.md |
 | Q-E7 | **Audit fingerprint bucket with the server's provider** (owner, 2026-11-08): on E2E that is Governance-mode lock, which an E2E account admin could remove (ADR-010 wanted COMPLIANCE). Accepted with a separate account and an explicit setting | ADR-011 §3 |
+| Q-E8 | **Servers run Ubuntu 26.04 LTS** (owner, 2026-11-09); the setup script also accepts 24.04 in case a provider has no 26.04 image yet | P1-T8b1 |
+| Q-E9 | **SSH: key-only, rate-limited, open to the internet** (owner, 2026-11-09): no passwords, no root login, repeated attempts blocked; a private WireGuard tunnel may come with P1-T8d | P1-T8b1 |
+| Q-E10 | **E-mail: Zoho ZeptoMail (India data centre)** for staff setup and invitation e-mails once live (owner, 2026-11-09); the owner gets Zoho's written confirmation of India-only storage before go-live; locally Mailpit stays; the app only needs plain SMTP settings | P1-T8b4 |
 | Q-T11 | **amhcloud.in for now** (owner, 2026-11-08; may change later); DNS stays at the registrar; certificates via our own acme-dns | Hospitals at `<slug>.app.amhcloud.in`; ADR-011 |
 | Q-K1 | **Job roles live in CARE only** (2026-11-06); Keycloak holds one `member` role per hospital | ADR-008, P1-T3 |
 | Q-K2 | **MFA for all staff** (2026-11-06), enforced by Keycloak and checked by the backend | ADR-008 |

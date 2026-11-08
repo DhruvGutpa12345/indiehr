@@ -71,3 +71,13 @@ repos:
         language: system
         files: ^scripts/(check-date-formats|test_check_date_formats)\.py$
         pass_filenames: false
+  # Host kit (P1-T8b1): the bootstrap's required controls (NIC/NPL time, SSH, 180-day logs,
+  # firewall) and no provider names in the kit (ADR-011).
+  - repo: local
+    hooks:
+      - id: host-bootstrap-static
+        name: host bootstrap keeps its required settings
+        entry: python3 -m unittest scripts/test_bootstrap_static.py
+        language: system
+        files: ^(deploy/host/|scripts/(deploy|local-vm)\.sh$|scripts/test_bootstrap_static\.py$)
+        pass_filenames: false

@@ -86,7 +86,7 @@ change the `.env` values, change one A record at the registrar. No application c
 - **Confirm with E2E in writing:** COMPLIANCE-mode object lock on the roadmap; SLA figure
   (their pages say both 99.9% and 99.95%); MeitY empanelment on the official list (the MeitY
   site was not reachable from here).
-- **Mail provider** (India-hosted SMTP) and the exact NIC/NPL NTP server names: P1-T8b.
+- **Decided 2026-11-09 (owner):** mail via Zoho ZeptoMail (India data centre; written confirmation of India-only storage before go-live), Ubuntu 26.04 LTS, SSH key-only and rate-limited. Time servers (CERT-In FAQ Q43, checked live 09-11-2026): `samay1.nic.in`, `samay2.nic.in` (NIC, stratum 2) and `time.nplindia.org` (NPL, stratum 1); none offers NTS.
 - **E2E start script** runs on every boot, so the bootstrap must stay idempotent.
 
 ## Sources (fetched 2026-11-08)

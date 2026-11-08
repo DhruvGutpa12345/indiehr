@@ -4,7 +4,7 @@
 # (mode 600, git-ignored) and handed to each container only as far as it needs them.
 #
 # Usage:
-#   scripts/staging.sh init <suffix> [--local]   write .env and secrets (once; refuses to overwrite)
+#   scripts/staging.sh init <suffix> [--local|--vm]  write .env and secrets (once; no overwrite)
 #   scripts/staging.sh up                        start everything, then the Keycloak realm + workers
 #   scripts/staging.sh smoke                     check every public address through Traefik
 #   scripts/staging.sh manage <args>             one-off manage.py command (no admin credentials)
@@ -12,10 +12,15 @@
 #   scripts/staging.sh local-proof               init (if needed) + up + smoke on this machine
 #
 # <suffix> is where hospitals live: <slug>.<suffix>, e.g. app.example.in (Q-T11).
+# --vm: a proof on a throwaway local VM (scripts/local-vm.sh): small memory, all addresses,
+#   journald logs. IHR_STAGING_OUT=<dir> makes init write .env and secrets/ there instead
+#   (scripts/deploy.sh ships them to the server). On the server this script runs from
+#   /srv/indiehr/scripts (no git checkout there): the folder above it is the root.
 set -euo pipefail
-ROOT="$(git -C "$(dirname "$0")" rev-parse --show-toplevel)"
+ROOT="$(git -C "$(dirname "$0")" rev-parse --show-toplevel 2>/dev/null || (cd "$(dirname "$0")/.." && pwd))"
 DIR="$ROOT/deploy/staging"
 SECRETS="$DIR/secrets"
+OUT="${IHR_STAGING_OUT:-$DIR}"
 compose() {  # the file list is worked out on each call: init may have just made .local
   local files=(-f "$DIR/compose.yaml")
   [[ -f "$DIR/.local" ]] && files+=(-f "$DIR/compose.local.yaml")
@@ -38,13 +43,14 @@ init() {
   local suffix="${1:?suffix, e.g. app.example.in}" local_run="${2:-}"
   [[ "$suffix" =~ ^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)+$ ]] \
     || { echo "not a domain: $suffix" >&2; exit 1; }
-  if [[ -e "$DIR/.env" || -e "$SECRETS" ]]; then
-    echo "deploy/staging/.env or secrets/ already exist; refusing to overwrite secrets." >&2
+  if [[ -e "$OUT/.env" || -e "$OUT/secrets" ]]; then
+    echo "$OUT/.env or secrets/ already exist; refusing to overwrite secrets." >&2
     exit 1
   fi
   # Everything is made in a scratch folder and moved into place only when complete, so a
   # failure half-way leaves nothing behind that a second init would refuse to replace.
-  INIT_WORK="$(mktemp -d "$DIR/.init.XXXXXX")"
+  [[ -d "$OUT" ]] || (umask 077 && mkdir -p "$OUT")
+  INIT_WORK="$(mktemp -d "$OUT/.init.XXXXXX")"
   trap 'rm -rf "${INIT_WORK:-}"' EXIT
   local work="$INIT_WORK"
   local backend_image="${IHR_BACKEND_IMAGE:-indiehr-backend:staging}"
@@ -71,6 +77,15 @@ init() {
       echo "IHR_PG_MEMORY=512m"
       echo "IHR_GUNICORN_WORKERS=1"
       echo "IHR_CELERY_CONCURRENCY=1"
+    elif [[ "$local_run" == "--vm" ]]; then
+      echo "# Proof run on a throwaway local VM (scripts/local-vm.sh): small memory; smoke"
+      echo "# checks reach Traefik on the VM itself"
+      echo "IHR_PG_SHARED_BUFFERS=128MB"
+      echo "IHR_PG_MEMORY=512m"
+      echo "IHR_GUNICORN_WORKERS=1"
+      echo "IHR_CELERY_CONCURRENCY=1"
+      echo "IHR_KEYCLOAK_MEMORY=900m"
+      echo "IHR_SMOKE_RESOLVE=127.0.0.1"
     fi
   } > "$work/.env"
 
@@ -111,10 +126,10 @@ EOF
   for f in provisioner.env staff-worker.env anchor-read.env anchor-write.env; do
     write_secret "$f" < /dev/null
   done
-  mv "$work/secrets" "$SECRETS"
-  mv "$work/.env" "$DIR/.env"
-  [[ "$local_run" == "--local" ]] && touch "$DIR/.local"
-  echo "Wrote deploy/staging/.env and secrets/ (mode 600). Next: scripts/staging.sh up"
+  mv "$work/secrets" "$OUT/secrets"
+  mv "$work/.env" "$OUT/.env"
+  [[ "$local_run" == "--local" ]] && touch "$OUT/.local"
+  echo "Wrote $OUT/.env and secrets/ (mode 600)."
 }
 
 admin_manage() {  # a one-off manage.py run holding the Keycloak bootstrap client (P1-T5f)
@@ -145,14 +160,18 @@ up() {
 }
 
 smoke() {  # every public address through Traefik, as a browser would reach it
-  local suffix port bind fail=0
+  local suffix port bind resolve fail=0
   suffix="$(env_get IHR_TENANT_DOMAIN_SUFFIX)"
   port="$(env_get IHR_HTTPS_PORT)"; port="${port:-443}"
   bind="$(env_get IHR_BIND)"
+  # Where the names point for the checks: the bind address of a local proof, or an address
+  # given in .env / the environment (a VM proof, or a server before its DNS exists)
+  resolve="${IHR_SMOKE_RESOLVE:-$(env_get IHR_SMOKE_RESOLVE)}"
+  [[ -z "$resolve" && "$bind" == "127.0.0.1" ]] && resolve=127.0.0.1
   local curl_args=(-sk --max-time 20)
-  if [[ "$bind" == "127.0.0.1" ]]; then
+  if [[ -n "$resolve" ]]; then
     for host in "$suffix" "alpha.$suffix" "console.$suffix" "auth.$suffix" "nope.$suffix"; do
-      curl_args+=(--resolve "$host:$port:127.0.0.1" --resolve "$host:${IHR_HTTP_PORT:-80}:127.0.0.1")
+      curl_args+=(--resolve "$host:$port:$resolve" --resolve "$host:${IHR_HTTP_PORT:-80}:$resolve")
     done
   fi
   check() {  # check <description> <expected> <actual>
@@ -216,5 +235,5 @@ case "${1:-}" in
       >/dev/null 2>&1 || true
     smoke
     ;;
-  *) sed -n '5,13p' "$0"; exit 1 ;;
+  *) sed -n '5,17p' "$0"; exit 1 ;;
 esac

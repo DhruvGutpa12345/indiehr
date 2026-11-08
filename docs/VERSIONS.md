@@ -136,3 +136,18 @@ Backend lock fully re-resolved on 2026-11-04 (latest compatible for every packag
 | keycloak-config-cli | not used: latest release v6.5.1 (2026-05-22) predates Keycloak 26.7 and mishandles 26.8 organisations | 2026-11-06 |
 
 Measured locally with the CARE stack running: Keycloak uses about 540 MB (limit 1 GB, heap 50%); first start about 30 s.
+
+## Host kit — P1-T8b1
+
+| Item | Version | Source | Checked |
+|---|---|---|---|
+| Server OS | Ubuntu 26.04 LTS (resolute); 24.04 LTS (noble) accepted | Q-E8 | 2026-11-09 |
+| Local test VM image | `ubuntu-26.04-server-cloudimg-amd64.img`, serial **20261016**, SHA-256 `5645d0318ad21f643ebb1ac4567514620e9893380b07b0201fda163baa5b7eb5` | cloud-images.ubuntu.com/releases/resolute/release-20261016; `SHA256SUMS.gpg` signed by D2EB 4462 6FDD C30B 513D 5BB7 1A5D 6C4C 7DB8 7C81 (UEC Image Automatic Signing Key; `ubuntu-cloudimage-keyring`) | 2026-11-09 |
+| docker-ce, docker-ce-cli | 5:29.9.3-1~ubuntu.26.04~resolute (…~ubuntu.24.04~noble) | download.docker.com apt, key 9DC8 5822 9FC7 DD38 854A E2D8 8D81 803C 0EBF CD88; held | 2026-11-09 |
+| containerd.io | 2.4.2-3~ubuntu.26.04~resolute | same | 2026-11-09 |
+| docker-buildx-plugin | 0.38.1-1~ubuntu.26.04~resolute | same | 2026-11-09 |
+| docker-compose-plugin | 5.7.0-1~ubuntu.26.04~resolute | same | 2026-11-09 |
+| chrony, fail2ban, ufw, unattended-upgrades | Ubuntu archive version of the release (security updates via unattended-upgrades) | Ubuntu | 2026-11-09 |
+| Time servers | samay1.nic.in, samay2.nic.in (NIC, stratum 2), time.nplindia.org (NPL, stratum 1); no NTS | CERT-In FAQ Q43; live NTP query | 2026-11-09 |
+
+The workstation now runs the same Docker packages (29.9.3; the P0-T2 row above shows 29.9.2 as first installed).

@@ -64,6 +64,15 @@ Keycloak must be running (`scripts/care-dev.sh keycloak up`). The first admin is
 - Operators are on two lists: role `ihr-operator` in realm `indiehr-ops`, and ours: `manage.py ihr_operator add|list|remove`.
 - Two workers (P1-T5f): `provisioner` (hospital runs, secret in `deploy/dev/provisioner.env`) and `staff-worker` (invitations, resets, expiry; `deploy/dev/staff-worker.env`). Each file holds only that worker's own narrow Keycloak service-account secret, written by `keycloak up`; neither holds the bootstrap admin credential, and the web app and CARE worker hold none. Logs: `scripts/care-dev.sh keycloak logs`.
 
+## Server kit on a throwaway VM (P1-T8b1)
+
+Proves `deploy/host/bootstrap.sh` and `scripts/deploy.sh` on this machine: the official Ubuntu
+26.04 cloud image under KVM (no sudo), its own SSH key, files only in `~/.cache/indiehr/vm/`.
+Stop the dev stack first (`scripts/care-dev.sh down`; the VM takes 3.5 GB). The runbook and the
+order of commands are in `deploy/host/README.md` ("Prove it locally"). SSH into it:
+`scripts/local-vm.sh ssh` (admin) or `scripts/local-vm.sh ssh ihr` (deploy user); remove it with
+`scripts/local-vm.sh destroy`.
+
 ## Stop or inspect
 
 ```bash
