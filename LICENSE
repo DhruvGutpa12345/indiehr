@@ -1,7 +1,45 @@
-Copyright (c) 2026 the IndieHR authors. All rights reserved.
+IndieHR — Proprietary Licence (View Only)
 
-This software and its source code are proprietary and confidential.
-No part of it may be copied, modified, distributed, sublicensed or used
-without prior written permission from the copyright holder.
+Copyright (c) 2026 Dhruv Gupta. All rights reserved.
 
-Third-party components keep their own licences; see NOTICE.
+1. Ownership. This repository and everything in it that is not a third-party component
+   listed in NOTICE (together, "the Work") — including source code, configuration,
+   scripts, documentation, designs, research, translations and data — is the property of
+   the copyright holder.
+
+2. No licence is granted. The Work is made visible for viewing only. Nothing in this
+   repository, and nothing about it being publicly visible, grants you any right or
+   licence to the Work. Without the copyright holder's prior written permission you may
+   not, in whole or in part:
+   a. use, run, install, deploy, host or operate the Work, or offer it as a service;
+   b. copy, reproduce, download for re-use, mirror or archive the Work;
+   c. modify, translate, adapt or create derivative works from the Work;
+   d. distribute, publish, sell, sublicense, lend or otherwise make the Work available;
+   e. use the Work, or any part of it, to train, fine-tune, evaluate or prompt any
+      machine-learning or artificial-intelligence system, or include it in any dataset;
+   f. remove or alter this notice or any copyright, attribution or licence notice.
+
+3. GitHub. The only exception is the limited right to view the Work and to fork it within
+   GitHub that GitHub's Terms of Service require for public repositories. A fork made
+   under those terms grants no further right: the restrictions in section 2 still apply
+   to it and to everything in it.
+
+4. Third-party components. Components listed in NOTICE (for example CARE by Open
+   Healthcare Network under the MIT licence, in apps/backend and apps/frontend) remain
+   under their own licences, whose texts are kept with them. This licence does not limit
+   any right those licences give you for those components as obtained from their
+   original sources. The copyright holder's own changes and additions remain under this
+   licence.
+
+5. Names. "IndieHR", "amhcloud" and any associated names and logos may not be used
+   without written permission.
+
+6. No warranty. The Work is provided "as is", without warranty of any kind. In no event
+   shall the copyright holder be liable for any claim, damages or other liability arising
+   from or in connection with the Work or any use of it.
+
+7. Permission. To ask for permission, contact the copyright holder through the GitHub
+   account that owns this repository. Any permission must be in writing and signed by the
+   copyright holder; it may be withdrawn as it states.
+
+8. Law. This notice is governed by the laws of India. Courts in India have jurisdiction.

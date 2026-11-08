@@ -1,4 +1,5 @@
-IndieHR includes or will include third-party open-source software.
+IndieHR (copyright Dhruv Gupta, all rights reserved; see LICENSE) includes or will include
+third-party open-source software. Those components keep their own licences:
 Their licences are reproduced or referenced below and in docs/LICENSES.md.
 
 - CARE (Open Healthcare Network), https://github.com/ohcnetwork/care

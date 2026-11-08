@@ -1,6 +1,11 @@
 # IndieHR
 
-Multi-tenant SaaS Hospital Information System for India (proprietary).
+Multi-tenant SaaS Hospital Information System for India.
+
+> **Proprietary, view only.** Copyright © 2026 Dhruv Gupta. All rights reserved. This repository
+> is public for viewing only: no use, copying, running, modification, distribution or AI
+> training without written permission ([LICENSE](LICENSE)). Third-party components keep their
+> own licences ([NOTICE](NOTICE)). Security reports: [SECURITY.md](SECURITY.md).
 
 | Doc | Purpose |
 |---|---|
