@@ -1,0 +1,19 @@
+# Proof run of the staging stack on this machine (P1-T8a; scripts/staging.sh local-proof).
+# Only 127.0.0.1, Traefik's self-signed certificate, no S3 (file uploads are not exercised),
+# and nothing written to this machine's journal (Docker's own log files, removed with the stack).
+x-local-logging: &local-logging
+  driver: json-file
+  options:
+    max-size: 10m
+services:
+  traefik: {logging: *local-logging}
+  db: {logging: *local-logging}
+  redis: {logging: *local-logging}
+  migrate: {logging: *local-logging}
+  backend: {logging: *local-logging}
+  celery-worker: {logging: *local-logging}
+  celery-beat: {logging: *local-logging}
+  provisioner: {logging: *local-logging}
+  staff-worker: {logging: *local-logging}
+  keycloak: {logging: *local-logging, mem_limit: 900m}
+  frontend: {logging: *local-logging}

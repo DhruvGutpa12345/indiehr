@@ -20,7 +20,7 @@
 | Q-E1 | **Upgrade RAM to 32 GB** | Not yet installed; P0-T5 ran in a low-memory setup instead |
 | Q-E2 | **Done** — user in docker group, verified after restart | P0-T2 only needs the Docker upgrade |
 | Q-E3 | **Private GitHub repo** | GitHub connector needs reconnecting, or `gh auth login` |
-| Q-E4 | **Cloud: decide later** (before P1-T8) | Local-only until staging |
+| Q-E4 | **Cloud: AWS Mumbai** (owner, 2026-11-08); the owner creates the account and pays, Claude never enters card details | Staging = one VM in ap-south-1; backups to Hyderabad (ap-south-2) |
 | Q-F3 | **Own curated drug list** for MVP | P2-T5 |
 | Q-G1/G3 | **Synthetic test users + screenshots + URL** | As planned |
 | Q-G2 | **Commit directly to main** | No PR workflow |
@@ -50,7 +50,7 @@
 | Q-T8 | **No inter-hospital referral in v1** (works between facilities of one tenant) | Redesign on ABDM later |
 | Q-T9 | **Clear cached data at logout** (frontend patch) | §6.9 |
 | Q-T10 | **Packs auto-update unedited rows**; edited rows need admin OK | §5 |
-| Q-T11 | **Domain decided at P1-T8** (staging) | — |
+| Q-T11 | **The owner's own domain** (owner, 2026-11-08; name to be given before P1-T8b) | Hospitals at `<slug>.app.<domain>` |
 | Q-K1 | **Job roles live in CARE only** (2026-11-06); Keycloak holds one `member` role per hospital | ADR-008, P1-T3 |
 | Q-K2 | **MFA for all staff** (2026-11-06), enforced by Keycloak and checked by the backend | ADR-008 |
 | Q-K3 | **Passwords: 12+ characters, last 5 not reused, no username/email, common-password block list**, no composition rules (2026-11-06) | ADR-008 |

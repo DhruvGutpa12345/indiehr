@@ -6,8 +6,20 @@
 #   API_UPSTREAM        e.g. http://backend:9000 — serve the API on the same origin (P1-T2b).
 #                       Each hospital's host then reaches its own schema. Empty: /api/ is 404.
 #   NGINX_RESOLVER      DNS server for API_UPSTREAM (default 127.0.0.11, Docker's own)
+# Access log without query strings (P1-T8a): searches carry patient names and phone numbers,
+# and the logs are kept 180 days. The path is enough to trace a request.
+log_format ihr_path '$remote_addr [$time_local] "$request_method $uri $server_protocol" '
+                    '$status $body_bytes_sent $request_time';
+# Behind Traefik the browser's request was https: pass that on, so Django (which trusts this
+# header) sees it. Traefik sets the header itself and ignores a client's.
+map $http_x_forwarded_proto $ihr_forwarded_proto {
+  default $scheme;
+  https https;
+}
+
 server {
   listen 8080;
+  access_log /var/log/nginx/access.log ihr_path;
   root /usr/share/nginx/html;
 
   server_tokens off;
@@ -35,7 +47,7 @@ server {
     proxy_pass $api_upstream;
     proxy_set_header Host $http_host;
     proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
-    proxy_set_header X-Forwarded-Proto $scheme;
+    proxy_set_header X-Forwarded-Proto $ihr_forwarded_proto;
     proxy_read_timeout 120s;
     client_max_body_size 10m;
   }

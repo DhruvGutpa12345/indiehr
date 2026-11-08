@@ -108,6 +108,16 @@ Backend lock fully re-resolved on 2026-11-04 (latest compatible for every packag
 | tenant-schemas-celery | 5.0.0 (2026-08-01; requires celery>=5) | 2026-11-06 |
 | ruff (pre-commit, plugins/) | v0.14.8 (same as CARE's config) | 2026-11-06 |
 
+## Staging stack — P1-T8a
+
+| Component | Version | Pinned how |
+|---|---|---|
+| Traefik | v3.7.17 (released 30-10-2026, latest stable) | tag + index digest written to `deploy/staging/.env` by `staging.sh init` |
+| PostgreSQL | 18.6-alpine | tag + digest (as above) |
+| Redis | 8.10.3-alpine (released 26-10-2026) | tag + digest (as above) |
+| Keycloak | 26.8.2 | digest in `deploy/staging/compose.yaml` (same as dev) |
+| Backend image | `deploy/docker/backend.Dockerfile` + `plugins/` (second build context) | built per commit |
+
 ## Reference data — P1-T7a
 
 | Data | Source | Licence | Loaded |

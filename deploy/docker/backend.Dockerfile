@@ -4,8 +4,10 @@
 # - pip removed from the final image (system + venv): it is not needed at runtime and
 #   carries its own outdated vendored copies of certifi/urllib3/msgpack/setuptools
 # - runs as the non-root user "django" (as upstream)
-# Build (context = the CARE backend):
-#   docker buildx build -f deploy/docker/backend.Dockerfile -t indiehr-backend apps/backend
+# - our own plugins (plugins/ihr_platform) on PYTHONPATH, as in dev and CI (P1-T8a)
+# Build (context = the CARE backend, plus our plugins as a second context):
+#   docker buildx build --build-context plugins=plugins \
+#     -f deploy/docker/backend.Dockerfile -t indiehr-backend apps/backend
 FROM python:3.13.18-slim-bookworm AS base
 
 ARG APP_HOME=/app
@@ -74,6 +76,12 @@ ENV GUNICORN_CMD_ARGS="--worker-class gthread --threads 4"
 COPY --chmod=0755 --chown=django:django ./scripts/*.sh $APP_HOME
 
 COPY --chown=django:django . $APP_HOME
+
+# Our plugins (P1-T8a): read-only for the app user, never pip-installed. Settings for
+# staging and production: ihr_platform.settings.deployment (refuses unsafe settings).
+COPY --from=plugins --chown=root:root --chmod=0755 ihr_platform /ihr/plugins/ihr_platform
+ENV PYTHONPATH=/ihr/plugins/ihr_platform
+ENV DJANGO_SETTINGS_MODULE=ihr_platform.settings.deployment
 
 USER django
 

@@ -1,0 +1,310 @@
+# IndieHR staging stack (P1-T8a): one VM, Docker Compose, Traefik in front (ADR-003).
+# Run through scripts/staging.sh, never directly. Files next to this one:
+#   .env                site settings for Compose itself (no secrets; staging.sh init writes it)
+#   secrets/*.env       one file per service, mode 600, git-ignored (staging.sh init writes them)
+#   traefik/routes.yml  the public routes (a fixed file: Traefik never gets the Docker socket)
+#   compose.local.yaml  a proof run on this machine (self-signed certificate, 127.0.0.1)
+#   compose.acme.yaml   Let's Encrypt certificates on the VM (added in P1-T8b, with the DNS)
+# Each container gets only the secrets it uses: the web app never sees Keycloak's admin
+# credential, each worker only its own narrow Keycloak account (P1-T5f).
+name: indiehr-staging
+
+x-logging: &logging
+  # The host's journald keeps 180 days (CERT-In; set up with the VM in P1-T8b).
+  driver: ${IHR_LOG_DRIVER:-journald}
+  options:
+    tag: "indiehr/{{.Name}}"
+
+x-hardening: &hardening
+  security_opt: ["no-new-privileges:true"]
+  cap_drop: ["ALL"]
+  restart: unless-stopped
+  logging: *logging
+
+x-app: &app
+  <<: *hardening
+  image: ${IHR_BACKEND_IMAGE:?set IHR_BACKEND_IMAGE}
+  env_file:
+    - secrets/app.env
+  environment: &app-env
+    DJANGO_SETTINGS_MODULE: ihr_platform.settings.deployment
+    IHR_ENVIRONMENT: ${IHR_ENVIRONMENT:-staging}
+    IHR_TENANT_DOMAIN_SUFFIX: ${IHR_TENANT_DOMAIN_SUFFIX:?}
+    IHR_KEYCLOAK_PUBLIC_URL: https://auth.${IHR_TENANT_DOMAIN_SUFFIX}
+    IHR_KEYCLOAK_URL: http://keycloak:8080
+    IHR_CONSOLE_URL: https://console.${IHR_TENANT_DOMAIN_SUFFIX}
+    IHR_BACKCHANNEL_LOGOUT_URL: http://backend:9000/api/ihr/backchannel-logout/
+    # Every hospital, the console, and the two internal names (health checks, back-channel)
+    DJANGO_ALLOWED_HOSTS: '[".${IHR_TENANT_DOMAIN_SUFFIX}", "localhost", "backend"]'
+    # No terminology server until P1-T10: never CARE's default third party over plain HTTP
+    SNOWSTORM_DEPLOYMENT_URL: http://127.0.0.1:9/fhir
+    GUNICORN_WORKERS: ${IHR_GUNICORN_WORKERS:-2}
+  # internal: database and Redis; edge: Keycloak, and the way out (S3, mail)
+  networks: [internal, edge]
+  depends_on:
+    migrate:
+      condition: service_completed_successfully
+
+services:
+  traefik:
+    <<: *hardening
+    image: traefik:v3.7.17@sha256:${IHR_TRAEFIK_DIGEST:?}
+    # Not root, no capabilities, no Docker socket: it listens on high ports inside the
+    # container and reads its routes from a read-only file.
+    user: "65534:65534"
+    command:
+      - --entrypoints.web.address=:8000
+      - --entrypoints.web.http.redirections.entrypoint.to=:443
+      - --entrypoints.web.http.redirections.entrypoint.scheme=https
+      - --entrypoints.websecure.address=:8443
+      - --entrypoints.websecure.http.tls=true
+      - --entrypoints.ping.address=:8082
+      - --ping.entrypoint=ping
+      - --providers.file.filename=/etc/traefik/routes.yml
+      - --api.dashboard=false
+      # Access log without paths or query strings: setup links and searches carry secrets
+      # and patient details, and these logs are kept 180 days.
+      - --accesslog=true
+      - --accesslog.format=json
+      - --accesslog.fields.defaultmode=keep
+      - --accesslog.fields.names.RequestPath=drop
+      - --accesslog.fields.names.ClientUsername=drop
+      - --accesslog.fields.headers.defaultmode=drop
+      - --log.level=INFO
+      - --global.checknewversion=false
+      - --global.sendanonymoususage=false
+    environment:
+      IHR_TENANT_DOMAIN_SUFFIX: ${IHR_TENANT_DOMAIN_SUFFIX:?}
+      IHR_SUFFIX_RE: ${IHR_SUFFIX_RE:?}
+    ports:
+      - "${IHR_BIND:-0.0.0.0}:${IHR_HTTP_PORT:-80}:8000"
+      - "${IHR_BIND:-0.0.0.0}:${IHR_HTTPS_PORT:-443}:8443"
+    volumes:
+      - ./traefik/routes.yml:/etc/traefik/routes.yml:ro
+    networks: [edge]
+    healthcheck:
+      test: ["CMD", "traefik", "healthcheck", "--ping", "--ping.entrypoint=ping", "--entrypoints.ping.address=:8082"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+    mem_limit: 128m
+
+  db:
+    <<: *hardening
+    image: postgres:18.6-alpine@sha256:${IHR_POSTGRES_DIGEST:?}
+    cap_add: ["CHOWN", "DAC_OVERRIDE", "FOWNER", "SETGID", "SETUID"]
+    env_file:
+      - secrets/db.env
+    environment:
+      POSTGRES_INITDB_ARGS: "--data-checksums"
+    command:
+      - postgres
+      - -c
+      - shared_buffers=${IHR_PG_SHARED_BUFFERS:-512MB}
+      - -c
+      - max_connections=100
+      - -c
+      - log_min_duration_statement=2000
+      - -c
+      - password_encryption=scram-sha-256
+    volumes:
+      # Postgres 18+ keeps its data under /var/lib/postgresql (ADR-003 rule 5)
+      - pgdata:/var/lib/postgresql
+      - ./initdb:/docker-entrypoint-initdb.d:ro
+    networks: [internal]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d postgres"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    mem_limit: ${IHR_PG_MEMORY:-1536m}
+    shm_size: 256m
+
+  redis:
+    <<: *hardening
+    image: redis:8.10.3-alpine@sha256:${IHR_REDIS_DIGEST:?}
+    cap_add: ["CHOWN", "SETGID", "SETUID"]
+    env_file:
+      - secrets/redis.env
+    # Staff sessions live here (ADR-009): saved to disk, and never evicted to make room;
+    # a full Redis refuses writes instead of signing people out.
+    command:
+      - sh
+      - -c
+      # The password reaches Redis on standard input ("-"), never in the process list. The
+      # image's entrypoint still runs (the data folder is owned by the redis user), and Redis
+      # ends up as process 1, so a stop lets it write its last changes to disk.
+      - |
+        exec docker-entrypoint.sh redis-server - --appendonly yes --appendfsync everysec --maxmemory ${IHR_REDIS_MAXMEMORY:-256mb} --maxmemory-policy noeviction <<CONF
+        requirepass "$$REDIS_PASSWORD"
+        CONF
+    volumes:
+      - redisdata:/data
+    networks: [internal]
+    healthcheck:
+      test: ["CMD-SHELL", "REDISCLI_AUTH=\"$$REDIS_PASSWORD\" redis-cli ping | grep -q PONG"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    mem_limit: 384m
+
+  # One-shot: schema changes, the platform's own addresses, roles and code lists in every
+  # hospital. The web app and workers start only after it has finished without error.
+  migrate:
+    <<: *app
+    restart: "no"
+    command:
+      - bash
+      - -c
+      - >-
+        python manage.py migrate --noinput
+        && python manage.py ihr_create_tenant --public --domain localhost
+        --domain console.${IHR_TENANT_DOMAIN_SUFFIX} --domain backend
+        && python manage.py all_tenants_command --no-public sync_permissions_roles
+        && python manage.py all_tenants_command --no-public sync_valueset
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    healthcheck:
+      disable: true
+
+  # One-off commands (scripts/staging.sh manage, and the Keycloak set-up). Never logged:
+  # some print secrets (a worker's Keycloak secret), and the journal is kept 180 days.
+  admin:
+    <<: *app
+    profiles: ["admin"]
+    restart: "no"
+    logging:
+      driver: none
+    healthcheck:
+      disable: true
+
+  backend:
+    <<: *app
+    env_file:
+      - secrets/app.env
+      # Read-only key of the audit fingerprint bucket (P1-T6b): verify and export
+      - secrets/anchor-read.env
+    # CARE's start.sh, without its wait scripts (they expect POSTGRES_* variables and would
+    # create databases): Compose already waits for a healthy database and Redis. The access
+    # log has the path only (%(U)s), never the query string.
+    command:
+      - bash
+      - -c
+      - >-
+        printf api > /tmp/container-role
+        && python manage.py collectstatic --noinput -v 0
+        && python manage.py compilemessages -v 0
+        && exec gunicorn --config python:config.gunicorn config.wsgi:application
+        --bind 0.0.0.0:9000 --chdir=/app --workers "$$GUNICORN_WORKERS"
+        --access-logformat '%(h)s %(t)s "%(m)s %(U)s" %(s)s %(B)s %(M)sms'
+        --access-logfile - --error-logfile -
+    mem_limit: ${IHR_BACKEND_MEMORY:-1g}
+
+  celery-worker:
+    <<: *app
+    env_file:
+      - secrets/app.env
+      # The hourly audit fingerprint runs here: the add-only bucket key (P1-T6b). The web
+      # app holds the read-only one; beat only schedules and needs neither.
+      - secrets/anchor-write.env
+    command:
+      - bash
+      - -c
+      - printf celery-worker > /tmp/container-role && exec celery --app=config.celery_app worker --max-tasks-per-child=50 --loglevel=info --concurrency=${IHR_CELERY_CONCURRENCY:-2}
+    mem_limit: ${IHR_CELERY_MEMORY:-768m}
+
+  celery-beat:
+    <<: *app
+    command:
+      - bash
+      - -c
+      - printf celery-beat > /tmp/container-role && touch /tmp/healthy && exec celery --app=config.celery_app beat --loglevel=info --schedule=/tmp/celerybeat-schedule
+    mem_limit: 384m
+
+  # The two Keycloak workers (P1-T5b/f), each with only its own narrow service account.
+  provisioner:
+    <<: *app
+    env_file:
+      - secrets/app.env
+      - secrets/provisioner.env
+    command: ["python", "manage.py", "ihr_provision_worker", "--role", "onboarding"]
+    healthcheck:
+      disable: true
+    mem_limit: 384m
+
+  staff-worker:
+    <<: *app
+    env_file:
+      - secrets/app.env
+      - secrets/staff-worker.env
+    command: ["python", "manage.py", "ihr_provision_worker", "--role", "staff"]
+    healthcheck:
+      disable: true
+    mem_limit: 320m
+
+  keycloak:
+    <<: *hardening
+    image: quay.io/keycloak/keycloak:26.8.2@sha256:3879c623248408de29a5303178b5816c77e8dfef3890c361f8c0bbeaa979ba3b
+    command: ["start"]
+    env_file:
+      - secrets/keycloak.env
+    environment:
+      KC_DB: postgres
+      KC_DB_URL_HOST: db
+      KC_DB_URL_DATABASE: keycloak
+      KC_DB_USERNAME: keycloak
+      KC_DB_POOL_MAX_SIZE: "20"
+      # TLS ends at Traefik; tokens carry the public https address as issuer.
+      KC_HOSTNAME: https://auth.${IHR_TENANT_DOMAIN_SUFFIX}
+      # The admin console lives on the private address only (SSH tunnel to this port).
+      KC_HOSTNAME_ADMIN: http://127.0.0.1:${IHR_KEYCLOAK_ADMIN_PORT:-8081}
+      KC_HOSTNAME_BACKCHANNEL_DYNAMIC: "true"
+      KC_HTTP_ENABLED: "true"
+      KC_PROXY_HEADERS: xforwarded
+      KC_HEALTH_ENABLED: "true"
+      KC_FEATURES_DISABLED: device-flow,ciba,impersonation,kerberos
+      KC_SPI_PASSWORD_POLICY__PASSWORD_BLACKLIST__BLACKLISTS_PATH: /opt/keycloak/data/password-blacklists
+      JAVA_OPTS_KC_HEAP: "-XX:MaxRAMPercentage=60 -XX:InitialRAMPercentage=25"
+    volumes:
+      - ../keycloak/password-blocklist:/opt/keycloak/data/password-blacklists:ro
+    networks: [internal, edge]
+    ports:
+      - "127.0.0.1:${IHR_KEYCLOAK_ADMIN_PORT:-8081}:8080"
+    depends_on:
+      db:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "exec 3<>/dev/tcp/127.0.0.1/9000 && printf 'GET /health/ready HTTP/1.0\\r\\nHost: localhost\\r\\n\\r\\n' >&3 && grep -q '\"UP\"' <&3"]
+      interval: 15s
+      timeout: 5s
+      retries: 40
+      start_period: 120s
+    mem_limit: ${IHR_KEYCLOAK_MEMORY:-1g}
+
+  frontend:
+    <<: *hardening
+    image: ${IHR_FRONTEND_IMAGE:?set IHR_FRONTEND_IMAGE}
+    environment:
+      API_UPSTREAM: http://backend:9000
+      CSP_STORAGE_ORIGIN: ${IHR_STORAGE_ORIGIN:-}
+    # The repository's nginx settings win over the ones built into the image, so a web-app
+    # bundle built before a settings change (e.g. path-only logs) still runs the current ones.
+    volumes:
+      - ../docker/frontend-nginx.conf.template:/etc/nginx/templates/default.conf.template:ro
+    networks: [edge]
+    depends_on:
+      backend:
+        condition: service_healthy
+    mem_limit: 96m
+
+networks:
+  edge:
+  internal:
+    internal: true
+
+volumes:
+  pgdata:
+  redisdata:

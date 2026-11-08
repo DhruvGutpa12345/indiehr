@@ -446,11 +446,23 @@ jobs:
           docker buildx build --load \
             --cache-from type=gha,scope=backend-prod \
             --cache-to type=gha,mode=max,scope=backend-prod \
+            --build-context plugins=plugins \
             -f deploy/docker/backend.Dockerfile -t indiehr-backend:ci apps/backend
 
       - name: Smoke test (app imports work, pip removed)
         run: |
           docker run --rm indiehr-backend:ci python -c "import django, celery, rest_framework; print('django', django.get_version())"
+          docker run --rm indiehr-backend:ci python -c "import ihr_platform.settings.secure, ihr_audit, ihr_identity, ihr_tenant_settings"
+          # With only a database address the server must refuse to start, naming our rules (P1-T8a)
+          if docker run --rm -e DATABASE_URL=postgres://u:p@db:5432/x -e REDIS_URL=redis://redis:6379 \
+              indiehr-backend:ci python manage.py check > refusal.txt 2>&1; then
+            echo "started without secrets"; exit 1
+          fi
+          for rule in "Refusing to start with unsafe settings" "DJANGO_SECRET_KEY is not set." \
+              "JWKS_BASE64 is not set." "'*' is not allowed"; do
+            grep -qF "$rule" refusal.txt || { echo "missing refusal: $rule"; tail -20 refusal.txt; exit 1; }
+          done
+          if docker run --rm indiehr-backend:ci sh -c 'touch /ihr/plugins/ihr_platform/x'; then echo "plugins writable"; exit 1; fi
           if docker run --rm indiehr-backend:ci python -m pip --version; then echo "pip should not be in the image"; exit 1; fi
 
       - name: Runs as non-root
