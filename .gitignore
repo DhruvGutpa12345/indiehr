@@ -40,3 +40,5 @@ deploy/dev/frontend-build/
 deploy/dev/keycloak.env
 deploy/dev/provisioner.env
 deploy/dev/staff-worker.env
+deploy/dev/audit-anchor-read.env
+deploy/dev/audit-anchor-write.env

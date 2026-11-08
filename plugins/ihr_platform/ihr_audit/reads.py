@@ -160,8 +160,9 @@ def start():
     return _seen.set(Seen())
 
 
-def finish(token):
-    """Stop noting and return (patient ids, total) for what the request showed."""
+def finish(token, cap=MAX_PATIENTS):
+    """Stop noting and return (patient ids, total) for what the request showed: at most
+    ``cap`` ids (None: all of them)."""
     seen = _seen.get()
     _seen.reset(token)
     if seen is None:
@@ -181,4 +182,12 @@ def finish(token):
         )
     patients.discard(None)
     ordered = sorted(patients)
-    return ordered[:MAX_PATIENTS], len(ordered)
+    return ordered[:cap], len(ordered)
+
+
+def note_patients(ids):
+    """Count patients as shown by this request when the view sends them without loading
+    model instances (the audit export)."""
+    seen = _seen.get()
+    if seen is not None:
+        seen.patients.update(ids)

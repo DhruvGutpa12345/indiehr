@@ -2,7 +2,7 @@
 
 - **Status:** Accepted (owner's answers of 2026-11-07)
 - **Date:** 2026-11-07
-- **Task:** P1-T6a (recording, hash chain, verify). P1-T6b adds the viewer, export and the outside anchor.
+- **Task:** P1-T6a (recording, hash chain, verify); P1-T6b (viewer, export, outside fingerprints; §7–§9, owner's answers of 2026-11-08).
 - **Builds on:** ADR-002 (schema per hospital), ADR-009 (staff sessions). Replaces CARE's own audit log, which stays off (TENANCY_DESIGN §6.12).
 
 ## Context
@@ -94,10 +94,78 @@ The trail stays in the hospital's schema, so it never mixes hospitals. It is bac
 - `ihr_audit_verify --slug x | --all [--seal]` recomputes everything and checks trigger coverage. It exits 1 on any problem, including finished entries left unsealed while nothing was sealed for 10 minutes.
 - Entries held back by a transaction still running anywhere in the database cluster are reported as a warning, not a problem.
 
+**7. Viewer for hospital-wide admins (P1-T6b).** `/api/ihr/audit/`:
+- `entries/` lists newest first, with filters: day range (IST), patient, kind, operation, table, actor prefix. Each row shows who, when, from where, which record, which patients and which fields changed, **never the values**.
+- `entries/<id>/` shows one entry with its old and new values. Identifiers are still masked.
+- `status/` shows the chain head and trigger coverage.
+- `export/` and `verifier.py` are covered in §8.
+
+Who may use them:
+- Only staff with an admin role on one of the hospital's **top-level, active** organisations. A team's or facility's admin may not.
+- The same check now guards the staff-access actions (P1-T5e2).
+
+What is recorded:
+- Every call is recorded, refused ones included, as a `request` entry with purpose `audit`.
+- Patients whose names it showed count as viewed.
+- Searched values in query strings are masked when recorded (and when shown, for older entries): phone numbers keep their last 4 digits, names and other free text become `***`, ids and paging stay.
+
+**8. Export, at most 31 days, each export recorded with every patient it shows.**
+- An export showing more than 1,000 patients is recorded as several entries under one request id.
+- **CSV** is for people:
+  - IST times as DD-MM-YYYY;
+  - which fields changed, no values;
+  - cells that a spreadsheet would run as formulas are neutralised.
+- **JSON Lines** is for an outside auditor, checked with `verify_export.py` (standard-library Python, also downloadable from the viewer). The export holds:
+  - every sealed window holding the range's entries, plus one window on each side, each with a line per entry: exported entries carry their details but never their values; every other entry shows only its time, patient ids and a hash of its details;
+  - seal headers on to the **earliest** fingerprint written after the last window, named with its object version and storage time.
+- **What the script checks:**
+  - every hash;
+  - that no entry of the range (or patient) is a bare hash;
+  - that the full windows start before the range (or at the first seal) and end after it;
+  - that the fingerprint matches a seal and was written within 3 hours of the last window;
+  - one header, nothing after the end line, and patient ids that line up.
+  - It prints the hospital, range and patient. `--hospital/--from/--to/--patient` check them against the request.
+  - **Exit 0:** proven. **Exit 3:** nothing contradicts but part is not proven, e.g. the newest hour, older formats, or no request given. **Exit 1:** altered.
+- **How the export is built:**
+  - The range ends when the export is recorded.
+  - The windows and the patients they carry are counted then; the request entry lists every one.
+  - The stream reads one database snapshot.
+- **Seal format 3** makes this possible:
+  - an entry's canonical text is `[at, patients, sha256(details)]`;
+  - the details hold `sha256(salt ‖ values)`, where `salt` is 16 random bytes per entry that never leave the database. Without the salt, short values (a status, a blood group, the last 4 digits) could be found by trying every candidate.
+  - Formats 1 and 2 (before the review) still verify, but their entries are exported as hashes only.
+- **Not proven by an export:**
+  - an entry whose time is in the range but which sits outside those windows (a transaction left open across the range's edge);
+  - unsealed entries beyond their own hash;
+  - that an empty range is empty;
+  - the external patient ids next to entries (the platform's word, checked only for consistency).
+- **A patient's export** carries the hashes of every entry in the windows it spans. That can be the whole range's trail: the price of proving nothing was left out.
+
+**9. Outside fingerprints, hourly, in a write-once bucket.**
+- **What is written:** Celery beat sends the job once for the platform (`PLATFORM_ONCE`, not once per hospital). It adds one JSON object per run listing each live (not provisioning) hospital's newest seal: number, hash and address. Each object is written once (`If-None-Match`). The object goes under `anchors/<platform>/YYYY/MM/DD/` in an S3 bucket with Object Lock.
+- **Two credentials,** read from the environment, never Django settings:
+  - Celery's may only add objects;
+  - the verifier's may only read and list.
+  - Neither can delete or change retention (checked live on dev MinIO).
+- **What `ihr_audit_verify` checks:** every hospital against every fingerprint, or from `--since` for frequent runs. It reports:
+  - a seal that differs (rewritten) or is missing (cut);
+  - a hospital dropped from newer fingerprints;
+  - a fingerprinted hospital no longer in the database, or whose address now belongs to another hospital;
+  - a job more than 2 hours late;
+  - delete markers, unreadable objects, and an object written twice;
+  - an object whose stated time is more than 10 minutes from the storage's own time (the storage's time orders and dates fingerprints).
+  - Claims are checked against the database in batches, so memory stays small however many fingerprints there are.
+  - a bucket without a lock.
+  - Outside dev it also reports retention that is not COMPLIANCE, unversioned buckets, and keeping objects for less than 7 years.
+  - A storage outage is reported while the local checks still run.
+- **Buckets:**
+  - **Production (P1-T8):** an India-region bucket in COMPLIANCE mode for 10 years, in an account the database admins do not hold.
+  - **Dev:** `scripts/care-dev.sh audit-anchors` makes a GOVERNANCE-mode bucket (30 days) in the local MinIO. Its root keys are in the dev containers, so dev does not show the guarantee; the checks say so.
+
 ## What this does not protect against (yet)
 
-- **A database owner** can drop the guards and rewrite the trail and the chain consistently, or cut off the newest entries and seals together. **P1-T6b** closes this: it keeps a daily fingerprint (seal number + hash) outside the database, where the database owner cannot change it.
-- **Entries not yet sealed** (up to about a minute old) could be removed without trace by someone with database access.
+- **A database owner** can still rewrite or cut what was sealed after the newest fingerprint, up to about an hour (§9 catches everything older), and remove entries not yet sealed (about a minute).
+- **Fingerprints are only as safe as the bucket's account.** Production must keep it apart from the database admins (P1-T8).
 - **Reads that never build model instances** (`values()`, raw SQL) are not noted. CARE's API serialises model instances.
 
 ## Consequences

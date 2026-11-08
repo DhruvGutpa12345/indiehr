@@ -47,12 +47,30 @@ RESENDABLE = CANCELLABLE | {
 }
 
 
-def _hospital_wide_admin(user):
-    """An admin role on one of the hospital's organisations (not only a facility's)."""
+def _admin_memberships(user):
     roles = RolePermission.objects.filter(
         permission__slug=UserPermissions.can_create_user.name
     ).values_list("role_id", flat=True)
-    return OrganizationUser.objects.filter(user=user, role_id__in=roles).exists()
+    return OrganizationUser.objects.filter(user=user, role_id__in=roles, deleted=False)
+
+
+def organisation_admin(user):
+    """An admin role on any of the hospital's organisations (not only a facility's)."""
+    return _admin_memberships(user).exists()
+
+
+def hospital_wide_admin(user):
+    """An admin role on one of the hospital's top-level organisations, active and not deleted
+    (not a team's or a district's inside it): who may read the audit trail (P1-T6b)."""
+    return (
+        _admin_memberships(user)
+        .filter(
+            organization__parent__isnull=True,
+            organization__active=True,
+            organization__deleted=False,
+        )
+        .exists()
+    )
 
 
 class StaffAccessView(APIView):
@@ -67,7 +85,7 @@ class StaffAccessView(APIView):
         )
         if target.is_superuser:
             raise PermissionDenied("Not for superusers.")
-        if _hospital_wide_admin(target) and not _hospital_wide_admin(request.user):
+        if organisation_admin(target) and not organisation_admin(request.user):
             raise PermissionDenied(
                 "Only a hospital-wide admin can do this for an admin."
             )

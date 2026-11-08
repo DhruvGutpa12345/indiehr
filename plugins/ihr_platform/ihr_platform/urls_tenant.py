@@ -17,6 +17,7 @@ urlpatterns = [
     path("api/ihr/join/", include("ihr_identity.join_urls")),
     # Hospital admins: reset a lost authenticator, resend or cancel an invitation (P1-T5e2)
     path("api/ihr/staff/", include("ihr_identity.staff_urls")),
+    path("api/ihr/audit/", include("ihr_audit.urls")),
     path("api/ihr/", include("ihr_tenant_settings.urls")),
     *care_urlpatterns,
 ]

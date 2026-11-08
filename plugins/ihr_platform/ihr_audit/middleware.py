@@ -17,6 +17,7 @@ from ihr_audit import context, reads
 SAFE_METHODS = frozenset(("GET", "HEAD", "OPTIONS"))
 # Purpose is inferred from the screen's API until staff are asked (owner: inferred now).
 PURPOSES = (
+    (re.compile(r"^/api/ihr/audit/"), "audit"),
     (re.compile(r"/(invoice|charge_item|account|payment_reconciliation)"), "billing"),
     (
         re.compile(r"^/api/(v1/(users|role|organization|facility_organization)|ihr/)"),
@@ -49,17 +50,25 @@ class AuditMiddleware:
         finally:
             try:
                 context.resync()  # the view's rollback may have undone the actor
-                patients, total = reads.finish(token)
-                if patients or request.method not in SAFE_METHODS:
+                # Every look at the trail is recorded, with or without patients, and
+                # with every patient it showed (an export can show thousands).
+                audit = ctx["purpose"] == "audit"
+                patients, total = reads.finish(
+                    token, None if audit else reads.MAX_PATIENTS
+                )
+                if patients or request.method not in SAFE_METHODS or audit:
+                    actor = context.current_actor() or "anonymous"
                     data = {"status": status}
-                    if total > len(patients):
+                    step = reads.MAX_PATIENTS
+                    if total > min(len(patients), step):  # cut short, or in parts
                         data["patients_total"] = total
-                    _record(
-                        context.current_actor() or "anonymous",
-                        ctx,
-                        patients,
-                        data,
-                    )
+                    parts = [
+                        patients[i : i + step] for i in range(0, len(patients), step)
+                    ]
+                    for number, part in enumerate(parts or [[]], 1):
+                        if len(parts) > 1:
+                            data = {**data, "part": number, "parts": len(parts)}
+                        _record(actor, ctx, part, data)
             finally:
                 context.end()
         return response

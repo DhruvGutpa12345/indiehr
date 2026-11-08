@@ -12,9 +12,11 @@ task are recorded as ``system:<application_name>`` (the process name, settings/t
 """
 
 import json
+import re
 import uuid
 from contextlib import contextmanager
 from contextvars import ContextVar
+from urllib.parse import parse_qsl, urlencode
 
 from django.db import connection
 
@@ -71,8 +73,68 @@ def resync():
         _apply(connection, values)
 
 
+# Query parameters whose values are kept as they are; any other value (a searched name or
+# phone number) is recorded as "***", a phone number with its last 4 digits.
+PLAIN_PARAMS = frozenset(
+    (
+        "limit",
+        "offset",
+        "ordering",
+        "page",
+        "size",
+        "status",
+        "mode",
+        "format",
+        "facility",
+        "encounter",
+        "patient",
+        "organization",
+        "category",
+        "kind",
+        "op",
+        "table",
+        "before",
+        "from",
+        "to",
+        "file",
+        "active",
+        "type",
+        "file_type",
+    )
+)
+MAX_PLAIN = 40
+_UUID = re.compile(
+    r"^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$"
+)
+_KEY = re.compile(r"^[A-Za-z0-9_.\[\]-]{1,40}$")
+_PHONE = re.compile(r"^\+?[\d -]{10,}$")  # phone-length: last 4 kept, like stored ones
+
+
+def _mask(name, value):
+    """Kept: values of known paging/filter parameters, and record ids (UUIDs) anywhere.
+    Masked: everything else, an OTP or a short number included."""
+    if name in PLAIN_PARAMS and len(value) <= MAX_PLAIN:
+        return value
+    if _UUID.match(value):
+        return value
+    if _PHONE.match(value) and sum(c.isdigit() for c in value) >= 10:  # noqa: PLR2004
+        return "***" + value.replace(" ", "").replace("-", "")[-4:]
+    return "***" if value else ""
+
+
+def mask_query(query):
+    """A query string with search values masked (also used to show entries recorded before
+    masking began)."""
+    if not query:
+        return query
+    pairs = parse_qsl(query, keep_blank_values=True)
+    return urlencode(
+        [(k if _KEY.match(k) else "***", _mask(k, v)) for k, v in pairs], safe="*[]"
+    )
+
+
 def request_context(request, purpose):
-    query = request.META.get("QUERY_STRING", "")
+    query = mask_query(request.META.get("QUERY_STRING", "")[:2000])
     ctx = {
         "rid": uuid.uuid4().hex,
         "via": "web",

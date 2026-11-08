@@ -48,9 +48,21 @@ def _reviewed_list(path):
     }
 
 
+def _body(response):
+    """The lower-cased body; downloads (audit export, files) are streamed, read once."""
+    if not hasattr(response, "ihr_body"):
+        raw = (
+            b"".join(response.streaming_content)
+            if response.streaming
+            else response.content
+        )
+        response.ihr_body = raw.decode(errors="replace").lower()
+    return response.ihr_body
+
+
 def _leaks(response, other):
     """Ids and canary of tenant ``other`` found in a response body."""
-    body = response.content.decode(errors="replace").lower()
+    body = _body(response)
     found = set(UUID_RE.findall(body)) & other.ids
     if other.canary.lower() in body:
         found.add(other.canary)
@@ -58,7 +70,7 @@ def _leaks(response, other):
 
 
 def _owns(response, tenant):
-    body = response.content.decode(errors="replace").lower()
+    body = _body(response)
     return bool(set(UUID_RE.findall(body)) & tenant.ids)
 
 
@@ -378,7 +390,8 @@ class CrossTenantIsolationTests(SimpleTestCase):
             )
 
     def test_periodic_jobs_run_once_per_active_tenant(self):
-        """Celery beat: CARE's periodic jobs go to every active hospital, never to public."""
+        """Celery beat: CARE's periodic jobs go to every active hospital, never to public;
+        a platform-wide job (the audit fingerprint) goes to public once and nowhere else."""
         from celery.beat import ScheduleEntry
         from config.celery_app import app
 
@@ -386,12 +399,14 @@ class CrossTenantIsolationTests(SimpleTestCase):
             settings.CELERY_BEAT_SCHEDULER, "ihr_platform.beat.ActiveTenantScheduler"
         )
         from care.emr.tasks import setup_periodic_tasks
+        from ihr_audit.tasks import setup_periodic_tasks as setup_audit_tasks
 
-        from ihr_platform.beat import ActiveTenantScheduler
+        from ihr_platform.beat import PLATFORM_ONCE, ActiveTenantScheduler
 
         # CARE registers these from on_after_finalize; if an earlier test already finalized the
         # app, that hook never fired in this process. Registering again is idempotent (by name).
         setup_periodic_tasks(app)
+        setup_audit_tasks(app)
         scheduler = ActiveTenantScheduler(app=app, lazy=True)
         entries = scheduler._tenant_aware_beat_schedule_to_dict(app.conf.beat_schedule)
         self.assertTrue(
@@ -407,7 +422,9 @@ class CrossTenantIsolationTests(SimpleTestCase):
             with patch.object(
                 scheduler,
                 "apply_async",
-                side_effect=lambda entry, **kw: sent.append(connection.schema_name)
+                side_effect=lambda entry, **kw: sent.append(
+                    (connection.schema_name, entry.name)
+                )
                 or MagicMock(id="x"),
             ):
                 for name, fields in entries.items():
@@ -417,10 +434,19 @@ class CrossTenantIsolationTests(SimpleTestCase):
                 Hospital.objects.filter(pk=self.b.hospital.pk).update(
                     status=Hospital.Status.ACTIVE
                 )
-        per_schema = Counter(sent)
+        once = {
+            name
+            for name, fields in entries.items()
+            if fields.get("options", {}).get("headers", {}).get(PLATFORM_ONCE)
+        }
+        self.assertEqual(once, {"ihr_audit_anchor@__all_tenants_only__"})
+        self.assertEqual(
+            sorted(s for s, name in sent if name in once), ["public"], sent
+        )
+        per_schema = Counter(s for s, name in sent if name not in once)
         self.assertNotIn("public", per_schema)
         self.assertNotIn(self.b.schema, per_schema, "suspended hospital got jobs")
-        self.assertEqual(per_schema[self.a.schema], len(entries))
+        self.assertEqual(per_schema[self.a.schema], len(entries) - len(once))
 
     # --- object storage --------------------------------------------------------------------
 

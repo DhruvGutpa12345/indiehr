@@ -11,6 +11,10 @@ services:
   backend:
     volumes:
       - ../../plugins:/ihr/plugins:ro
+    # Audit fingerprint bucket, read-only credentials (P1-T6b; `scripts/care-dev.sh audit-anchors`)
+    env_file:
+      - path: ../../deploy/dev/audit-anchor-read.env
+        required: false
     environment: &tenant-env
       PYTHONPATH: "/ihr/plugins/ihr_platform"
       DJANGO_SETTINGS_MODULE: "ihr_platform.settings.local"
@@ -28,6 +32,10 @@ services:
   celery:
     volumes:
       - ../../plugins:/ihr/plugins:ro
+    # The hourly audit fingerprint job: add-only credentials (P1-T6b)
+    env_file:
+      - path: ../../deploy/dev/audit-anchor-write.env
+        required: false
     environment: *tenant-env
     # In tenant mode "migrate" covers the shared schema and every hospital; "localhost" is the
     # platform's own address (health checks), "backend" its address inside the compose network

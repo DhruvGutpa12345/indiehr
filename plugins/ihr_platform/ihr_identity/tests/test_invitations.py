@@ -590,7 +590,7 @@ class RecoveryTests(InvitationCase):
         self.addCleanup(boss.delete)
         self.assertEqual(self.act(boss, "reset-sign-in").status_code, 403)
         with mock.patch(
-            "ihr_identity.staff_access._hospital_wide_admin", lambda u: u.pk == user.pk
+            "ihr_identity.staff_access.organisation_admin", lambda u: u.pk == user.pk
         ):
             refused = self.act(user, "reset-sign-in")
         self.assertEqual(refused.status_code, 403)  # an admin above the asker

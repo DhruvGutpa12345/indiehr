@@ -2,7 +2,7 @@
 # Run upstream CARE locally with the IndieHR low-memory override (P0-T5), in tenant mode with
 # two synthetic demo hospitals at http://alpha.localhost:8080 and http://beta.localhost:8080
 # (P1-T2b), and Keycloak on demand (P1-T3: `scripts/care-dev.sh keycloak help`).
-# Usage: scripts/care-dev.sh <up|down|ps|logs|seed|reset-passwords|frontend|shell|keycloak|provision|provision-demo>
+# Usage: scripts/care-dev.sh <up|down|ps|logs|seed|reset-passwords|frontend|shell|keycloak|provision|provision-demo|audit-anchors>
 set -euo pipefail
 ROOT="$(git -C "$(dirname "$0")" rev-parse --show-toplevel)"
 BACKEND="$ROOT/apps/backend"
@@ -156,6 +156,43 @@ SQL
   esac
 }
 
+# Audit fingerprints (P1-T6b, ADR-010): a write-once bucket in the dev MinIO and two narrow
+# accounts, one that may only add objects (Celery's hourly job) and one that may only read
+# (verify, export). Dev uses GOVERNANCE retention for 30 days so the bucket can be cleaned up;
+# production uses COMPLIANCE for 10 years (P1-T8).
+ANCHOR_BUCKET=ihr-audit-anchors
+audit_anchors() {
+  local dir="$ROOT/deploy/dev" wkey rkey wsecret rsecret
+  wkey=ihr-anchor-writer; rkey=ihr-anchor-reader
+  wsecret="$(python3 -c 'import secrets;print(secrets.token_hex(20))')"
+  rsecret="$(python3 -c 'import secrets;print(secrets.token_hex(20))')"
+  local mc=("${COMPOSE[@]}" exec -T minio mc)
+  "${mc[@]}" mb --ignore-existing --with-lock "local/$ANCHOR_BUCKET"
+  "${mc[@]}" retention set --default GOVERNANCE 30d "local/$ANCHOR_BUCKET"
+  "${COMPOSE[@]}" exec -T minio sh -c 'cat > /tmp/ihr-anchor-write.json' <<EOT
+{"Version":"2012-10-17","Statement":[{"Effect":"Allow","Action":["s3:PutObject"],"Resource":["arn:aws:s3:::$ANCHOR_BUCKET/anchors/*"]}]}
+EOT
+  "${COMPOSE[@]}" exec -T minio sh -c 'cat > /tmp/ihr-anchor-read.json' <<EOT
+{"Version":"2012-10-17","Statement":[{"Effect":"Allow","Action":["s3:GetObject","s3:GetObjectVersion"],"Resource":["arn:aws:s3:::$ANCHOR_BUCKET/anchors/*"]},{"Effect":"Allow","Action":["s3:ListBucket","s3:ListBucketVersions","s3:GetBucketObjectLockConfiguration","s3:GetBucketVersioning"],"Resource":["arn:aws:s3:::$ANCHOR_BUCKET"]}]}
+EOT
+  "${mc[@]}" admin policy create local ihr-anchor-write /tmp/ihr-anchor-write.json
+  "${mc[@]}" admin policy create local ihr-anchor-read /tmp/ihr-anchor-read.json
+  "${mc[@]}" admin user add local "$wkey" "$wsecret" >/dev/null
+  "${mc[@]}" admin user add local "$rkey" "$rsecret" >/dev/null
+  "${mc[@]}" admin policy attach local ihr-anchor-write --user "$wkey" >/dev/null 2>&1 || true
+  "${mc[@]}" admin policy attach local ihr-anchor-read --user "$rkey" >/dev/null 2>&1 || true
+  local common="IHR_AUDIT_ANCHOR_ENDPOINT=http://minio:9000
+IHR_AUDIT_ANCHOR_BUCKET=$ANCHOR_BUCKET"
+  (umask 077
+   printf '# Audit fingerprint writer (P1-T6b), written by scripts/care-dev.sh. Never commit.\n%s\nIHR_AUDIT_ANCHOR_WRITE_KEY=%s\nIHR_AUDIT_ANCHOR_WRITE_SECRET=%s\n' \
+     "$common" "$wkey" "$wsecret" > "$dir/audit-anchor-write.env"
+   printf '# Audit fingerprint reader (P1-T6b), written by scripts/care-dev.sh. Never commit.\n%s\nIHR_AUDIT_ANCHOR_READ_KEY=%s\nIHR_AUDIT_ANCHOR_READ_SECRET=%s\n' \
+     "$common" "$rkey" "$rsecret" > "$dir/audit-anchor-read.env")
+  "${COMPOSE[@]}" up -d --wait backend celery
+  "${COMPOSE[@]}" exec -T backend python manage.py ihr_audit_verify --all --seal 2>&1 | tail -3 || true
+  echo "Fingerprint bucket ready; the first one is written within the hour (or: verify --anchor)."
+}
+
 case "${1:-}" in
   up)
     # Rebuild the dev image whenever its inputs (lock file, Dockerfile) change
@@ -207,6 +244,7 @@ case "${1:-}" in
     for slug in "${HOSPITALS[@]}"; do echo "Web app: http://$slug.localhost:8080"; done
     ;;
   keycloak) keycloak_cmd "${@:2}" ;;
+  audit-anchors) audit_anchors ;;
   provision) kc_manage ihr_provision "${@:2}" ;;
   provision-demo)
     # A synthetic hospital brought live by the provisioning engine (P1-T5a). Its first admin's
