@@ -1,0 +1,15 @@
+{
+  "CONSCIOUSNESS_LEVEL__ALERT": "सचेत",
+  "PRESCRIPTION_FREQUENCY_Q4H": "हर 4 घंटे में",
+  "PRESCRIPTION_FREQUENCY_QID": "हर 6 घंटे में",
+  "PRESCRIPTION_FREQUENCY_QOD": "एक दिन छोड़कर",
+  "PRESCRIPTION_FREQUENCY_TID": "हर 8 घंटे में",
+  "PRESCRIPTION_ROUTE_IM": "IM (मांसपेशी में)",
+  "PRESCRIPTION_ROUTE_INTRATHECAL": "इंट्राथीकल इंजेक्शन (रीढ़ की नली में)",
+  "PRESCRIPTION_ROUTE_IV": "IV (नस में)",
+  "PRESCRIPTION_ROUTE_SC": "S/C (त्वचा के नीचे)",
+  "discharge": "डिस्चार्ज",
+  "encounter_date_field_label__OP": "OPD विज़िट की तारीख़ और समय",
+  "encounter_suggestion__OP": "OPD विज़िट",
+  "medicines_administered": "दवा(एँ) दे दी गईं"
+}

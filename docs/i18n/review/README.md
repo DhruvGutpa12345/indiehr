@@ -25,4 +25,4 @@ that look wrong. The app keeps CARE's wording until you approve a row; approved 
 | Batch | Sheet | Strings | Clinical | Reviewed |
 |---|---|---|---|---|
 | 1 (P1-T7c) | `hi-batch-1.csv` | 1,502 | 165 | waiting for you |
-| Upstream corrections (P1-T7c) | `hi-upstream-corrections.csv` | 211 (13 unsafe, 72 wrong meaning) | 70 | waiting for you; **unsafe rows first** |
+| Upstream corrections (P1-T7c) | `hi-upstream-corrections.csv` | 211 (13 unsafe, 72 wrong meaning) | 70 | 13 unsafe approved and applied 08-11-2026; 198 waiting for you |
