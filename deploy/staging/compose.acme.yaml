@@ -1,0 +1,127 @@
+# Wildcard certificate for every hospital address (P1-T8b2, ADR-011). Added by
+# scripts/staging.sh when .env sets IHR_ACME (scripts/staging.sh acme-init); never run directly.
+#
+# One certificate covers <suffix> and *.<suffix> (all hospitals, console., auth.). Traefik gets
+# it from the certificate authority (Let's Encrypt, its staging CA, or Pebble in a proof) with a
+# DNS check: it writes the check's TXT value into our own acme-dns, which answers for one small
+# zone (IHR_ACME_DNS_ZONE). At the registrar, three records delegate only that check:
+#   <IHR_ACME_DNS_NS>                 A      <this server's address>
+#   <IHR_ACME_DNS_ZONE>               NS     <IHR_ACME_DNS_NS>
+#   _acme-challenge.<suffix>          CNAME  <account>.<IHR_ACME_DNS_ZONE>   (acme-register prints it)
+# So no registrar or DNS provider API key ever sits on the server, and any registrar works.
+#
+# acme-dns: our own image (deploy/docker/acme-dns.Dockerfile), DNS on port 53 to the internet
+# (authoritative for its zone only, never a resolver), its HTTP API on an internal network that
+# only Traefik shares; registration is switched off except during acme-register, and updates are
+# accepted only from that network (the account's allowfrom).
+x-logging: &logging
+  driver: ${IHR_LOG_DRIVER:-journald}
+  options:
+    tag: "indiehr/{{.Name}}"
+
+services:
+  acme-dns:
+    image: ${IHR_ACMEDNS_IMAGE:?set IHR_ACMEDNS_IMAGE}
+    security_opt: ["no-new-privileges:true"]
+    cap_drop: ["ALL"]
+    restart: unless-stopped
+    logging: *logging
+    read_only: true
+    volumes:
+      - acmedns-data:/var/lib/acme-dns
+      # Written by staging.sh (not secret: names only), registration on or off
+      - ./generated/acme-dns/config.cfg:/etc/acme-dns/config.cfg:ro
+    ports:
+      - "${IHR_DNS_BIND:-0.0.0.0}:${IHR_DNS_PORT:-53}:53/udp"
+      - "${IHR_DNS_BIND:-0.0.0.0}:${IHR_DNS_PORT:-53}:53/tcp"
+    networks:
+      # The API listens only on this fixed address of the internal network (config.cfg), so
+      # neither the dns bridge nor the host can reach it; Traefik calls it by this alias
+      acme:
+        aliases: [acme-dns-api]
+        ipv4_address: ${IHR_ACME_API_IP:-172.30.53.5}
+      # A plain bridge for the published DNS port (an internal network cannot publish ports)
+      dns: {}
+    mem_limit: 64m
+    pids_limit: 64
+
+  # The volume Traefik keeps its certificate and accounts in belongs to Traefik's user. A new
+  # named volume is root's, and Traefik runs without root or capabilities, so this one-off sets
+  # the owner first (no network, only the two capabilities it needs).
+  traefik-data:
+    image: traefik:v3.7.17@sha256:${IHR_TRAEFIK_DIGEST:?}
+    user: "0:0"
+    security_opt: ["no-new-privileges:true"]
+    cap_drop: ["ALL"]
+    cap_add: ["CHOWN", "FOWNER"]
+    network_mode: none
+    # Only the folder itself (Traefik owns what it writes inside); a no-op once done
+    entrypoint: ["/bin/sh", "-c", "[ \"$$(stat -c %u:%a /data)\" = 65534:700 ] || { chown 65534:65534 /data && chmod 700 /data; }"]
+    volumes:
+      - traefik-data:/data
+    logging: *logging
+    restart: "no"
+
+  traefik:
+    # The base command plus the certificate resolver. Compose replaces a command list instead of
+    # extending it: scripts/test_staging_acme.py checks this list still starts with the base one.
+    command:
+      - --entrypoints.web.address=:8000
+      - --entrypoints.web.http.redirections.entrypoint.to=:443
+      - --entrypoints.web.http.redirections.entrypoint.scheme=https
+      - --entrypoints.websecure.address=:8443
+      - --entrypoints.websecure.http.tls=true
+      - --entrypoints.ping.address=:8082
+      - --ping.entrypoint=ping
+      - --providers.file.filename=/etc/traefik/routes.yml
+      - --api.dashboard=false
+      - --accesslog=true
+      - --accesslog.format=json
+      - --accesslog.fields.defaultmode=keep
+      - --accesslog.fields.names.RequestPath=drop
+      - --accesslog.fields.names.ClientUsername=drop
+      - --accesslog.fields.headers.defaultmode=drop
+      - --log.level=INFO
+      - --global.checknewversion=false
+      - --global.sendanonymoususage=false
+      # ---- certificate resolver "le" (P1-T8b2) ----
+      - --certificatesresolvers.le.acme.caserver=${IHR_ACME_CA_SERVER:?}
+      # The system bundle for Let's Encrypt; Pebble's own test root in a proof
+      - --certificatesresolvers.le.acme.cacertificates=${IHR_ACME_CA_CERTS:-/etc/ssl/certs/ca-certificates.crt}
+      - --certificatesresolvers.le.acme.storage=/data/acme.json
+      - --certificatesresolvers.le.acme.keytype=EC256
+      # Renewal timing (Traefik has no ARI): 2160 h means "renew 30 days before expiry, checked
+      # daily". That suits Let's Encrypt's 90-day, then 64-day (Feb 2027) and 45-day (Feb 2028)
+      # certificates. A proof sets 1 h to watch a renewal happen.
+      - --certificatesresolvers.le.acme.certificatesduration=${IHR_ACME_CERT_HOURS:-2160}
+      - --certificatesresolvers.le.acme.dnschallenge.provider=acmedns
+      # Lookups for the pre-check: Docker's resolver (the server's own). The pre-check then asks
+      # the authoritative servers directly, so Let's Encrypt is only told to look once our TXT
+      # value is really visible (no failed validations against its rate limits).
+      - --certificatesresolvers.le.acme.dnschallenge.resolvers=${IHR_ACME_RESOLVERS:-127.0.0.11:53}
+    environment:
+      ACME_DNS_API_BASE: http://acme-dns-api:8053
+      ACME_DNS_STORAGE_PATH: /data/acme-dns-accounts.json
+      # routes.yml asks resolver "le" for the default certificate only when this is set
+      IHR_ACME_RESOLVER: le
+    volumes:
+      - traefik-data:/data
+    networks: [edge, acme]
+    depends_on:
+      traefik-data:
+        condition: service_completed_successfully
+      acme-dns:
+        condition: service_started
+
+networks:
+  # Traefik <-> acme-dns API only; no way out. The fixed range is the account's allowfrom.
+  acme:
+    internal: true
+    ipam:
+      config:
+        - subnet: ${IHR_ACME_SUBNET:-172.30.53.0/28}
+  dns:
+
+volumes:
+  acmedns-data:
+  traefik-data:

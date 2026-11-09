@@ -1,0 +1,66 @@
+# Certificate proof with Let's Encrypt's test CA, Pebble (P1-T8b2). Added by scripts/staging.sh
+# on top of compose.acme.yaml when .env sets IHR_ACME=pebble; nothing here reaches the internet.
+#
+# Stands in for the public DNS with CoreDNS (files written by staging.sh into
+# generated/acme-proof/ next to this file):
+#   <suffix> zone          the registrar's records: *.<suffix> and the _acme-challenge CNAME
+#   parent zone            <IHR_ACME_DNS_NS> A <acme-dns address> (the registrar's A record)
+#   <IHR_ACME_DNS_ZONE>    forwarded to acme-dns (the registrar's NS delegation)
+# The acme-dns address is its fixed address on the proof network, or (IHR_PROOF_DNS_VIA=host)
+# the server's own address: then Traefik's pre-check reaches acme-dns the way it will in
+# production, through the published port 53 from inside a container (Docker's hairpin path).
+# Questions from containers arrive over Docker's bridges, which DOCKER-USER lets through, so the
+# firewall's own 53 rule is proven from outside instead (scripts/local-vm.sh verify).
+services:
+  pebble:
+    image: ghcr.io/letsencrypt/pebble:2.10.1@sha256:ddf230642b1a584f519f32e347de1b05a6e4c1f6c35c1863b33effeab5f78199
+    user: "65534:65534"
+    security_opt: ["no-new-privileges:true"]
+    cap_drop: ["ALL"]
+    command: ["-config", "/proof/pebble-config.json", "-strict", "-dnsserver", "${IHR_PROOF_COREDNS_IP:?}:53"]
+    environment:
+      PEBBLE_VA_NOSLEEP: "1"
+      # Every order is checked again (no reuse of earlier checks), so a renewal proves the
+      # whole DNS path a second time; no random "bad nonce" answers.
+      PEBBLE_AUTHZREUSE: "0"
+      PEBBLE_WFE_NONCEREJECT: "0"
+    volumes:
+      - ./generated/acme-proof/pebble-config.json:/proof/pebble-config.json:ro
+    networks: [proof]
+    depends_on: [coredns]
+    mem_limit: 128m
+
+  coredns:
+    image: coredns/coredns:1.15.0@sha256:0a9d8c8ddf34347eb59aad9a8784f0710de88d6d112726d11d271f9bc6daca26
+    user: "65534:65534"
+    security_opt: ["no-new-privileges:true"]
+    cap_drop: ["ALL"]
+    # The image's binary carries this file capability; without it in the set, exec fails
+    cap_add: ["NET_BIND_SERVICE"]
+    command: ["-conf", "/proof/Corefile"]
+    volumes:
+      - ./generated/acme-proof:/proof:ro
+    networks:
+      proof:
+        ipv4_address: ${IHR_PROOF_COREDNS_IP:?}
+    mem_limit: 64m
+
+  acme-dns:
+    networks:
+      proof:
+        ipv4_address: ${IHR_PROOF_ACMEDNS_IP:?}
+
+  traefik:
+    # Docker's resolver (127.0.0.11, as in production) asks CoreDNS for every outside name, so
+    # Traefik's pre-check finds the "registrar's" records the way it would find the real ones
+    dns: ["${IHR_PROOF_COREDNS_IP:?}"]
+    volumes:
+      - ./generated/acme-proof/pebble.minica.pem:/proof/pebble.minica.pem:ro
+    networks: [proof]
+    depends_on: [pebble]
+
+networks:
+  proof:
+    ipam:
+      config:
+        - subnet: ${IHR_PROOF_SUBNET:-172.30.54.0/24}

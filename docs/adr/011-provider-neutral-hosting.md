@@ -88,6 +88,12 @@ change the `.env` values, change one A record at the registrar. No application c
   site was not reachable from here).
 - **Decided 2026-11-09 (owner):** mail via Zoho ZeptoMail (India data centre; written confirmation of India-only storage before go-live), Ubuntu 26.04 LTS, SSH key-only and rate-limited. Time servers (CERT-In FAQ Q43, checked live 09-11-2026): `samay1.nic.in`, `samay2.nic.in` (NIC, stratum 2) and `time.nplindia.org` (NPL, stratum 1); none offers NTS.
 - **E2E start script** runs on every boot, so the bootstrap must stay idempotent.
+- **Certificate (P1-T8b2, built 2026-11-09):** acme-dns runs on the same server (our own image,
+  port 53 open in the firewall). The registrar keeps three records, not two: an A record for the
+  NS name (`acme-ns.amhcloud.in`; kept outside the delegated zone so no glue record is needed),
+  the NS record for `acme.amhcloud.in`, and the `_acme-challenge.app.amhcloud.in` CNAME; plus
+  the hospitals' `*.app.amhcloud.in` A record and, recommended, a CAA record for Let's Encrypt.
+  Runbook: `deploy/staging/README.md`.
 
 ## Sources (fetched 2026-11-08)
 

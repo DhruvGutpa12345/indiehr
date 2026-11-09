@@ -273,6 +273,7 @@ class FirewallTests(unittest.TestCase):
         self.assertIn('for p in $SSH_PORTS; do ufw_rule "limit $p/tcp"', BOOTSTRAP)
         self.assertIn('ufw_rule "allow 80/tcp"', BOOTSTRAP)
         self.assertIn('ufw_rule "allow 443/tcp"', BOOTSTRAP)
+        self.assertIn('ufw_rule "allow 53"', BOOTSTRAP)
         self.assertIn("ufw default deny incoming", BOOTSTRAP)
         # the SSH rule is added before ufw is switched on
         self.assertLess(BOOTSTRAP.index('ufw_rule "limit'), BOOTSTRAP.index("ufw --force enable"))
@@ -303,10 +304,10 @@ class FirewallTests(unittest.TestCase):
         for rule in fine:
             self.assertNotRegex(rule, regex, rule)
 
-    def test_docker_user_lets_only_80_and_443_in(self):
+    def test_docker_user_lets_only_80_443_and_53_in(self):
         rules = [l for l in heredoc("docker_user_block").splitlines() if l.startswith("-A")]
-        ports = re.findall(r"--ctorigdstport (\d+)", "\n".join(rules))
-        self.assertEqual(sorted(ports), ["443", "80"])
+        ports = re.findall(r"-p (tcp|udp) .*--ctorigdstport (\d+)", "\n".join(rules))
+        self.assertEqual(sorted(ports), [("tcp", "443"), ("tcp", "53"), ("tcp", "80"), ("udp", "53")])
         self.assertEqual(rules[-1], "-A DOCKER-USER -j DROP")
         for rule in rules[:-1]:
             self.assertTrue(rule.endswith(("-j RETURN", '"[IHR DOCKER-USER BLOCK] "')), rule)
@@ -391,6 +392,16 @@ class OsAndNeutralityTests(unittest.TestCase):
             hits = pattern.findall(path.read_text())
             self.assertEqual(hits, [], f"{path.relative_to(ROOT)} names a provider: {hits}")
 
+
+
+class HostDnsTests(unittest.TestCase):
+    def test_resolved_stub_off_for_acme_dns(self):
+        self.assertIn("DNSStubListener=no", heredoc("resolved_conf"))
+        self.assertIn('ln -sfn "$RESOLV_TARGET" /etc/resolv.conf', BOOTSTRAP)
+        self.assertIn('RESOLV_TARGET="/run/systemd/resolve/resolv.conf"', BOOTSTRAP)
+        check = function("run_check")
+        self.assertIn("port 53 free on the host", check)
+        self.assertIn("the host still resolves names", check)
 
 if __name__ == "__main__":
     unittest.main()

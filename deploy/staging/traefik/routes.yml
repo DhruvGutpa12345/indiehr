@@ -51,3 +51,15 @@ http:
         contentTypeNosniff: true
         frameDeny: true
         referrerPolicy: strict-origin-when-cross-origin
+# {{ if env "IHR_ACME_RESOLVER" }}  (Go template, read by Traefik before the YAML)
+# P1-T8b2 (compose.acme.yaml): one certificate for <suffix> and *.<suffix>, used by every router
+# above (they say only `tls: {}`), from the resolver set up in compose.acme.yaml.
+tls:
+  stores:
+    default:
+      defaultGeneratedCert:
+        resolver: '{{ env "IHR_ACME_RESOLVER" }}'
+        domain:
+          main: '{{ env "IHR_TENANT_DOMAIN_SUFFIX" }}'
+          sans: ['*.{{ env "IHR_TENANT_DOMAIN_SUFFIX" }}']
+# {{ end }}

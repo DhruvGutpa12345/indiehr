@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Deploy the staging stack to a bootstrapped server over SSH (P1-T8b1, ADR-011).
-# Provider-neutral and registry-free: our two images travel as `docker save | ssh docker load`,
+# Provider-neutral and registry-free: our images (and acme-dns when .env has IHR_ACME) travel as `docker save | ssh docker load`,
 # the pinned third-party images are pulled by the server itself.
 #
 #   scripts/deploy.sh --host ihr@<address> [--port 22] [--env-dir deploy/staging] [--allow-dirty]
@@ -114,12 +114,20 @@ if ((LOCAL_PROOF)) && [[ ! -f "$ENV_DIR/.env" ]]; then
   IHR_STAGING_OUT="$ENV_DIR" IHR_BACKEND_IMAGE="$BACKEND" IHR_FRONTEND_IMAGE="$FRONTEND" \
     scripts/staging.sh init "$PROOF_SUFFIX" --vm
 fi
-((BUILD_ONLY)) && { log "Images built: $BACKEND, $FRONTEND"; exit 0; }
+# acme-dns (P1-T8b2), only when the site uses the wildcard certificate (staging.sh acme-init)
+ACMEDNS=""
+[[ -f "$ENV_DIR/.env" && -n "$(env_get IHR_ACME)" ]] && ACMEDNS="$(env_get IHR_ACMEDNS_IMAGE)"
+if ((BUILD)) && [[ -n "$ACMEDNS" ]]; then
+  log "Building $ACMEDNS (deploy/docker/acme-dns.Dockerfile: pinned source, Go and base image)"
+  docker buildx build -q --load -f deploy/docker/acme-dns.Dockerfile \
+    --label "$REV_LABEL=$SHA" --label "ihr.git-dirty=$DIRTY" -t "$ACMEDNS" deploy/docker >/dev/null
+fi
+((BUILD_ONLY)) && { log "Images built: $BACKEND, $FRONTEND${ACMEDNS:+, $ACMEDNS}"; exit 0; }
 
 [[ -f "$ENV_DIR/.env" && -d "$ENV_DIR/secrets" ]] \
   || die "no $ENV_DIR/.env and secrets/: run scripts/staging.sh init <suffix> first"
 [[ -f "$ENV_DIR/.local" ]] && die "$ENV_DIR was made for a proof on this machine (init --local); use init without --local, or --local-proof"
-for img in "$BACKEND" "$FRONTEND"; do
+for img in "$BACKEND" "$FRONTEND" ${ACMEDNS:+"$ACMEDNS"}; do
   docker image inspect "$img" >/dev/null 2>&1 || die "image $img not found here (drop --no-build)"
   # With --no-build the images may come from another commit: DEPLOYED must not claim HEAD
   rev="$(label_of "$img" "$REV_LABEL")"
@@ -169,6 +177,7 @@ ship_image() {  # ship_image <image>
 }
 ship_image "$BACKEND"
 ship_image "$FRONTEND"
+[[ -z "$ACMEDNS" ]] || ship_image "$ACMEDNS"
 
 # ---- 3. Stack files (tracked files only: never a stray .env or secret) ----------------------
 log "Sending the stack files to $REMOTE_ROOT"
@@ -209,5 +218,6 @@ remote "docker image prune -f >/dev/null"
   echo "backend_image=$BACKEND $(docker image inspect -f '{{.Id}}' "$BACKEND")"
   echo "frontend_image=$FRONTEND $(docker image inspect -f '{{.Id}}' "$FRONTEND")"
   echo "frontend_revision=$(label_of "$FRONTEND" "$REV_LABEL") bundle=$(label_of "$FRONTEND" ihr.bundle)"
+  [[ -z "$ACMEDNS" ]] || echo "acmedns_image=$ACMEDNS $(docker image inspect -f '{{.Id}}' "$ACMEDNS") source=$(label_of "$ACMEDNS" ihr.acme-dns.commit)"
 } | remote "cat > $REMOTE_ROOT/DEPLOYED.tmp && mv $REMOTE_ROOT/DEPLOYED.tmp $REMOTE_ROOT/DEPLOYED && rm -f $REMOTE_ROOT/DEPLOYING"
 log "Deployed $(label_of "$BACKEND" "$REV_LABEL") (dirty: $(label_of "$BACKEND" ihr.git-dirty)) to $HOST; recorded in $REMOTE_ROOT/DEPLOYED"

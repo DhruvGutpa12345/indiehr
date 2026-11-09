@@ -48,3 +48,4 @@ deploy/staging/.env
 deploy/staging/.local
 deploy/staging/secrets/
 deploy/staging/.init.*/
+deploy/staging/generated/

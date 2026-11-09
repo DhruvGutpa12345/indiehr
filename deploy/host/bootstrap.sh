@@ -40,6 +40,9 @@ DEPLOY_USER="ihr"
 SSH_GROUP="ihr-ssh"
 SRV_DIR="/srv/indiehr"
 SWAPFILE="/swapfile"
+# acme-dns (P1-T8b2) publishes port 53; systemd-resolved's local stub would hold it
+RESOLVED_DROPIN="/etc/systemd/resolved.conf.d/60-indiehr.conf"
+RESOLV_TARGET="/run/systemd/resolve/resolv.conf"
 SWAP_SIZE="2G"
 SELF_INSTALL="/usr/local/sbin/ihr-bootstrap"
 STATE_DIR="/etc/indiehr"
@@ -183,8 +186,9 @@ EOF
 # Docker publishes ports with DNAT + FORWARD, so ufw's INPUT rules never see them. Docker
 # consults DOCKER-USER before its own rules; ufw loads this block at boot (before Docker
 # starts) and on every reload, so the chain is never open. From outside, only connections
-# whose original destination port is 80 or 443 reach a container; containers' own traffic
-# (from docker0 / br-*) and replies are untouched.
+# whose original destination port is 80 or 443 (Traefik), or 53 (acme-dns: the DNS check for the
+# wildcard certificate, P1-T8b2) reach a container; containers' own traffic (from docker0 / br-*)
+# and replies are untouched.
 docker_user_block() {
   cat <<'EOF'
 # BEGIN IHR DOCKER-USER (managed by deploy/host/bootstrap.sh; edits here are overwritten)
@@ -195,6 +199,8 @@ docker_user_block() {
 -A DOCKER-USER -i br-+ -j RETURN
 -A DOCKER-USER -p tcp -m conntrack --ctstate DNAT --ctorigdstport 80 --ctdir ORIGINAL -j RETURN
 -A DOCKER-USER -p tcp -m conntrack --ctstate DNAT --ctorigdstport 443 --ctdir ORIGINAL -j RETURN
+-A DOCKER-USER -p udp -m conntrack --ctstate DNAT --ctorigdstport 53 --ctdir ORIGINAL -j RETURN
+-A DOCKER-USER -p tcp -m conntrack --ctstate DNAT --ctorigdstport 53 --ctdir ORIGINAL -j RETURN
 -A DOCKER-USER -m limit --limit 6/min -j LOG --log-prefix "[IHR DOCKER-USER BLOCK] "
 -A DOCKER-USER -j DROP
 COMMIT
@@ -227,6 +233,16 @@ findtime = 10m
 bantime = 1h
 bantime.increment = true
 bantime.maxtime = 1w
+EOF
+}
+
+resolved_conf() {
+  cat <<'EOF'
+# Managed by deploy/host/bootstrap.sh (P1-T8b2). acme-dns answers on port 53 for the wildcard
+# certificate's DNS check, so systemd-resolved keeps no local stub on 127.0.0.53/127.0.0.54:53;
+# the host reads its upstream resolvers directly (/etc/resolv.conf -> /run/systemd/resolve/resolv.conf).
+[Resolve]
+DNSStubListener=no
 EOF
 }
 
@@ -383,16 +399,19 @@ run_check() {
   done
   while IFS= read -r v; do
     [[ -n "$v" ]] && info "extra ufw rule (not managed here; review it): $v"
-  done < <(grep '^ufw ' <<< "$out" | grep -Ev "^ufw (allow (80|443)/tcp|allow out 123/udp|limit ($(paste -sd'|' - <<< "${ports:-22}"))/tcp)( |$)" || true)
+  done < <(grep '^ufw ' <<< "$out" | grep -Ev "^ufw (allow (80|443)/tcp|allow 53|allow out 123/udp|limit ($(paste -sd'|' - <<< "${ports:-22}"))/tcp)( |$)" || true)
   expect "ufw allow 80/tcp" grep -Eq '^ufw allow 80/tcp( |$)' <<< "$out"
   expect "ufw allow 443/tcp" grep -Eq '^ufw allow 443/tcp( |$)' <<< "$out"
+  expect "ufw allow 53 (acme-dns, tcp+udp)" grep -Eq '^ufw allow 53( |$)' <<< "$out"
   expect "ufw allow out 123/udp (NTP)" grep -Eq '^ufw allow out 123/udp( |$)' <<< "$out"
   out="$(iptables -S DOCKER-USER 2>/dev/null || true)"
   # the first rule without conditions must be our DROP (Docker may append a RETURN after it)
   v="$(awk 'NF==4 && $1=="-A" {print $4; exit}' <<< "$out")"
-  if [[ "$out" == *"--ctorigdstport 80 "* && "$out" == *"--ctorigdstport 443 "* && "$v" == DROP ]]; then
-    pass "DOCKER-USER: only 80 and 443 reach containers from outside, then DROP"
-  else fail "DOCKER-USER: only 80 and 443 reach containers from outside, then DROP"; fi
+  if [[ "$out" == *"--ctorigdstport 80 "* && "$out" == *"--ctorigdstport 443 "* \
+        && "$out" == *"-p udp -m conntrack --ctstate DNAT --ctorigdstport 53 "* \
+        && "$out" == *"-p tcp -m conntrack --ctstate DNAT --ctorigdstport 53 "* && "$v" == DROP ]]; then
+    pass "DOCKER-USER: only 80, 443 and 53 reach containers from outside, then DROP"
+  else fail "DOCKER-USER: only 80, 443 and 53 reach containers from outside, then DROP"; fi
   out="$(iptables -S FORWARD 2>/dev/null || true)"
   expect "FORWARD consults DOCKER-USER" grep -q -- '-j DOCKER-USER' <<< "$out"
 
@@ -473,6 +492,15 @@ run_check() {
   expect "no automatic reboot" grep -q '^Unattended-Upgrade::Automatic-Reboot "false";' <<< "$out"
   if [[ -f /run/reboot-required ]]; then info "a reboot is pending (security update); plan one"; fi
   expect "swap active" [ -n "$(swapon --show --noheadings)" ]
+  # host DNS: port 53 free for acme-dns (P1-T8b2), names still resolve
+  if systemctl is-enabled --quiet systemd-resolved 2>/dev/null; then
+    expect "systemd-resolved: no local stub on port 53" same_content "$RESOLVED_DROPIN" "$(resolved_conf)"
+    expect "/etc/resolv.conf points at the upstream resolvers" [ "$(readlink -f /etc/resolv.conf)" == "$RESOLV_TARGET" ]
+  fi
+  # Docker itself holding it (dockerd or docker-proxy) is acme-dns's published port
+  v="$(ss -Hlntup 'sport = :53' 2>/dev/null | grep -Ev '\(\("(dockerd|docker-proxy)"' || true)"
+  expect "port 53 free on the host for acme-dns (other than Docker's; found: ${v:-nothing})" [ -z "$v" ]
+  expect "the host still resolves names (download.docker.com)" getent ahosts download.docker.com
   local apport_state
   apport_state="$(systemctl is-enabled apport.service 2>/dev/null || true)"
   expect "apport crash reporter switched off (masked or absent; found: ${apport_state:-absent})" \
@@ -679,6 +707,18 @@ if systemctl list-unit-files apport.service >/dev/null 2>&1 \
   if ! ((DRY_RUN)); then sysctl -q -w fs.suid_dumpable=0; fi
 fi
 
+# ---- 5b. Host DNS: port 53 for acme-dns (P1-T8b2) --------------------------------------------
+# systemd-resolved stays (it still reads the provider's resolvers from DHCP); only its local stub
+# goes, and /etc/resolv.conf names the upstream resolvers instead of 127.0.0.53.
+if systemctl is-enabled --quiet systemd-resolved 2>/dev/null; then
+  log "Host DNS (systemd-resolved without its local stub: port 53 is acme-dns's)"
+  write_file "$RESOLVED_DROPIN" 644 < <(resolved_conf)
+  if ((WROTE)) && ! ((DRY_RUN)); then systemctl restart systemd-resolved; fi
+  if [[ "$(readlink -f /etc/resolv.conf)" != "$RESOLV_TARGET" ]]; then
+    act "/etc/resolv.conf -> $RESOLV_TARGET" ln -sfn "$RESOLV_TARGET" /etc/resolv.conf
+  fi
+fi
+
 # ---- 6. Docker Engine (pinned, Docker's own apt repository) --------------------------------
 log "Docker Engine $DOCKER_CE_VERSION (pinned)"
 for p in docker.io docker-doc docker-compose docker-compose-v2 podman-docker containerd runc; do
@@ -801,7 +841,7 @@ fi
 # ---- 8. Firewall ------------------------------------------------------------------------------
 SSH_PORTS="$(sshd_ports)"
 [[ -n "$SSH_PORTS" ]] || die "sshd -T reports no port (is the sshd configuration valid? sshd -t); firewall left unchanged"
-log "Firewall (ufw: deny in, allow out, limit $(paste -sd, - <<< "$SSH_PORTS")/tcp, allow 80+443; DOCKER-USER)"
+log "Firewall (ufw: deny in, allow out, limit $(paste -sd, - <<< "$SSH_PORTS")/tcp, allow 80+443+53; DOCKER-USER)"
 ufw_added="$(ufw show added 2>/dev/null || true)"
 rules_changed=0
 # With IPV6=no, ufw drops all IPv6 traffic (an IPv6 SSH session included) and writes no IPv6
@@ -823,6 +863,7 @@ ufw_rule() {  # ufw_rule "<rule as 'ufw show added' prints it, without 'ufw '>" 
 for p in $SSH_PORTS; do ufw_rule "limit $p/tcp" "SSH, rate-limited (Q-E9)"; done
 ufw_rule "allow 80/tcp" "HTTP (redirects to HTTPS)"
 ufw_rule "allow 443/tcp" "HTTPS"
+ufw_rule "allow 53" "DNS for the certificate check (acme-dns, P1-T8b2)"
 ufw_rule "allow out 123/udp" "NTP to NIC/NPL"
 # A plain allow for the SSH port (e.g. `ufw allow OpenSSH`) matches before our limit rule, so
 # the rate limit would never apply. Removed only now, after the limit rule is in place.

@@ -13,7 +13,8 @@
 #
 # Deploy into it: scripts/deploy.sh --local-proof. Settings: IHR_VM_MEM (MiB, 3584),
 # IHR_VM_DISK (20G), IHR_VM_SSH_PORT (2222), IHR_VM_HTTP_PORT (8080), IHR_VM_HTTPS_PORT (8443),
-# IHR_VM_PROBE_PORTS ("2998 2999": host ports for the firewall probes on 9998 and 9999).
+# IHR_VM_PROBE_PORTS ("2998 2999": host ports for the firewall probes on 9998 and 9999),
+# IHR_VM_DNS_PORT (5354: the VM's port 53, tcp + udp, for acme-dns; P1-T8b2).
 set -euo pipefail
 ROOT="$(git -C "$(dirname "$0")" rev-parse --show-toplevel)"
 CACHE="${IHR_VM_CACHE:-$HOME/.cache/indiehr/vm}"
@@ -31,6 +32,7 @@ DISK="${IHR_VM_DISK:-20G}"
 SSH_PORT="${IHR_VM_SSH_PORT:-2222}"
 HTTP_PORT="${IHR_VM_HTTP_PORT:-8080}"
 HTTPS_PORT="${IHR_VM_HTTPS_PORT:-8443}"
+DNS_PORT="${IHR_VM_DNS_PORT:-5354}"
 read -r PROBE_HOST_PORT PROBE_DOCKER_PORT <<< "${IHR_VM_PROBE_PORTS:-2998 2999}"
 BASE="$CACHE/$IMAGE_NAME"
 OVERLAY="$CACHE/disk.qcow2"
@@ -130,6 +132,7 @@ EOF
   local fwd="hostfwd=tcp:127.0.0.1:$SSH_PORT-:22,hostfwd=tcp:127.0.0.1:$HTTP_PORT-:80"
   fwd+=",hostfwd=tcp:127.0.0.1:$HTTPS_PORT-:443"
   fwd+=",hostfwd=tcp:127.0.0.1:$PROBE_HOST_PORT-:9998,hostfwd=tcp:127.0.0.1:$PROBE_DOCKER_PORT-:9999"
+  fwd+=",hostfwd=udp:127.0.0.1:$DNS_PORT-:53,hostfwd=tcp:127.0.0.1:$DNS_PORT-:53"
   qemu-system-x86_64 -enable-kvm -cpu host -m "$MEM" -smp 2 -name ihr-vm \
     -drive "file=$OVERLAY,if=virtio,format=qcow2" \
     -drive "file=$SEED,if=virtio,format=raw,readonly=on" \
@@ -223,6 +226,10 @@ verify() {
   check "operator console over https" 302 "$(curl "${r[@]}" --resolve "console.$PROOF_SUFFIX:$HTTPS_PORT:127.0.0.1" "https://console.$PROOF_SUFFIX:$HTTPS_PORT/ops/" || true)"
   check "hospital web app over https" 200 "$(curl "${r[@]}" --resolve "alpha.$PROOF_SUFFIX:$HTTPS_PORT:127.0.0.1" "https://alpha.$PROOF_SUFFIX:$HTTPS_PORT/" || true)"
 
+  if [[ -n "$(vm ihr "sed -n 's/^IHR_ACME=//p' /srv/indiehr/deploy/staging/.env" 2>/dev/null || true)" ]]; then
+    verify_acme
+  fi
+
   log "Logs: containers write to the persistent journal"
   check "Traefik's log is in journald" yes \
     "$(vm ubuntu "sudo journalctl -q -n 1 -o cat CONTAINER_TAG=indiehr/indiehr-staging-traefik-1 | grep -q . && echo yes || echo no")"
@@ -238,6 +245,41 @@ verify() {
   echo
   ((FAILS == 0)) || { echo "$FAILS check(s) FAILED"; exit 1; }
   echo "All checks passed."
+}
+
+dns_reply() {  # dns_reply <server> <port> [dig args]: "<status> <answers>", or "noreply"
+  # (dig prints its own errors on stdout, so only a real reply's header counts)
+  local out st an
+  out="$(dig +time=3 +tries=1 @"$1" -p "$2" "${@:3}" 2>/dev/null || true)"
+  st="$(sed -n 's/.*->>HEADER<<-.* status: \([A-Z]*\),.*/\1/p' <<< "$out")"
+  an="$(sed -n 's/.* ANSWER: \([0-9]*\),.*/\1/p' <<< "$out")"
+  if [[ -n "$st" ]]; then echo "$st ${an:-0}"; else echo noreply; fi
+}
+
+verify_acme() {  # the wildcard certificate and acme-dns, from outside (P1-T8b2; IHR_ACME=pebble)
+  log "Certificate: acme-dns on port 53 from outside, the wildcard certificate over HTTPS"
+  local full root
+  dns() { dns_reply 127.0.0.1 "$DNS_PORT" "$@"; }
+  full="$(vm ihr 'cd /srv/indiehr && scripts/staging.sh acme-register' 2>/dev/null \
+    | sed -n 's/^acme-dns account: \([^ ]*\).*/\1/p')"
+  check "acme-dns account registered" yes "$([[ -n "$full" ]] && echo yes || echo no)"
+  check "DNS over UDP from outside answers the check values" "NOERROR 2" "$(dns TXT "$full")"
+  check "DNS over TCP from outside answers the check values" "NOERROR 2" "$(dns +tcp TXT "$full")"
+  check "not a resolver for other names (answers: no such name)" "NXDOMAIN 0" "$(dns A example.com)"
+  # Mutation: without the DOCKER-USER rule for udp/53 the same question must go unanswered
+  local rule="-p udp -m conntrack --ctstate DNAT --ctorigdstport 53 --ctdir ORIGINAL -j RETURN"
+  vm ubuntu "sudo iptables -D DOCKER-USER $rule"  # each dig uses a new source port: no old conntrack entry helps
+  check "mutation: without its DOCKER-USER rule, port 53/udp is closed" noreply "$(dns TXT "$full")"
+  check "mutation: tcp still open (its own rule)" "NOERROR 2" "$(dns +tcp TXT "$full")"
+  vm ubuntu "sudo ufw reload >/dev/null"
+  check "after ufw reload the udp rule is back" "NOERROR 2" "$(dns TXT "$full")"
+  root="$CACHE/pebble-root.pem"
+  vm ihr "docker exec indiehr-staging-traefik-1 wget -q -O - --no-check-certificate https://pebble:15000/roots/0" > "$root" 2>/dev/null || true
+  local h
+  for h in "alpha.$PROOF_SUFFIX" "console.$PROOF_SUFFIX" "auth.$PROOF_SUFFIX"; do
+    check "trusted wildcard certificate for $h (Pebble's root only)" 0 \
+      "$(curl -s -o /dev/null --max-time 15 --cacert "$root" --resolve "$h:$HTTPS_PORT:127.0.0.1" "https://$h:$HTTPS_PORT/"; echo $?)"
+  done
 }
 
 down() {
