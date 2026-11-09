@@ -84,6 +84,7 @@ jobs:
               - '.github/workflows/apps.yml'
             infra:
               - 'deploy/**'
+              - 'infra/**'
               - 'scripts/**'
               - '.trivyignore.yaml'
               - '.github/workflows/**'
@@ -518,6 +519,51 @@ jobs:
         run: |
           command -v dig >/dev/null || { sudo apt-get update -q && sudo apt-get install -y -q dnsutils; }
           IHR_ACMEDNS_IMAGE=indiehr-acme-dns:ci scripts/staging.sh acme-proof
+
+  infra-tofu:
+    name: Infra modules (OpenTofu fmt, validate, mock tests)
+    needs: changes
+    if: needs.changes.outputs.infra == 'true' || github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    env:
+      TOFU_VERSION: 1.13.9
+      # OpenTofu's release signing key (https://get.opentofu.org/opentofu.asc)
+      TOFU_KEY_FPR: E3E6E43D84CB852EADB0051D0C0AF313E5FD9F80
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Install OpenTofu (signature and checksum checked)
+        run: |
+          set -euo pipefail
+          d="$(mktemp -d)"; cd "$d"
+          base="https://github.com/opentofu/opentofu/releases/download/v${TOFU_VERSION}"
+          for f in "tofu_${TOFU_VERSION}_linux_amd64.tar.gz" "tofu_${TOFU_VERSION}_SHA256SUMS" "tofu_${TOFU_VERSION}_SHA256SUMS.gpgsig"; do
+            curl -fsSL --retry 5 --retry-all-errors -o "$f" "$base/$f"
+          done
+          export GNUPGHOME="$d/gnupg"; mkdir -m 700 "$GNUPGHOME"
+          curl -fsSL --retry 5 https://get.opentofu.org/opentofu.asc | gpg -q --import
+          gpg --status-fd 1 --verify "tofu_${TOFU_VERSION}_SHA256SUMS.gpgsig" "tofu_${TOFU_VERSION}_SHA256SUMS" \
+            | grep -q "VALIDSIG ${TOFU_KEY_FPR} "
+          grep " tofu_${TOFU_VERSION}_linux_amd64.tar.gz$" "tofu_${TOFU_VERSION}_SHA256SUMS" | sha256sum -c -
+          tar -xzf "tofu_${TOFU_VERSION}_linux_amd64.tar.gz" tofu
+          sudo install -m 755 tofu /usr/local/bin/tofu
+          tofu version
+
+      - name: Format
+        run: tofu fmt -check -recursive -diff infra
+
+      - name: Validate and test (mock providers, no cloud account)
+        env:
+          TF_PROVIDER_DOWNLOAD_RETRY: "8"
+        run: |
+          set -euo pipefail
+          for root in infra/e2e infra/aws infra/aws/anchor; do
+            echo "::group::$root"
+            (cd "$root" && tofu init -backend=false -input=false -lockfile=readonly \
+              && tofu validate && tofu test)
+            echo "::endgroup::"
+          done
 
   outdated:
     name: Outdated dependencies report (weekly, report only)

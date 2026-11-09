@@ -20,7 +20,8 @@ possible, nothing paid until needed, trials on this machine. Findings that shape
   **Chennai**; S3-compatible object storage at ₹625 for the first 250 GB. Its object lock is
   **Governance mode only** (an account admin can shorten or remove it); no COMPLIANCE mode.
   Its OpenTofu provider (e2e 2.2.12) covers servers, object stores and networks, not DNS; its
-  "start script" (2,048 characters, every boot) is not full cloud-init.
+  "start script" (2,048 characters) is not full cloud-init (and its provider runs it only at
+  creation, P1-T8b4: not used).
 - No Indian provider is supported by lego (Traefik's certificate library) for DNS checks.
 - Zero-cost hosted options all fall short for us: Oracle Always Free (Hyderabad/Mumbai) is now
   2 ARM cores / 12 GB, needs a credit card, can be reclaimed when idle, and has no S3-style
@@ -62,7 +63,8 @@ possible, nothing paid until needed, trials on this machine. Findings that shape
 
 **Switching providers** then means: run the other `infra/<provider>/` module, run the same
 bootstrap, restore the database from the pgBackRest repository (or copy it), copy the buckets,
-change the `.env` values, change one A record at the registrar. No application change.
+change the `.env` values, move the two A records at the registrar (`*.app` and `acme-ns`). No
+application change.
 
 **Rules:**
 - Nothing in `apps/`, `plugins/` or `deploy/staging/compose.yaml` may name a provider.
@@ -89,7 +91,13 @@ change the `.env` values, change one A record at the registrar. No application c
   (their pages say both 99.9% and 99.95%); MeitY empanelment on the official list (the MeitY
   site was not reachable from here).
 - **Decided 2026-11-09 (owner):** mail via Zoho ZeptoMail (India data centre; written confirmation of India-only storage before go-live), Ubuntu 26.04 LTS, SSH key-only and rate-limited. Time servers (CERT-In FAQ Q43, checked live 09-11-2026): `samay1.nic.in`, `samay2.nic.in` (NIC, stratum 2) and `time.nplindia.org` (NPL, stratum 1); none offers NTS.
-- **E2E start script** runs on every boot, so the bootstrap must stay idempotent.
+- **E2E start script:** E2E's provider runs it only when a node is created (P1-T8b4 found this
+  in its source), before bootstrap.sh is installed, so `infra/e2e` sets none. The bootstrap
+  stays idempotent anyway (re-runs over SSH).
+- **Cloud modules (P1-T8b4, 09-11-2026):** `infra/e2e`, `infra/aws`, `infra/aws/anchor`, tested
+  with mock providers only (nothing applied). Gaps found in E2E's provider 2.2.12: bucket
+  versioning not set at creation (the module fails until it is on), no object lock, keys or
+  CORS (manual), API key in request URLs. AWS with x86 `t3.large` is about ₹6,600 + storage.
 - **Certificate (P1-T8b2, built 2026-11-09):** acme-dns runs on the same server (our own image,
   port 53 open in the firewall). The registrar keeps three records, not two: an A record for the
   NS name (`acme-ns.amhcloud.in`; kept outside the delegated zone so no glue record is needed),

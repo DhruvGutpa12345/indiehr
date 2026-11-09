@@ -24,6 +24,11 @@ GOOD_ENV = {
     "FILE_UPLOAD_BUCKET": "files",
     "FACILITY_S3_BUCKET": "facility",
     "SNOWSTORM_DEPLOYMENT_URL": "http://127.0.0.1:9/fhir",
+    # Mail (P1-T8b4)
+    "EMAIL_HOST": "smtp.mail-test.in",
+    "EMAIL_FROM": "IndieHR <no-reply@hospital-test.in>",
+    "IHR_KEYCLOAK_SMTP_HOST": "smtp.mail-test.in",
+    "IHR_KEYCLOAK_SMTP_FROM": "no-reply@hospital-test.in",
 }
 GOOD_SETTINGS = {
     "DEBUG": False,
@@ -46,6 +51,15 @@ GOOD_SETTINGS = {
     "SENTRY_DSN": "",
     "TIME_ZONE": "Asia/Kolkata",
     "USE_TZ": True,
+    "EMAIL_BACKEND": "django.core.mail.backends.smtp.EmailBackend",
+    "EMAIL_HOST": "smtp.mail-test.in",
+    "EMAIL_USE_TLS": True,
+    "DEFAULT_FROM_EMAIL": "IndieHR <no-reply@hospital-test.in>",
+    "IHR_KEYCLOAK_SMTP": {
+        "host": "smtp.mail-test.in",
+        "from": "no-reply@hospital-test.in",
+        "starttls": "true",
+    },
 }
 
 
@@ -87,6 +101,25 @@ class SecureRulesTests(SimpleTestCase):
             "SENTRY_DSN must stay unset": {"SENTRY_DSN": "https://x@sentry.io/1"},
             "TIME_ZONE must be Asia/Kolkata": {"TIME_ZONE": "UTC"},
             "USE_TZ must be on": {"USE_TZ": False},
+            "EMAIL_HOST is not set": {"EMAIL_HOST": "localhost"},
+            "EMAIL_BACKEND must be": {
+                "EMAIL_BACKEND": "django.core.mail.backends.console.EmailBackend"
+            },
+            "EMAIL_USE_TLS": {"EMAIL_USE_TLS": False},
+            "EMAIL_FROM must be our own sender": {
+                "DEFAULT_FROM_EMAIL": "IndieHR <no-reply@localhost>"
+            },
+            "EMAIL_FROM must be our own": {
+                "DEFAULT_FROM_EMAIL": "Open Healthcare Network <ops@care.ohc.network>"
+            },
+            "IHR_KEYCLOAK_SMTP_HOST and _FROM": {"IHR_KEYCLOAK_SMTP": None},
+            "Keycloak's mail server must use TLS": {
+                "IHR_KEYCLOAK_SMTP": {
+                    "host": "smtp.mail-test.in",
+                    "from": "x@hospital-test.in",
+                    "starttls": "false",
+                }
+            },
         }
         for expected, change in cases.items():
             with self.subTest(expected=expected):
@@ -157,5 +190,7 @@ class DeploymentSettingsImportTests(SimpleTestCase):
             "CARE's published default",
             "'*' is not allowed",
             "IHR_TENANT_DOMAIN_SUFFIX",
+            "EMAIL_HOST is not set",
+            "IHR_KEYCLOAK_SMTP_HOST and _FROM must be set",
         ):
             self.assertIn(expected, result.stderr)

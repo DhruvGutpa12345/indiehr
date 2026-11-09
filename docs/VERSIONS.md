@@ -175,3 +175,19 @@ Regenerate the module overlay when Trivy flags the image: in upstream's source a
 | Replaced | upstream CARE's `docker.io/pgsty/silo:latest` (an unpinned MinIO fork) in dev: kept out of every start (`profiles`) | — | 2026-11-09 |
 
 Measured: storage + gateway about 57 MB together in dev (MinIO had a 300 MB limit).
+
+## Cloud modules and mail — P1-T8b4
+
+| Item | Version | Pinned how | Checked |
+|---|---|---|---|
+| OpenTofu | 1.13.9 (05-11-2026) | `required_version = ">= 1.13.9, < 1.14.0"`; workstation binary in `~/.local/bin` and CI install both check the release signature (OpenTofu key E3E6 E43D 84CB 852E ADB0 051D 0C0A F313 E5FD 9F80) and SHA-256 | 2026-11-09 |
+| E2E provider | `e2eterraformprovider/e2e` 2.2.12 (31-08-2026); checksums signed by 0915 4369 65FE BBA4 428B A77C 3EF4 0241 C2FB 9A1B; repository has no licence file (tool only, never shipped) | exact version + `infra/e2e/.terraform.lock.hcl` | 2026-11-09 |
+| AWS provider | `hashicorp/aws` 6.72.0 (04-11-2026), OpenTofu registry build signed by OpenTofu's key | exact version + lock files | 2026-11-09 |
+| Ubuntu on AWS | Canonical's SSM pointer `/aws/service/canonical/ubuntu/server/26.04/stable/current/amd64/hvm/ebs-gp3/ami-id` (image changes never rebuild the server) | resolved at apply | 2026-11-09 |
+| Mail | Zoho ZeptoMail SMTP `smtp.zeptomail.in:587` STARTTLS (certificate `*.zeptomail.in`, Sectigo, checked live), user `emailapikey` | `scripts/staging.sh mail-init` defaults | 2026-11-09 |
+| Mail stand-in (proofs) | Mailpit v1.33.0 (same pin as dev) with STARTTLS required and a password file | `deploy/staging/compose.mailtest.yaml` | 2026-11-09 |
+
+Lock files carry the linux_amd64 `h1:` hashes only: GitHub's release-asset host answered 504 to
+OpenTofu's own downloads on 09-11-2026, so the packages were fetched through GitHub's API, checked
+by signature and SHA-256, and installed from a local mirror (`~/.cache/indiehr/tofu.rc`, this
+machine only). Add other platforms with `tofu providers lock -platform=…` when needed.

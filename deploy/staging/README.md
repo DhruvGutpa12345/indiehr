@@ -169,6 +169,33 @@ Uploads: up to 100 MB (as CARE's web app allows; Traefik refuses bigger ones) an
 in a separate account (ADR-011 §3); on a staging server this bucket proves the setup. Back up the
 `s3data` volume with the database (P1-T8c).
 
+## Mail: Zoho ZeptoMail (P1-T8b4)
+
+Invitations (Django) and Keycloak's setup e-mails go through **Zoho ZeptoMail**, India data
+centre (owner, 09-11-2026, Q-E10: written confirmation of India-only storage before go-live).
+The server refuses to start without real mail settings (`settings/secure.py`): no mail host,
+no TLS, a localhost or upstream sender, or no Keycloak mail server.
+
+| Command | What it does |
+|---|---|
+| `scripts/staging.sh mail-init no-reply@amhcloud.in` | Once: asks for the ZeptoMail SMTP password (the agent's Send Mail token; typed, never on the command line) and writes the settings: `smtp.zeptomail.in:587`, STARTTLS, user `emailapikey`. `--host` / `--user` if ZeptoMail's dashboard says otherwise (port 587 only: everything uses STARTTLS) |
+| `scripts/staging.sh mail-init --test` | A stand-in instead (automatic in `local-proof`): Mailpit requiring STARTTLS and the password, with a throwaway CA; nothing leaves the server |
+| `scripts/staging.sh mail-check you@example.com` | Django sends a test e-mail (with the stand-in, it is read back) |
+
+**Owner, before go-live:** a ZeptoMail account at zoho.in; a Mail Agent; verify the sending
+domain (ZeptoMail gives the DKIM TXT and a bounce CNAME; add a DMARC record, start with
+`p=none`); copy the agent's SMTP password. E-mails carry only a hospital's name and a one-time
+link, never patient data.
+
+**Where the password goes:** `secrets/app.env` (Django needs it) and `secrets/mail.env`, which
+reaches only the one-off Keycloak sync (`ihr_keycloak_sync --realm`), which stores it in
+Keycloak's realm. Nowhere else, and never in a log.
+
+**Proven** (local staging stack with the stand-in): Django's test e-mail arrives over STARTTLS
+with the password and a checked certificate; a wrong password is refused (535); a server whose
+certificate is not trusted is refused; Keycloak delivered the first admin's setup e-mail when a
+hospital was provisioned; the password in no container's log.
+
 **Done in P1-T8b1:** the host (`deploy/host/bootstrap.sh`: firewall incl. Docker's published
 ports, key-only SSH, NTP to NIC/NPL, journald one year, pinned Docker) and deploy over SSH.
 
@@ -176,5 +203,6 @@ ports, key-only SSH, NTP to NIC/NPL, journald one year, pinned Docker) and deplo
 
 **Done in P1-T8b3:** files on SeaweedFS (above).
 
-**Not yet** (P1-T8b4–d): cloud modules and mail, backups and a restore drill, Keycloak's own
-hardening.
+**Done in P1-T8b4:** mail (above) and the cloud modules (`infra/README.md`).
+
+**Not yet** (P1-T8c–d): backups and a restore drill, Keycloak's own hardening.

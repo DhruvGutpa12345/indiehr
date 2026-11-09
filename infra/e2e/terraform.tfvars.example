@@ -1,0 +1,13 @@
+# Copy to terraform.tfvars (git-ignored). Secrets never go here: the state passphrase is
+# TF_VAR_state_passphrase, E2E's API key and token SERVICE_API_KEY / SERVICE_AUTH_TOKEN.
+name           = "indiehr-staging"
+project_id     = "12345"
+location       = "Delhi"
+plan           = "C3-4vCPU-8RAM-100DISK-C3-Onetemplate-Ubuntu24.04-Delhi" # check: infra/README.md
+image          = "Ubuntu-24.04-Distro"
+ssh_public_key = "ssh-ed25519 AAAA... owner@laptop"
+buckets = {
+  files    = "indiehr-staging-files"
+  facility = "indiehr-staging-facility"
+  backups  = "indiehr-staging-backups"
+}

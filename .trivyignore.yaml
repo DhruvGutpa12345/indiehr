@@ -1,5 +1,27 @@
 # Reviewed Trivy exceptions (P1-T12). Each entry is scoped to a path and says why.
 misconfigurations:
+  # ---- infra/ (P1-T8b4, OpenTofu) ----
+  - id: AWS-0107
+    paths:
+      - "infra/aws/server.tf"
+    statement: >-
+      Public server by design: 80/443 (the web app), 53 tcp+udp (acme-dns, the wildcard
+      certificate's DNS check, P1-T8b2) and 22 (owner decision Q-E9, 09-11-2026: SSH open to the
+      internet, key-only and rate-limited by deploy/host/bootstrap.sh; ssh_cidrs can narrow it).
+  - id: AWS-0104
+    paths:
+      - "infra/aws/server.tf"
+    statement: >-
+      Egress is limited to the ports the server uses (80, 443, 587, 53 tcp/udp, 123/udp) but must
+      reach any address: Ubuntu mirrors, Docker registries, Let's Encrypt, NIC/NPL time servers,
+      the registrar's DNS servers and the mail service have no fixed address list.
+  - id: AWS-0132
+    paths:
+      - "infra/aws/storage.tf"
+      - "infra/aws/anchor/main.tf"
+    statement: >-
+      Encrypted at rest with S3's own keys (SSE-S3, AES-256). A customer-managed KMS key is a
+      provider-only service with no portable equivalent; ADR-011 rules require a new ADR first.
   - id: DS-0002
     paths:
       - "apps/backend/docker/dev.Dockerfile"

@@ -234,6 +234,12 @@ Do you have an account? Monthly budget for staging (about ₹3–6k) and product
 
 **Q-E6 Email / alerts for you.** Where should I send ops alerts (email, WhatsApp, both)? Can I use your email for staging alerts?
 
+**Q-E11 E2E disk encryption (P1-T8b4, before the first apply).** E2E nodes can be created with
+"encryption" on (`disk_encryption` in `infra/e2e`; it cannot be changed later). Its docs do not
+say whether the passphrase is needed at every boot; if it is, the server would not come back by
+itself after a restart. ⭐ Ask E2E in writing (with the Q-E10/ADR-011 questions); keep it off
+until they confirm unattended restarts work. The database disk on AWS is always encrypted.
+
 ## F. Clinical content and data
 
 **Q-F1 Terminology.** OK to register for the free **SNOMED CT India affiliate licence** (via NRCeS) in your company's name? ICD-10 for diagnosis coding by default (ICD-11 later)? ⭐ yes

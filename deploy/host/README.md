@@ -57,6 +57,8 @@ A re-run takes seconds, changes nothing on a healthy host, and repairs drift. It
 a start-script run and an SSH run never overlap. At boot it only *starts* Docker and chrony if
 they are not up yet (a no-op while they are still starting); it restarts them only for a changed
 configuration.
+Check what the provider really does: one provider's own tooling runs its start script only when
+a server is created, before this script exists (`infra/README.md`); there, re-run it over SSH.
 
 ## What it does, and why
 

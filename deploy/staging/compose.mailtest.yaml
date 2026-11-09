@@ -1,0 +1,52 @@
+# A stand-in for the real mail service in a proof (P1-T8b4). Added by scripts/staging.sh when
+# .env sets IHR_MAIL=test (`scripts/staging.sh mail-init --test`, automatic in local-proof).
+#
+# It behaves like Zoho ZeptoMail where it matters: STARTTLS is required, the certificate is
+# checked (a throwaway CA from generated/mailtest/, trusted only by these containers), and a
+# user name and password are required. Nothing leaves the machine: Mailpit keeps every message
+# in memory; `scripts/staging.sh mail-check` reads them back.
+services:
+  smtp-test:
+    image: axllent/mailpit:v1.33.0@sha256:9b3a463be15354c0f0eba91697d80e3e0d8a5623ef0e627cacc836bc17fd5231
+    user: "65534:65534"
+    read_only: true
+    cap_drop: ["ALL"]
+    security_opt: ["no-new-privileges:true"]
+    command:
+      - --smtp-tls-cert=/proof/smtp.crt
+      - --smtp-tls-key=/proof/smtp.key
+      - --smtp-require-starttls
+      - --smtp-auth-file=/proof/smtp-auth
+      - --disable-version-check
+    volumes:
+      - ./generated/mailtest:/proof:ro
+    tmpfs:
+      - /tmp
+    networks:
+      internal:
+        aliases: ["mail.ihr-proof.test"]
+    mem_limit: 64m
+
+  # Everything that sends mail trusts the throwaway CA too (Python: SSL_CERT_FILE, the image's own
+  # bundle plus that CA; Keycloak: its truststore)
+  backend:
+    environment: &mail-trust
+      SSL_CERT_FILE: /proof/ca-bundle.pem
+    volumes: &mail-proof
+      - ./generated/mailtest:/proof:ro
+  celery-worker:
+    environment: *mail-trust
+    volumes: *mail-proof
+  provisioner:
+    environment: *mail-trust
+    volumes: *mail-proof
+  staff-worker:
+    environment: *mail-trust
+    volumes: *mail-proof
+  admin:
+    environment: *mail-trust
+    volumes: *mail-proof
+  keycloak:
+    environment:
+      KC_TRUSTSTORE_PATHS: /proof/ca.pem
+    volumes: *mail-proof

@@ -1,0 +1,13 @@
+# Copy to backend.hcl (git-ignored), fill in, then: tofu init -backend-config=backend.hcl
+# The state bucket is made once by hand in E2E's console (versioning on); its keys come from
+# AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY in the environment (an E2E object store key pair).
+bucket                      = "indiehr-tofu-state"
+key                         = "e2e/staging.tfstate"
+region                      = "us-east-1" # ignored by E2E; any value the S3 client accepts
+endpoints                   = { s3 = "https://objectstore.e2enetworks.net" }
+use_path_style              = true
+skip_credentials_validation = true
+skip_region_validation      = true
+skip_requesting_account_id  = true
+skip_metadata_api_check     = true
+skip_s3_checksum            = true

@@ -15,3 +15,6 @@ d912d634f01af5b1adfc2bef8dcae8cdd72e3c48:care/facility/migrations/0448_rename_ve
 d912d634f01af5b1adfc2bef8dcae8cdd72e3c48:care/facility/migrations/0448_rename_ventilator_fi02_dailyround_ventilator_fio2.py:generic-api-key:52
 # 2026-11-09 P1-T8b1: public fingerprint of Ubuntu's cloud-image signing key (UEC Image Automatic Signing Key), not a secret
 scripts/local-vm.sh:generic-api-key:26
+
+# 2026-11-09 P1-T8b4: public fingerprint of OpenTofu's release signing key (get.opentofu.org/opentofu.asc), not a secret
+.github/workflows/apps.yml:generic-api-key:532

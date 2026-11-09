@@ -18,6 +18,9 @@
 #   scripts/staging.sh acme-proof [--keep]       certificate proof with Pebble, alone, on this machine
 #   scripts/staging.sh s3-init                   files on the server itself: SeaweedFS (P1-T8b3)
 #   scripts/staging.sh s3-check                  live checks of its keys, locks and public paths
+#   scripts/staging.sh mail-init <from> [--host H] [--port P] [--user U] | --test
+#                                                mail via Zoho ZeptoMail (P1-T8b4); token on stdin
+#   scripts/staging.sh mail-check <to>           send a test e-mail through Django
 #
 # <suffix> is where hospitals live: <slug>.<suffix>, e.g. app.example.in (Q-T11).
 # --vm: a proof on a throwaway local VM (scripts/local-vm.sh): small memory, all addresses,
@@ -45,6 +48,7 @@ compose() {  # the file list is worked out on each call: init may have just made
     [[ "$acme" == pebble ]] && files+=(-f "$DIR/compose.pebble.yaml")
   fi
   [[ "$(env_get IHR_S3)" == local ]] && files+=(-f "$DIR/compose.s3.yaml")
+  [[ "$(env_get IHR_MAIL)" == test ]] && files+=(-f "$DIR/compose.mailtest.yaml")
   docker compose --project-directory "$DIR" ${IHR_PROJECT:+-p "$IHR_PROJECT"} "${files[@]}" "$@"
 }
 LOCAL_SUFFIX="app.ihr-proof.in"  # local proof only; resolved to 127.0.0.1 by curl --resolve
@@ -160,12 +164,16 @@ EOF
 }
 
 admin_manage() {  # a one-off manage.py run holding the Keycloak bootstrap client (P1-T5f)
-  local id secret
+  local id secret mail_pw="" extra=()
   id="$(sed -n 's/^KC_BOOTSTRAP_ADMIN_CLIENT_ID=//p' "$SECRETS/keycloak.env")"
   secret="$(sed -n 's/^KC_BOOTSTRAP_ADMIN_CLIENT_SECRET=//p' "$SECRETS/keycloak.env")"
-  IHR_KEYCLOAK_ADMIN_CLIENT_ID="$id" IHR_KEYCLOAK_ADMIN_CLIENT_SECRET="$secret" \
+  # The mail password reaches only this one-off (ihr_keycloak_sync puts it on the realm), never
+  # the web app's settings (P1-T8b4)
+  [[ -f "$SECRETS/mail.env" ]] && mail_pw="$(sed -n 's/^IHR_KEYCLOAK_SMTP_PASSWORD=//p' "$SECRETS/mail.env")"
+  [[ -n "$mail_pw" ]] && extra=(-e IHR_KEYCLOAK_SMTP_PASSWORD)
+  IHR_KEYCLOAK_ADMIN_CLIENT_ID="$id" IHR_KEYCLOAK_ADMIN_CLIENT_SECRET="$secret" IHR_KEYCLOAK_SMTP_PASSWORD="$mail_pw" \
     compose --profile admin run --rm --no-deps -T -e IHR_KEYCLOAK_ADMIN_CLIENT_ID \
-    -e IHR_KEYCLOAK_ADMIN_CLIENT_SECRET admin python manage.py "$@"
+    -e IHR_KEYCLOAK_ADMIN_CLIENT_SECRET "${extra[@]}" admin python manage.py "$@"
 }
 
 worker_secret() {  # worker_secret <role> <file> <variable>
@@ -180,7 +188,9 @@ up() {
   compose up -d --wait db redis
   [[ -z "$(env_get IHR_ACME)" ]] || acme_up
   [[ "$(env_get IHR_S3)" != local ]] || s3_up
-  compose up -d --wait traefik keycloak backend celery-worker celery-beat frontend
+  local extra=()
+  if [[ "$(env_get IHR_MAIL)" == test ]]; then mail_test_files; extra=(smtp-test); fi
+  compose up -d --wait "${extra[@]}" traefik keycloak backend celery-worker celery-beat frontend
   admin_manage ihr_keycloak_sync --realm --all
   worker_secret onboarding provisioner.env IHR_KEYCLOAK_ONBOARDING_SECRET
   worker_secret staff staff-worker.env IHR_KEYCLOAK_STAFF_SECRET
@@ -250,6 +260,111 @@ smoke() {  # every public address through Traefik, as a browser would reach it
     echo "skip  hospital checks: no hospital 'alpha' yet (scripts/staging.sh manage ihr_create_tenant ...)"
   fi
   return "$fail"
+}
+
+# ---- Mail (P1-T8b4): Zoho ZeptoMail, or a stand-in for proofs (compose.mailtest.yaml) ------------
+EMAIL_RE='^[A-Za-z0-9._%+-]+@[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)+$'
+MAIL_TEST_HOST="mail.ihr-proof.test"
+
+mail_init() {  # mail_init <from-address> [--host H] [--port P] [--user U] | mail_init --test
+  local envf="$OUT/.env" sec="$OUT/secrets" from="" host="smtp.zeptomail.in" port=587
+  local user="emailapikey" test=0 token tmp
+  [[ -f "$envf" && -d "$sec" ]] || die "no $envf / secrets: run scripts/staging.sh init <suffix> first"
+  grep -q '^IHR_MAIL=' "$envf" && die "$envf already has mail settings (IHR_MAIL=...)"
+  while (($#)); do
+    case "$1" in
+      --test) test=1 ;;
+      --host) host="${2:?--host H}"; shift ;;
+      --port) port="${2:?--port P}"; shift ;;
+      --user) user="${2:?--user U}"; shift ;;
+      -*) die "unknown option: $1" ;;
+      *) from="$1" ;;
+    esac
+    shift
+  done
+  if ((test)); then
+    # The stand-in: same shape as ZeptoMail (STARTTLS, user and password), nothing leaves
+    host="$MAIL_TEST_HOST" port=1025 from="${from:-no-reply@ihr-proof.test}" token="$(rand 32)"
+  else
+    [[ -n "$from" ]] || die "usage: scripts/staging.sh mail-init <from-address> (the token is read from stdin)"
+    # The token comes from the keyboard or stdin, never the command line (shell history, ps)
+    if [[ -t 0 ]]; then
+      read -rsp "ZeptoMail SMTP password (the agent's Send Mail token): " token; echo
+    else
+      IFS= read -r token || true
+    fi
+    [[ ${#token} -ge 16 ]] || die "that does not look like a ZeptoMail token (too short)"
+  fi
+  [[ "$from" =~ $EMAIL_RE ]] || die "not an e-mail address: $from"
+  [[ "$host" =~ $DOMAIN_RE ]] || die "not a host name: $host"
+  # 587 with STARTTLS only: deployment settings always use STARTTLS (EMAIL_USE_TLS), and so does
+  # Keycloak's realm; port 465 (implicit TLS) would fail to connect. The stand-in uses 1025.
+  if ((test)); then [[ "$port" == 1025 ]] || die "the stand-in listens on 1025"
+  else [[ "$port" == 587 ]] || die "only port 587 (STARTTLS) is supported"; fi
+  [[ "$user" =~ ^[A-Za-z0-9@._-]+$ ]] || die "not a user name: $user"
+  # Values go into env files that Compose reads (and expands): no spaces, quotes or $
+  case "$token" in *[[:space:]\"\'\\\$\`]*) die "the token has characters an env file cannot hold" ;; esac
+  local SECRETS_TARGET="$sec"
+  # Django (invitations, P1-T5e1): host, user, password, sender; TLS is always on in deployment
+  tmp="$(grep -Ev '^(EMAIL_HOST|EMAIL_PORT|EMAIL_USER|EMAIL_PASSWORD|EMAIL_FROM|EMAIL_USE_TLS|IHR_KEYCLOAK_SMTP_[A-Z]+)=' "$sec/app.env"
+    echo "# Mail (P1-T8b4, scripts/staging.sh mail-init): $([[ $test == 1 ]] && echo "proof stand-in" || echo "Zoho ZeptoMail")"
+    echo "EMAIL_HOST=$host"
+    echo "EMAIL_PORT=$port"
+    echo "EMAIL_USE_TLS=True"
+    echo "EMAIL_USER=$user"
+    echo "EMAIL_PASSWORD=$token"
+    echo "EMAIL_FROM=IndieHR <$from>"
+    echo "# Keycloak's setup e-mails (its password only in secrets/mail.env, for ihr_keycloak_sync)"
+    echo "IHR_KEYCLOAK_SMTP_HOST=$host"
+    echo "IHR_KEYCLOAK_SMTP_PORT=$port"
+    echo "IHR_KEYCLOAK_SMTP_FROM=$from"
+    echo "IHR_KEYCLOAK_SMTP_USER=$user")"
+  printf '%s\n' "$tmp" | write_secret app.env.new
+  mv "$sec/app.env.new" "$sec/app.env"
+  printf 'IHR_KEYCLOAK_SMTP_PASSWORD=%s\n' "$token" | write_secret mail.env
+  {
+    echo "# Mail (P1-T8b4; scripts/staging.sh mail-init)"
+    echo "IHR_MAIL=$([[ $test == 1 ]] && echo test || echo smtp)"
+  } >> "$envf"
+  echo "Mail settings added ($host:$port, from $from); token in $sec (mode 600)."
+}
+
+mail_test_files() {  # the stand-in's throwaway CA, certificate and password file (IHR_MAIL=test)
+  local d="$GEN/mailtest" token
+  mkdir -p "$d"
+  if [[ ! -s "$d/ca.pem" || ! -s "$d/smtp.crt" ]]; then
+    # Shaped like a real CA and server certificate: Python 3.13 checks strictly (key usage)
+    openssl req -x509 -newkey ec -pkeyopt ec_paramgen_curve:prime256v1 -nodes -days 30 \
+      -subj "/CN=IndieHR proof mail CA (throwaway)" -keyout "$d/ca.key" -out "$d/ca.pem" \
+      -addext "basicConstraints=critical,CA:TRUE,pathlen:0" -addext "keyUsage=critical,keyCertSign,cRLSign" \
+      -addext "subjectKeyIdentifier=hash" 2>/dev/null
+    openssl req -newkey ec -pkeyopt ec_paramgen_curve:prime256v1 -nodes -subj "/CN=$MAIL_TEST_HOST" \
+      -keyout "$d/smtp.key" -out "$d/smtp.csr" 2>/dev/null
+    openssl x509 -req -in "$d/smtp.csr" -CA "$d/ca.pem" -CAkey "$d/ca.key" -CAcreateserial -days 30 \
+      -extfile <(printf 'subjectAltName=DNS:%s\nextendedKeyUsage=serverAuth\nkeyUsage=critical,digitalSignature\nbasicConstraints=critical,CA:FALSE\nauthorityKeyIdentifier=keyid\nsubjectKeyIdentifier=hash\n' "$MAIL_TEST_HOST") \
+      -out "$d/smtp.crt" 2>/dev/null
+    rm -f "$d/smtp.csr" "$d/ca.key" "$d/ca.srl"  # nothing else is ever signed with it
+  fi
+  # Python checks certificates against SSL_CERT_FILE: the image's own bundle plus this CA
+  docker run --rm --network none --log-driver none --entrypoint cat "$(env_get IHR_BACKEND_IMAGE)" \
+    /etc/ssl/certs/ca-certificates.crt > "$d/ca-bundle.pem"
+  cat "$d/ca.pem" >> "$d/ca-bundle.pem"
+  # Mailpit (user nobody) reads these: a throwaway proof key and the proof's own token
+  token="$(sed -n 's/^IHR_KEYCLOAK_SMTP_PASSWORD=//p' "$SECRETS/mail.env")"
+  printf 'emailapikey:%s\n' "$token" > "$d/smtp-auth"
+  chmod 644 "$d"/*
+}
+
+mail_check() {  # mail_check <to>: Django sends a test e-mail; with the stand-in, read it back
+  local to="${1:?usage: scripts/staging.sh mail-check <to-address>}"
+  [[ "$to" =~ $EMAIL_RE ]] || die "not an e-mail address: $to"
+  compose --profile admin run --rm --no-deps -T admin python manage.py sendtestemail "$to"
+  if [[ "$(env_get IHR_MAIL)" == test ]]; then
+    compose exec -T smtp-test wget -q -O - "http://127.0.0.1:8025/api/v1/search?query=to:$to" \
+      | python3 -c 'import json,sys; n=json.load(sys.stdin)["messages_count"]; print("stand-in received", n, "message(s) to that address"); sys.exit(0 if n else 1)'
+  else
+    echo "Sent. Check the inbox of $to, and ZeptoMail's logs (Mail Agents > Processed emails)."
+  fi
 }
 
 # ---- Object storage on the server: SeaweedFS (P1-T8b3, compose.s3.yaml) ------------------------
@@ -787,12 +902,16 @@ case "${1:-}" in
   acme-proof) acme_proof "${@:2}" ;;
   acme-proof-run) acme_proof_run ;;
   s3-init) s3_init ;;
+  mail-init) mail_init "${@:2}" ;;
+  mail-check) mail_check "${@:2}" ;;
   s3-check) s3_check ;;
   local-proof)
     [[ -f "$DIR/.env" ]] || IHR_FRONTEND_IMAGE="${IHR_FRONTEND_IMAGE:-indiehr-frontend:local}" \
       init "$LOCAL_SUFFIX" --local
     # A proof keeps its files on SeaweedFS too (P1-T8b3)
     grep -q '^IHR_S3=' "$DIR/.env" || s3_init
+    # ...and a stand-in for the mail service (P1-T8b4)
+    grep -q '^IHR_MAIL=' "$DIR/.env" || mail_init --test
     up
     # A synthetic hospital for the address checks (no Keycloak client: sign-in is not tested)
     compose --profile admin run --rm --no-deps -T admin python manage.py ihr_create_tenant \
@@ -800,5 +919,5 @@ case "${1:-}" in
       >/dev/null 2>&1 || true
     smoke
     ;;
-  *) sed -n '5,24p' "$0"; exit 1 ;;
+  *) sed -n '5,27p' "$0"; exit 1 ;;
 esac

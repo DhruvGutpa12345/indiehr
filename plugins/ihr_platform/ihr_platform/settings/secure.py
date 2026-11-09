@@ -22,6 +22,8 @@ WEAK_SECRET_RE = re.compile(
     re.IGNORECASE,
 )
 LOCAL_SUFFIXES = ("localhost", "local", "test", "example", "invalid")
+LOCAL_MAIL_HOSTS = {"", "localhost", "127.0.0.1", "::1"}
+SMTP_BACKEND = "django.core.mail.backends.smtp.EmailBackend"
 # Environment variables a deployment must set itself (no default may stand in for them).
 REQUIRED_ENV = (
     "DJANGO_SECRET_KEY",
@@ -123,4 +125,36 @@ def problems(settings, environ):  # noqa: PLR0912 (one flat list of rules)
         found.append(
             "SENTRY_DSN must stay unset (no data leaves India; P1-T9 monitoring)."
         )
+    found += mail_problems(settings)
+    return found
+
+
+def mail_problems(settings):
+    """Invitations (Django) and setup e-mails (Keycloak) must really leave, over TLS, from our
+    own sender (P1-T8b4; scripts/staging.sh mail-init)."""
+    found = []
+    # Any other backend (console, file, locmem) sends nothing; the console one would also print
+    # one-time join and setup links into the logs (kept 180 days)
+    if settings.get("EMAIL_BACKEND") != SMTP_BACKEND:
+        found.append(f"EMAIL_BACKEND must be {SMTP_BACKEND}.")
+    if str(settings.get("EMAIL_HOST", "")).strip().lower() in LOCAL_MAIL_HOSTS:
+        found.append(
+            "EMAIL_HOST is not set: no e-mail would leave (scripts/staging.sh mail-init)."
+        )
+    if not (settings.get("EMAIL_USE_TLS") or settings.get("EMAIL_USE_SSL")):
+        found.append("EMAIL_USE_TLS (or EMAIL_USE_SSL) must be on.")
+    sender = str(settings.get("DEFAULT_FROM_EMAIL", "")).lower()
+    if "@" not in sender or "@localhost" in sender or "ohc.network" in sender:
+        found.append(
+            "EMAIL_FROM must be our own sender (e.g. IndieHR <no-reply@amhcloud.in>)."
+        )
+    smtp = settings.get("IHR_KEYCLOAK_SMTP") or {}
+    if str(smtp.get("host", "")).strip().lower() in LOCAL_MAIL_HOSTS or not smtp.get(
+        "from"
+    ):
+        found.append(
+            "IHR_KEYCLOAK_SMTP_HOST and _FROM must be set (Keycloak's setup e-mails)."
+        )
+    elif "true" not in {str(smtp.get(k, "")).lower() for k in ("starttls", "ssl")}:
+        found.append("Keycloak's mail server must use TLS (starttls or ssl).")
     return found
