@@ -540,7 +540,7 @@ jobs:
           test "$(docker image inspect indiehr-postgres:ci --format '{{.Config.User}}')" = postgres
           docker run --rm --entrypoint sh indiehr-postgres:ci -c 'pgbackrest version && ! test -e /usr/local/bin/gosu'
           docker run -d --name pg --cap-drop ALL --security-opt no-new-privileges:true -e POSTGRES_PASSWORD=ci-only indiehr-postgres:ci
-          for i in $(seq 1 30); do docker exec pg pg_isready -q && break; sleep 2; done
+          for _ in $(seq 1 30); do docker exec pg pg_isready -q && break; sleep 2; done
           test "$(docker exec pg psql -U postgres -Atc 'select current_user')" = postgres
           docker rm -f pg
 
