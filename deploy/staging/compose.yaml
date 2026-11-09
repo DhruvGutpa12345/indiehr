@@ -94,8 +94,11 @@ services:
 
   db:
     <<: *hardening
-    image: postgres:18.6-alpine@sha256:${IHR_POSTGRES_DIGEST:?}
-    cap_add: ["CHOWN", "DAC_OVERRIDE", "FOWNER", "SETGID", "SETUID"]
+    # Our build of the official postgres:18.6-alpine image with pgBackRest (P1-T8c,
+    # deploy/docker/postgres.Dockerfile). Runs as postgres (70) from the start: no root
+    # entrypoint, no capabilities.
+    image: ${IHR_POSTGRES_IMAGE:?set IHR_POSTGRES_IMAGE}
+    user: "70:70"
     env_file:
       - secrets/db.env
     environment:
@@ -110,6 +113,14 @@ services:
       - log_min_duration_statement=2000
       - -c
       - password_encryption=scram-sha-256
+      # WAL archiving for backups (P1-T8c, compose.backup.yaml): on when backups are set up.
+      # Finished WAL files go to a spool; the backup service pushes them off the server.
+      - -c
+      - archive_mode=${IHR_PG_ARCHIVE_MODE:-off}
+      - -c
+      - archive_command=/usr/local/bin/ihr-pgbackrest-spool %p %f
+      - -c
+      - archive_timeout=60
     volumes:
       # Postgres 18+ keeps its data under /var/lib/postgresql (ADR-003 rule 5)
       - pgdata:/var/lib/postgresql

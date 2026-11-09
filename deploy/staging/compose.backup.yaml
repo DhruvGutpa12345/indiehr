@@ -1,0 +1,70 @@
+# Database backups (P1-T8c): pgBackRest 2.60, added by scripts/staging.sh when .env sets
+# IHR_BACKUP (scripts/staging.sh backup-init); never run directly.
+#
+# - Postgres archives every finished WAL file (at least once a minute) into the `walspool`
+#   volume (deploy/docker/backup/wal-spool.sh): the database needs no backup key and no way out.
+# - `backup` (same image, user postgres) pushes the spool to the repository every 10 s, takes a
+#   full backup on Sundays and a differential on other days (IST night), keeps 4 fulls: any
+#   moment of about the last 4 weeks can be restored (owner, 09-11-2026). It reads the data
+#   read-only and talks to Postgres over its socket.
+# - The repository is an S3 bucket in the other Indian region (E2E Chennai, AWS Hyderabad), set
+#   in generated/pgbackrest/pgbackrest.conf (written from .env by staging.sh). Everything is
+#   encrypted before it leaves (aes-256-cbc, passphrase in secrets/backup.env, which also holds
+#   the bucket key): without the passphrase no backup can be restored, so it is also kept in the
+#   owner's password manager.
+x-logging: &logging
+  driver: ${IHR_LOG_DRIVER:-journald}
+  options:
+    tag: "indiehr/{{.Name}}"
+
+services:
+  db:
+    environment:
+      # The spool refuses more than this (wal-spool.sh): Postgres then shows the failure
+      IHR_BACKUP_SPOOL_MAX_MB: ${IHR_BACKUP_SPOOL_MAX_MB:-2048}
+    volumes:
+      - walspool:/var/spool/ihr-wal
+      - pgsocket:/var/run/postgresql
+
+  backup:
+    image: ${IHR_POSTGRES_IMAGE:?set IHR_POSTGRES_IMAGE}
+    user: "70:70"
+    read_only: true
+    cap_drop: ["ALL"]
+    security_opt: ["no-new-privileges:true"]
+    restart: unless-stopped
+    logging: *logging
+    entrypoint: ["/usr/local/bin/ihr-backup-schedule"]
+    env_file:
+      - secrets/backup.env
+    environment:
+      TZ: Asia/Kolkata
+      IHR_BACKUP_TIME: ${IHR_BACKUP_TIME:-02:30}
+      IHR_BACKUP_FULL_DAY: ${IHR_BACKUP_FULL_DAY:-7}
+    volumes:
+      - pgdata:/var/lib/postgresql:ro
+      - walspool:/var/spool/ihr-wal
+      - pgsocket:/var/run/postgresql
+      - backupstate:/var/lib/pgbackrest
+      - ./generated/pgbackrest/pgbackrest.conf:/etc/pgbackrest/pgbackrest.conf:ro
+    tmpfs:
+      - /tmp:uid=70,gid=70,mode=0700
+    # internal: the database (and SeaweedFS in a proof); edge: the provider's bucket
+    networks: [internal, edge]
+    depends_on:
+      db:
+        condition: service_healthy
+    # Unhealthy: WAL stuck in the spool, archiving check failing, or no backup for 26 h
+    # (deploy/docker/backup/health.sh; `scripts/staging.sh smoke` reports it)
+    healthcheck:
+      test: ["CMD", "/usr/local/bin/ihr-backup-health"]
+      interval: 60s
+      timeout: 10s
+      retries: 3
+      start_period: 15m
+    mem_limit: ${IHR_BACKUP_MEMORY:-384m}
+
+volumes:
+  walspool:
+  pgsocket:
+  backupstate:

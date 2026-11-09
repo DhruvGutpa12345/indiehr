@@ -191,3 +191,10 @@ Lock files carry the linux_amd64 `h1:` hashes only: GitHub's release-asset host 
 OpenTofu's own downloads on 09-11-2026, so the packages were fetched through GitHub's API, checked
 by signature and SHA-256, and installed from a local mirror (`~/.cache/indiehr/tofu.rc`, this
 machine only). Add other platforms with `tofu providers lock -platform=…` when needed.
+
+## Backups — P1-T8c
+
+| Item | Version | Pinned how | Checked |
+|---|---|---|---|
+| pgBackRest | 2.60.0 (18-10-2026; Alpine packages 2.58) built from the release tarball (tag commit 2e1c4f2b) | `ADD --checksum=sha256:7409309d…22d0` in `deploy/docker/postgres.Dockerfile` | 2026-11-09 |
+| Postgres image | `postgres:18.6-alpine3.23@sha256:a0cbdbbcc57f7317ca183ac9d10eb3af72b5b05b2f25acad58e765bd2b139099` + pgBackRest; `gosu` removed (old Go, 26 CVEs; never needed as the image runs as postgres) | digest | 2026-11-09 |

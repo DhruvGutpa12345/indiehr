@@ -196,6 +196,64 @@ with the password and a checked certificate; a wrong password is refused (535); 
 certificate is not trusted is refused; Keycloak delivered the first admin's setup e-mail when a
 hospital was provisioned; the password in no container's log.
 
+## Database backups and restore drill (P1-T8c)
+
+pgBackRest 2.60 keeps the whole database server (hospitals, platform, Keycloak) restorable to
+**any moment of the last 28 days** (owner, 09-11-2026): a full backup every Sunday, a
+differential the other nights (02:30 IST), and every change in between (WAL, shipped at least
+once a minute). Retention is by time, so extra full backups never shorten the window.
+Everything is **encrypted on the server** before it leaves (aes-256-cbc).
+
+| Command | What it does |
+|---|---|
+| `scripts/staging.sh backup-init https://in-south1-objectstore.e2enetworks.net <bucket> Chennai --uri-style path` | Once: asks for the backup bucket's key (typed or piped, never an argument), makes the encryption passphrase, turns archiving on. AWS: `https://s3.ap-south-2.amazonaws.com <bucket> ap-south-2`. `--local`: a proof into this stack's SeaweedFS (automatic in `local-proof`; same disk, so not a real backup) |
+| `scripts/staging.sh backup-status` | Backups in the repository, the service's last backup / push / check, WAL files still waiting. The service is **unhealthy** (Docker, and `smoke`) when a WAL file waits over 10 minutes, the hourly check fails, or no backup succeeded for 26 hours |
+| `scripts/staging.sh backup-now [full\|diff]` | A backup now (e.g. before an upgrade) |
+| `scripts/staging.sh restore-drill [--target "2026-11-09 14:00:55+05:30"]` | Restores into a throwaway copy beside the live database (refused without room for it), then checks every hospital's audit trail **in the copy** against the outside fingerprints the storage had by the copy's last transaction, and removes it. `--keep` leaves the copy for a look (`--clean` removes it). The target always carries its offset (+05:30): without one Postgres would read UTC |
+| `scripts/staging.sh restore [--target …]` | **A lost database:** restores into this stack's own, empty database volume (never over an existing one, never while the stack runs), recovers with archiving on so the new timeline reaches the repository. Before recovery it sweeps the WAL spool: our database's surviving WAL is pushed and replayed (less is lost); another database's WAL (e.g. an empty database started by mistake) is set aside in the backup state volume's `rejected-wal/` (`backup-status` lists it), since it would block every later push |
+
+**The passphrase:** `PGBACKREST_REPO1_CIPHER_PASS` in `secrets/backup.env`. Without it no backup
+can be read, so copy it into the owner's password manager right after `backup-init` (the
+deploying machine keeps `secrets/` too). Never only on the server.
+
+**How it is built:** Postgres runs from our image (`deploy/docker/postgres.Dockerfile`: the
+official 18.6 Alpine image + pgBackRest, as user 70 with no capabilities). It only copies each
+finished WAL file into a spool volume; the separate `backup` service (same image, reads the data
+read-only, `compose.backup.yaml`) pushes the spool every 10 s and runs the schedule. So the
+database holds no backup key and still has no way out to the internet.
+
+**A real restore** (the server or its disk is lost):
+1. New server: `deploy/host/bootstrap.sh`, then `scripts/deploy.sh --no-start` with the same
+   `.env` and `secrets/` (kept on the deploying machine). If they are gone too: `init`, then
+   `backup-init <endpoint> <bucket> <region> --existing-passphrase` (the bucket key, then the
+   passphrase from the password manager).
+2. On the server, with the stack down: `scripts/staging.sh restore` (or `--target "…+05:30"` to
+   undo a mistake made at a known moment). It first pushes any of the lost database's WAL still
+   in the spool; if that fails (the repository out of reach) it stops before recovering anything:
+   fix the access and run it again. An interrupted restore leaves a marker in the volume: `up`
+   refuses it, and `restore` simply starts again.
+3. `scripts/staging.sh up`, then `scripts/staging.sh backup-now full` (the first backup of the
+   new timeline), then `scripts/staging.sh smoke`.
+Practise with `restore-drill` monthly; it never touches the live database.
+
+**An empty database never takes the place of a lost one.** `up` refuses to let Postgres make a
+fresh, empty cluster (the hospitals would see an empty system) when:
+- the server had a database before (`deploy/staging/.db-created`; only `down -v` clears it);
+- a restore is unfinished (its marker in the volume);
+- on a new server, the backup repository already holds backups (it is asked before the first
+  start; if it cannot be read, `up` refuses too).
+`up --new-database` starts an empty one on purpose. Should it happen anyway, the backup service
+refuses to push the stranger's WAL (pgBackRest: "do not match the database") and turns unhealthy;
+the repository stays untouched, and `restore` sets that WAL aside.
+
+A drill fails the audit check on purpose ("no fingerprint has been written yet") until the copy
+holds a transaction later than the server's first fingerprint (hourly, so in about its first
+hour): a fingerprint stored after the copy's last transaction cannot vouch for it.
+
+**Known and accepted:** the backup service reaches Postgres over its socket as the database
+superuser (pgBackRest's local mode; it also reads every data file). It is exactly as trusted as
+the database itself, has no published port, and is the only other container on that socket.
+
 **Done in P1-T8b1:** the host (`deploy/host/bootstrap.sh`: firewall incl. Docker's published
 ports, key-only SSH, NTP to NIC/NPL, journald one year, pinned Docker) and deploy over SSH.
 
@@ -205,4 +263,8 @@ ports, key-only SSH, NTP to NIC/NPL, journald one year, pinned Docker) and deplo
 
 **Done in P1-T8b4:** mail (above) and the cloud modules (`infra/README.md`).
 
-**Not yet** (P1-T8c–d): backups and a restore drill, Keycloak's own hardening.
+**Done in P1-T8c:** database backups and the restore drill (above); the fingerprint bucket's
+lock mode (`IHR_AUDIT_ANCHOR_LOCK_MODE`).
+
+**Not yet** (P1-T8d): Keycloak's own hardening. Not backed up: SeaweedFS's files when they live on
+the server itself (owner, 09-11-2026: at go-live files are in the provider's versioned bucket).

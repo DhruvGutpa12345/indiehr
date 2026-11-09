@@ -10,6 +10,10 @@ Two credentials, read from the environment when used (never Django settings):
     IHR_AUDIT_ANCHOR_WRITE_KEY / _SECRET   may only add objects (the hourly job, Celery)
     IHR_AUDIT_ANCHOR_READ_KEY / _SECRET    may only read and list (verify, export)
 plus IHR_AUDIT_ANCHOR_ENDPOINT (empty for AWS), _BUCKET and _REGION (default ap-south-1).
+
+IHR_AUDIT_ANCHOR_LOCK_MODE (P1-T8c, ADR-011 §3): COMPLIANCE (default) requires a bucket whose
+lock nobody can lift. GOVERNANCE accepts a Governance-mode bucket (E2E offers no other), which an
+admin of the storage account could lift: allowed only when set explicitly, and always reported.
 """
 
 import base64
@@ -40,6 +44,20 @@ class NotConfiguredError(Exception):
     pass
 
 
+LOCK_MODES = ("COMPLIANCE", "GOVERNANCE")
+
+
+def required_lock_mode():
+    """The weakest lock mode this platform accepts (IHR_AUDIT_ANCHOR_LOCK_MODE, default COMPLIANCE)."""
+    value = (
+        os.environ.get("IHR_AUDIT_ANCHOR_LOCK_MODE", "").strip().upper() or "COMPLIANCE"
+    )
+    if value not in LOCK_MODES:
+        msg = f"IHR_AUDIT_ANCHOR_LOCK_MODE must be COMPLIANCE or GOVERNANCE, not {value!r}"
+        raise NotConfiguredError(msg)
+    return value
+
+
 def prefix():
     """Objects of this platform (``IHR_TENANT_DOMAIN_SUFFIX``) only: staging and production
     may share a bucket without mixing their fingerprints."""
@@ -48,7 +66,7 @@ def prefix():
 
 
 class S3Store:
-    def __init__(self, role):
+    def __init__(self, role, quick=False):
         env = os.environ
         key = env.get(f"IHR_AUDIT_ANCHOR_{role}_KEY", "")
         secret = env.get(f"IHR_AUDIT_ANCHOR_{role}_SECRET", "")
@@ -68,9 +86,9 @@ class S3Store:
             config=Config(
                 signature_version="s3v4",
                 s3={"addressing_style": "path"},
-                connect_timeout=5,
-                read_timeout=20,
-                retries={"max_attempts": 3},
+                connect_timeout=3 if quick else 5,
+                read_timeout=5 if quick else 20,
+                retries={"max_attempts": 1 if quick else 3},
             ),
         )
 
@@ -301,29 +319,92 @@ def database_hashes():
     return stored_hashes
 
 
-def _lock_problems(store, fps):
-    lock = store.lock()
+def _lock_problems(store, fps, lock=...):
+    required = required_lock_mode()
+    if lock is ...:
+        lock = store.lock()
     if lock is None:
         fps.problems.append(
             f"fingerprint bucket {store.bucket!r} has no Object Lock default retention"
         )
         return
     weak = []
-    if lock["mode"] != "COMPLIANCE":
+    if lock["mode"] == "GOVERNANCE" and required == "GOVERNANCE":
+        # Accepted on purpose (ADR-011 §3), never silently
+        fps.notes.append(
+            f"fingerprint bucket {store.bucket!r}: GOVERNANCE retention, accepted by "
+            "IHR_AUDIT_ANCHOR_LOCK_MODE=GOVERNANCE (an admin of the storage account can lift it)"
+        )
+    elif lock["mode"] != "COMPLIANCE":
         weak.append(f"{lock['mode']} retention can be lifted by the storage admin")
     if lock["versioning"] != "Enabled":
         weak.append("versioning is not enabled")
     if lock["days"] < MIN_RETENTION_DAYS:
         weak.append(f"objects are kept {lock['days']} days only")
     for item in weak:
-        (fps.notes if settings.DEBUG else fps.problems).append(
-            f"fingerprint bucket {store.bucket!r}: {item}"
-        )
+        if settings.DEBUG:
+            fps.notes.append(
+                f"fingerprint bucket {store.bucket!r}: {item} (allowed in dev only)"
+            )
+        else:
+            fps.problems.append(f"fingerprint bucket {store.bucket!r}: {item}")
 
 
-def load_all(store=None, since=None, stored_hashes=None, batch=500):
+_LOCK_STATUS_CACHE = {}  # {"at": monotonic seconds, "value": dict}
+LOCK_STATUS_SECONDS = 300
+
+
+def lock_status(store=None):
+    """For the status page: the bucket's lock and whether this platform accepts it. One
+    storage call at most every 5 minutes per process (a page load never waits on it twice)."""
+    import time
+
+    cached = _LOCK_STATUS_CACHE.get("value")
+    if (
+        store is None
+        and cached
+        and time.monotonic() - _LOCK_STATUS_CACHE["at"] < LOCK_STATUS_SECONDS
+    ):
+        return cached
+    value = _lock_status(store)
+    if store is None:
+        _LOCK_STATUS_CACHE.update(at=time.monotonic(), value=value)
+    return value
+
+
+def _lock_status(store):
+    try:
+        required = required_lock_mode()
+        store = store or S3Store("READ", quick=True)
+    except NotConfiguredError as exc:
+        return {"configured": False, "detail": str(exc)}
+    try:
+        lock = store.lock()
+    except Exception as exc:  # any storage error: shown on the page, never fatal
+        return {
+            "configured": True,
+            "bucket": store.bucket,
+            "readable": False,
+            "detail": type(exc).__name__,
+        }
+    fps = Fingerprints()
+    _lock_problems(store, fps, lock)
+    return {
+        "configured": True,
+        "bucket": store.bucket,
+        "required_mode": required,
+        "mode": lock and lock["mode"],
+        "retention_days": lock and lock["days"],
+        "accepted": not fps.problems,
+        "notes": fps.notes,
+        "problems": fps.problems,
+    }
+
+
+def load_all(store=None, since=None, stored_hashes=None, batch=500, until=None):
     """Read every fingerprint of this platform (from the day ``since`` if given), checking
-    each claim against the database in batches of ``batch`` objects."""
+    each claim against the database in batches of ``batch`` objects. ``until``: only those
+    the storage received by then (a database restored to that moment, P1-T8c)."""
     store = store or S3Store("READ")
     stored_hashes = stored_hashes or database_hashes()
     fps = Fingerprints()
@@ -335,6 +416,8 @@ def load_all(store=None, since=None, stored_hashes=None, batch=500):
             fps.problems.append(f"fingerprint {key}: written more than once")
         seen.add(key)
         if first and key[len(prefix()) : len(prefix()) + 10] < first:
+            continue
+        if until and stored > until:
             continue
         if version is None:
             fps.problems.append(f"fingerprint {key}: a delete marker hides it")

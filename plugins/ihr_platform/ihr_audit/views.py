@@ -30,7 +30,7 @@ from rest_framework.permissions import BasePermission
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
-from ihr_audit import export, reads
+from ihr_audit import anchor, export, reads
 from ihr_audit.context import mask_query
 from ihr_audit.export import IST, OP_NAMES, ist
 from ihr_audit.install import coverage
@@ -287,6 +287,8 @@ class StatusView(APIView):
                 "oldest_unsealed_at": oldest and ist(oldest),
                 "triggers_ok": not problems,
                 "trigger_problems": problems[:20],
+                # The outside fingerprint bucket's lock and whether it is accepted (P1-T8c)
+                "fingerprints": anchor.lock_status(),
             }
         )
 

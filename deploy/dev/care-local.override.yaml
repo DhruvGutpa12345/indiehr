@@ -83,6 +83,7 @@ services:
       IHR_S3_PATIENT_BUCKET: patient-bucket
       IHR_S3_FACILITY_BUCKET: facility-bucket
       IHR_S3_ANCHOR_BUCKET: ihr-audit-anchors
+      IHR_S3_BACKUP_BUCKET: ihr-backups
       IHR_S3_MAX_GB: "5"
     volumes:
       - s3-data:/data

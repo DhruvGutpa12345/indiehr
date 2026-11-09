@@ -5,7 +5,8 @@
 #
 # Usage:
 #   scripts/staging.sh init <suffix> [--local|--vm]  write .env and secrets (once; no overwrite)
-#   scripts/staging.sh up                        start everything, then the Keycloak realm + workers
+#   scripts/staging.sh up [--new-database]       start everything, then the Keycloak realm + workers
+#                                                (--new-database: an empty database where backups exist)
 #   scripts/staging.sh smoke                     check every public address through Traefik
 #   scripts/staging.sh manage <args>             one-off manage.py command (no admin credentials)
 #   scripts/staging.sh ps | logs [service] | down
@@ -21,6 +22,11 @@
 #   scripts/staging.sh mail-init <from> [--host H] [--port P] [--user U] | --test
 #                                                mail via Zoho ZeptoMail (P1-T8b4); token on stdin
 #   scripts/staging.sh mail-check <to>           send a test e-mail through Django
+#   scripts/staging.sh backup-init <https://endpoint> <bucket> <region> [--uri-style path|host] | --local
+#                                                database backups (P1-T8c); bucket key on stdin
+#   scripts/staging.sh backup-status | backup-now [full|diff]
+#   scripts/staging.sh restore-drill [--target "YYYY-MM-DD HH:MM:SS+05:30"] [--keep | --clean]
+#   scripts/staging.sh restore [--target ...]   a lost server: into this stack's empty volume
 #
 # <suffix> is where hospitals live: <slug>.<suffix>, e.g. app.example.in (Q-T11).
 # --vm: a proof on a throwaway local VM (scripts/local-vm.sh): small memory, all addresses,
@@ -49,6 +55,7 @@ compose() {  # the file list is worked out on each call: init may have just made
   fi
   [[ "$(env_get IHR_S3)" == local ]] && files+=(-f "$DIR/compose.s3.yaml")
   [[ "$(env_get IHR_MAIL)" == test ]] && files+=(-f "$DIR/compose.mailtest.yaml")
+  [[ -n "$(env_get IHR_BACKUP)" ]] && files+=(-f "$DIR/compose.backup.yaml")
   docker compose --project-directory "$DIR" ${IHR_PROJECT:+-p "$IHR_PROJECT"} "${files[@]}" "$@"
 }
 LOCAL_SUFFIX="app.ihr-proof.in"  # local proof only; resolved to 127.0.0.1 by curl --resolve
@@ -82,9 +89,8 @@ init() {
   local backend_image="${IHR_BACKEND_IMAGE:-indiehr-backend:staging}"
   local frontend_image="${IHR_FRONTEND_IMAGE:-indiehr-frontend:staging}"
   echo "Resolving image digests..."
-  local traefik postgres redis
+  local traefik redis
   traefik="$(digest traefik:v3.7.17)"
-  postgres="$(digest postgres:18.6-alpine)"
   redis="$(digest redis:8.10.3-alpine)"
   mkdir -m 700 "$work/secrets"
   {
@@ -94,7 +100,8 @@ init() {
     echo "IHR_BACKEND_IMAGE=$backend_image"
     echo "IHR_FRONTEND_IMAGE=$frontend_image"
     echo "IHR_TRAEFIK_DIGEST=$traefik"
-    echo "IHR_POSTGRES_DIGEST=$postgres"
+    # Our build of postgres:18.6-alpine with pgBackRest (deploy/docker/postgres.Dockerfile, P1-T8c)
+    echo "IHR_POSTGRES_IMAGE=${IHR_POSTGRES_IMAGE:-indiehr-postgres:staging}"
     echo "IHR_REDIS_DIGEST=$redis"
     if [[ "$local_run" == "--local" ]]; then
       echo "# Proof run on this machine: only 127.0.0.1, small memory, Docker's own log files"
@@ -183,19 +190,64 @@ worker_secret() {  # worker_secret <role> <file> <variable>
   printf '%s=%s\n' "$3" "$secret" | write_secret "$2"
 }
 
-up() {
+up() {  # up [--new-database]: the flag only where an empty database is really meant (db_guard)
+  local new_db=0
+  [[ "${1:-}" != --new-database ]] || new_db=1
+  [[ $# -eq 0 || $new_db == 1 ]] || die "usage: scripts/staging.sh up [--new-database]"
   [[ -f "$DIR/.env" ]] || { echo "run: scripts/staging.sh init <suffix>" >&2; exit 1; }
+  [[ -z "$(env_get IHR_BACKUP)" ]] || backup_config
+  db_guard "$new_db"
   compose up -d --wait db redis
+  touch "$DIR/.db-created"
   [[ -z "$(env_get IHR_ACME)" ]] || acme_up
   [[ "$(env_get IHR_S3)" != local ]] || s3_up
   local extra=()
   if [[ "$(env_get IHR_MAIL)" == test ]]; then mail_test_files; extra=(smtp-test); fi
+  if [[ -n "$(env_get IHR_BACKUP)" ]]; then backup_config; extra+=(backup); fi
   compose up -d --wait "${extra[@]}" traefik keycloak backend celery-worker celery-beat frontend
   admin_manage ihr_keycloak_sync --realm --all
   worker_secret onboarding provisioner.env IHR_KEYCLOAK_ONBOARDING_SECRET
   worker_secret staff staff-worker.env IHR_KEYCLOAK_STAFF_SECRET
   compose up -d --force-recreate provisioner staff-worker
   compose ps --format 'table {{.Service}}\t{{.Status}}'
+}
+
+db_guard() {  # db_guard <new 0|1>: never an empty database where one is to be restored. In an
+  # empty volume Postgres makes a fresh, empty cluster and the hospitals see an empty system:
+  #  - a half-done restore (its marker in the volume) must be finished first;
+  #  - a server that had a database here (.db-created) must restore it;
+  #  - a new server whose backup repository already has backups is a restore, not a start.
+  local new="$1" vol="${IHR_PROJECT:-indiehr-staging}_pgdata" state out
+  state="empty"
+  if docker volume inspect "$vol" >/dev/null 2>&1; then
+    state="$(docker run --rm --user 70:70 --network none -v "$vol:/var/lib/postgresql" \
+      --entrypoint sh "$(env_get IHR_POSTGRES_IMAGE)" -c "$PG_STATE")" || die "could not read $vol"
+  fi
+  case "$state" in
+    db) return 0 ;;
+    restoring) die "$vol holds an unfinished restore: run scripts/staging.sh restore again" ;;
+  esac
+  [[ "$new" == 1 ]] && return 0
+  [[ ! -f "$DIR/.db-created" ]] || die "$vol is missing or empty, but this server had a database: restore it (scripts/staging.sh restore). To start an empty one on purpose: scripts/staging.sh up --new-database"
+  [[ -n "$(env_get IHR_BACKUP)" ]] || return 0
+  out="$(repo_info)" || die "cannot read the backup repository, so cannot tell whether this is a restore: fix its access (scripts/staging.sh backup-status), or start an empty database on purpose with scripts/staging.sh up --new-database"
+  if grep -q '"type":"full"' <<< "$out"; then
+    die "the backup repository already holds backups of a database: this is a restore (scripts/staging.sh restore, then up). To start an empty database anyway: scripts/staging.sh up --new-database"
+  fi
+}
+
+# The database volume's state (PGDATA: compose.yaml): "restoring" while a real restore is unfinished
+PG_STATE='if [ -e /var/lib/postgresql/.ihr-restore-incomplete ]; then echo restoring; elif [ -e /var/lib/postgresql/18/docker/PG_VERSION ]; then echo db; else echo empty; fi'
+
+repo_info() {  # the repository's info as JSON, read by a one-off container (the stack may be down)
+  local rc=0
+  compose up --no-start db backup >/dev/null || die "could not create the stack's containers and volumes"
+  [[ "$(env_get IHR_S3)" != local ]] || compose up -d --wait s3 >/dev/null
+  docker rm -f ihr-repo-info >/dev/null 2>&1 || true
+  pg_container ihr-repo-info "" pgbackrest --stanza=main --output=json --log-level-console=error info
+  docker start -a ihr-repo-info || rc=$?
+  docker rm -f ihr-repo-info >/dev/null 2>&1 || true
+  return "$rc"
 }
 
 smoke() {  # every public address through Traefik, as a browser would reach it
@@ -239,6 +291,12 @@ smoke() {  # every public address through Traefik, as a browser would reach it
     check "files: patient files need a signature" 403 "$(code "https://files.$suffix:$port/$(env_get IHR_S3_PATIENT_BUCKET)/x")"
     check "files: hospital pictures are public (none here yet)" 404 "$(code "https://files.$suffix:$port/$(env_get IHR_S3_FACILITY_BUCKET)/no-such-picture.png")"
   fi
+  if [[ -n "$(env_get IHR_BACKUP)" ]]; then
+    local bh
+    bh="$(docker inspect -f '{{.State.Health.Status}}' "$(compose ps -q backup)" 2>/dev/null || echo missing)"
+    if [[ "$bh" == starting ]]; then echo "skip  backups: the backup service is still starting"
+    else check "backups healthy (WAL pushed, check passing, backup within 26 h)" healthy "$bh"; fi
+  fi
   check "unknown hospital address: no branding" 404 "$(code "https://nope.$suffix:$port/api/ihr/bootstrap/")"
   check "bare suffix not served" 404 "$(code "https://$suffix:$port/")"
   check "HSTS on the console" "max-age=31536000" "$(header "https://console.$suffix:$port/ops/" strict-transport-security)"
@@ -261,6 +319,276 @@ smoke() {  # every public address through Traefik, as a browser would reach it
   fi
   return "$fail"
 }
+
+# ---- Database backups (P1-T8c): pgBackRest, compose.backup.yaml ----------------------------------
+backup_init() {  # backup_init <https://endpoint> <bucket> <region> [--uri-style path|host] | --local
+  local envf="$OUT/.env" sec="$OUT/secrets" endpoint="" bucket="" region="" style="host" local_repo=0
+  local key secret args=() existing=0 pass
+  [[ -f "$envf" && -d "$sec" ]] || die "no $envf / secrets: run scripts/staging.sh init <suffix> first"
+  grep -q '^IHR_BACKUP=' "$envf" && die "$envf already has backup settings (IHR_BACKUP=...)"
+  while (($#)); do
+    case "$1" in
+      --local) local_repo=1 ;;
+      # A new server reading an existing repository: its passphrase (from the password
+      # manager), typed or as the last line on stdin, instead of a new one
+      --existing-passphrase) existing=1 ;;
+      --uri-style) style="${2:?--uri-style path|host}"; shift ;;
+      -*) die "unknown option: $1" ;;
+      *) args+=("$1") ;;
+    esac
+    shift
+  done
+  if ((local_repo)); then
+    # Proof only: the backup bucket of this stack's own SeaweedFS (same disk, so not a real
+    # backup); a real server uses a bucket in the other region
+    grep -q '^IHR_S3=local' "$envf" || die "backup-init --local needs SeaweedFS on this stack (s3-init)"
+    endpoint="http://s3:8333" bucket="$(sed -n 's/^IHR_S3_BACKUP_BUCKET=//p' "$envf" | tail -1)" region="ap-south-1" style="path"
+    key="$(sed -n 's/^IHR_S3_BACKUP_KEY=//p' "$sec/s3-gateway.env")"
+    secret="$(sed -n 's/^IHR_S3_BACKUP_SECRET=//p' "$sec/s3-gateway.env")"
+  else
+    ((${#args[@]} == 3)) || die "usage: scripts/staging.sh backup-init <https://endpoint> <bucket> <region> [--uri-style path|host]"
+    endpoint="${args[0]}" bucket="${args[1]}" region="${args[2]}"
+    [[ "$endpoint" =~ ^https://[a-z0-9.-]+(:[0-9]+)?$ ]] || die "the endpoint must be https://host (e.g. https://in-south1-objectstore.e2enetworks.net)"
+    # The bucket's key, from the keyboard or stdin (two lines: key, then secret), never arguments
+    if [[ -t 0 ]]; then
+      read -rp "Backup bucket access key: " key; read -rsp "Backup bucket secret key: " secret; echo
+    else
+      IFS= read -r key || true; IFS= read -r secret || true
+    fi
+  fi
+  if ((existing)); then
+    if [[ -t 0 ]]; then read -rsp "The repository's encryption passphrase: " pass; echo
+    else IFS= read -r pass || true; fi
+    [[ ${#pass} -ge 20 ]] || die "that passphrase is too short to be ours"
+    case "$pass" in *[[:space:]\"\'\\\$\`]*) die "the passphrase has characters an env file cannot hold" ;; esac
+  else
+    pass="$(rand 48)"
+  fi
+  [[ "$bucket" =~ $BUCKET_RE ]] || die "not a bucket name: $bucket"
+  [[ "$region" =~ ^[A-Za-z0-9-]+$ ]] || die "not a region: $region"
+  [[ "$style" =~ ^(path|host)$ ]] || die "--uri-style is path or host"
+  for v in "$key" "$secret"; do
+    [[ ${#v} -ge 8 ]] || die "the bucket key and secret are required"
+    case "$v" in *[[:space:]\"\'\\\$\`]*) die "the key has characters an env file cannot hold" ;; esac
+  done
+  local SECRETS_TARGET="$sec"
+  {
+    echo "# Database backups (P1-T8c, scripts/staging.sh backup-init): the backup service only."
+    echo "# PGBACKREST_REPO1_CIPHER_PASS encrypts every backup. Without it nothing can be restored:"
+    echo "# keep a copy in the owner's password manager, never only on the server."
+    echo "PGBACKREST_REPO1_S3_KEY=$key"
+    echo "PGBACKREST_REPO1_S3_KEY_SECRET=$secret"
+    echo "PGBACKREST_REPO1_CIPHER_PASS=$pass"
+  } | write_secret backup.env
+  {
+    echo "# Database backups (P1-T8c; scripts/staging.sh backup-init): any moment of the last"
+    echo "# 28 days (owner, 09-11-2026)"
+    echo "IHR_BACKUP=s3"
+    echo "IHR_BACKUP_ENDPOINT=$endpoint"
+    echo "IHR_BACKUP_BUCKET=$bucket"
+    echo "IHR_BACKUP_REGION=$region"
+    echo "IHR_BACKUP_URI_STYLE=$style"
+    echo "IHR_PG_ARCHIVE_MODE=on"
+  } >> "$envf"
+  echo "Backup settings added ($endpoint, bucket $bucket). Copy PGBACKREST_REPO1_CIPHER_PASS from"
+  echo "$sec/backup.env into your password manager now: without it no backup can be restored."
+}
+
+backup_config() {  # generated/pgbackrest/pgbackrest.conf from .env (no secrets: those are env)
+  local d="$GEN/pgbackrest" tmp
+  mkdir -p "$d"
+  tmp="$(mktemp "$d/.conf.XXXXXX")"
+  cat > "$tmp" <<EOF
+# Written by scripts/staging.sh from .env (P1-T8c); changes here are overwritten.
+# Keys and the encryption passphrase come from secrets/backup.env (PGBACKREST_REPO1_*).
+[global]
+repo1-type=s3
+repo1-s3-endpoint=$(env_get IHR_BACKUP_ENDPOINT)
+repo1-s3-bucket=$(env_get IHR_BACKUP_BUCKET)
+repo1-s3-region=$(env_get IHR_BACKUP_REGION)
+repo1-s3-uri-style=$(env_get IHR_BACKUP_URI_STYLE)
+# One folder per platform: staging and production may share a bucket
+repo1-path=/pgbackrest/$(env_get IHR_TENANT_DOMAIN_SUFFIX)
+repo1-cipher-type=aes-256-cbc
+# Any moment of the last 28 days (owner, 09-11-2026): pgBackRest keeps the newest full that is
+# older than 28 days and everything after it, however many extra fulls were taken
+repo1-retention-full-type=time
+repo1-retention-full=28
+compress-type=zst
+process-max=2
+start-fast=y
+archive-timeout=120
+log-level-console=info
+log-level-file=off
+lock-path=/tmp/pgbackrest
+
+[main]
+pg1-path=/var/lib/postgresql/18/docker
+pg1-socket-path=/var/run/postgresql
+pg1-user=postgres
+EOF
+  chmod 644 "$tmp"
+  mv "$tmp" "$d/pgbackrest.conf"
+}
+
+backup_status() {
+  compose exec -T backup pgbackrest --stanza=main info
+  echo "--- the backup service's own record (/var/lib/pgbackrest/status):"
+  compose exec -T backup cat /var/lib/pgbackrest/status 2>/dev/null || echo "(none yet)"
+  echo "--- WAL files waiting in the spool: $(compose exec -T backup sh -c 'ls /var/spool/ihr-wal | grep -vc "^\." || true')"
+  compose exec -T backup sh -c 'ls /var/lib/pgbackrest/rejected-wal 2>/dev/null | sed "s/^/--- set aside by a restore (another database; remove once checked): /"' || true
+}
+
+DRILL="ihr-restore-drill"
+TARGET_RE='^[0-9]{4}-[0-9]{2}-[0-9]{2} [0-9]{2}:[0-9]{2}:[0-9]{2}([+-][0-9]{2}:[0-9]{2}|Z)$'
+
+check_target() {  # a PITR target must carry its offset: without one Postgres reads it as UTC
+  [[ "$1" =~ $TARGET_RE ]] || die "--target must look like '2026-11-09 14:00:55+05:30' (with the offset)"
+  echo "Target: $1 = $(date -u -d "$1" '+%Y-%m-%d %H:%M:%S') UTC"
+}
+
+pg_container() {  # pg_container <name> <volume:path,...> <command...>: our image as postgres, with
+  # the repository's settings and keys (env file: never on a command line), on the stack's
+  # internal (SeaweedFS) and edge (a provider's bucket) networks
+  local name="$1" mounts="$2" project="${IHR_PROJECT:-indiehr-staging}" m args=()
+  shift 2
+  m=()
+  [[ -z "$mounts" ]] || IFS=',' read -ra m <<< "$mounts"
+  for v in "${m[@]}"; do args+=(-v "$v"); done
+  docker create --name "$name" --user 70:70 --network "${project}_internal" --memory 768m \
+    --env-file "$SECRETS/backup.env" --cap-drop ALL --security-opt no-new-privileges:true \
+    "${args[@]}" -v "$GEN/pgbackrest/pgbackrest.conf:/etc/pgbackrest/pgbackrest.conf:ro" \
+    --tmpfs /tmp:uid=70,gid=70,mode=0700 "$(env_get IHR_POSTGRES_IMAGE)" "$@" >/dev/null
+  docker network connect "${project}_edge" "$name"
+}
+
+wait_promoted() {  # wait_promoted <container>: until recovery has ended (or fail)
+  local out="" i
+  for i in $(seq 1 450); do
+    out="$(docker exec "$1" psql -U postgres -Atc "SELECT pg_is_in_recovery()" 2>/dev/null || true)"
+    [[ "$out" == f ]] && return 0
+    docker inspect -f '{{.State.Running}}' "$1" 2>/dev/null | grep -q true || break
+    sleep 2
+  done
+  docker logs --tail 30 "$1"
+  die "recovery did not finish"
+}
+
+restore_drill() {  # a copy of the database from the backups, checked, then removed
+  local target="" keep=0 pw dburl i free need as_of
+  while (($#)); do
+    case "$1" in
+      --target) target="${2:?--target 'YYYY-MM-DD HH:MM:SS+05:30'}"; shift ;;
+      --keep) keep=1 ;;
+      --clean) docker rm -f "$DRILL" "$DRILL-restore" >/dev/null 2>&1; docker volume rm -f "$DRILL" >/dev/null; echo "Drill removed."; return 0 ;;
+      *) die "usage: scripts/staging.sh restore-drill [--target 'YYYY-MM-DD HH:MM:SS+05:30'] [--keep | --clean]" ;;
+    esac
+    shift
+  done
+  [[ -n "$(env_get IHR_BACKUP)" ]] || die "no backups set up here (backup-init)"
+  [[ -z "$target" ]] || check_target "$target"
+  backup_config
+  # Room for a second copy beside the live database (the same disk): twice its size
+  need="$(compose exec -T db psql -U postgres -Atc "SELECT sum(pg_database_size(datname)) / 1048576 FROM pg_database" | tr -d '[:space:]')"
+  free="$(df -Pm "$(docker info --format '{{.DockerRootDir}}')" 2>/dev/null | awk 'NR==2 {print $4}')"
+  if [[ -n "$need" && -n "$free" ]] && ((free < 2 * need + 1024)); then
+    die "not enough disk for a copy: ${free} MB free, about $((2 * need + 1024)) MB needed"
+  fi
+  # Whatever happens from here, the drill's containers go (and the volume, unless --keep)
+  # (the trap runs after this function's locals are gone: keep's value is written into it)
+  # shellcheck disable=SC2064
+  trap "docker rm -f '$DRILL-restore' >/dev/null 2>&1; [[ $keep == 1 ]] || { docker rm -f '$DRILL' >/dev/null 2>&1; docker volume rm -f '$DRILL' >/dev/null 2>&1; }" EXIT
+  docker rm -f "$DRILL" "$DRILL-restore" >/dev/null 2>&1 || true
+  docker volume rm -f "$DRILL" >/dev/null 2>&1 || true
+  docker volume create "$DRILL" >/dev/null
+  echo "== Restore $([[ -n "$target" ]] && echo "to $target" || echo "to the newest moment in the backups")"
+  pg_container "$DRILL-restore" "$DRILL:/var/lib/postgresql" pgbackrest --stanza=main \
+    ${target:+--type=time "--target=$target" --target-action=promote} restore
+  if docker start -a "$DRILL-restore"; then i=0; else i=$?; fi
+  ((i == 0)) || die "restore failed"
+  # The copy never archives into the repository (archive_mode=off); it fetches WAL to recover.
+  # Recovery needs at least the original's max_connections (100, compose.yaml).
+  pg_container "$DRILL" "$DRILL:/var/lib/postgresql" postgres -c archive_mode=off \
+    -c shared_buffers=128MB -c max_connections=100
+  docker start "$DRILL" >/dev/null
+  wait_promoted "$DRILL"
+  # The copy's own moment: its last replayed transaction (what the fingerprints are checked at)
+  as_of="$(docker logs "$DRILL" 2>&1 | sed -n 's/.*last completed transaction was at log time \([0-9-]* [0-9:.]*[+-][0-9]*\).*/\1/p' | tail -1)"
+  [[ "$as_of" =~ [+-][0-9]{2}$ ]] && as_of="$as_of:00"
+  echo "== The restored copy (its last transaction: ${as_of:-not found in its log})"
+  docker exec "$DRILL" psql -U postgres -Atc "SELECT 'databases: ' || string_agg(datname || ' ' || pg_size_pretty(pg_database_size(datname)), ', ' ORDER BY datname) FROM pg_database WHERE NOT datistemplate"
+  docker exec "$DRILL" psql -U postgres -d ihr -Atc "SELECT 'hospital schemas: ' || count(*) FROM pg_namespace WHERE nspname ~ '^h_[a-z0-9]{10}\$'"
+  # The audit trail of every hospital, checked in the copy against the outside fingerprints
+  # the storage had received by the copy's moment: a backup that restores a rewritten
+  # history fails here
+  echo "== Audit trail and fingerprints, checked in the restored copy"
+  pw="$(sed -n 's#^DATABASE_URL=postgres://ihr:\([^@]*\)@db:5432/ihr$#\1#p' "$SECRETS/app.env")"
+  [[ -n "$pw" ]] || die "DATABASE_URL in secrets/app.env is not in the expected form"
+  dburl="postgres://ihr:$pw@$DRILL:5432/ihr"
+  local envs=(-e DATABASE_URL) k v
+  while IFS='=' read -r k v; do
+    if [[ "$k" =~ ^IHR_AUDIT_ANCHOR_[A-Z_]+$ ]]; then export "$k=$v"; envs+=(-e "$k"); fi
+  done < "$SECRETS/anchor-read.env"
+  if DATABASE_URL="$dburl" compose --profile admin run --rm --no-deps -T "${envs[@]}" admin \
+    python manage.py ihr_audit_verify --all ${as_of:+--as-of "$as_of"}; then i=0; else i=$?; fi
+  ((keep)) && echo "Kept: container $DRILL (psql: docker exec -it $DRILL psql -U postgres). Remove: scripts/staging.sh restore-drill --clean"
+  ((i == 0)) || die "the restored copy failed the audit check"
+  echo "Restore drill passed."
+}
+
+restore_live() {  # restore [--target T]: a lost server's database, into this stack's own volume
+  local target="" project="${IHR_PROJECT:-indiehr-staging}" vol i state
+  while (($#)); do
+    case "$1" in
+      --target) target="${2:?--target 'YYYY-MM-DD HH:MM:SS+05:30'}"; shift ;;
+      *) die "usage: scripts/staging.sh restore [--target 'YYYY-MM-DD HH:MM:SS+05:30']" ;;
+    esac
+    shift
+  done
+  [[ -n "$(env_get IHR_BACKUP)" ]] || die "no backup settings here (backup-init, with --existing-passphrase on a new server)"
+  [[ -z "$target" ]] || check_target "$target"
+  vol="${project}_pgdata"
+  if [[ -n "$(compose ps -q db 2>/dev/null)" ]]; then die "the stack is running: scripts/staging.sh down first"; fi
+  backup_config
+  # Volumes made the Compose way (labels), then: never over an existing database
+  compose up --no-start db backup >/dev/null || die "could not create the stack's containers and volumes"
+  # The repository on this stack's own SeaweedFS (a local proof) must be running to read from
+  [[ "$(env_get IHR_S3)" != local ]] || compose up -d --wait s3 >/dev/null
+  # Never over a database; an unfinished restore (its marker) is started again from scratch
+  state="$(docker run --rm --user 70:70 --network none -v "$vol:/var/lib/postgresql" --entrypoint sh \
+    "$(env_get IHR_POSTGRES_IMAGE)" -c "$PG_STATE")" || die "could not read $vol"
+  case "$state" in
+    db) die "$vol already holds a database; restore only into an empty one (on a new server: scripts/staging.sh down -v first, if the stack was started)" ;;
+    restoring) echo "== An unfinished restore is in $vol: starting it again" ;;
+  esac
+  # The marker stays until recovery has finished: up refuses a half-restored database
+  docker run --rm --user 70:70 --network none -v "$vol:/var/lib/postgresql" --entrypoint sh \
+    "$(env_get IHR_POSTGRES_IMAGE)" -c 'touch /var/lib/postgresql/.ihr-restore-incomplete && find /var/lib/postgresql/18 -mindepth 1 -delete 2>/dev/null; mkdir -p /var/lib/postgresql/18/docker && chmod 700 /var/lib/postgresql/18/docker'
+  echo "== Restore $([[ -n "$target" ]] && echo "to $target" || echo "to the newest moment in the backups") into $vol"
+  trap 'docker rm -f ihr-restore ihr-restore-spool ihr-restore-recovery >/dev/null 2>&1' EXIT
+  pg_container ihr-restore "$vol:/var/lib/postgresql" pgbackrest --stanza=main \
+    ${target:+--type=time "--target=$target" --target-action=promote} restore
+  if docker start -a ihr-restore; then i=0; else i=$?; fi
+  ((i == 0)) || die "restore failed"
+  # The spool before recovery: our own surviving WAL pushed (replayed below), another
+  # database's set aside (it would block every later push)
+  pg_container ihr-restore-spool "$vol:/var/lib/postgresql:ro,${project}_walspool:/var/spool/ihr-wal,${project}_backupstate:/var/lib/pgbackrest" \
+    ihr-backup-spool-sweep
+  docker start -a ihr-restore-spool || die "the spool still holds WAL of this database that could not be pushed (above): nothing was recovered yet; fix the repository's access and run scripts/staging.sh restore again"
+  # Recovery with the repository in reach, archiving ON into the stack's spool: the new
+  # timeline's history file reaches the repository, so later restores can follow it
+  pg_container ihr-restore-recovery "$vol:/var/lib/postgresql,${project}_walspool:/var/spool/ihr-wal" \
+    postgres -c archive_mode=on -c "archive_command=/usr/local/bin/ihr-pgbackrest-spool %p %f" \
+    -c max_connections=100
+  docker start ihr-restore-recovery >/dev/null
+  wait_promoted ihr-restore-recovery
+  docker exec ihr-restore-recovery psql -U postgres -Atc "CHECKPOINT" >/dev/null
+  docker stop -t 60 ihr-restore-recovery >/dev/null
+  docker run --rm --user 70:70 --network none -v "$vol:/var/lib/postgresql" --entrypoint sh \
+    "$(env_get IHR_POSTGRES_IMAGE)" -c 'rm -f /var/lib/postgresql/.ihr-restore-incomplete'
+  echo "Restored. Next: scripts/staging.sh up (it pushes the new timeline), then scripts/staging.sh backup-now full"
+}
+
 
 # ---- Mail (P1-T8b4): Zoho ZeptoMail, or a stand-in for proofs (compose.mailtest.yaml) ------------
 EMAIL_RE='^[A-Za-z0-9._%+-]+@[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)+$'
@@ -382,11 +710,11 @@ s3_init() {  # SeaweedFS keys into secrets/, CARE's and the fingerprint keys int
     || die "FILE_UPLOAD_BUCKET / FACILITY_S3_BUCKET in secrets/app.env are not two bucket names"
   hex() { python3 -c "import secrets;print(secrets.token_hex($1))"; }
   declare -A key
-  for k in ADMIN CARE ANCHOR_WRITE ANCHOR_READ; do key[${k}_KEY]="ihr$(hex 10)"; key[${k}_SECRET]="$(hex 20)"; done
+  for k in ADMIN CARE ANCHOR_WRITE ANCHOR_READ BACKUP; do key[${k}_KEY]="ihr$(hex 10)"; key[${k}_SECRET]="$(hex 20)"; done
   local SECRETS_TARGET="$sec"
   {
     echo "# SeaweedFS identities (P1-T8b3), written by scripts/staging.sh s3-init; the s3 container only."
-    for k in ADMIN CARE ANCHOR_WRITE ANCHOR_READ; do
+    for k in ADMIN CARE ANCHOR_WRITE ANCHOR_READ BACKUP; do
       echo "IHR_S3_${k}_KEY=${key[${k}_KEY]}"
       echo "IHR_S3_${k}_SECRET=${key[${k}_SECRET]}"
     done
@@ -400,9 +728,9 @@ s3_init() {  # SeaweedFS keys into secrets/, CARE's and the fingerprint keys int
     echo "BUCKET_SECRET=${key[CARE_SECRET]}")"
   printf '%s\n' "$tmp" | write_secret app.env.new
   mv "$sec/app.env.new" "$sec/app.env"
-  printf 'IHR_AUDIT_ANCHOR_ENDPOINT=http://s3:8333\nIHR_AUDIT_ANCHOR_BUCKET=%s\nIHR_AUDIT_ANCHOR_WRITE_KEY=%s\nIHR_AUDIT_ANCHOR_WRITE_SECRET=%s\n' \
+  printf 'IHR_AUDIT_ANCHOR_ENDPOINT=http://s3:8333\nIHR_AUDIT_ANCHOR_LOCK_MODE=COMPLIANCE\nIHR_AUDIT_ANCHOR_BUCKET=%s\nIHR_AUDIT_ANCHOR_WRITE_KEY=%s\nIHR_AUDIT_ANCHOR_WRITE_SECRET=%s\n' \
     "$S3_ANCHOR_BUCKET_DEFAULT" "${key[ANCHOR_WRITE_KEY]}" "${key[ANCHOR_WRITE_SECRET]}" | write_secret anchor-write.env
-  printf 'IHR_AUDIT_ANCHOR_ENDPOINT=http://s3:8333\nIHR_AUDIT_ANCHOR_BUCKET=%s\nIHR_AUDIT_ANCHOR_READ_KEY=%s\nIHR_AUDIT_ANCHOR_READ_SECRET=%s\n' \
+  printf 'IHR_AUDIT_ANCHOR_ENDPOINT=http://s3:8333\nIHR_AUDIT_ANCHOR_LOCK_MODE=COMPLIANCE\nIHR_AUDIT_ANCHOR_BUCKET=%s\nIHR_AUDIT_ANCHOR_READ_KEY=%s\nIHR_AUDIT_ANCHOR_READ_SECRET=%s\n' \
     "$S3_ANCHOR_BUCKET_DEFAULT" "${key[ANCHOR_READ_KEY]}" "${key[ANCHOR_READ_SECRET]}" | write_secret anchor-read.env
   {
     echo "# Object storage on this server: SeaweedFS (P1-T8b3; scripts/staging.sh s3-init)"
@@ -410,6 +738,7 @@ s3_init() {  # SeaweedFS keys into secrets/, CARE's and the fingerprint keys int
     echo "IHR_S3_PATIENT_BUCKET=$patient"
     echo "IHR_S3_FACILITY_BUCKET=$facility"
     echo "IHR_S3_ANCHOR_BUCKET=$S3_ANCHOR_BUCKET_DEFAULT"
+    echo "IHR_S3_BACKUP_BUCKET=ihr-backups"
     echo "# Audit fingerprints: kept 10 years, removable by nobody through S3 (ADR-010 §9)"
     echo "IHR_S3_LOCK_MODE=COMPLIANCE"
     echo "IHR_S3_LOCK_DAYS=3650"
@@ -435,7 +764,8 @@ s3_tool() {  # s3_tool <script> <args>: a deploy/s3 script with the S3_* keys th
 s3_up() {  # SeaweedFS, then its buckets (idempotent)
   compose up -d --wait s3
   s3_tool setup_buckets.py --lock-mode "$(env_get IHR_S3_LOCK_MODE)" --lock-days "$(env_get IHR_S3_LOCK_DAYS)" \
-    --cors-origin "https://*.$(env_get IHR_TENANT_DOMAIN_SUFFIX)"
+    --cors-origin "https://*.$(env_get IHR_TENANT_DOMAIN_SUFFIX)" \
+    --backups "$(env_get IHR_S3_BACKUP_BUCKET || true)"
 }
 
 s3_check() {  # every key and lock, and the public paths through Traefik (files.<suffix>)
@@ -798,7 +1128,7 @@ IHR_SUFFIX_RE=${LOCAL_SUFFIX//./\\.}
 IHR_BACKEND_IMAGE=unused:proof
 IHR_FRONTEND_IMAGE=unused:proof
 IHR_TRAEFIK_DIGEST=$(digest traefik:v3.7.17)
-IHR_POSTGRES_DIGEST=unused
+IHR_POSTGRES_IMAGE=unused:proof
 IHR_REDIS_DIGEST=unused
 IHR_LOG_DRIVER=json-file
 IHR_BIND=127.0.0.1
@@ -888,12 +1218,14 @@ acme_proof_run() {  # the checks of acme-proof (run inside its throwaway folder)
 
 case "${1:-}" in
   init) init "${@:2}" ;;
-  up) up ;;
+  up) up "${@:2}" ;;
   smoke) smoke ;;
   manage) compose --profile admin run --rm --no-deps -T admin python manage.py "${@:2}" ;;
   ps) compose ps ;;
   logs) compose logs --tail=200 "${@:2}" ;;
-  down) compose down "${@:2}" ;;
+  down)  # with -v the volumes go on purpose: the next up may start an empty database
+    compose down "${@:2}"
+    if [[ " ${*:2} " == *" -v "* || " ${*:2} " == *" --volumes "* ]]; then rm -f "$DIR/.db-created"; fi ;;
   acme-init) acme_init "${@:2}" ;;
   acme-register) acme_register "${@:2}" ;;
   acme-new-cert) acme_new_cert ;;
@@ -902,6 +1234,11 @@ case "${1:-}" in
   acme-proof) acme_proof "${@:2}" ;;
   acme-proof-run) acme_proof_run ;;
   s3-init) s3_init ;;
+  backup-init) backup_init "${@:2}" ;;
+  backup-status) backup_status ;;
+  backup-now) compose exec -T backup pgbackrest --stanza=main --type="${2:-diff}" backup ;;
+  restore-drill) restore_drill "${@:2}" ;;
+  restore) restore_live "${@:2}" ;;
   mail-init) mail_init "${@:2}" ;;
   mail-check) mail_check "${@:2}" ;;
   s3-check) s3_check ;;
@@ -912,6 +1249,8 @@ case "${1:-}" in
     grep -q '^IHR_S3=' "$DIR/.env" || s3_init
     # ...and a stand-in for the mail service (P1-T8b4)
     grep -q '^IHR_MAIL=' "$DIR/.env" || mail_init --test
+    # ...and backups into that SeaweedFS (P1-T8c; same disk: a proof, not a real backup)
+    grep -q '^IHR_BACKUP=' "$DIR/.env" || backup_init --local
     up
     # A synthetic hospital for the address checks (no Keycloak client: sign-in is not tested)
     compose --profile admin run --rm --no-deps -T admin python manage.py ihr_create_tenant \
@@ -919,5 +1258,5 @@ case "${1:-}" in
       >/dev/null 2>&1 || true
     smoke
     ;;
-  *) sed -n '5,27p' "$0"; exit 1 ;;
+  *) sed -n '5,33p' "$0"; exit 1 ;;
 esac

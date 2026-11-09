@@ -159,7 +159,7 @@ def seal_once(schema):
     return sealed
 
 
-def verify(schema, stale_minutes=10):
+def verify(schema, stale_minutes=10, as_of=None):
     """Recompute the whole chain. Returns (problems, summary)."""
     names = _names(schema)
     problems = []
@@ -204,19 +204,28 @@ def verify(schema, stale_minutes=10):
         # The sealer is late if an entry it could seal (its transaction is over) has waited
         # stale_minutes and nothing was sealed in the last few runs. Entries held back by a
         # transaction still running somewhere in the cluster are reported, not a problem.
+        # ``as_of`` (a restored copy, P1-T8c): "now" is the copy's last moment, not today.
         cursor.execute(
             sql.SQL(
                 "SELECT count(*), min(at), "
                 "count(*) FILTER (WHERE txid < pg_snapshot_xmin(pg_current_snapshot())), "
                 "count(*) FILTER (WHERE txid >= pg_snapshot_xmin(pg_current_snapshot()) "
-                "  AND at < now() - make_interval(mins => %s)), "
+                "  AND at < coalesce(%s::timestamptz, now()) - make_interval(mins => %s)), "
                 "min(at) FILTER (WHERE txid < pg_snapshot_xmin(pg_current_snapshot())) "
-                "  < now() - make_interval(mins => %s) "
+                "  < coalesce(%s::timestamptz, now()) - make_interval(mins => %s) "
                 "  AND coalesce((SELECT max(sealed_at) FROM {seal}) "
-                "      < now() - make_interval(secs => %s), true) "
+                "      < coalesce(%s::timestamptz, now()) - make_interval(secs => %s), true) "
                 "FROM {entry} WHERE txid >= %s::xid8"
             ).format(**names),
-            [stale_minutes, stale_minutes, SEALER_GRACE_SECONDS, expected_lower],
+            [
+                as_of,
+                stale_minutes,
+                as_of,
+                stale_minutes,
+                as_of,
+                SEALER_GRACE_SECONDS,
+                expected_lower,
+            ],
         )
         unsealed, oldest, sealable, held_back, sealer_idle = cursor.fetchone()
     if sealable and sealer_idle:

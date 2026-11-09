@@ -9,7 +9,8 @@ environment; ``--since`` limits that to recent ones for frequent runs). ``--anch
 status 1 on any problem, so it can run from cron or CI.
 """
 
-from datetime import date
+import os
+from datetime import date, datetime
 
 from botocore.exceptions import BotoCoreError, ClientError
 from django.conf import settings
@@ -39,6 +40,12 @@ class Command(BaseCommand):
             "the default reads all of them",
         )
         parser.add_argument("--stale-minutes", type=int, default=10)
+        parser.add_argument(
+            "--as-of",
+            type=datetime.fromisoformat,
+            help="a database restored to this moment (ISO 8601 with offset; restore-drill, "
+            "P1-T8c): only fingerprints stored by then count, and 'late' is measured then",
+        )
 
     def _anchors(self, options):
         """(fingerprints or None when not checked, platform problems). A storage outage
@@ -52,8 +59,19 @@ class Command(BaseCommand):
                     f"fingerprint not written: {exc} (run --anchor in the celery "
                     "container, which holds the writer's key)"
                 ]
+        if (
+            options["anchor"]
+            and not written
+            and not os.environ.get("IHR_AUDIT_ANCHOR_READ_KEY")
+        ):
+            # The writer's container (Celery) holds no reader key, on purpose: the fingerprint
+            # is written; the backend checks them all (P1-T8c)
+            self.stdout.write(
+                "outside fingerprints are checked where the reader's key is (the backend)"
+            )
+            return None, []
         try:
-            fps = anchor.load_all(since=options["since"])
+            fps = anchor.load_all(since=options["since"], until=options["as_of"])
         except anchor.NotConfiguredError as exc:
             message = f"outside fingerprints not checked: {exc}"
             if settings.DEBUG and not written:
@@ -63,11 +81,17 @@ class Command(BaseCommand):
         except (BotoCoreError, ClientError) as exc:
             return None, [*written, f"outside fingerprints unreadable: {exc}"]
         for note in fps.notes:
-            self.stdout.write(self.style.WARNING(f"{note} (allowed in dev only)"))
+            self.stdout.write(self.style.WARNING(note))
         self.stdout.write(f"{fps.count} outside fingerprints read")
-        return fps, written + fps.problems + anchor.platform_problems(fps)
+        return fps, (
+            written + fps.problems + anchor.platform_problems(fps, now=options["as_of"])
+        )
 
     def handle(self, *args, **options):
+        as_of = options["as_of"]
+        if as_of and (as_of.tzinfo is None or options["seal"] or options["anchor"]):
+            msg = "--as-of needs a time zone offset, and reads only (no --seal or --anchor)"
+            raise CommandError(msg)
         hospitals = Hospital.objects.exclude(schema_name="public").order_by("slug")
         if options["slug"]:
             hospitals = hospitals.filter(slug=options["slug"])
@@ -90,7 +114,9 @@ class Command(BaseCommand):
         for hospital in hospitals:
             with schema_context(hospital.schema_name):
                 problems = coverage(connection, hospital.schema_name)
-                chain, summary = verify(hospital.schema_name, options["stale_minutes"])
+                chain, summary = verify(
+                    hospital.schema_name, options["stale_minutes"], as_of=as_of
+                )
             problems += chain
             if anchors is not None:
                 problems += anchor.check(str(hospital.uuid), anchors)

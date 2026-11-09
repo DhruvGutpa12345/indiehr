@@ -4,7 +4,9 @@
 # the pinned third-party images are pulled by the server itself.
 #
 #   scripts/deploy.sh --host ihr@<address> [--port 22] [--env-dir deploy/staging] [--allow-dirty]
-#                     [--identity <key>] [--no-build | --build-only]
+#                     [--identity <key>] [--no-build | --build-only] [--no-start]
+#   --no-start: everything but starting the stack (a new server that is to be restored first:
+#               scripts/staging.sh restore, then up; deploy/staging/README.md)
 #   scripts/deploy.sh --local-proof [...]   the throwaway VM of scripts/local-vm.sh:
 #                     ihr@127.0.0.1:2222, its own key and .env/secrets under ~/.cache/indiehr/vm
 #
@@ -23,8 +25,8 @@ REMOTE_ROOT=/srv/indiehr
 VM_CACHE="${IHR_VM_CACHE:-$HOME/.cache/indiehr/vm}"
 PROOF_SUFFIX="app.ihr-proof.in"
 
-HOST="" PORT=22 ENV_DIR="" ALLOW_DIRTY=0 IDENTITY="" BUILD=1 BUILD_ONLY=0 LOCAL_PROOF=0 KNOWN_HOSTS=""
-usage() { sed -n '2,18p' "$0" | sed 's/^# \{0,1\}//'; }
+HOST="" PORT=22 ENV_DIR="" ALLOW_DIRTY=0 IDENTITY="" BUILD=1 BUILD_ONLY=0 LOCAL_PROOF=0 NO_START=0 KNOWN_HOSTS=""
+usage() { sed -n '2,20p' "$0" | sed 's/^# \{0,1\}//'; }
 while (($#)); do
   case "$1" in
     --host) HOST="${2:?--host user@address}"; shift ;;
@@ -35,6 +37,7 @@ while (($#)); do
     --no-build) BUILD=0 ;;
     --build-only) BUILD_ONLY=1 ;;
     --local-proof) LOCAL_PROOF=1 ;;
+    --no-start) NO_START=1 ;;
     -h|--help) usage; exit 0 ;;
     *) echo "unknown option: $1" >&2; usage >&2; exit 2 ;;
   esac
@@ -75,8 +78,10 @@ env_get() { sed -n "s/^$1=//p" "$ENV_DIR/.env" | tail -1; }
 # ---- 1. Images (built here; the web app from the CI bundle, never built locally) -----------
 backend_image() { [[ -f "$ENV_DIR/.env" ]] && env_get IHR_BACKEND_IMAGE || echo "indiehr-backend:staging"; }
 frontend_image() { [[ -f "$ENV_DIR/.env" ]] && env_get IHR_FRONTEND_IMAGE || echo "indiehr-frontend:staging"; }
+postgres_image() { local v=""; [[ -f "$ENV_DIR/.env" ]] && v="$(env_get IHR_POSTGRES_IMAGE)"; echo "${v:-indiehr-postgres:staging}"; }
 BACKEND="$(backend_image)"
 FRONTEND="$(frontend_image)"
+POSTGRES="$(postgres_image)"
 REV_LABEL="org.opencontainers.image.revision"
 if ((BUILD)); then
   # Build context: a fresh copy of the committed files, so git-ignored files in the working
@@ -102,6 +107,10 @@ if ((BUILD)); then
   docker buildx build -q --load -f deploy/docker/frontend.Dockerfile \
     --label "$REV_LABEL=$SHA" --label "ihr.git-dirty=$DIRTY" --label "ihr.bundle=${bundle_id:-unknown}" \
     --build-context config=deploy/docker -t "$FRONTEND" "$BUNDLE" >/dev/null
+  # Postgres with pgBackRest (P1-T8c): pinned base image and pgBackRest source
+  log "Building $POSTGRES (deploy/docker/postgres.Dockerfile: postgres 18.6 + pgBackRest)"
+  docker buildx build -q --load -f deploy/docker/postgres.Dockerfile \
+    --label "$REV_LABEL=$SHA" --label "ihr.git-dirty=$DIRTY" -t "$POSTGRES" deploy/docker >/dev/null
 fi
 label_of() {  # label_of <image> <label>: the label's value, or "unknown"
   local v; v="$(docker image inspect -f "{{index .Config.Labels \"$2\"}}" "$1" 2>/dev/null || true)"
@@ -122,12 +131,12 @@ if ((BUILD)) && [[ -n "$ACMEDNS" ]]; then
   docker buildx build -q --load -f deploy/docker/acme-dns.Dockerfile \
     --label "$REV_LABEL=$SHA" --label "ihr.git-dirty=$DIRTY" -t "$ACMEDNS" deploy/docker >/dev/null
 fi
-((BUILD_ONLY)) && { log "Images built: $BACKEND, $FRONTEND${ACMEDNS:+, $ACMEDNS}"; exit 0; }
+((BUILD_ONLY)) && { log "Images built: $BACKEND, $FRONTEND, $POSTGRES${ACMEDNS:+, $ACMEDNS}"; exit 0; }
 
 [[ -f "$ENV_DIR/.env" && -d "$ENV_DIR/secrets" ]] \
   || die "no $ENV_DIR/.env and secrets/: run scripts/staging.sh init <suffix> first"
 [[ -f "$ENV_DIR/.local" ]] && die "$ENV_DIR was made for a proof on this machine (init --local); use init without --local, or --local-proof"
-for img in "$BACKEND" "$FRONTEND" ${ACMEDNS:+"$ACMEDNS"}; do
+for img in "$BACKEND" "$FRONTEND" "$POSTGRES" ${ACMEDNS:+"$ACMEDNS"}; do
   docker image inspect "$img" >/dev/null 2>&1 || die "image $img not found here (drop --no-build)"
   # With --no-build the images may come from another commit: DEPLOYED must not claim HEAD
   rev="$(label_of "$img" "$REV_LABEL")"
@@ -177,6 +186,7 @@ ship_image() {  # ship_image <image>
 }
 ship_image "$BACKEND"
 ship_image "$FRONTEND"
+ship_image "$POSTGRES"
 [[ -z "$ACMEDNS" ]] || ship_image "$ACMEDNS"
 
 # ---- 3. Stack files (tracked files only: never a stray .env or secret) ----------------------
@@ -195,7 +205,9 @@ tar -C "$ENV_DIR" -cf - .env secrets \
       && chmod 600 $REMOTE_ROOT/deploy/staging/.env $REMOTE_ROOT/deploy/staging/secrets/*"
 
 # ---- 5. Start and check, with the same commands as a run on this machine --------------------
-if ((LOCAL_PROOF)); then
+if ((NO_START)); then
+  log "Not starting the stack (--no-start): on the server, scripts/staging.sh restore, then up and smoke"
+elif ((LOCAL_PROOF)); then
   log "Starting the stack on the VM, a synthetic hospital 'alpha', then the smoke checks"
   remote "cd $REMOTE_ROOT && scripts/staging.sh local-proof"
 else
@@ -218,6 +230,7 @@ remote "docker image prune -f >/dev/null"
   echo "backend_image=$BACKEND $(docker image inspect -f '{{.Id}}' "$BACKEND")"
   echo "frontend_image=$FRONTEND $(docker image inspect -f '{{.Id}}' "$FRONTEND")"
   echo "frontend_revision=$(label_of "$FRONTEND" "$REV_LABEL") bundle=$(label_of "$FRONTEND" ihr.bundle)"
+  echo "postgres_image=$POSTGRES $(docker image inspect -f '{{.Id}}' "$POSTGRES") pgbackrest=$(label_of "$POSTGRES" ihr.pgbackrest.version)"
   [[ -z "$ACMEDNS" ]] || echo "acmedns_image=$ACMEDNS $(docker image inspect -f '{{.Id}}' "$ACMEDNS") source=$(label_of "$ACMEDNS" ihr.acme-dns.commit)"
 } | remote "cat > $REMOTE_ROOT/DEPLOYED.tmp && mv $REMOTE_ROOT/DEPLOYED.tmp $REMOTE_ROOT/DEPLOYED && rm -f $REMOTE_ROOT/DEPLOYING"
 log "Deployed $(label_of "$BACKEND" "$REV_LABEL") (dirty: $(label_of "$BACKEND" ihr.git-dirty)) to $HOST; recorded in $REMOTE_ROOT/DEPLOYED"

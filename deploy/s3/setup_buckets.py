@@ -134,6 +134,7 @@ def main():
     p.add_argument("--patient", required=True)
     p.add_argument("--facility", required=True)
     p.add_argument("--anchor", required=True)
+    p.add_argument("--backups", help="a private bucket for pgBackRest (proofs; P1-T8c)")
     p.add_argument("--lock-mode", choices=sorted(STRENGTH), required=True)
     p.add_argument("--lock-days", type=int, required=True)
     p.add_argument("--cors-origin", action="append", required=True)
@@ -147,6 +148,9 @@ def main():
     no_policy(s3, a.patient)
     public_read(s3, a.facility)
     anchor_bucket(s3, a.anchor, a.lock_mode, a.lock_days)
+    if a.backups:
+        ensure_plain(s3, a.backups)
+        no_policy(s3, a.backups)
 
 
 if __name__ == "__main__":

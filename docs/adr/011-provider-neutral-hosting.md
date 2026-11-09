@@ -98,6 +98,10 @@ application change.
   with mock providers only (nothing applied). Gaps found in E2E's provider 2.2.12: bucket
   versioning not set at creation (the module fails until it is on), no object lock, keys or
   CORS (manual), API key in request URLs. AWS with x86 `t3.large` is about ₹6,600 + storage.
+- **Lock mode (P1-T8c, built 2026-11-09):** `IHR_AUDIT_ANCHOR_LOCK_MODE` (in both anchor env
+  files) is COMPLIANCE by default; GOVERNANCE is accepted only when set, and then reported as a
+  note by `ihr_audit_verify` and on the audit status page (`fingerprints` block). Backups:
+  pgBackRest to the backup bucket in the other region, encrypted on the server, 4 weeks.
 - **Certificate (P1-T8b2, built 2026-11-09):** acme-dns runs on the same server (our own image,
   port 53 open in the firewall). The registrar keeps three records, not two: an A record for the
   NS name (`acme-ns.amhcloud.in`; kept outside the delegated zone so no glue record is needed),

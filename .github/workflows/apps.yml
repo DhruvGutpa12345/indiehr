@@ -520,6 +520,42 @@ jobs:
           command -v dig >/dev/null || { sudo apt-get update -q && sudo apt-get install -y -q dnsutils; }
           IHR_ACMEDNS_IMAGE=indiehr-acme-dns:ci scripts/staging.sh acme-proof
 
+  postgres-image:
+    name: Postgres image (pgBackRest build, smoke, Trivy)
+    needs: changes
+    if: needs.changes.outputs.infra == 'true' || github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+
+      - name: Build (deploy/docker/postgres.Dockerfile)
+        run: docker buildx build --load -f deploy/docker/postgres.Dockerfile -t indiehr-postgres:ci deploy/docker
+
+      - name: Smoke (starts as postgres with no capabilities, pgBackRest present, no gosu)
+        run: |
+          set -euo pipefail
+          test "$(docker image inspect indiehr-postgres:ci --format '{{.Config.User}}')" = postgres
+          docker run --rm --entrypoint sh indiehr-postgres:ci -c 'pgbackrest version && ! test -e /usr/local/bin/gosu'
+          docker run -d --name pg --cap-drop ALL --security-opt no-new-privileges:true -e POSTGRES_PASSWORD=ci-only indiehr-postgres:ci
+          for i in $(seq 1 30); do docker exec pg pg_isready -q && break; sleep 2; done
+          test "$(docker exec pg psql -U postgres -Atc 'select current_user')" = postgres
+          docker rm -f pg
+
+      - name: Trivy image scan (fail on fixable HIGH/CRITICAL)
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          scan-type: image
+          image-ref: indiehr-postgres:ci
+          scanners: vuln,secret
+          severity: CRITICAL,HIGH
+          ignore-unfixed: true
+          trivyignores: .trivyignore.yaml
+          exit-code: "1"
+          format: table
+
   infra-tofu:
     name: Infra modules (OpenTofu fmt, validate, mock tests)
     needs: changes

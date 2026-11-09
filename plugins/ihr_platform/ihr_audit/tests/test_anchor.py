@@ -233,6 +233,91 @@ class ReviewRegressionTests(AnchorCase):
             self.assertEqual(fps.problems, [])
             self.assertTrue(fps.notes)
 
+    def test_governance_accepted_only_when_chosen_and_always_reported(self):
+        # ADR-011 §3 (P1-T8c): E2E offers Governance only; accepted when set explicitly
+        store = FakeStore(mode="GOVERNANCE")
+        anchor.write(store)
+        with (
+            override_settings(DEBUG=False),
+            patch.dict(os.environ, {"IHR_AUDIT_ANCHOR_LOCK_MODE": "GOVERNANCE"}),
+        ):
+            fps = anchor.load_all(store)
+            self.assertEqual(fps.problems, [])
+            self.assertTrue(
+                any("accepted by IHR_AUDIT_ANCHOR_LOCK_MODE" in n for n in fps.notes)
+            )
+            status = anchor.lock_status(store)
+            self.assertTrue(status["accepted"])
+            self.assertEqual(status["required_mode"], "GOVERNANCE")
+        with (
+            override_settings(DEBUG=False),
+            patch.dict(os.environ, {"IHR_AUDIT_ANCHOR_LOCK_MODE": "COMPLIANCE"}),
+        ):
+            self.assertFalse(anchor.lock_status(store)["accepted"])
+
+    def test_compliance_always_accepted_and_unknown_modes_refused(self):
+        store = FakeStore(mode="COMPLIANCE")
+        with override_settings(DEBUG=False):
+            for value in ("", "COMPLIANCE", "governance"):
+                with patch.dict(os.environ, {"IHR_AUDIT_ANCHOR_LOCK_MODE": value}):
+                    self.assertTrue(anchor.lock_status(store)["accepted"], value)
+            with patch.dict(os.environ, {"IHR_AUDIT_ANCHOR_LOCK_MODE": "NONE"}):
+                with self.assertRaises(anchor.NotConfiguredError):
+                    anchor.load_all(store)
+                self.assertFalse(anchor.lock_status(store)["configured"])
+
+    def test_writer_container_checks_nothing_it_cannot_read(self):
+        # Celery holds only the writer's key: writing succeeds and is not a failure (P1-T8c)
+        from io import StringIO
+
+        from django.core.management import call_command
+
+        out = StringIO()
+        env = {
+            k: v
+            for k, v in os.environ.items()
+            if not k.startswith("IHR_AUDIT_ANCHOR_READ")
+        }
+        with (
+            override_settings(DEBUG=False),
+            patch.dict(os.environ, env, clear=True),
+            patch.object(anchor, "write", return_value="anchors/x.json"),
+        ):
+            call_command(
+                "ihr_audit_verify", slug=self.hospital.slug, anchor=True, stdout=out
+            )
+        self.assertIn("fingerprint written", out.getvalue())
+        self.assertIn("checked where the reader's key is", out.getvalue())
+
+    def test_a_restored_copy_is_checked_as_of_its_moment(self):
+        # restore-drill --as-of (P1-T8c): fingerprints the storage received after the copy's
+        # moment cannot be in it and are not counted
+        t1 = datetime(2026, 11, 9, 8, 0, tzinfo=UTC)
+        self.store.clock = t1
+        anchor.write(self.store)
+        self.store.clock = t1 + timedelta(hours=1)
+        anchor.write(self.store)
+        every = anchor.load_all(self.store)
+        early = anchor.load_all(self.store, until=t1 + timedelta(minutes=5))
+        self.assertEqual((every.count, early.count), (2, 1))
+        self.assertEqual(
+            anchor.platform_problems(early, now=t1 + timedelta(minutes=5)), []
+        )
+
+    def test_as_of_needs_an_offset_and_never_writes(self):
+        from django.core.management import CommandError, call_command
+
+        for extra in ({}, {"seal": True}, {"anchor": True}):
+            with self.subTest(extra=extra), self.assertRaises(CommandError):
+                naive = (
+                    datetime(2026, 11, 9, 8, 0)
+                    if not extra
+                    else datetime(2026, 11, 9, 8, 0, tzinfo=UTC)
+                )
+                call_command(
+                    "ihr_audit_verify", slug=self.hospital.slug, as_of=naive, **extra
+                )
+
     def test_storage_outage_still_runs_the_local_checks(self):
         from io import StringIO
 

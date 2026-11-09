@@ -33,6 +33,8 @@ services:
       IHR_S3_PATIENT_BUCKET: ${IHR_S3_PATIENT_BUCKET:?}
       IHR_S3_FACILITY_BUCKET: ${IHR_S3_FACILITY_BUCKET:?}
       IHR_S3_ANCHOR_BUCKET: ${IHR_S3_ANCHOR_BUCKET:?}
+      # Backups in a proof (P1-T8c, backup-init --local); a real server's go to another region
+      IHR_S3_BACKUP_BUCKET: ${IHR_S3_BACKUP_BUCKET:-ihr-backups}
       # Presigned URLs are signed for the public address
       IHR_S3_EXTERNAL_URL: https://files.${IHR_TENANT_DOMAIN_SUFFIX:?}
       # Disk cap: SeaweedFS never takes more than this of the server's disk (the database's too)
