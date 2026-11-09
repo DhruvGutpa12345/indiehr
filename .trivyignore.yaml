@@ -15,6 +15,17 @@ misconfigurations:
       Egress is limited to the ports the server uses (80, 443, 587, 53 tcp/udp, 123/udp) but must
       reach any address: Ubuntu mirrors, Docker registries, Let's Encrypt, NIC/NPL time servers,
       the registrar's DNS servers and the mail service have no fixed address list.
+  - id: AWS-0087
+    paths:
+      - "infra/aws/storage.tf"
+    statement: >-
+      Only the facility bucket (aws_s3_bucket_public_access_block.care["facility"]): its policy
+      lets anyone GET a hospital picture, as CARE expects (no listing, no writes, no ACLs). The
+      patient files and backup buckets block public policies (tests in infra/aws/tests).
+  - id: AWS-0093
+    paths:
+      - "infra/aws/storage.tf"
+    statement: Same facility bucket as AWS-0087; every other bucket restricts public buckets.
   - id: AWS-0132
     paths:
       - "infra/aws/storage.tf"
