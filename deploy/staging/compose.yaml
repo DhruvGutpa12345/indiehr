@@ -58,6 +58,9 @@ services:
       - --entrypoints.web.http.redirections.entrypoint.scheme=https
       - --entrypoints.websecure.address=:8443
       - --entrypoints.websecure.http.tls=true
+      # Uploads of up to 100 MB from slow hospital links (P1-T8b3): Traefik's 60 s default for
+      # reading a whole request would cut them off
+      - --entrypoints.websecure.transport.respondingTimeouts.readTimeout=15m
       - --entrypoints.ping.address=:8082
       - --ping.entrypoint=ping
       - --providers.file.filename=/etc/traefik/routes.yml

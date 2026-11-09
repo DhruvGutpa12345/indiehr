@@ -1,7 +1,7 @@
 """Fingerprints of every hospital's audit chain, kept outside the database (P1-T6b, ADR-010).
 
-Every hour one small JSON object is added to a write-once bucket (S3 Object Lock; MinIO in
-dev, an India-region bucket in production). It lists, per hospital, the newest seal's number
+Every hour one small JSON object is added to a write-once bucket (S3 Object Lock; SeaweedFS
+in dev and staging, an India-region bucket in production). It lists, per hospital, the newest seal's number
 and hash. Nobody can change or delete it until its retention ends, not even the platform's
 database owner. A rewritten or shortened chain no longer matches the fingerprints written
 before the change: ``ihr_audit_verify`` checks every hospital against every fingerprint.

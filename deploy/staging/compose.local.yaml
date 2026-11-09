@@ -1,6 +1,7 @@
 # Proof run of the staging stack on this machine (P1-T8a; scripts/staging.sh local-proof).
-# Only 127.0.0.1, Traefik's self-signed certificate, no S3 (file uploads are not exercised),
-# and nothing written to this machine's journal (Docker's own log files, removed with the stack).
+# Only 127.0.0.1, Traefik's self-signed certificate, SeaweedFS for files (compose.s3.yaml), and
+# nothing written to this machine's journal (Docker's own log files, removed with the stack: the
+# entries below, and IHR_LOG_DRIVER=json-file in .env for the overlays' services).
 x-local-logging: &local-logging
   driver: json-file
   options:

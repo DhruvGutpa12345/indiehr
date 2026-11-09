@@ -122,10 +122,59 @@ certificate; `up` notices when acme-dns no longer accepts Traefik's key. Losing
 `traefik-data` also loses the certificate itself: browsers then get Traefik's placeholder (an
 error page) until a new one is issued, so restore it rather than start over.
 
+## Files on the server: SeaweedFS (P1-T8b3)
+
+CARE's uploads and hospital pictures, and the audit fingerprints, can live on the server itself
+in SeaweedFS (free; uses the server's disk, at most `IHR_S3_MAX_GB`, default 20 GB, so it can
+never fill the database's disk). `local-proof` always uses SeaweedFS.
+
+**A provider's bucket instead** (E2E, AWS), now or later, changes settings only:
+- `.env`: remove the `IHR_S3*` lines; set `IHR_STORAGE_ORIGIN` to the provider's address (the
+  web app's CSP allows only that one);
+- `secrets/app.env`: `BUCKET_ENDPOINT` and `BUCKET_EXTERNAL_ENDPOINT` (both the provider's
+  address), `BUCKET_KEY`, `BUCKET_SECRET`, `BUCKET_REGION`, the two bucket names; the buckets need
+  the same CORS (`https://*.<suffix>`) and the facility bucket the public-read policy
+  (`deploy/s3/setup_buckets.py` does both against any S3 endpoint);
+- `secrets/anchor-read.env` / `anchor-write.env`: `IHR_AUDIT_ANCHOR_ENDPOINT` (empty for AWS),
+  `_BUCKET`, the two keys;
+- copy the files across first; keep the old `s3data` volume until its fingerprints are copied
+  or no longer needed (their lock cannot be lifted).
+
+| Command | What it does |
+|---|---|
+| `scripts/staging.sh s3-init` | Once, after `init`: makes the four keys (storage admin, CARE, fingerprint writer, fingerprint reader) in `secrets/s3-gateway.env`, gives CARE and the two fingerprint files their one key each, and adds the settings to `.env` |
+| `scripts/staging.sh up` | Also starts SeaweedFS and sets up the buckets (idempotent) |
+| `scripts/staging.sh s3-check` | 38 live checks: each key does what it must and nothing more, the lock holds against every key including the admin, anonymous and browser access through `files.<suffix>` |
+
+**Buckets:** `FILE_UPLOAD_BUCKET` (private: the browser uploads and downloads with short-lived
+signed links), `FACILITY_S3_BUCKET` (anyone may read a picture, nobody may list or write), and
+`ihr-audit-anchors` (Object Lock **COMPLIANCE for 10 years**: no key, not even the storage admin,
+can delete or shorten a fingerprint; the verifier's production checks pass).
+
+**Addresses:** browsers use `https://files.<suffix>` (covered by the wildcard certificate),
+object paths of the two CARE buckets only; everything else there, including the fingerprint
+bucket and every bucket-level call, goes nowhere. The web app and Celery use `http://s3:8333`
+inside the stack. `files` is a reserved hospital slug.
+
+**Why two containers:** SeaweedFS's own internal parts (master, volume server, filer) have no
+access control, and the filer can delete a locked bucket underneath S3 (tried: one request removed
+it). They listen on 127.0.0.1 only; the S3 gateway shares their network namespace and is the
+only thing other containers can reach.
+
+**Limits to know:** COMPLIANCE stops every S3 key, but not someone with root on the server, who
+can delete the Docker volume. A stolen fingerprint-writer key can fill the bucket with junk that
+no key can remove for 10 years; the disk cap keeps that away from the database, and the clean-up
+is a root-only delete of the junk paths through the filer inside the `s3` container.
+Uploads: up to 100 MB (as CARE's web app allows; Traefik refuses bigger ones) and 15 minutes. That is why production keeps fingerprints in a provider's bucket
+in a separate account (ADR-011 §3); on a staging server this bucket proves the setup. Back up the
+`s3data` volume with the database (P1-T8c).
+
 **Done in P1-T8b1:** the host (`deploy/host/bootstrap.sh`: firewall incl. Docker's published
 ports, key-only SSH, NTP to NIC/NPL, journald one year, pinned Docker) and deploy over SSH.
 
 **Done in P1-T8b2:** the wildcard certificate through our own acme-dns (above).
 
-**Not yet** (P1-T8b3–d): S3 buckets and mail, backups and a restore drill, Keycloak's own
+**Done in P1-T8b3:** files on SeaweedFS (above).
+
+**Not yet** (P1-T8b4–d): cloud modules and mail, backups and a restore drill, Keycloak's own
 hardening.

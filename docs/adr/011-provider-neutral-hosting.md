@@ -70,7 +70,9 @@ change the `.env` values, change one A record at the registrar. No application c
   queues, provider KMS) without a new ADR.
 - OpenTofu state is encrypted (passphrase key) and kept in an Indian S3-compatible bucket.
 - MinIO is not used for new work: its community edition was archived in April 2026. Local
-  object storage moves to SeaweedFS (dev's MinIO container is replaced in P1-T8b).
+  object storage is SeaweedFS (dev and staging since P1-T8b3, `deploy/s3/`). Its master, volume
+  server and filer listen on loopback only: their APIs have no access control and can delete a
+  COMPLIANCE-locked bucket underneath S3 (tried live), so only the S3 gateway is reachable.
 
 ## Costs (staging, per month, before 18% GST)
 

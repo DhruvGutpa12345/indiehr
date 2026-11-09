@@ -25,6 +25,7 @@ RESERVED_SLUGS = {
     "mail",
     "status",
     "public",
+    "files",  # files.<suffix>: object storage behind Traefik (P1-T8b3)
 }
 _ALPHABET = "abcdefghijklmnopqrstuvwxyz0123456789"
 

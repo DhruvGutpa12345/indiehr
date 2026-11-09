@@ -115,8 +115,7 @@ The overrides live in `deploy/dev/care-local.override.yaml`; CARE's files are un
 | http://alpha.localhost:8080 | Web app, Alpha Multispeciality Hospital (synthetic) |
 | http://beta.localhost:8080 | Web app, Beta Children's Hospital (synthetic) |
 | http://alpha.localhost:9000/api/v1/ | API direct (the host picks the hospital) |
-| http://localhost:9001 | File storage console |
-| http://localhost:9100 | File storage S3 API (pre-signed file URLs) |
+| http://localhost:9100 | File storage S3 API (pre-signed file URLs): SeaweedFS since P1-T8b3 (`deploy/s3/`, no web console). Keys in `deploy/dev/s3-gateway.env` (git-ignored); `scripts/care-dev.sh s3-check` tests every key and lock |
 | localhost:5433 / 6380 | Postgres / Redis |
 | http://auth.localhost:8081 | Keycloak (staff sign-in), realm `indiehr`; admin console at `/admin/` |
 | http://alpha.localhost:8082 · http://beta.localhost:8082 | Dev token viewer: signs in through Keycloak and shows the token |

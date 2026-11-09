@@ -67,7 +67,7 @@ Last GitHub Releases are v3.0.0 (backend, 2025-02-12) and v3.0.32 (frontend, 202
 |---|---|---|
 | postgres (upstream compose) | 17-alpine | 2026-11-03 |
 | redis (upstream compose) | 8-alpine | 2026-11-03 |
-| object storage (upstream compose) | pgsty/silo:latest (unpinned upstream; replace per ADR-003 before staging) | 2026-11-03 |
+| object storage (upstream compose) | pgsty/silo:latest (unpinned upstream): still started by CI's upstream `make up` jobs; dev and staging use SeaweedFS since P1-T8b3 (below) | 2026-11-09 |
 | backend dev image `care_local` | built from apps/backend @ upstream.lock, 1.07 GB | 2026-11-03 |
 | actions/upload-artifact | v7.0.2 | 2026-11-03 |
 
@@ -166,3 +166,12 @@ The workstation now runs the same Docker packages (29.9.3; the P0-T2 row above s
 | Let's Encrypt | classic profile: 90-day certificates now, 64 days from 10-02-2027, 45 days from 16-02-2028; limits: 50 certificates per registered domain per week, 5 duplicates per week, 5 failed validations per name per hour | letsencrypt.org/docs/rate-limits, /docs/profiles | 2026-11-09 |
 
 Regenerate the module overlay when Trivy flags the image: in upstream's source at the pinned commit run `go get golang.org/x/crypto@latest golang.org/x/net@latest golang.org/x/text@latest github.com/klauspost/compress@latest && go mod tidy` (Go 1.27.3), check `go test ./...`, copy `go.mod` and `go.sum` to `deploy/docker/acme-dns/`.
+
+## Object storage — P1-T8b3
+
+| Item | Version | Pinned how | Checked |
+|---|---|---|---|
+| SeaweedFS | 4.53 (08-11-2026, latest; Apache-2.0) — `chrislusf/seaweedfs:4.53@sha256:ccad23e18639c8b98cee17e7100b95830a06077b56d8e5b006d6dcf8ec5e94a0`. Object Lock deletion fixes landed through 4.50–4.52 (issues #11333, #12006): stay at 4.52 or later | digest in `deploy/staging/compose.s3.yaml` and `deploy/dev/care-local.override.yaml` | 2026-11-09 |
+| Replaced | upstream CARE's `docker.io/pgsty/silo:latest` (an unpinned MinIO fork) in dev: kept out of every start (`profiles`) | — | 2026-11-09 |
+
+Measured: storage + gateway about 57 MB together in dev (MinIO had a 300 MB limit).

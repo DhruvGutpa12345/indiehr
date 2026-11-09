@@ -34,7 +34,30 @@ http:
       service: noop@internal
       priority: 20
       tls: {}
+    # {{ if env "IHR_FILES_BUCKETS" }}  (P1-T8b3, compose.s3.yaml: our SeaweedFS)
+    # Browsers upload and download CARE's files here with presigned URLs, and read hospital
+    # pictures. Object paths of the two buckets only: no bucket-level calls (create, policy,
+    # lock, listing a bucket's root) and never the fingerprint bucket. "files" is a reserved slug.
+    files:
+      rule: 'Host(`files.{{ env "IHR_TENANT_DOMAIN_SUFFIX" }}`) && PathRegexp(`^/({{ env "IHR_FILES_BUCKETS" }})/.+`)'
+      entryPoints: [websecure]
+      service: s3
+      middlewares: [files-headers, files-size]
+      priority: 30
+      tls: {}
+    files-closed:
+      rule: 'Host(`files.{{ env "IHR_TENANT_DOMAIN_SUFFIX" }}`)'
+      entryPoints: [websecure]
+      service: noop@internal
+      priority: 25
+      tls: {}
+    # {{ end }}
   services:
+    # {{ if env "IHR_FILES_BUCKETS" }}
+    s3:
+      loadBalancer:
+        servers: [{url: "http://s3:8333"}]
+    # {{ end }}
     frontend:
       loadBalancer:
         servers: [{url: "http://frontend:8080"}]
@@ -45,6 +68,18 @@ http:
       loadBalancer:
         servers: [{url: "http://keycloak:8080"}]
   middlewares:
+    # {{ if env "IHR_FILES_BUCKETS" }}
+    files-headers:
+      headers:
+        stsSeconds: 31536000
+        contentTypeNosniff: true
+    # CARE's web app allows files up to 100 MB; a signed upload link itself has no size limit,
+    # so the limit is enforced here (bodies over 1 MB are buffered to Traefik's temporary disk)
+    files-size:
+      buffering:
+        maxRequestBodyBytes: 110000000
+        memRequestBodyBytes: 1048576
+    # {{ end }}
     secure-headers:
       headers:
         stsSeconds: 31536000

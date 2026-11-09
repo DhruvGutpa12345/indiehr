@@ -181,7 +181,7 @@ ship_image "$FRONTEND"
 
 # ---- 3. Stack files (tracked files only: never a stray .env or secret) ----------------------
 log "Sending the stack files to $REMOTE_ROOT"
-git ls-files -z deploy/staging deploy/keycloak/password-blocklist \
+git ls-files -z deploy/staging deploy/s3 deploy/keycloak/password-blocklist \
     deploy/docker/frontend-nginx.conf.template scripts/staging.sh \
   | tar --null -T - -czf - \
   | remote "tar -C $REMOTE_ROOT --no-same-owner -xzf -"

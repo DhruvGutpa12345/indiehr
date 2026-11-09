@@ -146,7 +146,7 @@ What is recorded:
 - **Two credentials,** read from the environment, never Django settings:
   - Celery's may only add objects;
   - the verifier's may only read and list.
-  - Neither can delete or change retention (checked live on dev MinIO).
+  - Neither can delete or change retention (checked live on dev MinIO, and since P1-T8b3 on SeaweedFS by `deploy/s3/check_keys.py`: `scripts/care-dev.sh s3-check`, `scripts/staging.sh s3-check`).
 - **What `ihr_audit_verify` checks:** every hospital against every fingerprint, or from `--since` for frequent runs. It reports:
   - a seal that differs (rewritten) or is missing (cut);
   - a hospital dropped from newer fingerprints;
@@ -160,7 +160,7 @@ What is recorded:
   - A storage outage is reported while the local checks still run.
 - **Buckets:**
   - **Production (P1-T8):** an India-region bucket in COMPLIANCE mode for 10 years, in an account the database admins do not hold. *(Owner, 2026-11-08, ADR-011 §3: the bucket lives with the server's provider; on E2E that is Governance mode, accepted with a separate account and an explicit `IHR_AUDIT_ANCHOR_LOCK_MODE=GOVERNANCE`.)*
-  - **Dev:** `scripts/care-dev.sh audit-anchors` makes a GOVERNANCE-mode bucket (30 days) in the local MinIO. Its root keys are in the dev containers, so dev does not show the guarantee; the checks say so.
+  - **Dev:** `scripts/care-dev.sh audit-anchors` makes a GOVERNANCE-mode bucket (30 days) in the local SeaweedFS (MinIO until P1-T8b3). Its root keys are in the dev containers, so dev does not show the guarantee; the checks say so.
 
 ## What this does not protect against (yet)
 

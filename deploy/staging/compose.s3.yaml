@@ -1,0 +1,96 @@
+# Object storage on the server itself: SeaweedFS (P1-T8b3, ADR-011). Added by scripts/staging.sh
+# when .env sets IHR_S3=local (scripts/staging.sh s3-init); never run directly. With a provider's
+# bucket instead (E2E, AWS), leave IHR_S3 unset and put its endpoint and keys in secrets/app.env.
+#
+# Holds CARE's two file buckets and the audit fingerprint bucket (Object Lock, COMPLIANCE).
+# - `s3` (deploy/s3/start.sh): master, volume server and filer listening on 127.0.0.1 only (their
+#   APIs have no access control and sit underneath S3's locks: a recursive DELETE on the filer
+#   removes a locked bucket), plus the S3 gateway, the only part others can reach.
+#   Keys: secrets/s3-gateway.env (every identity; deploy/s3/s3.template.json says what each may do).
+# - Browsers reach it through Traefik at files.<suffix>, object paths of CARE's two buckets only
+#   (traefik/routes.yml): no bucket-level calls and no fingerprint bucket from outside.
+# - The web app and Celery reach it as http://s3:8333 on the internal network.
+x-logging: &logging
+  driver: ${IHR_LOG_DRIVER:-journald}
+  options:
+    tag: "indiehr/{{.Name}}"
+
+services:
+  # One container (deploy/s3/start.sh): storage on 127.0.0.1 only, and the S3 gateway. If either
+  # process stops, the container stops and Docker restarts both together.
+  s3:
+    image: chrislusf/seaweedfs:4.53@sha256:ccad23e18639c8b98cee17e7100b95830a06077b56d8e5b006d6dcf8ec5e94a0
+    user: "1000:1000"  # the image's "seaweed" user, who owns /data
+    read_only: true
+    cap_drop: ["ALL"]
+    security_opt: ["no-new-privileges:true"]
+    restart: unless-stopped
+    logging: *logging
+    entrypoint: ["/bin/sh", "/etc/seaweedfs/start.sh"]
+    env_file:
+      - secrets/s3-gateway.env
+    environment:
+      IHR_S3_PATIENT_BUCKET: ${IHR_S3_PATIENT_BUCKET:?}
+      IHR_S3_FACILITY_BUCKET: ${IHR_S3_FACILITY_BUCKET:?}
+      IHR_S3_ANCHOR_BUCKET: ${IHR_S3_ANCHOR_BUCKET:?}
+      # Presigned URLs are signed for the public address
+      IHR_S3_EXTERNAL_URL: https://files.${IHR_TENANT_DOMAIN_SUFFIX:?}
+      # Disk cap: SeaweedFS never takes more than this of the server's disk (the database's too)
+      IHR_S3_MAX_GB: ${IHR_S3_MAX_GB:-20}
+    volumes:
+      - s3data:/data
+      - ../s3/start.sh:/etc/seaweedfs/start.sh:ro
+      - ../s3/s3.template.json:/etc/seaweedfs/s3.template.json:ro
+    tmpfs:
+      - /tmp:uid=1000,gid=1000,mode=0700,size=16m
+    # internal: the web app and Celery; files: Traefik and the one-off s3-tool
+    networks:
+      internal: {}
+      files: {}
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q -O /dev/null http://127.0.0.1:8333/healthz && wget -q -O /dev/null http://127.0.0.1:8888/healthz"]
+      interval: 15s
+      timeout: 5s
+      retries: 12
+      start_period: 30s
+    mem_limit: ${IHR_S3_MEMORY:-448m}
+
+  # One-off (scripts/staging.sh): bucket setup and the key checks, with the backend image's
+  # boto3. Keys come through `-e NAME` from secrets/s3-gateway.env, never on a command line.
+  # On the files network, where files.<suffix> is Traefik (alias below): the checks also go
+  # the way a browser does.
+  s3-tool:
+    image: ${IHR_BACKEND_IMAGE:?set IHR_BACKEND_IMAGE}
+    profiles: ["admin"]
+    security_opt: ["no-new-privileges:true"]
+    cap_drop: ["ALL"]
+    logging: *logging
+    entrypoint: ["python"]
+    volumes:
+      - ../s3:/ihr-s3:ro
+    networks: [files]
+
+  traefik:
+    environment:
+      # routes.yml adds the files.<suffix> router when this is set
+      IHR_FILES_BUCKETS: ${IHR_S3_PATIENT_BUCKET:?}|${IHR_S3_FACILITY_BUCKET:?}
+    networks:
+      files:
+        aliases: ["files.${IHR_TENANT_DOMAIN_SUFFIX:?}"]
+
+  backend:
+    depends_on:
+      s3:
+        condition: service_healthy
+  celery-worker:
+    depends_on:
+      s3:
+        condition: service_healthy
+
+networks:
+  # SeaweedFS's gateway, Traefik and the one-off tool; no way out
+  files:
+    internal: true
+
+volumes:
+  s3data:

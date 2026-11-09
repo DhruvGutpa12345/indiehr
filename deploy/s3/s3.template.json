@@ -1,0 +1,37 @@
+{
+  "identities": [
+    {
+      "name": "ihr-s3-admin",
+      "credentials": [{"accessKey": "@ADMIN_KEY@", "secretKey": "@ADMIN_SECRET@"}],
+      "actions": ["Admin", "Read", "Write", "List", "Tagging"]
+    },
+    {
+      "name": "ihr-care",
+      "credentials": [{"accessKey": "@CARE_KEY@", "secretKey": "@CARE_SECRET@"}],
+      "actions": [
+        "Read:@PATIENT_BUCKET@", "Write:@PATIENT_BUCKET@", "List:@PATIENT_BUCKET@",
+        "Read:@FACILITY_BUCKET@", "Write:@FACILITY_BUCKET@", "List:@FACILITY_BUCKET@"
+      ]
+    },
+    {
+      "name": "ihr-anchor-writer",
+      "credentials": [{"accessKey": "@ANCHOR_WRITE_KEY@", "secretKey": "@ANCHOR_WRITE_SECRET@"}],
+      "policyNames": ["ihr-anchor-write"]
+    },
+    {
+      "name": "ihr-anchor-reader",
+      "credentials": [{"accessKey": "@ANCHOR_READ_KEY@", "secretKey": "@ANCHOR_READ_SECRET@"}],
+      "policyNames": ["ihr-anchor-read"]
+    }
+  ],
+  "policies": [
+    {
+      "name": "ihr-anchor-write",
+      "content": "{\"Version\":\"2012-10-17\",\"Statement\":[{\"Effect\":\"Allow\",\"Action\":[\"s3:PutObject\"],\"Resource\":[\"arn:aws:s3:::@ANCHOR_BUCKET@/anchors/*\"]}]}"
+    },
+    {
+      "name": "ihr-anchor-read",
+      "content": "{\"Version\":\"2012-10-17\",\"Statement\":[{\"Effect\":\"Allow\",\"Action\":[\"s3:GetObject\",\"s3:GetObjectVersion\"],\"Resource\":[\"arn:aws:s3:::@ANCHOR_BUCKET@/anchors/*\"]},{\"Effect\":\"Allow\",\"Action\":[\"s3:ListBucket\",\"s3:ListBucketVersions\",\"s3:GetBucketObjectLockConfiguration\",\"s3:GetBucketVersioning\"],\"Resource\":[\"arn:aws:s3:::@ANCHOR_BUCKET@\"]}]}"
+    }
+  ]
+}

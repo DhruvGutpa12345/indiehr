@@ -16,6 +16,8 @@
 #   scripts/staging.sh acme-retry                ask for the certificate again (after DNS changes)
 #   scripts/staging.sh acme-new-cert             drop the stored certificate (after changing the CA)
 #   scripts/staging.sh acme-proof [--keep]       certificate proof with Pebble, alone, on this machine
+#   scripts/staging.sh s3-init                   files on the server itself: SeaweedFS (P1-T8b3)
+#   scripts/staging.sh s3-check                  live checks of its keys, locks and public paths
 #
 # <suffix> is where hospitals live: <slug>.<suffix>, e.g. app.example.in (Q-T11).
 # --vm: a proof on a throwaway local VM (scripts/local-vm.sh): small memory, all addresses,
@@ -42,6 +44,7 @@ compose() {  # the file list is worked out on each call: init may have just made
     files+=(-f "$DIR/compose.acme.yaml")
     [[ "$acme" == pebble ]] && files+=(-f "$DIR/compose.pebble.yaml")
   fi
+  [[ "$(env_get IHR_S3)" == local ]] && files+=(-f "$DIR/compose.s3.yaml")
   docker compose --project-directory "$DIR" ${IHR_PROJECT:+-p "$IHR_PROJECT"} "${files[@]}" "$@"
 }
 LOCAL_SUFFIX="app.ihr-proof.in"  # local proof only; resolved to 127.0.0.1 by curl --resolve
@@ -90,8 +93,10 @@ init() {
     echo "IHR_POSTGRES_DIGEST=$postgres"
     echo "IHR_REDIS_DIGEST=$redis"
     if [[ "$local_run" == "--local" ]]; then
-      echo "# Proof run on this machine: only 127.0.0.1, small memory"
+      echo "# Proof run on this machine: only 127.0.0.1, small memory, Docker's own log files"
+      echo "# (removed with the stack) instead of this machine's journal"
       echo "IHR_BIND=127.0.0.1"
+      echo "IHR_LOG_DRIVER=json-file"
       echo "IHR_PG_SHARED_BUFFERS=128MB"
       echo "IHR_PG_MEMORY=512m"
       echo "IHR_GUNICORN_WORKERS=1"
@@ -147,6 +152,9 @@ EOF
   done
   mv "$work/secrets" "$OUT/secrets"
   mv "$work/.env" "$OUT/.env"
+  # Removed here too, not only by the EXIT trap: a later step in the same run may replace that
+  # trap (acme_register sets its own)
+  rm -rf "$work"; INIT_WORK=""
   [[ "$local_run" == "--local" ]] && touch "$OUT/.local"
   echo "Wrote $OUT/.env and secrets/ (mode 600)."
 }
@@ -171,6 +179,7 @@ up() {
   [[ -f "$DIR/.env" ]] || { echo "run: scripts/staging.sh init <suffix>" >&2; exit 1; }
   compose up -d --wait db redis
   [[ -z "$(env_get IHR_ACME)" ]] || acme_up
+  [[ "$(env_get IHR_S3)" != local ]] || s3_up
   compose up -d --wait traefik keycloak backend celery-worker celery-beat frontend
   admin_manage ihr_keycloak_sync --realm --all
   worker_secret onboarding provisioner.env IHR_KEYCLOAK_ONBOARDING_SECRET
@@ -190,7 +199,7 @@ smoke() {  # every public address through Traefik, as a browser would reach it
   [[ -z "$resolve" && "$bind" == "127.0.0.1" ]] && resolve=127.0.0.1
   local curl_args=(-sk --max-time 20)
   if [[ -n "$resolve" ]]; then
-    for host in "$suffix" "alpha.$suffix" "console.$suffix" "auth.$suffix" "nope.$suffix"; do
+    for host in "$suffix" "alpha.$suffix" "console.$suffix" "auth.$suffix" "nope.$suffix" "files.$suffix"; do
       curl_args+=(--resolve "$host:$port:$resolve" --resolve "$host:${IHR_HTTP_PORT:-80}:$resolve")
     done
   fi
@@ -214,6 +223,12 @@ smoke() {  # every public address through Traefik, as a browser would reach it
   issuer="$(curl "${curl_args[@]}" "https://auth.$suffix:$port/realms/indiehr/.well-known/openid-configuration" \
     | python3 -c 'import json,sys;print(json.load(sys.stdin).get("issuer",""))' 2>/dev/null || true)"
   check "token issuer is the public https address" "https://auth.$suffix/realms/indiehr" "$issuer"
+  if [[ "$(env_get IHR_S3)" == local ]]; then
+    check "files: nothing at the root" 418 "$(code "https://files.$suffix:$port/")"
+    check "files: fingerprint bucket not public" 418 "$(code "https://files.$suffix:$port/$(env_get IHR_S3_ANCHOR_BUCKET)/anchors/x")"
+    check "files: patient files need a signature" 403 "$(code "https://files.$suffix:$port/$(env_get IHR_S3_PATIENT_BUCKET)/x")"
+    check "files: hospital pictures are public (none here yet)" 404 "$(code "https://files.$suffix:$port/$(env_get IHR_S3_FACILITY_BUCKET)/no-such-picture.png")"
+  fi
   check "unknown hospital address: no branding" 404 "$(code "https://nope.$suffix:$port/api/ihr/bootstrap/")"
   check "bare suffix not served" 404 "$(code "https://$suffix:$port/")"
   check "HSTS on the console" "max-age=31536000" "$(header "https://console.$suffix:$port/ops/" strict-transport-security)"
@@ -235,6 +250,84 @@ smoke() {  # every public address through Traefik, as a browser would reach it
     echo "skip  hospital checks: no hospital 'alpha' yet (scripts/staging.sh manage ihr_create_tenant ...)"
   fi
   return "$fail"
+}
+
+# ---- Object storage on the server: SeaweedFS (P1-T8b3, compose.s3.yaml) ------------------------
+S3_ANCHOR_BUCKET_DEFAULT="ihr-audit-anchors"
+BUCKET_RE='^[a-z0-9][a-z0-9-]{1,61}[a-z0-9]$'
+
+s3_init() {  # SeaweedFS keys into secrets/, CARE's and the fingerprint keys into their env files
+  local envf="$OUT/.env" sec="$OUT/secrets" suffix patient facility k tmp
+  [[ -f "$envf" && -d "$sec" ]] || die "no $envf / secrets: run scripts/staging.sh init <suffix> first"
+  grep -q '^IHR_S3=' "$envf" && die "$envf already has object storage settings (IHR_S3=...)"
+  suffix="$(sed -n 's/^IHR_TENANT_DOMAIN_SUFFIX=//p' "$envf" | tail -1)"
+  patient="$(sed -n 's/^FILE_UPLOAD_BUCKET=//p' "$sec/app.env" | tail -1)"
+  facility="$(sed -n 's/^FACILITY_S3_BUCKET=//p' "$sec/app.env" | tail -1)"
+  [[ "$patient" =~ $BUCKET_RE && "$facility" =~ $BUCKET_RE && "$patient" != "$facility" ]] \
+    || die "FILE_UPLOAD_BUCKET / FACILITY_S3_BUCKET in secrets/app.env are not two bucket names"
+  hex() { python3 -c "import secrets;print(secrets.token_hex($1))"; }
+  declare -A key
+  for k in ADMIN CARE ANCHOR_WRITE ANCHOR_READ; do key[${k}_KEY]="ihr$(hex 10)"; key[${k}_SECRET]="$(hex 20)"; done
+  local SECRETS_TARGET="$sec"
+  {
+    echo "# SeaweedFS identities (P1-T8b3), written by scripts/staging.sh s3-init; the s3 container only."
+    for k in ADMIN CARE ANCHOR_WRITE ANCHOR_READ; do
+      echo "IHR_S3_${k}_KEY=${key[${k}_KEY]}"
+      echo "IHR_S3_${k}_SECRET=${key[${k}_SECRET]}"
+    done
+  } | write_secret s3-gateway.env
+  # CARE: its own key, the internal address, and the public one for presigned URLs
+  tmp="$(grep -Ev '^(BUCKET_KEY|BUCKET_SECRET|BUCKET_ENDPOINT|BUCKET_EXTERNAL_ENDPOINT)=' "$sec/app.env"
+    echo "# Object storage on this server (P1-T8b3, scripts/staging.sh s3-init)"
+    echo "BUCKET_ENDPOINT=http://s3:8333"
+    echo "BUCKET_EXTERNAL_ENDPOINT=https://files.$suffix"
+    echo "BUCKET_KEY=${key[CARE_KEY]}"
+    echo "BUCKET_SECRET=${key[CARE_SECRET]}")"
+  printf '%s\n' "$tmp" | write_secret app.env.new
+  mv "$sec/app.env.new" "$sec/app.env"
+  printf 'IHR_AUDIT_ANCHOR_ENDPOINT=http://s3:8333\nIHR_AUDIT_ANCHOR_BUCKET=%s\nIHR_AUDIT_ANCHOR_WRITE_KEY=%s\nIHR_AUDIT_ANCHOR_WRITE_SECRET=%s\n' \
+    "$S3_ANCHOR_BUCKET_DEFAULT" "${key[ANCHOR_WRITE_KEY]}" "${key[ANCHOR_WRITE_SECRET]}" | write_secret anchor-write.env
+  printf 'IHR_AUDIT_ANCHOR_ENDPOINT=http://s3:8333\nIHR_AUDIT_ANCHOR_BUCKET=%s\nIHR_AUDIT_ANCHOR_READ_KEY=%s\nIHR_AUDIT_ANCHOR_READ_SECRET=%s\n' \
+    "$S3_ANCHOR_BUCKET_DEFAULT" "${key[ANCHOR_READ_KEY]}" "${key[ANCHOR_READ_SECRET]}" | write_secret anchor-read.env
+  {
+    echo "# Object storage on this server: SeaweedFS (P1-T8b3; scripts/staging.sh s3-init)"
+    echo "IHR_S3=local"
+    echo "IHR_S3_PATIENT_BUCKET=$patient"
+    echo "IHR_S3_FACILITY_BUCKET=$facility"
+    echo "IHR_S3_ANCHOR_BUCKET=$S3_ANCHOR_BUCKET_DEFAULT"
+    echo "# Audit fingerprints: kept 10 years, removable by nobody through S3 (ADR-010 §9)"
+    echo "IHR_S3_LOCK_MODE=COMPLIANCE"
+    echo "IHR_S3_LOCK_DAYS=3650"
+    echo "IHR_STORAGE_ORIGIN=https://files.$suffix"
+  } >> "$envf"
+  echo "Object storage settings added to $envf; keys in $sec (mode 600)."
+}
+
+s3_tool() {  # s3_tool <script> <args>: a deploy/s3 script with the S3_* keys through the environment
+  local script="$1" k v envs=()
+  shift
+  for k in ADMIN CARE ANCHOR_WRITE ANCHOR_READ; do
+    for v in KEY SECRET; do
+      export "S3_${k}_${v}=$(sed -n "s/^IHR_S3_${k}_${v}=//p" "$SECRETS/s3-gateway.env")"
+      envs+=(-e "S3_${k}_${v}")
+    done
+  done
+  compose --profile admin run --rm --no-deps -T "${envs[@]}" s3-tool "/ihr-s3/$script" \
+    --endpoint http://s3:8333 --patient "$(env_get IHR_S3_PATIENT_BUCKET)" \
+    --facility "$(env_get IHR_S3_FACILITY_BUCKET)" --anchor "$(env_get IHR_S3_ANCHOR_BUCKET)" "$@"
+}
+
+s3_up() {  # SeaweedFS, then its buckets (idempotent)
+  compose up -d --wait s3
+  s3_tool setup_buckets.py --lock-mode "$(env_get IHR_S3_LOCK_MODE)" --lock-days "$(env_get IHR_S3_LOCK_DAYS)" \
+    --cors-origin "https://*.$(env_get IHR_TENANT_DOMAIN_SUFFIX)"
+}
+
+s3_check() {  # every key and lock, and the public paths through Traefik (files.<suffix>)
+  local suffix; suffix="$(env_get IHR_TENANT_DOMAIN_SUFFIX)"
+  # files.<suffix> is Traefik on the files network (port 8443 inside); its certificate is
+  # checked by `cert` and smoke, so these requests skip TLS verification
+  s3_tool check_keys.py --public-endpoint "https://files.$suffix:8443" --origin "https://alpha.$suffix" --insecure --size-limit
 }
 
 # ---- Wildcard certificate (P1-T8b2, compose.acme.yaml) ---------------------------------------
@@ -693,9 +786,13 @@ case "${1:-}" in
   acme-retry) compose restart traefik && cert --wait 300 ;;
   acme-proof) acme_proof "${@:2}" ;;
   acme-proof-run) acme_proof_run ;;
+  s3-init) s3_init ;;
+  s3-check) s3_check ;;
   local-proof)
     [[ -f "$DIR/.env" ]] || IHR_FRONTEND_IMAGE="${IHR_FRONTEND_IMAGE:-indiehr-frontend:local}" \
       init "$LOCAL_SUFFIX" --local
+    # A proof keeps its files on SeaweedFS too (P1-T8b3)
+    grep -q '^IHR_S3=' "$DIR/.env" || s3_init
     up
     # A synthetic hospital for the address checks (no Keycloak client: sign-in is not tested)
     compose --profile admin run --rm --no-deps -T admin python manage.py ihr_create_tenant \
@@ -703,5 +800,5 @@ case "${1:-}" in
       >/dev/null 2>&1 || true
     smoke
     ;;
-  *) sed -n '5,22p' "$0"; exit 1 ;;
+  *) sed -n '5,24p' "$0"; exit 1 ;;
 esac
