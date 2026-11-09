@@ -5,6 +5,11 @@
 #
 # Commit 43b0aca (08-06-2026) is the v2.0.2 release plus upstream's later fixes that bound the
 # DNS read path and index the TXT table (both unreleased so far).
+#
+# acme-dns/go.mod + go.sum replace upstream's: only golang.org/x/{crypto,net,text} and
+# github.com/klauspost/compress (test-only, but the repository scan reads go.mod) are raised to
+# releases without known HIGH/CRITICAL flaws (Trivy gate), with what they pull in. How to
+# regenerate them: docs/VERSIONS.md ("Wildcard certificate").
 ARG ACMEDNS_COMMIT=43b0acaacef24d1058d70ed584d6b7275a8344ed
 
 FROM golang:1.27.3-alpine3.23@sha256:5d5113301ffcac84e2bfb20c42648803fecaea6789c89bb9b66884e18cbb30a7 AS build
@@ -12,7 +17,7 @@ ARG ACMEDNS_COMMIT
 ADD --checksum=sha256:7faa984517d6f0a0c356532519a9eb4b152f8614daa35a1d44c851d667da7206 \
     https://github.com/acme-dns/acme-dns/archive/${ACMEDNS_COMMIT}.tar.gz /src.tar.gz
 WORKDIR /src
-# Modules are checked against upstream's go.sum (GOFLAGS=-mod=readonly is Go's default);
+# Modules are checked against our go.sum (GOFLAGS=-mod=readonly is Go's default);
 # GOTOOLCHAIN=local: never download another Go toolchain during the build. Upstream's tests run
 # against our module versions; one is skipped because it needs a non-root user (builds run as root).
 ENV CGO_ENABLED=0 GOTOOLCHAIN=local GOFLAGS=-trimpath
