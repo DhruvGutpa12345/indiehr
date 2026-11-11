@@ -198,4 +198,4 @@ machine only). Add other platforms with `tofu providers lock -platform=…` when
 | Item | Version | Pinned how | Checked |
 |---|---|---|---|
 | pgBackRest | 2.60.0 (18-10-2026; Alpine packages 2.58) built from the release tarball (tag commit 2e1c4f2b) | `ADD --checksum=sha256:7409309d…22d0` in `deploy/docker/postgres.Dockerfile` | 2026-11-09 |
-| Postgres image | `postgres:18.6-alpine3.23@sha256:f1031bf693d8d60b0a0380c51a3510607c7a93c7c1d18bf7af94a3a8dbeb40b8` (re-pinned 2026-11-11) + pgBackRest; `krb5-libs` ≥ 1.22.3-r0 installed on top (the base still has 1.22.1-r0: 18 HIGH advisories); `gosu` removed (old Go, 26 CVEs; never needed as the image runs as postgres) | digest | 2026-11-09 |
+| Postgres image | `postgres:18.6-alpine3.23@sha256:f1031bf693d8d60b0a0380c51a3510607c7a93c7c1d18bf7af94a3a8dbeb40b8` (re-pinned 2026-11-11) + pgBackRest; Alpine's pending security updates applied at build (`apk upgrade`: the base lacked fixed `krb5-libs` and `libxslt`, 20 HIGH advisories on 2026-11-11); `gosu` removed (old Go, 26 CVEs; never needed as the image runs as postgres) | digest | 2026-11-09 |

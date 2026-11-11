@@ -23,10 +23,11 @@ FROM postgres:18.6-alpine3.23@sha256:f1031bf693d8d60b0a0380c51a3510607c7a93c7c1d
 ARG PGBACKREST_VERSION
 LABEL org.opencontainers.image.title="indiehr-postgres" \
       ihr.pgbackrest.version="${PGBACKREST_VERSION}"
-# pgBackRest's runtime libraries (libpq is the image's own). krb5-libs at least 1.22.3-r0:
-# the base image still has 1.22.1-r0 (18 HIGH advisories, 2026-11-11); the build fails if the
-# fixed package is not available
-RUN apk add --no-cache libxml2 lz4-libs zstd-libs zlib libbz2 yaml 'krb5-libs>=1.22.3-r0' \
+# Alpine 3.23's pending fixes first (the official image lags: on 2026-11-11 krb5-libs and
+# libxslt had fixed HIGH advisories it did not carry yet; the stable branch only gets patch
+# releases), then pgBackRest's runtime libraries (libpq is the image's own)
+RUN apk upgrade --no-cache \
+ && apk add --no-cache libxml2 lz4-libs zstd-libs zlib libbz2 yaml \
  && install -d -o postgres -g postgres -m 750 /var/lib/pgbackrest /var/spool/pgbackrest /tmp/pgbackrest
 COPY --from=build /src/build/src/pgbackrest /usr/local/bin/pgbackrest
 # archive_command (database) and the schedule (backup service), P1-T8c; the spool belongs to
