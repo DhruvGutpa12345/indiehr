@@ -1,0 +1,50 @@
+# blackbox_exporter's probes (P1-T9a; deploy/monitoring/prometheus/prometheus.yml says what each
+# probe is pointed at). Probes never follow redirects and never send credentials.
+modules:
+  # A public address through Traefik, with its certificate checked as a browser would
+  https_2xx:
+    prober: http
+    timeout: 10s
+    http:
+      method: GET
+      valid_status_codes: [200]
+      fail_if_not_ssl: true
+      follow_redirects: false
+      preferred_ip_protocol: ip4
+      ip_protocol_fallback: false
+  # The same while Traefik serves its own placeholder certificate (no acme-init yet, or a proof
+  # on this machine): the expiry date is still read, the issuer is not checked
+  https_2xx_selfsigned:
+    prober: http
+    timeout: 10s
+    http:
+      method: GET
+      valid_status_codes: [200]
+      fail_if_not_ssl: true
+      follow_redirects: false
+      preferred_ip_protocol: ip4
+      ip_protocol_fallback: false
+      tls_config:
+        insecure_skip_verify: true
+  # A health address inside the stack (plain HTTP on the internal network)
+  http_2xx:
+    prober: http
+    timeout: 10s
+    http:
+      method: GET
+      valid_status_codes: [200]
+      follow_redirects: false
+      preferred_ip_protocol: ip4
+      ip_protocol_fallback: false
+  # acme-dns answers at all: a name it does not hold, so any proper reply counts (it answers
+  # NXDOMAIN outside its own zone). Works for every site without knowing its zone.
+  dns_alive:
+    prober: dns
+    timeout: 5s
+    dns:
+      query_name: ihr-probe.invalid
+      query_type: A
+      transport_protocol: udp
+      preferred_ip_protocol: ip4
+      ip_protocol_fallback: false
+      valid_rcodes: [NOERROR, NXDOMAIN, REFUSED]

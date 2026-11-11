@@ -33,6 +33,13 @@
 #   scripts/staging.sh backup-status | backup-now [full|diff]
 #   scripts/staging.sh restore-drill [--target "YYYY-MM-DD HH:MM:SS+05:30"] [--keep | --clean]
 #   scripts/staging.sh restore [--target ...]   a lost server: into this stack's empty volume
+#   scripts/staging.sh monitoring-init <alert-recipient> [--from A] | --test
+#                                                metrics and e-mail alerts (P1-T9a); the alerts'
+#                                                ZeptoMail token and dead-man ping URL on stdin
+#   scripts/staging.sh monitoring-deadman        set the dead-man switch's ping URL later (stdin)
+#   scripts/staging.sh alerts | alert-test       alerts held now | one test alert, mailed now
+#   scripts/staging.sh ops-tunnel [ihr@<server>] Prometheus and Alertmanager on 127.0.0.1 (SSH)
+#   scripts/staging.sh monitoring-textfile [--keys]   the host timer's run (deploy/host/bootstrap.sh)
 #
 # <suffix> is where hospitals live: <slug>.<suffix>, e.g. app.example.in (Q-T11).
 # --vm: a proof on a throwaway local VM (scripts/local-vm.sh): small memory, all addresses,
@@ -65,6 +72,14 @@ compose() {  # the file list is worked out on each call: init may have just made
   [[ "$(env_get IHR_S3)" == local ]] && files+=(-f "$DIR/compose.s3.yaml")
   [[ "$(env_get IHR_MAIL)" == test ]] && files+=(-f "$DIR/compose.mailtest.yaml")
   [[ -n "$(env_get IHR_BACKUP)" ]] && files+=(-f "$DIR/compose.backup.yaml")
+  local mon; mon="$(env_get IHR_MONITORING)"
+  if [[ -n "$mon" ]]; then
+    files+=(-f "$DIR/compose.monitoring.yaml")
+    [[ "$mon" == test ]] && files+=(-f "$DIR/compose.monitoring.test.yaml")
+  fi
+  # Alertmanager runs as the user that owns secrets/ (it reads its token from there, mode 600)
+  export IHR_SECRETS_UID IHR_SECRETS_GID
+  IHR_SECRETS_UID="$(id -u)"; IHR_SECRETS_GID="$(id -g)"
   docker compose --project-directory "$DIR" ${IHR_PROJECT:+-p "$IHR_PROJECT"} "${files[@]}" "$@"
 }
 LOCAL_SUFFIX="app.ihr-proof.in"  # local proof only; resolved to 127.0.0.1 by curl --resolve
@@ -247,6 +262,8 @@ up() {  # up [--new-database]: the flag only where an empty database is really m
   # The workers' Keycloak secrets of before P1-T8d2: replaced by the sync above, so dead;
   # their files go too
   rm -f "$SECRETS/provisioner.env" "$SECRETS/staff-worker.env"
+  # Metrics and alerts last (P1-T9a): they watch what is already running
+  [[ -z "$(env_get IHR_MONITORING)" ]] || monitoring_up
   compose ps --format 'table {{.Service}}\t{{.Status}}'
 }
 
@@ -274,6 +291,9 @@ db_guard() {  # db_guard <new 0|1>: never an empty database where one is to be r
   fi
 }
 
+# Restored copies log like the live database (compose.yaml, P1-T9a): no query values
+PG_LOG_PRIVACY=(-c log_min_duration_statement=-1 -c log_min_error_statement=panic -c log_error_verbosity=terse)
+
 # The database volume's state (PGDATA: compose.yaml): "restoring" while a real restore is unfinished
 PG_STATE='if [ -e /var/lib/postgresql/.ihr-restore-incomplete ]; then echo restoring; elif [ -e /var/lib/postgresql/18/docker/PG_VERSION ]; then echo db; else echo empty; fi'
 
@@ -299,7 +319,7 @@ smoke() {  # every public address through Traefik, as a browser would reach it
   [[ -z "$resolve" && "$bind" == "127.0.0.1" ]] && resolve=127.0.0.1
   local curl_args=(-sk --max-time 20)
   if [[ -n "$resolve" ]]; then
-    for host in "$suffix" "alpha.$suffix" "console.$suffix" "auth.$suffix" "nope.$suffix" "files.$suffix"; do
+    for host in "$suffix" "alpha.$suffix" "console.$suffix" "auth.$suffix" "nope.$suffix" "files.$suffix" "status.$suffix" "ops.$suffix"; do
       curl_args+=(--resolve "$host:$port:$resolve" --resolve "$host:${IHR_HTTP_PORT:-80}:$resolve")
     done
   fi
@@ -349,6 +369,11 @@ smoke() {  # every public address through Traefik, as a browser would reach it
     if [[ "$bh" == starting ]]; then echo "skip  backups: the backup service is still starting"
     else check "backups healthy (WAL pushed, check passing, backup within 26 h)" healthy "$bh"; fi
   fi
+  # The outside uptime check's address (P1-T9a): Traefik's ping there, nothing else; ops. closed
+  check "status address for the uptime check" "200 OK" "$(curl "${curl_args[@]}" -w ' %{http_code}' -o /dev/null "https://status.$suffix:$port/healthz" | sed 's/^ //') $(curl "${curl_args[@]}" "https://status.$suffix:$port/healthz")"
+  check "status host: nothing else served" 418 "$(code "https://status.$suffix:$port/")"
+  check "ops host closed (reserved, SSH tunnel only)" 418 "$(code "https://ops.$suffix:$port/")"
+  [[ -z "$(env_get IHR_MONITORING)" ]] || monitoring_smoke
   check "unknown hospital address: no branding" 404 "$(code "https://nope.$suffix:$port/api/ihr/bootstrap/")"
   check "bare suffix not served" 404 "$(code "https://$suffix:$port/")"
   check "HSTS on the console" "max-age=31536000" "$(header "https://console.$suffix:$port/ops/" strict-transport-security)"
@@ -561,7 +586,7 @@ restore_drill() {  # a copy of the database from the backups, checked, then remo
   # The copy never archives into the repository (archive_mode=off); it fetches WAL to recover.
   # Recovery needs at least the original's max_connections (100, compose.yaml).
   pg_container "$DRILL" "$DRILL:/var/lib/postgresql" postgres -c archive_mode=off \
-    -c shared_buffers=128MB -c max_connections=100
+    -c shared_buffers=128MB -c max_connections=100 "${PG_LOG_PRIVACY[@]}"
   docker start "$DRILL" >/dev/null
   wait_promoted "$DRILL"
   # The copy's own moment: its last replayed transaction (what the fingerprints are checked at)
@@ -631,7 +656,7 @@ restore_live() {  # restore [--target T]: a lost server's database, into this st
   # timeline's history file reaches the repository, so later restores can follow it
   pg_container ihr-restore-recovery "$vol:/var/lib/postgresql,${project}_walspool:/var/spool/ihr-wal" \
     postgres -c archive_mode=on -c "archive_command=/usr/local/bin/ihr-pgbackrest-spool %p %f" \
-    -c max_connections=100
+    -c max_connections=100 "${PG_LOG_PRIVACY[@]}"
   docker start ihr-restore-recovery >/dev/null
   wait_promoted ihr-restore-recovery
   docker exec ihr-restore-recovery psql -U postgres -Atc "CHECKPOINT" >/dev/null
@@ -1193,6 +1218,9 @@ IHR_DNS_BIND=127.0.0.1
 IHR_DNS_PORT=${IHR_PROOF_DNS_PORT:-15353}
 IHR_ACME_SUBNET=172.30.63.0/28
 IHR_ACME_API_IP=172.30.63.5
+IHR_MONITORING_NET=172.30.67.0/26
+IHR_MONITORING_DYNAMIC=172.30.67.32/27
+IHR_PROMETHEUS_IP=172.30.67.6
 EOF
   IHR_STAGING_DIR="$p" IHR_STAGING_OUT="$p" IHR_ACMEDNS_IMAGE="$img" IHR_PROOF_NET=172.30.64 \
     "$0" acme-init pebble "acme.${LOCAL_SUFFIX#*.}" "acme-ns.${LOCAL_SUFFIX#*.}" >/dev/null
@@ -1271,6 +1299,490 @@ acme_proof_run() {  # the checks of acme-proof (run inside its throwaway folder)
   return "$fail"
 }
 
+# ---- Metrics and e-mail alerts (P1-T9a, compose.monitoring.yaml) ---------------------------------
+MON_TEST_TO="ops@ihr-proof.test"
+MON_TEST_DEADMAN="http://heartbeat-stub:8080/ping"
+# The dead-man switch's ping address (healthchecks.io gives https://hc-ping.com/<uuid>)
+DEADMAN_RE='^https://[a-z0-9.-]+(:[0-9]+)?(/[A-Za-z0-9._~-]+)+$'
+
+# Set-up services that run once and exit; never reported as "not running" (host-metrics.sh)
+MON_ONESHOTS='migrate|admin|keytool|s3-tool|traefik-data|alertmanager-data'
+
+monitoring_init() {  # monitoring_init <alert-recipient> [--from A] [--host H] [--port P] [--user U] | --test
+  local envf="$OUT/.env" sec="$OUT/secrets" to="" from="" host="smtp.zeptomail.in" port=587
+  local user="emailapikey" test=0 token="" deadman="" suffix pg_pw redis_pw
+  [[ -f "$envf" && -d "$sec" ]] || die "no $envf / secrets: run scripts/staging.sh init <suffix> first"
+  grep -q '^IHR_MONITORING=' "$envf" && die "$envf already has monitoring settings (IHR_MONITORING=...)"
+  while (($#)); do
+    case "$1" in
+      --test) test=1 ;;
+      --from) from="${2:?--from address}"; shift ;;
+      --host) host="${2:?--host H}"; shift ;;
+      --port) port="${2:?--port P}"; shift ;;
+      --user) user="${2:?--user U}"; shift ;;
+      -*) die "unknown option: $1" ;;
+      *) to="$1" ;;
+    esac
+    shift
+  done
+  suffix="$(sed -n 's/^IHR_TENANT_DOMAIN_SUFFIX=//p' "$envf" | tail -1)"
+  if ((test)); then
+    # The proof: mail to the Mailpit stand-in with its own password, pings to the local counter
+    grep -q '^IHR_MAIL=test' "$envf" || die "monitoring-init --test needs the mail stand-in (mail-init --test) first"
+    host="$MAIL_TEST_HOST" port=1025 to="${to:-$MON_TEST_TO}" from="${from:-alerts@ihr-proof.test}"
+    token="$(sed -n 's/^IHR_KEYCLOAK_SMTP_PASSWORD=//p' "$sec/mail.env")"
+    deadman="$MON_TEST_DEADMAN"
+  else
+    [[ -n "$to" ]] || die "usage: scripts/staging.sh monitoring-init <alert-recipient> [--from address] (token and ping URL on stdin)"
+    # alerts@<the domain above the hospitals' suffix>, e.g. alerts@amhcloud.in for app.amhcloud.in
+    from="${from:-alerts@${suffix#*.}}"
+    # The alerts' own ZeptoMail token (a Mail Agent of its own, not the web app's), then the
+    # dead-man switch's ping URL: from the keyboard or two lines on stdin, never the command line
+    if [[ -t 0 ]]; then
+      read -rsp "ZeptoMail SMTP password for alerts (its Mail Agent's Send Mail token): " token; echo
+      read -rp "healthchecks.io ping URL (https://hc-ping.com/...; empty: none yet): " deadman
+    else
+      IFS= read -r token || true; IFS= read -r deadman || true
+    fi
+    [[ ${#token} -ge 16 ]] || die "that does not look like a ZeptoMail token (too short)"
+    [[ -z "$deadman" || "$deadman" =~ $DEADMAN_RE ]] || die "the ping URL must look like https://hc-ping.com/<uuid>"
+    [[ "$port" == 587 ]] || die "only port 587 (STARTTLS) is supported"
+  fi
+  [[ "$to" =~ $EMAIL_RE ]] || die "not an e-mail address: $to"
+  [[ "$from" =~ $EMAIL_RE ]] || die "not an e-mail address: $from"
+  [[ "$host" =~ $DOMAIN_RE ]] || die "not a host name: $host"
+  [[ "$user" =~ ^[A-Za-z0-9@._-]+$ ]] || die "not a user name: $user"
+  case "$token" in ""|*[[:space:]\"\'\\\$\`]*) die "the token is empty or has characters a secret file cannot hold" ;; esac
+  local SECRETS_TARGET="$sec"
+  # Alertmanager reads these three as files (no newline: the whole file is the value)
+  printf '%s' "$token" | write_secret alertmanager-smtp-password
+  printf '%s' "$deadman" | write_secret alertmanager-watchdog-url
+  printf '%s' "${deadman:+$deadman/fail}" | write_secret alertmanager-watchdog-fail-url
+  # The exporters' own database and Redis users (created by `up`; monitoring_db_role and
+  # compose.yaml's redis command). Redis gets only the SHA-256 of its password.
+  pg_pw="$(rand 32)"; redis_pw="$(rand 32)"
+  printf 'DATA_SOURCE_URI=db:5432/postgres?sslmode=disable\nDATA_SOURCE_USER=ihr_monitor\nDATA_SOURCE_PASS=%s\n' "$pg_pw" \
+    | write_secret postgres-exporter.env
+  printf 'REDIS_PASSWORD=%s\n' "$redis_pw" | write_secret redis-exporter.env
+  { grep -v '^IHR_REDIS_MONITOR_SHA256=' "$sec/redis.env" || true
+    printf 'IHR_REDIS_MONITOR_SHA256=%s\n' "$(printf '%s' "$redis_pw" | sha256sum | cut -d' ' -f1)"
+  } | write_secret redis.env.new
+  mv "$sec/redis.env.new" "$sec/redis.env"
+  {
+    echo "# Metrics and e-mail alerts (P1-T9a; scripts/staging.sh monitoring-init)"
+    echo "IHR_MONITORING=$([[ $test == 1 ]] && echo test || echo on)"
+    echo "IHR_ALERT_TO=$to"
+    echo "IHR_ALERT_FROM=$from"
+    echo "IHR_ALERT_SMTP_HOST=$host"
+    echo "IHR_ALERT_SMTP_PORT=$port"
+    echo "IHR_ALERT_SMTP_USER=$user"
+    echo "IHR_ALERT_DEADMAN=$([[ -n $deadman ]] && echo on || echo off)"
+    # A proof on this machine: the host timer's files next to the stack, not in /var/lib
+    [[ -f "$OUT/.local" ]] && echo "IHR_TEXTFILE_DIR=$OUT/generated/monitoring/textfile"
+  } >> "$envf"
+  echo "Monitoring settings added (alerts to $to from $from via $host:$port); secrets in $sec (mode 600)."
+  [[ -n "$deadman" ]] || echo "No dead-man switch yet: once it exists, add its URL with scripts/staging.sh monitoring-deadman."
+}
+
+monitoring_deadman() {  # monitoring_deadman: (re)set the dead-man switch's ping URL (stdin or keyboard)
+  local envf="$OUT/.env" url=""
+  [[ "$(sed -n 's/^IHR_MONITORING=//p' "$envf" | tail -1)" == on ]] || die "no monitoring here (monitoring-init), or a proof (its stand-in needs no URL)"
+  if [[ -t 0 ]]; then read -rp "healthchecks.io ping URL: " url; else IFS= read -r url || true; fi
+  [[ "$url" =~ $DEADMAN_RE ]] || die "the ping URL must look like https://hc-ping.com/<uuid>"
+  local SECRETS_TARGET="$OUT/secrets"
+  printf '%s' "$url" | write_secret alertmanager-watchdog-url
+  printf '%s' "$url/fail" | write_secret alertmanager-watchdog-fail-url
+  sed -i 's/^IHR_ALERT_DEADMAN=.*/IHR_ALERT_DEADMAN=on/' "$envf"
+  echo "Dead-man switch set. Next: scripts/staging.sh up (Alertmanager starts pinging it)."
+}
+
+textfile_dir() { local v; v="$(env_get IHR_TEXTFILE_DIR)"; echo "${v:-/var/lib/indiehr/textfile}"; }
+
+json_targets() {  # json_targets <file> [<target> <labels as k=v,k=v>]...: a Prometheus file_sd file
+  local f="$1"; shift
+  python3 -c 'import json,sys
+a = sys.argv[2:]
+groups = [{"targets": [a[i]], "labels": dict(kv.split("=", 1) for kv in a[i + 1].split(",") if kv)} for i in range(0, len(a), 2)]
+with open(sys.argv[1] + ".new", "w") as out:
+    json.dump(groups, out, indent=1)' "$f" "$@"
+  chmod 644 "$f.new"
+  mv "$f.new" "$f"
+}
+
+monitoring_config() {  # generated/monitoring/: Prometheus's targets and alertmanager.yml, from .env
+  local d="$GEN/monitoring" suffix to from host port user deadman hello tls module tmp
+  suffix="$(env_get IHR_TENANT_DOMAIN_SUFFIX)"
+  to="$(env_get IHR_ALERT_TO)"; from="$(env_get IHR_ALERT_FROM)"
+  host="$(env_get IHR_ALERT_SMTP_HOST)"; port="$(env_get IHR_ALERT_SMTP_PORT)"; user="$(env_get IHR_ALERT_SMTP_USER)"
+  deadman="$(env_get IHR_ALERT_DEADMAN)"
+  # Checked again: .env may have been edited, and these go into YAML
+  [[ "$suffix" =~ $DOMAIN_RE && "$host" =~ $DOMAIN_RE ]] || die "IHR_TENANT_DOMAIN_SUFFIX / IHR_ALERT_SMTP_HOST in .env are not domain names"
+  [[ "$to" =~ $EMAIL_RE && "$from" =~ $EMAIL_RE ]] || die "IHR_ALERT_TO / IHR_ALERT_FROM in .env are not e-mail addresses"
+  [[ "$port" =~ ^[0-9]+$ && "$user" =~ ^[A-Za-z0-9@._-]+$ ]] || die "IHR_ALERT_SMTP_PORT / IHR_ALERT_SMTP_USER in .env are not valid"
+  mkdir -p "$d/targets"
+  # Traefik's own certificate until acme-init (and in a proof): the probe reads its expiry
+  # without checking who issued it
+  module=https_2xx; [[ -n "$(env_get IHR_ACME)" ]] || module=https_2xx_selfsigned
+  json_targets "$d/targets/probe-public.json" \
+    "https://auth.$suffix:8443/realms/indiehr/.well-known/openid-configuration" "endpoint=auth,module=$module" \
+    "https://status.$suffix:8443/healthz" "endpoint=status,module=$module"
+  json_targets "$d/targets/probe-internal.json" \
+    "http://backend:9000/health/" "service=backend" "http://keycloak:9000/health/ready" "service=keycloak"
+  if [[ -n "$(env_get IHR_ACME)" ]]; then json_targets "$d/targets/probe-dns.json" "acme-dns:53" "service=acme-dns"
+  else json_targets "$d/targets/probe-dns.json"; fi
+  if [[ "$(env_get IHR_S3)" == local ]]; then json_targets "$d/targets/s3.json" "s3:9327" "service=s3"
+  else json_targets "$d/targets/s3.json"; fi
+  hello="${suffix#*.}"
+  if [[ "$(env_get IHR_MONITORING)" == test ]]; then
+    tls="        tls_config: {min_version: TLS12, server_name: \"$host\", ca_file: /proof/ca.pem}"
+  else
+    tls="        tls_config: {min_version: TLS12, server_name: \"$host\"}"
+  fi
+  tmp="$(mktemp "$d/.alertmanager.XXXXXX")"
+  cat > "$tmp" <<EOF
+# Written by scripts/staging.sh from .env (P1-T9a); changes here are overwritten.
+# Secrets are files Alertmanager reads (secrets/alertmanager-*), never written here.
+global:
+  smtp_smarthost: "$host:$port"
+  smtp_from: "IndieHR alerts <$from>"
+  smtp_hello: "$hello"
+  smtp_auth_username: "$user"
+  smtp_auth_password_file: /run/ihr-alerts/smtp-password
+  # STARTTLS required (ZeptoMail on 587); never plain text
+  smtp_require_tls: true
+
+route:
+  receiver: email
+  group_by: [alertname, severity]
+  group_wait: 30s
+  group_interval: 5m
+  repeat_interval: 4h
+  routes:
+    # The outside dead-man switch: pinged about once a minute while all is well
+    - receiver: $([[ "$deadman" == on ]] && echo deadman || echo blackhole)
+      matchers: ['alertname="Watchdog"']
+      group_wait: 0s
+      group_interval: 1m
+      repeat_interval: 1m
+    # A mail every day at 09:00 IST (the mail path works)
+    - receiver: email-heartbeat
+      matchers: ['alertname="DailyHeartbeat"']
+      group_wait: 0s
+      repeat_interval: 24h
+    # Mail is failing: tell the dead-man switch (its /fail), and try mail too
+    - receiver: $([[ "$deadman" == on ]] && echo deadman-fail || echo blackhole)
+      matchers: ['alertname="AlertmanagerNotificationsFailing"']
+      continue: true
+      repeat_interval: 1h
+    - receiver: email
+      matchers: ['severity="critical"']
+      repeat_interval: 4h
+    # Warnings wait for the day (08:00-22:00 IST) and repeat once a day
+    - receiver: email
+      matchers: ['severity="warning"']
+      repeat_interval: 24h
+      active_time_intervals: [daytime-ist]
+
+time_intervals:
+  - name: daytime-ist
+    time_intervals:
+      - times: [{start_time: "08:00", end_time: "22:00"}]
+        location: Asia/Kolkata
+
+inhibit_rules:
+  # The critical alert says it already: no warning of the same name for the same thing beside
+  # it. Every label that tells instances apart is compared (one missing on both counts as
+  # equal), so a critical for db never mutes a warning for provisioner, nor /boot one for /.
+  - source_matchers: ['severity="critical"']
+    target_matchers: ['severity="warning"']
+    equal: [alertname, service, job, instance, mountpoint, purpose, endpoint]
+  # A service that is down as a whole: no separate container alerts for it
+  - source_matchers: ['alertname=~"BackendHealth|KeycloakNotReady|BackupUnhealthy"']
+    target_matchers: ['alertname=~"ContainerUnhealthy|ContainerNotRunning|ContainerRestarting|ContainerMemoryNearLimit"']
+    equal: [service]
+
+receivers:
+  - name: email
+    email_configs:
+      - to: "$to"
+        send_resolved: true
+$tls
+        headers:
+          Subject: '[IndieHR {{ .Status | toUpper }}] {{ .CommonLabels.alertname }} ({{ .CommonLabels.severity }})'
+  - name: email-heartbeat
+    email_configs:
+      - to: "$to"
+        send_resolved: false
+$tls
+        headers:
+          Subject: '[IndieHR] Daily alert check: mail works'
+  - name: deadman
+    webhook_configs:
+      - url_file: /run/ihr-alerts/watchdog-url
+        send_resolved: false
+        max_alerts: 1
+  - name: deadman-fail
+    webhook_configs:
+      - url_file: /run/ihr-alerts/watchdog-fail-url
+        send_resolved: false
+        max_alerts: 1
+  - name: blackhole
+EOF
+  chmod 644 "$tmp"
+  mv "$tmp" "$d/alertmanager.yml"
+}
+
+monitoring_db_role() {  # the exporter's login role: pg_monitor only, its password from the secret
+  local pw
+  pw="$(sed -n 's/^DATA_SOURCE_PASS=//p' "$SECRETS/postgres-exporter.env")"
+  [[ "$pw" =~ ^[A-Za-z0-9_-]{20,}$ ]] || die "secrets/postgres-exporter.env has no usable DATA_SOURCE_PASS"
+  # On stdin, never a command line; the server never logs the statement (compose.yaml)
+  compose exec -T db psql -U postgres -d postgres -v ON_ERROR_STOP=1 -q >/dev/null <<SQL
+SELECT 'CREATE ROLE ihr_monitor' WHERE NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'ihr_monitor')\gexec
+ALTER ROLE ihr_monitor WITH LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS CONNECTION LIMIT 3 PASSWORD '$pw';
+GRANT pg_monitor TO ihr_monitor;
+-- initdb/10-roles.sh revokes CONNECT from PUBLIC on every database: this one only
+GRANT CONNECT ON DATABASE postgres TO ihr_monitor;
+SQL
+}
+
+MON_DIR="$DIR/../monitoring"   # what compose.monitoring.yaml mounts as ../monitoring
+monitoring_settings() {  # monitoring_settings <service>: the files a service reads its settings from
+  case "$1" in
+    prometheus) printf '%s\n' "$MON_DIR/prometheus/prometheus.yml" "$MON_DIR"/prometheus/rules/*.yml ;;
+    alertmanager) printf '%s\n' "$GEN/monitoring/alertmanager.yml" ;;
+    blackbox-exporter) printf '%s\n' "$MON_DIR/blackbox/blackbox.yml" ;;
+  esac
+}
+monitoring_settings_sum() {  # one hash over a service's settings files (names and contents; no secret:
+  # the token and the ping URL are files Alertmanager reads on each send)
+  local f
+  monitoring_settings "$1" | while IFS= read -r f; do echo "$f"; cat "$f"; done | sha256sum | cut -d' ' -f1
+}
+
+monitoring_up() {  # after the stack: settings, the database role, the host's files, then the services
+  local svc=(prometheus alertmanager node-exporter blackbox-exporter postgres-exporter redis-exporter) out s
+  local stale=() stamp
+  monitoring_config
+  out="$(textfile_dir)"
+  # node_exporter mounts it: Docker would create a missing folder as root
+  if [[ ! -d "$out" ]]; then
+    [[ -f "$DIR/.local" ]] || die "no $out: run deploy/host/bootstrap.sh on this server (it makes the folder and the timer)"
+    mkdir -p "$out"
+  fi
+  monitoring_db_role
+  monitoring_textfile --keys
+  [[ "$(env_get IHR_MONITORING)" != test ]] || svc+=(heartbeat-stub)
+  # Settings are single files mounted read-only, rewritten as new files (deploys, .env changes):
+  # a running container keeps the old ones, and neither Prometheus nor Alertmanager rereads its
+  # rules or routes by itself. A container whose settings changed since it started (or that
+  # has no stamp yet) is recreated; Alertmanager's silences and notification log stay in amdata.
+  for s in prometheus alertmanager blackbox-exporter; do
+    stamp="$GEN/monitoring/.settings-$s"
+    if [[ -n "$(compose ps -aq "$s" 2>/dev/null)" && "$(cat "$stamp" 2>/dev/null)" != "$(monitoring_settings_sum "$s")" ]]; then
+      stale+=("$s")
+    fi
+  done
+  compose up -d --wait "${svc[@]}"
+  if ((${#stale[@]})); then
+    echo "Settings changed: recreating ${stale[*]}"
+    compose up -d --wait --no-deps --force-recreate "${stale[@]}"
+  fi
+  for s in prometheus alertmanager blackbox-exporter; do
+    monitoring_settings_sum "$s" > "$GEN/monitoring/.settings-$s"
+  done
+}
+
+monitoring_textfile() {  # monitoring_textfile [--keys]: the host timer's run (every minute)
+  local out services spool keys=0
+  [[ "${1:-}" != --keys ]] || keys=1
+  [[ -n "$(env_get IHR_MONITORING)" ]] || return 0
+  out="$(textfile_dir)"
+  [[ -d "$out" ]] || die "no $out (deploy/host/bootstrap.sh makes it)"
+  # The services this stack should have running: one-shot set-up services (restart "no") exit
+  # by design and are left out (host-metrics.sh skips the same names on its own as well)
+  services="$(compose config --services 2>/dev/null | grep -Evx "$MON_ONESHOTS" | tr '\n' ' ' || true)"
+  spool="$(env_get IHR_BACKUP_SPOOL_MAX_MB)"
+  "$ROOT/deploy/monitoring/host-metrics.sh" --out "$out" --project "${IHR_PROJECT:-indiehr-staging}" \
+    --services "$services" --backup-spool-max-mb "${spool:-2048}"
+  # The key ages hourly (three one-off key-tool containers)
+  if ((keys)) || [[ ! -f "$out/ihr_client_keys.prom" || -n "$(find "$out/ihr_client_keys.prom" -mmin +55)" ]]; then
+    monitoring_key_metrics "$out"
+  fi
+}
+
+monitoring_key_metrics() {  # <out>/ihr_client_keys.prom: each purpose's active key and its age
+  local out="$1" p json lines=() tmp
+  for p in "${KEY_PURPOSES[@]}"; do
+    # A failed read writes nothing: the file goes stale and ClientKeyCheckStale says so
+    json="$(kt "$p" status --json 2>/dev/null)" || return 0
+    lines+=("$(python3 -c 'import json,sys
+label = "{purpose=\"%s\"}" % sys.argv[1]
+active = [k for k in json.load(sys.stdin)["keys"] if k["state"] == "active"]
+print("ihr_client_key_active%s %d" % (label, 1 if active else 0))
+if active:
+    print("ihr_client_key_active_age_days%s %d" % (label, int(active[0]["age_days"])))' "$p" <<< "$json")") || return 0
+  done
+  tmp="$(mktemp "$out/.ihr_client_keys.XXXXXX")"
+  {
+    echo "# HELP ihr_client_key_active 1 when the purpose has an active signing key"
+    echo "# TYPE ihr_client_key_active gauge"
+    echo "# HELP ihr_client_key_active_age_days Age of the active signing key in days"
+    echo "# TYPE ihr_client_key_active_age_days gauge"
+    printf '%s\n' "${lines[@]}" | sort
+    echo "# HELP ihr_client_keys_checked_timestamp_seconds When the keys were last read"
+    echo "# TYPE ihr_client_keys_checked_timestamp_seconds gauge"
+    echo "ihr_client_keys_checked_timestamp_seconds $(date +%s)"
+  } > "$tmp"
+  chmod 644 "$tmp"
+  mv "$tmp" "$out/ihr_client_keys.prom"
+}
+
+prom_get() {  # prom_get <url>: a GET from inside the Prometheus container (monitoring network;
+  # by address or 127.0.0.1 only: its wget cannot resolve service names, see monitoring_smoke)
+  compose exec -T prometheus wget -q -T 10 -O - "$1"
+}
+
+am_ip() {  # Alertmanager's fixed address on `alerting`, the only one it listens on
+  local v; v="$(env_get IHR_ALERTMANAGER_IP)"; v="${v:-10.203.0.20}"
+  [[ "$v" =~ ^[0-9]{1,3}(\.[0-9]{1,3}){3}$ ]] || die "IHR_ALERTMANAGER_IP in .env is not an IPv4 address"
+  echo "$v"
+}
+
+am_tool() {  # am_tool <args>: Alertmanager's own amtool, against itself
+  local ip; ip="$(am_ip)"
+  compose exec -T alertmanager amtool --alertmanager.url="http://$ip:9093" "$@"
+}
+
+stub_count() {  # the dead-man switch stand-in's ping count, asked inside its own container
+  compose exec -T heartbeat-stub python -I -c "import urllib.request as u; print(u.urlopen('http://127.0.0.1:8080/count', timeout=5).read().decode())"
+}
+
+monitoring_smoke() {  # smoke's monitoring part: targets up, rules loaded, Alertmanager set up
+  local i out bad
+  # The host's files fresh now (a server's timer does this every minute; a proof on this
+  # machine has no timer: run `scripts/staging.sh monitoring-textfile` to refresh them)
+  monitoring_textfile
+  check "monitoring: nothing published on the host (SSH tunnel only)" "" \
+    "$(for s in prometheus alertmanager node-exporter blackbox-exporter postgres-exporter redis-exporter; do docker port "$(compose ps -q "$s")" 2>/dev/null; done)"
+  # Every target scraped and up (the first scrapes take up to 30 s after a start)
+  for i in $(seq 1 12); do
+    bad="$(prom_get 'http://127.0.0.1:9090/api/v1/targets?state=active' | python3 -c 'import json,sys
+t = json.load(sys.stdin)["data"]["activeTargets"]
+print(" ".join(sorted("%s(%s)" % (x["labels"]["job"], x["labels"].get("endpoint") or x["labels"].get("service") or "") for x in t if x["health"] != "up")) if t else "none")' 2>/dev/null || echo unreadable)"
+    [[ -n "$bad" ]] || break
+    sleep 10
+  done
+  check "monitoring: every Prometheus target up" "" "$bad"
+  out="$(prom_get http://127.0.0.1:9090/api/v1/rules | python3 -c 'import json,sys
+g = json.load(sys.stdin)["data"]["groups"]
+rules = [r for x in g for r in x["rules"]]
+err = [r["name"] for r in rules if r.get("health") == "err"]
+print("%d groups, %d rules%s" % (len(g), len(rules), (", errors: " + " ".join(err)) if err else ""))' 2>/dev/null || echo unreadable)"
+  check "monitoring: alert rules loaded without errors" "$(grep -c -- '- alert:' "$ROOT"/deploy/monitoring/prometheus/rules/*.yml | awk -F: '{n+=$2} END {print n}') rules" \
+    "$(sed -n 's/^[0-9]* groups, \([0-9]* rules\)$/\1/p' <<< "$out")"
+  # The exporters answer (target up) even when their login fails: their own verdict counts
+  for s in pg_up redis_up; do
+    check "monitoring: $s is 1 (the exporter reaches its server and logs in)" 1 \
+      "$(prom_get "http://127.0.0.1:9090/api/v1/query?query=$s" | python3 -c 'import json,sys
+r = json.load(sys.stdin)["data"]["result"]
+print(" ".join(sorted(x["value"][1] for x in r)) or "absent")' 2>/dev/null || echo unreadable)"
+  done
+  check "monitoring: Prometheus hands alerts to Alertmanager" 1 \
+    "$(prom_get http://127.0.0.1:9090/api/v1/alertmanagers | python3 -c 'import json,sys;print(len(json.load(sys.stdin)["data"]["activeAlertmanagers"]))' 2>/dev/null || echo 0)"
+  # Configuration loaded, and no cluster: the gossip port stays closed
+  # Asked through Alertmanager's own amtool: the Prometheus image's wget cannot resolve service
+  # names on Docker's resolver (it reads the "search ." line wrongly), though Prometheus can
+  check "monitoring: Alertmanager configured, gossip off" "loaded disabled" \
+    "$( (am_tool config show | grep -q '^receivers:' && echo loaded || echo empty) 2>/dev/null) $(am_tool cluster show 2>/dev/null | sed -n 's/^Cluster Status: *//p')"
+  # The always-firing Watchdog reaches Alertmanager (the first rule run is up to 30 s after a start)
+  for i in $(seq 1 9); do
+    out="$(am_tool alert query alertname=Watchdog -o simple 2>/dev/null | grep -q '^Watchdog ' && echo yes || echo no)"
+    [[ "$out" == yes ]] && break
+    sleep 10
+  done
+  check "monitoring: Watchdog alert reaches Alertmanager" yes "$out"
+  if [[ "$(env_get IHR_MONITORING)" == test ]]; then
+    for i in $(seq 1 9); do
+      out="$(stub_count | python3 -c 'import json,sys;print("yes" if json.load(sys.stdin)["ping"] > 0 else "no")' 2>/dev/null || echo no)"
+      [[ "$out" == yes ]] && break
+      sleep 10
+    done
+    check "monitoring: the dead-man switch stand-in receives pings" yes "$out"
+  elif [[ "$(env_get IHR_ALERT_DEADMAN)" != on ]]; then
+    echo "WARN  monitoring: no dead-man switch yet (scripts/staging.sh monitoring-deadman)"
+  fi
+  # Traefik's metrics answer Prometheus's address only: the web app, on the same network as
+  # Traefik, is refused
+  check "Traefik metrics refused to other containers" 403 \
+    "$(compose exec -T backend python -c 'import urllib.request, urllib.error
+try:
+    print(urllib.request.urlopen("http://traefik:8083/metrics", timeout=5).status)
+except urllib.error.HTTPError as e:
+    print(e.code)' 2>/dev/null || echo unreachable)"
+  check "host metrics written in the last 5 minutes" yes \
+    "$([[ -n "$(find "$(textfile_dir)/ihr_host.prom" -mmin -5 2>/dev/null)" ]] && echo yes || echo no)"
+}
+
+alerts() {  # alerts: what Alertmanager holds now (firing, silenced, inhibited)
+  [[ -n "$(env_get IHR_MONITORING)" ]] || die "no monitoring here (monitoring-init)"
+  am_tool alert query --active --silenced --inhibited -o extended
+  if [[ "$(env_get IHR_MONITORING)" == test ]]; then
+    echo "--- dead-man switch stand-in: $(stub_count)"
+  fi
+}
+
+alert_test() {  # alert-test: one synthetic alert, mailed now; it resolves itself after 5 minutes
+  local end tag
+  [[ -n "$(env_get IHR_MONITORING)" ]] || die "no monitoring here (monitoring-init)"
+  end="$(date -u -d '+5 min' +%Y-%m-%dT%H:%M:%SZ)"
+  tag="test-$(date +%Y%m%d%H%M%S)"
+  # severity info: routed at once at any hour (warnings wait for the day)
+  am_tool alert add IhrAlertTest \
+    severity=info "run=$tag" --annotation=summary="Test alert from scripts/staging.sh alert-test. No action needed." \
+    --end="$end"
+  echo "Sent IhrAlertTest ($tag) to Alertmanager; the mail goes out within about 30 s to $(env_get IHR_ALERT_TO)."
+  if [[ "$(env_get IHR_MONITORING)" == test ]]; then
+    local i n=0
+    for i in $(seq 1 12); do
+      n="$(compose exec -T smtp-test wget -q -O - "http://127.0.0.1:8025/api/v1/search?query=subject:IhrAlertTest" \
+        | python3 -c 'import json,sys;print(json.load(sys.stdin)["messages_count"])' 2>/dev/null || echo 0)"
+      ((n > 0)) && break
+      sleep 10
+    done
+    ((n > 0)) || die "the stand-in received no alert mail within 2 minutes (scripts/staging.sh logs alertmanager)"
+    echo "Stand-in received $n alert mail(s) for IhrAlertTest."
+  fi
+}
+
+ops_tunnel() {  # ops-tunnel [user@server] [--port N]: Prometheus and Alertmanager on this machine
+  local dest="" port=22 prom am
+  while (($#)); do
+    case "$1" in
+      --port) port="${2:?--port N}"; shift ;;
+      -*) die "usage: scripts/staging.sh ops-tunnel [ihr@<server>] [--port N]" ;;
+      *) dest="$1" ;;
+    esac
+    shift
+  done
+  prom="$(env_get IHR_PROMETHEUS_IP)"; prom="${prom:-10.203.0.70}"
+  am="$(am_ip)"
+  [[ "$port" =~ ^[0-9]+$ ]] || die "--port must be a number"
+  # Their fixed addresses on the server's monitoring and alerting networks (nothing is published); bootstrap.sh
+  # allows local forwarding only. Bound to this machine's 127.0.0.1 alone.
+  local cmd=(ssh -N -p "$port" -L "127.0.0.1:9090:$prom:9090" -L "127.0.0.1:9093:$am:9093" "${dest:-ihr@<server>}")
+  echo "Prometheus:   http://127.0.0.1:9090   (alerts: /alerts, targets: /targets)"
+  echo "Alertmanager: http://127.0.0.1:9093"
+  if [[ -z "$dest" ]]; then
+    echo "Run on your own machine (Ctrl-C ends it):"
+    printf '  %s\n' "${cmd[*]}"
+  else
+    [[ "$dest" =~ ^[a-z_][a-z0-9_.-]*@[A-Za-z0-9.:-]+$ ]] || die "not user@server: $dest"
+    echo "Tunnel open until Ctrl-C."
+    exec "${cmd[@]}"
+  fi
+}
+
 case "${1:-}" in
   init) init "${@:2}" ;;
   up) up "${@:2}" ;;
@@ -1298,6 +1810,13 @@ case "${1:-}" in
   mail-init) mail_init "${@:2}" ;;
   mail-check) mail_check "${@:2}" ;;
   s3-check) s3_check ;;
+  monitoring-init) monitoring_init "${@:2}" ;;
+  monitoring-deadman) monitoring_deadman ;;
+  monitoring-render) monitoring_config ;;
+  monitoring-textfile) monitoring_textfile "${@:2}" ;;
+  alerts) alerts ;;
+  alert-test) alert_test ;;
+  ops-tunnel) ops_tunnel "${@:2}" ;;
   local-proof)
     [[ -f "$DIR/.env" ]] || IHR_FRONTEND_IMAGE="${IHR_FRONTEND_IMAGE:-indiehr-frontend:local}" \
       init "$LOCAL_SUFFIX" --local
@@ -1307,6 +1826,8 @@ case "${1:-}" in
     grep -q '^IHR_MAIL=' "$DIR/.env" || mail_init --test
     # ...and backups into that SeaweedFS (P1-T8c; same disk: a proof, not a real backup)
     grep -q '^IHR_BACKUP=' "$DIR/.env" || backup_init --local
+    # ...and metrics with alerts to the mail stand-in (P1-T9a)
+    grep -q '^IHR_MONITORING=' "$DIR/.env" || monitoring_init --test
     up
     # A synthetic hospital for the address checks, then its Keycloak organisation and client
     # (smoke checks every hospital's client holds the web app's current key)
@@ -1316,5 +1837,5 @@ case "${1:-}" in
     admin_manage ihr_keycloak_sync --all >/dev/null
     smoke
     ;;
-  *) sed -n '5,39p' "$0"; exit 1 ;;
+  *) sed -n '5,46p' "$0"; exit 1 ;;
 esac

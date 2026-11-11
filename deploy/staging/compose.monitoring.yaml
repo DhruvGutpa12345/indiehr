@@ -1,0 +1,228 @@
+# Metrics and e-mail alerts (P1-T9a). Added by scripts/staging.sh when .env sets IHR_MONITORING
+# (scripts/staging.sh monitoring-init); never run directly. What is watched and which alerts
+# exist: deploy/staging/README.md, "Monitoring and alerts".
+#
+# - Prometheus (30 days, at most 4 GB) reads the exporters below, Traefik's metrics port,
+#   Keycloak's management port and SeaweedFS's gateway over the `monitoring` network, which has
+#   no way out, and hands alerts to Alertmanager over `alerting`. It is on no other network.
+# - Alertmanager's API has no login (silences, alerts): so nothing but Prometheus can reach it.
+#   It is on `alerting` (internal; Prometheus, Alertmanager and, in a proof, the dead-man
+#   stand-in only), listens on its fixed address there alone, and goes out (SMTP, the dead-man
+#   switch) through `alertmail`, a bridge with no other container on it. Never on `edge` or
+#   `monitoring`, where the web app, Traefik and the scrape targets are.
+#   It mails through the mail service with its own token (secrets/alertmanager-smtp-password)
+#   and pings the outside dead-man switch (secrets/alertmanager-watchdog-url). Its settings are
+#   written from .env by staging.sh (generated/monitoring/alertmanager.yml): the recipient never
+#   goes into the repository.
+# - No container gets the Docker socket. Container states, the journal, the NTP source, backups
+#   and key ages come from a host timer that writes files node_exporter reads
+#   (deploy/monitoring/host-metrics.sh; deploy/host/bootstrap.sh installs the timer).
+# - Nothing is published on the host. The operator reaches Prometheus and Alertmanager on their
+#   fixed addresses through an SSH tunnel (scripts/staging.sh ops-tunnel).
+#
+# Images: pinned by digest (multi-arch index), all Apache-2.0 except redis_exporter (MIT);
+# docs/VERSIONS.md. Every service: read-only root, no capabilities, no-new-privileges, a memory
+# limit, the journald log driver like the rest of the stack.
+x-logging: &logging
+  driver: ${IHR_LOG_DRIVER:-journald}
+  options:
+    tag: "indiehr/{{.Name}}"
+
+x-monitoring: &monitoring
+  security_opt: ["no-new-privileges:true"]
+  cap_drop: ["ALL"]
+  read_only: true
+  restart: unless-stopped
+  logging: *logging
+
+services:
+  prometheus:
+    <<: *monitoring
+    image: prom/prometheus:v3.16.0@sha256:e04987641b57704f408e31f6373ba4138ecf27cb4a165d24aabb6c38fddd0f06
+    user: "65534:65534"
+    command:
+      - --config.file=/etc/prometheus/prometheus.yml
+      - --storage.tsdb.path=/prometheus
+      # Metrics are not the 180-day log record (CERT-In covers logs): 30 days, and never more
+      # than 4 GB of the disk the database shares
+      - --storage.tsdb.retention.time=${IHR_PROMETHEUS_RETENTION:-30d}
+      - --storage.tsdb.retention.size=${IHR_PROMETHEUS_MAX_SIZE:-4GB}
+      # Prometheus's defaults stay: no admin API (deleting series), no lifecycle API (shutdown or
+      # reload over HTTP), no remote-write receiver
+      - --web.listen-address=:9090
+    volumes:
+      - ../monitoring/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ../monitoring/prometheus/rules:/etc/prometheus/rules:ro
+      # What depends on the site (its suffix, SeaweedFS, acme-dns): written by staging.sh
+      - ./generated/monitoring/targets:/etc/prometheus/targets:ro
+      - promdata:/prometheus
+    networks:
+      monitoring:
+        ipv4_address: ${IHR_PROMETHEUS_IP:-10.203.0.70}
+      alerting: {}
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:9090/-/ready"]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+      start_period: 60s
+    mem_limit: ${IHR_PROMETHEUS_MEMORY:-384m}
+
+  # Its data volume belongs to the user Alertmanager runs as (below); a new named volume is
+  # root's. A one-off with only the two capabilities it needs, no network; a no-op once done.
+  alertmanager-data:
+    image: prom/alertmanager:v0.35.0@sha256:e638797febd034838eca8b98cdbd46f951e9bf7f178777aa8669167406a9946c
+    user: "0:0"
+    security_opt: ["no-new-privileges:true"]
+    cap_drop: ["ALL"]
+    cap_add: ["CHOWN", "FOWNER"]
+    network_mode: none
+    entrypoint: ["/bin/sh", "-c", "[ \"$$(stat -c %u:%a /alertmanager)\" = \"${IHR_SECRETS_UID:?}:700\" ] || { chown ${IHR_SECRETS_UID:?}:${IHR_SECRETS_GID:?} /alertmanager && chmod 700 /alertmanager; }"]
+    volumes:
+      - amdata:/alertmanager
+    logging: *logging
+    restart: "no"
+
+  alertmanager:
+    <<: *monitoring
+    image: prom/alertmanager:v0.35.0@sha256:e638797febd034838eca8b98cdbd46f951e9bf7f178777aa8669167406a9946c
+    # The user that owns secrets/ on this server (staging.sh sets it on every call): the SMTP
+    # token and the dead-man URL stay mode 600, readable by that user alone
+    user: "${IHR_SECRETS_UID:?}:${IHR_SECRETS_GID:?}"
+    command:
+      - --config.file=/etc/alertmanager/alertmanager.yml
+      - --storage.path=/alertmanager
+      # Its address on `alerting` only (the alertmail bridge reaches the host's network)
+      - --web.listen-address=${IHR_ALERTMANAGER_IP:-10.203.0.20}:9093
+      # One server: no cluster, so the gossip port (9094) is never opened
+      - --cluster.listen-address=
+      - --data.retention=120h
+    volumes:
+      - ./generated/monitoring/alertmanager.yml:/etc/alertmanager/alertmanager.yml:ro
+      - ./secrets/alertmanager-smtp-password:/run/ihr-alerts/smtp-password:ro
+      - ./secrets/alertmanager-watchdog-url:/run/ihr-alerts/watchdog-url:ro
+      - ./secrets/alertmanager-watchdog-fail-url:/run/ihr-alerts/watchdog-fail-url:ro
+      - amdata:/alertmanager
+    # alerting: Prometheus hands it alerts (and the operator's SSH tunnel reaches this fixed
+    # address); alertmail: the way out (SMTP, the dead-man switch), shared with no one
+    networks:
+      alerting:
+        ipv4_address: ${IHR_ALERTMANAGER_IP:-10.203.0.20}
+      alertmail: {}
+    depends_on:
+      alertmanager-data:
+        condition: service_completed_successfully
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://${IHR_ALERTMANAGER_IP:-10.203.0.20}:9093/-/ready"]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+    mem_limit: 64m
+
+  node-exporter:
+    <<: *monitoring
+    image: prom/node-exporter:v1.12.1@sha256:1b4e4438faca4dd7e001dd445d161a4a2091b0fededa84093b3a8dfeae1f1be0
+    user: "65534:65534"
+    command:
+      - --path.rootfs=/host
+      - --collector.textfile.directory=/textfile
+      # Its own network namespace: the container's interfaces say nothing about the host's
+      - --no-collector.netdev
+      - --no-collector.netclass
+      - --no-collector.netstat
+      - --no-collector.sockstat
+      - --no-collector.arp
+    volumes:
+      # The host's file systems (sizes, free space), /proc and /sys read-only; nothing written
+      - /:/host:ro,rslave
+      # The host timer's files (deploy/monitoring/host-metrics.sh)
+      - ${IHR_TEXTFILE_DIR:-/var/lib/indiehr/textfile}:/textfile:ro
+    networks: [monitoring]
+    mem_limit: 48m
+
+  blackbox-exporter:
+    <<: *monitoring
+    image: prom/blackbox-exporter:v0.29.1@sha256:ea1c7aa3ef3f307cd03e85f34abb604478ccb90b567fc690da0cd9776da76b13
+    # The image would run as root: nobody needs no root for HTTP and DNS probes
+    user: "65534:65534"
+    command: ["--config.file=/etc/blackbox_exporter/config.yml"]
+    volumes:
+      - ../monitoring/blackbox/blackbox.yml:/etc/blackbox_exporter/config.yml:ro
+    # monitoring: the public addresses are Traefik's aliases there. dnsprobe (compose.yaml): the
+    # internet-facing acme-dns, which is on no other network of the stack's
+    networks: [monitoring, dnsprobe]
+    mem_limit: 48m
+
+  # A login role with pg_monitor only (scripts/staging.sh creates it, password in
+  # secrets/postgres-exporter.env). No per-table or per-index collectors: the hospitals' schema
+  # names never become labels.
+  # Accepted risk (P1-T9a review): v0.20 always serves /probe?target=<DSN>, so a container on
+  # `monitoring` (Traefik, node_exporter, blackbox_exporter) could make it try a Postgres login
+  # on `internal` and read back pg_up 0/1. Every role password is random (20+ characters,
+  # scram-sha-256), and acme-dns and Alertmanager are no longer on `monitoring`.
+  postgres-exporter:
+    <<: *monitoring
+    image: prometheuscommunity/postgres-exporter:v0.20.1@sha256:ac5ec343104fae0e2d84a27bb8d69b38430a11910c5382cad85d478d2bab713e
+    user: "65534:65534"
+    env_file:
+      - secrets/postgres-exporter.env
+    command:
+      - --no-collector.stat_user_tables
+      - --no-collector.statio_user_tables
+      - --no-collector.statio_user_indexes
+      - --no-collector.stat_statements
+      - --no-collector.long_running_transactions
+      - --log.level=warn
+    networks: [internal, monitoring]
+    depends_on:
+      db:
+        condition: service_healthy
+    mem_limit: 64m
+
+  # Its own Redis user (compose.yaml: INFO, PING and the Celery queue's length; no other key,
+  # no CONFIG), password in secrets/redis-exporter.env. Never --debug: it prints the password.
+  redis-exporter:
+    <<: *monitoring
+    image: oliver006/redis_exporter:v1.97.0@sha256:f5f903fbe77571d455ede0453b084d6840bc62fc105efac001034421cab83b99
+    user: "59000:59000"
+    env_file:
+      - secrets/redis-exporter.env
+    command:
+      - -redis.addr=redis://redis:6379
+      - -redis.user=ihr-monitor
+      # CONFIG GET would return the password: skipped (maxmemory comes from INFO)
+      - -config-command=-
+      - -check-single-keys=db0=celery
+      - -disable-exporting-key-values
+      # /scrape would let anyone on the network point it at another server
+      - -disable-scrape-endpoint
+      - -set-client-name=false
+      - -exclude-slowlog-metrics
+      - -exclude-commandlog-metrics
+      - -exclude-latency-histogram-metrics
+      - -log-level=warning
+    networks: [internal, monitoring]
+    depends_on:
+      redis:
+        condition: service_healthy
+    mem_limit: 48m
+
+networks:
+  # Prometheus -> Alertmanager (and the dead-man stand-in in a proof); no way out. A fixed range
+  # outside the other two (kcproxy .0/28, monitoring .64/26): Alertmanager's address (.20) is
+  # the one the SSH tunnel uses; Docker hands out .24-.31. Change IHR_ALERTING_NET, its range and
+  # IHR_ALERTMANAGER_IP together if the server already uses it.
+  alerting:
+    internal: true
+    ipam:
+      config:
+        - subnet: ${IHR_ALERTING_NET:-10.203.0.16/28}
+          ip_range: ${IHR_ALERTING_DYNAMIC:-10.203.0.24/29}
+  # Alertmanager's way out (SMTP, the dead-man switch). No other container joins it (in a proof:
+  # the mail stand-in, compose.monitoring.test.yaml).
+  alertmail:
+
+volumes:
+  promdata:
+  amdata:

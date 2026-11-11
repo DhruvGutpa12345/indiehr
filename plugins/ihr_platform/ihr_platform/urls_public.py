@@ -28,6 +28,9 @@ handler500 = server_error
 
 urlpatterns = [
     path("ping/", ping),
+    # CARE's own health check (database, cache, Celery queue), for the monitoring probe on the
+    # internal address backend:9000 (P1-T9a); Traefik never routes /health from outside
+    path("health/", include("healthy_django.urls", namespace="healthy_django")),
     path("ops/", include("ihr_platform.console.urls")),  # operator console (P1-T5b)
     # From Keycloak only: a sign-in ended (P1-T5d)
     path("api/ihr/backchannel-logout/", backchannel.logout, name="ihr-backchannel"),

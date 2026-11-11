@@ -55,7 +55,11 @@ services:
 
   db:
     mem_limit: 400m
-    command: ["postgres", "-c", "shared_buffers=64MB", "-c", "max_connections=40"]
+    # No query values in the logs, as on staging (P1-T9a): never the statement behind an
+    # error, errors in their short form, no slow-statement logging
+    command: ["postgres", "-c", "shared_buffers=64MB", "-c", "max_connections=40",
+              "-c", "log_min_duration_statement=-1", "-c", "log_min_error_statement=panic",
+              "-c", "log_error_verbosity=terse"]
     ports: !override
       - "127.0.0.1:5433:5432"
 

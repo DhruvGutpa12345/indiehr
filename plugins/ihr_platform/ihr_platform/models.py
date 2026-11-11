@@ -23,9 +23,10 @@ RESERVED_SLUGS = {
     "admin",
     "static",
     "mail",
-    "status",
+    "status",  # status.<suffix>/healthz: the outside uptime check (P1-T9a)
     "public",
     "files",  # files.<suffix>: object storage behind Traefik (P1-T8b3)
+    "ops",  # ops.<suffix>: kept for operator tools such as dashboards (P1-T9a)
 }
 _ALPHABET = "abcdefghijklmnopqrstuvwxyz0123456789"
 

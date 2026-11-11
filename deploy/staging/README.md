@@ -320,3 +320,97 @@ lock mode (`IHR_AUDIT_ANCHOR_LOCK_MODE`).
 
 **Not backed up:** SeaweedFS's files when they live on the server itself (owner, 09-11-2026: at
 go-live files are in the provider's versioned bucket).
+
+## Monitoring and alerts (P1-T9a)
+
+Prometheus watches the stack and Alertmanager e-mails the owner (Q-E6) through Zoho ZeptoMail,
+with an outside dead-man switch (healthchecks.io) and an outside uptime check (UptimeRobot)
+for the cases the server cannot report itself (owner, 11-11-2026, Q-O1–Q-O4). Logs, their
+redaction and the 180-day record are P1-T9b/c; dashboards P1-T9d.
+
+**What runs** (`compose.monitoring.yaml`, on when `.env` has `IHR_MONITORING`; about 0.7 GB of
+memory limits): Prometheus v3.16.0 (30 days, at most 4 GB), Alertmanager v0.35.0, node_exporter,
+blackbox_exporter, postgres_exporter and redis_exporter, all pinned by digest, read-only, no
+capabilities, journald logs. Prometheus reads its targets on the `monitoring` network (no way
+out) and hands alerts over `alerting` (internal: Prometheus and Alertmanager only, plus the
+dead-man stand-in in a proof). Alertmanager's API has no login, so it is on no network the web
+app, Traefik or a scrape target shares: it listens on its fixed `alerting` address alone
+(`IHR_ALERTMANAGER_IP`, default 10.203.0.20 in `IHR_ALERTING_NET` 10.203.0.16/28) and goes out
+for mail and pings through `alertmail`, a bridge with no other container on it. The internet-facing
+acme-dns is probed on `dnsprobe` (acme-dns and blackbox_exporter only), never on `monitoring`.
+No container gets the Docker socket: a host timer (`deploy/host/bootstrap.sh` installs
+`ihr-host-metrics.timer`) writes container states (long-running services only; one-shot set-up
+services such as `migrate` or `traefik-data` exit by design and are never reported), memory
+working sets (without reclaimable page cache, as `docker stats`), journal size, chrony's source
+and offset, backup markers and client-key ages for node_exporter
+(`deploy/monitoring/host-metrics.sh`). chronyd answers root only, so the unit's one root step
+reads it into `/run/indiehr-chrony` (root-owned); a failed read shows as "unknown"
+(NtpReadingFailed), never as a wrong source. `up` recreates Prometheus, Alertmanager or
+blackbox_exporter when their settings changed since they started (a stamp of the files' hashes
+in `generated/monitoring/`), so a new rule or a dead-man URL added later takes effect.
+
+**What is read:** Traefik's metrics on its own port 8083, answered only to Prometheus's fixed
+address (routes.yml, router `metrics`; never published); Keycloak's management port 9000 (never
+routed by Traefik); SeaweedFS's gateway on 9327; Postgres through role `ihr_monitor` (pg_monitor
+only, no per-table series, so no hospital schema names); Redis through ACL user `ihr-monitor`
+(PING, INFO and the length of the `celery` list only: no other key, no CONFIG, which would show
+the password; Redis holds only the SHA-256 of its password). Probes: `auth.<suffix>` sign-in
+discovery and `status.<suffix>/healthz` through Traefik with the real certificate (expiry read
+from it), `backend:9000/health/`, `keycloak:9000/health/ready`, and acme-dns answering on port 53.
+
+**The public status address** `https://status.<suffix>/healthz` answers `OK` (200) from Traefik's
+own ping, or 503 while Traefik stops. It carries no data and no version, and costs nothing per
+request (no database query from the internet). It proves the server, its network, DNS, the
+certificate and Traefik; what sits behind Traefik is watched from inside, and the dead-man switch
+notices when that watching stops. `status` and `ops` are reserved slugs; every other path on
+`status.` and all of `ops.` answer 418.
+
+**Alerts** (rules in `deploy/monitoring/prometheus/rules/`, each unit-tested by promtool in
+`../tests/`). Critical: mailed at once, repeated every 4 h. Warning: mailed between 08:00 and
+22:00 IST, repeated every 24 h. A critical alert mutes the warning of the same name for the same
+thing only (same service, job, instance, mount, key purpose and endpoint); a service down as a
+whole (BackendHealth, KeycloakNotReady, BackupUnhealthy) mutes its container alerts. A container
+alert can still arrive a few minutes first (it fires sooner); its repeats are then muted.
+
+| Group | Alerts |
+|---|---|
+| Pipeline | Watchdog (always on, pings the dead-man switch about once a minute), DailyHeartbeat (a mail at 09:00 IST every day), AlertmanagerNotificationsFailing (also to the dead-man switch's `/fail`), AlertmanagerConfigNotLoaded, PrometheusRuleFailures, PrometheusCannotReachAlertmanager, HostMetricsStale |
+| Availability | PublicEndpointDown (auth, status; 3 min), TargetDown (5 min; critical for traefik, keycloak, postgres, redis, s3, node), PostgresDown / RedisDown (the exporter answers but cannot reach its server or log in; 5 min), BackendHealth, KeycloakNotReady, ContainerNotRunning (critical for the hospitals' services, warning for the workers and monitoring), ContainerUnhealthy, ContainerRestarting (more than 2 in 15 min) |
+| Capacity | DiskFreeLow (20 GB warning, 12 GB critical on `/`; other data mounts also below 25 % / 15 %; `/boot` never), DiskFillingUp (below 12 GB within 7 days), MemoryLow (10 % / 5 %), OomKill, SwapInUse, ContainerMemoryNearLimit (90 %), CpuLoadHigh, JournalNearCap, JournalSuppressed, PgConnectionsHigh (80 of 100), PgLongTransaction (1 h), RedisMemoryHigh (80 % / 90 %), RedisPersistenceFailing, CeleryBacklog (200 for 10 min) |
+| Backups | BackupUnhealthy, BackupTooOld (26 h), BackupCheckStale (2 h), WalSpoolStuck (10 min), WalSpoolNearCap (75 %), WalArchiveFailing |
+| Time, certificates, keys | NtpUnsynced, NtpOffset (chrony's own offset; 100 ms / 1 s), NtpSourceNotIndian, NtpReadingFailed, TlsCertExpiry (21 / 7 days), AcmeDnsDown, ClientKeyAge (150 / 365 days), ClientKeyMissing, ClientKeyCheckStale (also when never checked) |
+
+Alert text is built from label values only (service, endpoint, job, key purpose): never a log
+line, a user name, an address or patient data (`scripts/test_staging_monitoring.py` checks it).
+
+| Command | What it does |
+|---|---|
+| `scripts/staging.sh monitoring-init owner@example.com [--from alerts@amhcloud.in]` | Once: asks for the alerts' own ZeptoMail token and the healthchecks.io ping URL (typed, or two lines on stdin; never the command line; the URL may be empty for now), writes `secrets/alertmanager-*`, `secrets/postgres-exporter.env`, `secrets/redis-exporter.env` (mode 600) and the settings in `.env`. The sender defaults to `alerts@` the domain above the suffix |
+| `scripts/staging.sh monitoring-init --test` | Automatic in `local-proof`: mail to the Mailpit stand-in (STARTTLS, checked certificate, password), pings to a local counter; nothing leaves the machine |
+| `scripts/staging.sh monitoring-deadman` | Add or change the ping URL later (stdin) |
+| `scripts/staging.sh up` / `smoke` | `up` writes the settings, creates the database role, starts the services; `smoke` checks every target up, all rules loaded, Alertmanager configured with gossip off, `pg_up` and `redis_up` 1 (the exporters' logins work), the Watchdog reaching it (and the stand-in's ping count), Traefik's metrics refused to other containers, the host file fresh, the status address |
+| `scripts/staging.sh alerts` | What Alertmanager holds now (amtool) |
+| `scripts/staging.sh alert-test` | One test alert (`IhrAlertTest`, severity info), mailed within about 30 s, resolved after 5 min; with the stand-in it waits for the mail |
+| `scripts/staging.sh ops-tunnel ihr@<server>` | SSH tunnel: Prometheus at http://127.0.0.1:9090, Alertmanager at http://127.0.0.1:9093 (their fixed addresses on the server's `monitoring` and `alerting` networks; nothing published) |
+| `scripts/check-monitoring.sh` | promtool and amtool from the pinned images: settings, rules, rule tests (pre-commit and CI) |
+
+**Owner, before monitoring goes on:**
+1. ZeptoMail: a second Mail Agent for alerts (its own token, so it can be revoked alone), sending
+   from `alerts@amhcloud.in` (same verified domain). Copy its SMTP password.
+2. healthchecks.io (free plan): a check with period 1 minute and grace 10 minutes; e-mail
+   integration to the owner. Copy its ping URL (`https://hc-ping.com/<uuid>`). It receives only
+   the Watchdog alert's name and Alertmanager's own address, never data.
+3. UptimeRobot (free plan): an HTTP(S) monitor on `https://status.app.amhcloud.in/healthz`,
+   keyword `OK`, every 5 minutes, alert by e-mail.
+4. `scripts/staging.sh monitoring-init <your address>` (token, then URL), deploy, `up`, `smoke`,
+   then `scripts/staging.sh alert-test` and look for the mail.
+
+**Privacy fix that came with this task:** Postgres no longer writes statements into its log
+(`log_min_duration_statement=-1`, `log_min_error_statement=panic`, `log_error_verbosity=terse`,
+also for restored copies and the dev database). Django binds values on the client side, so a
+logged slow or failed statement carried what staff typed (names, phone numbers), and a
+duplicate-key error's DETAIL line carried the key's value.
+
+**Not proven yet** (needs the stack running; this task checked the settings statically and with
+the pinned images): targets up, mails arriving, the dead-man pings, memory use, the host timer on
+a server.

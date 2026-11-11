@@ -79,6 +79,7 @@ a server is created, before this script exists (`infra/README.md`); there, re-ru
 | Swap | 2 GB `/swapfile` if the server has no swap | Headroom on an 8 GB server |
 | Kernel | `/etc/sysctl.d/60-indiehr.conf` (keys this kernel lacks, e.g. IPv6 ones under `ipv6.disable=1`, are skipped): no ICMP redirects or source routing, SYN cookies, `kptr_restrict`, `dmesg_restrict`, no unprivileged BPF, `swappiness 10` | Common hardening that leaves Docker's forwarding alone |
 | Directories | `/srv/indiehr` owned by `ihr`, mode 750 | Where `scripts/deploy.sh` puts the stack |
+| Host metrics (P1-T9a) | `/var/lib/indiehr/textfile` owned by `ihr` (755); `ihr-host-metrics.timer` every minute runs `ihr-host-metrics.service` as `ihr` (extra group `systemd-journal`, `NoNewPrivileges`): `scripts/staging.sh monitoring-textfile` writes container states, journal size, chrony's source, backup markers and client-key ages for node_exporter. Skipped until the first deploy; does nothing until `.env` has `IHR_MONITORING`. `--check`: units as managed, timer active, the file fresh once monitoring is on | No container gets the Docker socket (it would control the whole server); the host itself reads `docker inspect` and the cgroup files |
 
 **Chrony without editing Ubuntu's file.** Our sources live in `/etc/chrony/indiehr.conf`; a
 systemd drop-in starts chronyd with `-f /etc/chrony/indiehr.conf`. Ubuntu's own `chrony.conf`

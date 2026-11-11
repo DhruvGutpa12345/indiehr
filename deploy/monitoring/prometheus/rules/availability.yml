@@ -1,0 +1,167 @@
+# Availability alerts (P1-T9a). Severity: critical = e-mail at once, again every 4 h until fixed;
+# warning = e-mail between 08:00 and 22:00 IST, again every 24 h. Tests: ../tests/availability.yml
+#
+# Alert text is built from label values only (service, endpoint, job): never log lines, user
+# names, addresses or patient data.
+groups:
+  - name: pipeline
+    rules:
+      # Always firing. Alertmanager passes it to the outside dead-man switch about once a minute;
+      # when the pings stop (server, Prometheus, Alertmanager or the network down), that service
+      # e-mails the owner after 10 minutes.
+      - alert: Watchdog
+        expr: vector(1)
+        labels:
+          severity: none
+        annotations:
+          summary: "Alerting pipeline heartbeat (always firing; goes to the outside dead-man switch)"
+
+      # Once a day at 09:00 IST a mail, so a silently broken mail path is noticed within a day
+      - alert: DailyHeartbeat
+        expr: hour() == 3 and minute() >= 30 and minute() < 40
+        labels:
+          severity: info
+        annotations:
+          summary: "Daily check that alert e-mails arrive (09:00 IST). No action needed."
+
+      - alert: AlertmanagerNotificationsFailing
+        expr: sum by (integration) (increase(alertmanager_notifications_failed_total[10m])) > 0
+        for: 10m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Alertmanager could not deliver {{ $labels.integration }} notifications in the last 10 minutes"
+
+      - alert: AlertmanagerConfigNotLoaded
+        expr: alertmanager_config_last_reload_successful == 0
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Alertmanager kept its old settings: the new alertmanager.yml did not load"
+
+      - alert: PrometheusRuleFailures
+        expr: sum by (rule_group) (increase(prometheus_rule_evaluation_failures_total[10m])) > 0
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Alert rules in group {{ $labels.rule_group }} fail to evaluate"
+
+      - alert: PrometheusCannotReachAlertmanager
+        expr: increase(prometheus_notifications_errors_total[10m]) > 0 or prometheus_notifications_alertmanagers_discovered < 1
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Prometheus cannot hand alerts to Alertmanager"
+
+      # The host's timer (deploy/monitoring/host-metrics.sh) feeds every container, backup,
+      # journal, NTP-source and key-age alert below: if it stops, those go silent
+      - alert: HostMetricsStale
+        expr: time() - ihr_host_metrics_last_run_timestamp_seconds > 300 or absent(ihr_host_metrics_last_run_timestamp_seconds)
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "The host's metrics timer has not run for more than 5 minutes (container, backup and key alerts are blind)"
+
+  - name: availability
+    rules:
+      # From the inside, through Traefik with the real certificate. The outside uptime check
+      # covers the network and DNS in front of the server.
+      - alert: PublicEndpointDown
+        expr: probe_success{job="probe-public"} == 0
+        for: 3m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Public address {{ $labels.endpoint }} does not answer 200 through Traefik"
+
+      - alert: TargetDown
+        expr: up{job=~"traefik|keycloak|postgres|redis|s3|node"} == 0
+        for: 5m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Prometheus cannot read {{ $labels.job }} for 5 minutes"
+
+      - alert: TargetDown
+        expr: up{job!~"traefik|keycloak|postgres|redis|s3|node"} == 0
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Prometheus cannot read {{ $labels.job }} for 5 minutes"
+
+      # The exporters keep answering (up 1) when they cannot log in or reach their server; they
+      # say so in pg_up / redis_up. Without these, the Postgres, Redis and Celery alerts go quiet.
+      - alert: PostgresDown
+        expr: pg_up == 0
+        for: 5m
+        labels:
+          severity: critical
+          service: db
+        annotations:
+          summary: "postgres_exporter cannot reach the database (database down, or the ihr_monitor login fails)"
+
+      - alert: RedisDown
+        expr: redis_up == 0
+        for: 5m
+        labels:
+          severity: critical
+          service: redis
+        annotations:
+          summary: "redis_exporter cannot reach Redis (Redis down, or the ihr-monitor user fails)"
+
+      - alert: BackendHealth
+        expr: probe_success{job="probe-internal", service="backend"} == 0
+        for: 3m
+        labels:
+          severity: critical
+        annotations:
+          summary: "The web app's health check fails (database, cache or Celery queue)"
+
+      - alert: KeycloakNotReady
+        expr: probe_success{job="probe-internal", service="keycloak"} == 0
+        for: 3m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Keycloak is not ready: nobody can sign in"
+
+  - name: containers
+    rules:
+      # A service of the stack whose container is missing counts as not running (the host
+      # timer writes 0 for it). Critical for the services hospitals use; the workers and the
+      # monitoring itself are warnings.
+      - alert: ContainerNotRunning
+        expr: ihr_container_running{service!~"provisioner|staff-worker|prometheus|alertmanager|node-exporter|blackbox-exporter|postgres-exporter|redis-exporter|heartbeat-stub|smtp-test"} == 0
+        for: 5m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Container {{ $labels.service }} is not running"
+
+      - alert: ContainerNotRunning
+        expr: ihr_container_running{service=~"provisioner|staff-worker|prometheus|alertmanager|node-exporter|blackbox-exporter|postgres-exporter|redis-exporter|heartbeat-stub|smtp-test"} == 0
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Container {{ $labels.service }} is not running"
+
+      - alert: ContainerUnhealthy
+        expr: ihr_container_unhealthy == 1
+        for: 5m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Container {{ $labels.service }} reports unhealthy"
+
+      - alert: ContainerRestarting
+        expr: increase(ihr_container_restarts_total[15m]) > 2
+        labels:
+          severity: warning
+        annotations:
+          summary: "Container {{ $labels.service }} restarted more than twice in 15 minutes"

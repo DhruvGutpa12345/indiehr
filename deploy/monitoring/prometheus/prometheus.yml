@@ -1,0 +1,103 @@
+# Prometheus for the staging/production stack (P1-T9a; deploy/staging/compose.monitoring.yaml).
+# A fixed file: what changes with the site (its suffix, whether SeaweedFS and acme-dns run here)
+# comes from the target files scripts/staging.sh writes into generated/monitoring/targets/.
+#
+# Privacy: metrics carry service, router and probe names only. No hospital name, user, address
+# or path ever becomes a label (scripts/test_staging_monitoring.py checks the rules for that).
+global:
+  scrape_interval: 30s
+  scrape_timeout: 10s
+  evaluation_interval: 30s
+
+# Over `alerting`, the network Prometheus and Alertmanager share with nobody else
+alerting:
+  alertmanagers:
+    - static_configs:
+        - targets: ["alertmanager:9093"]
+
+rule_files:
+  - /etc/prometheus/rules/*.yml
+
+scrape_configs:
+  - job_name: prometheus
+    static_configs:
+      - targets: ["localhost:9090"]
+
+  - job_name: alertmanager
+    static_configs:
+      - targets: ["alertmanager:9093"]
+
+  # The host: CPU, memory, disks, the clock (timex), and the files the host's timer writes
+  # (containers, journal, NTP source, backups, client-key age: deploy/monitoring/host-metrics.sh)
+  - job_name: node
+    static_configs:
+      - targets: ["node-exporter:9100"]
+
+  - job_name: blackbox
+    static_configs:
+      - targets: ["blackbox-exporter:9115"]
+
+  # pg_monitor only; no per-table or per-schema series (hospital schemas never appear)
+  - job_name: postgres
+    static_configs:
+      - targets: ["postgres-exporter:9187"]
+
+  - job_name: redis
+    static_configs:
+      - targets: ["redis-exporter:9121"]
+
+  # Traefik's metrics port answers this server's fixed address only (routes.yml, "metrics")
+  - job_name: traefik
+    static_configs:
+      - targets: ["traefik:8083"]
+
+  # Keycloak's management port (never routed by Traefik)
+  - job_name: keycloak
+    static_configs:
+      - targets: ["keycloak:9000"]
+
+  # SeaweedFS's gateway, when files are kept on this server (IHR_S3=local); empty otherwise
+  - job_name: s3
+    file_sd_configs:
+      - files: ["/etc/prometheus/targets/s3.json"]
+
+  # The public addresses, reached through Traefik on the monitoring network with the real
+  # certificate (auth sign-in discovery, status/healthz): success, latency, certificate expiry
+  - job_name: probe-public
+    metrics_path: /probe
+    params:
+      module: [https_2xx]
+    file_sd_configs:
+      - files: ["/etc/prometheus/targets/probe-public.json"]
+    relabel_configs: &probe-relabel
+      - source_labels: [__address__]
+        target_label: __param_target
+      - source_labels: [__param_target]
+        target_label: instance
+      - target_label: __address__
+        replacement: blackbox-exporter:9115
+      # A target may name its own module (https_2xx_selfsigned while Traefik still serves its
+      # own certificate: a proof on this machine, or a server before acme-init)
+      - source_labels: [module]
+        regex: (.+)
+        target_label: __param_module
+
+  # Inside the stack: CARE's own health check (database, cache, Celery queue) and Keycloak's
+  # readiness, each on its internal port
+  - job_name: probe-internal
+    metrics_path: /probe
+    params:
+      module: [http_2xx]
+    file_sd_configs:
+      - files: ["/etc/prometheus/targets/probe-internal.json"]
+    relabel_configs: *probe-relabel
+
+  # acme-dns answering on port 53 (the wildcard certificate's renewals depend on it). blackbox
+  # reaches it on `dnsprobe`, a network the two share with nobody (acme-dns faces the internet)
+  - job_name: probe-dns
+    metrics_path: /probe
+    params:
+      module: [dns_alive]
+    file_sd_configs:
+      - files: ["/etc/prometheus/targets/probe-dns.json"]
+    relabel_configs: *probe-relabel

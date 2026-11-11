@@ -199,3 +199,26 @@ machine only). Add other platforms with `tofu providers lock -platform=…` when
 |---|---|---|---|
 | pgBackRest | 2.60.0 (18-10-2026; Alpine packages 2.58) built from the release tarball (tag commit 2e1c4f2b) | `ADD --checksum=sha256:7409309d…22d0` in `deploy/docker/postgres.Dockerfile` | 2026-11-09 |
 | Postgres image | `postgres:18.6-alpine3.23@sha256:f1031bf693d8d60b0a0380c51a3510607c7a93c7c1d18bf7af94a3a8dbeb40b8` (re-pinned 2026-11-11) + pgBackRest; Alpine's pending security updates applied at build (`apk upgrade`: the base lacked fixed `krb5-libs` and `libxslt`, 20 HIGH advisories on 2026-11-11); `gosu` removed (old Go, 26 CVEs; never needed as the image runs as postgres) | digest | 2026-11-09 |
+
+## Metrics and e-mail alerts — P1-T9a
+
+Every image pinned by its multi-arch index digest in `deploy/staging/compose.monitoring.yaml`
+(resolved with `docker buildx imagetools inspect`; each is the project's latest release on GitHub,
+checked 2026-11-11). Release notes read for the two newest: Prometheus 3.16.0 (no removed flags,
+promtool unchanged for us) and Alertmanager 0.35.0 (only `--enable-feature=auto-gomemlimit` became
+a flag, eventrecorder outputs need names; neither used here).
+
+| Item | Version | Pinned how | Checked |
+|---|---|---|---|
+| Prometheus (and promtool) | v3.16.0 (05-11-2026; Apache-2.0) — `prom/prometheus:v3.16.0@sha256:e04987641b57704f408e31f6373ba4138ecf27cb4a165d24aabb6c38fddd0f06`; user nobody | digest in compose; `scripts/check-monitoring.sh` reads it from there | 2026-11-11 |
+| Alertmanager (and amtool) | v0.35.0 (09-11-2026; Apache-2.0) — `prom/alertmanager:v0.35.0@sha256:e638797febd034838eca8b98cdbd46f951e9bf7f178777aa8669167406a9946c`; runs as the owner of `secrets/` | digest | 2026-11-11 |
+| node_exporter | v1.12.1 (14-07-2026; Apache-2.0) — `prom/node-exporter:v1.12.1@sha256:1b4e4438faca4dd7e001dd445d161a4a2091b0fededa84093b3a8dfeae1f1be0` | digest | 2026-11-11 |
+| blackbox_exporter | v0.29.1 (21-10-2026; Apache-2.0) — `prom/blackbox-exporter:v0.29.1@sha256:ea1c7aa3ef3f307cd03e85f34abb604478ccb90b567fc690da0cd9776da76b13`; the image runs as root, we run it as nobody | digest | 2026-11-11 |
+| postgres_exporter | v0.20.1 (08-07-2026; Apache-2.0) — `prometheuscommunity/postgres-exporter:v0.20.1@sha256:ac5ec343104fae0e2d84a27bb8d69b38430a11910c5382cad85d478d2bab713e` | digest | 2026-11-11 |
+| redis_exporter | v1.97.0 (04-11-2026; MIT) — `oliver006/redis_exporter:v1.97.0@sha256:f5f903fbe77571d455ede0453b084d6840bc62fc105efac001034421cab83b99`; its `--debug` prints the Redis password (seen 2026-11-11): never used | digest | 2026-11-11 |
+| Dead-man switch | healthchecks.io (free plan, owner's account, Q-O4): pinged by Alertmanager's Watchdog about once a minute | URL in `secrets/alertmanager-watchdog-url` | 2026-11-11 |
+| Outside uptime check | UptimeRobot (free plan, owner's account, Q-O4) on `https://status.<suffix>/healthz` | — | 2026-11-11 |
+| Alert mail | Zoho ZeptoMail `smtp.zeptomail.in:587` STARTTLS, user `emailapikey`, a Mail Agent and token of its own for alerts | `scripts/staging.sh monitoring-init` defaults | 2026-11-11 |
+
+Memory limits: Prometheus 384 MB, Alertmanager 64 MB, the exporters 48–64 MB each (about 0.7 GB in
+all). Not measured live yet (the stack was not started in this task).

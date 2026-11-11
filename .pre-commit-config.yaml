@@ -129,3 +129,20 @@ repos:
         additional_dependencies: ["pyyaml==6.0.3"]
         files: ^(deploy/staging/|deploy/docker/acme-dns|scripts/(staging|deploy)\.sh$|scripts/test_staging_acme\.py$)
         pass_filenames: false
+      # Metrics and e-mail alerts (P1-T9a): hardened services, no Docker socket, narrow exporter
+      # users, Traefik's metrics and status routes, no query values in Postgres's logs
+      - id: staging-monitoring-static
+        name: monitoring keeps its required settings
+        entry: python -m unittest scripts/test_staging_monitoring.py
+        language: python
+        additional_dependencies: ["pyyaml==6.0.3"]
+        files: ^(deploy/staging/|deploy/monitoring/|deploy/dev/care-local|scripts/(staging|deploy|check-monitoring)\.sh$|scripts/test_staging_monitoring\.py$|plugins/ihr_platform/ihr_platform/models\.py$|\.pre-commit-config\.yaml$)
+        pass_filenames: false
+      # The rules' unit tests and the settings, checked by the pinned Prometheus and Alertmanager
+      # images themselves (promtool, amtool): needs Docker, no network
+      - id: monitoring-promtool
+        name: Prometheus rules, rule tests and Alertmanager settings (promtool, amtool)
+        entry: scripts/check-monitoring.sh
+        language: system
+        files: ^(deploy/monitoring/|deploy/staging/compose\.monitoring\.yaml$|scripts/(staging|check-monitoring)\.sh$)
+        pass_filenames: false

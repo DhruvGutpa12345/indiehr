@@ -65,14 +65,35 @@ http:
       middlewares: [hospital-auth-ratelimit]
       priority: 15
       tls: {}
-    # Anything else on the console or auth host goes nowhere. Without this, the hospitals'
-    # catch-all would not match them, but a later, looser rule might.
+    # Anything else on the console, auth and status hosts goes nowhere, and ops. (reserved for
+    # operator tools, P1-T9a; today they are reached by SSH tunnel only) is closed outright.
+    # "status" and "ops" match the hospitals' pattern: without this router at a higher priority
+    # than the hospitals (10, 15), they would be served the web app.
     closed:
-      rule: 'Host(`console.{{ env "IHR_TENANT_DOMAIN_SUFFIX" }}`) || Host(`auth.{{ env "IHR_TENANT_DOMAIN_SUFFIX" }}`)'
+      rule: 'Host(`console.{{ env "IHR_TENANT_DOMAIN_SUFFIX" }}`) || Host(`auth.{{ env "IHR_TENANT_DOMAIN_SUFFIX" }}`) || Host(`status.{{ env "IHR_TENANT_DOMAIN_SUFFIX" }}`) || Host(`ops.{{ env "IHR_TENANT_DOMAIN_SUFFIX" }}`)'
       entryPoints: [websecure]
       service: noop@internal
       priority: 20
       tls: {}
+    # The public status address for the outside uptime check (P1-T9a, UptimeRobot): Traefik's
+    # own ping, "OK" or 503, at a constant cost. No data, no version, no database query per
+    # request from the internet. It proves the server, its network, the certificate and Traefik
+    # are up; the services behind Traefik are watched from inside (Prometheus, e-mail alerts),
+    # and the dead-man switch notices when that watching itself stops.
+    status:
+      rule: 'Host(`status.{{ env "IHR_TENANT_DOMAIN_SUFFIX" }}`) && Path(`/healthz`)'
+      entryPoints: [websecure]
+      service: ping@internal
+      middlewares: [status-ratelimit, status-path]
+      priority: 30
+      tls: {}
+    # Traefik's metrics, on their own port (compose.yaml: metrics entry point, no published
+    # port), for Prometheus's fixed address alone (P1-T9a)
+    metrics:
+      rule: 'PathPrefix(`/metrics`)'
+      entryPoints: [metrics]
+      service: prometheus@internal
+      middlewares: [prometheus-only]
     # {{ if env "IHR_FILES_BUCKETS" }}  (P1-T8b3, compose.s3.yaml: our SeaweedFS)
     # Browsers upload and download CARE's files here with presigned URLs, and read hospital
     # pictures. Object paths of the two buckets only: no bucket-level calls (create, policy,
@@ -136,6 +157,19 @@ http:
         period: 1s
         burst: 10
         sourceCriterion: {ipStrategy: {ipv6Subnet: 64}}
+    status-ratelimit:
+      rateLimit:
+        average: 5
+        period: 1s
+        burst: 10
+        sourceCriterion: {ipStrategy: {ipv6Subnet: 64}}
+    status-path:
+      replacePath:
+        path: /ping
+    # The connecting address itself (no forwarded headers count): Prometheus only
+    prometheus-only:
+      ipAllowList:
+        sourceRange: ['{{ env "IHR_PROMETHEUS_IP" }}/32']
     # At most 10 sign-in submissions of one address in progress at once (each runs a slow hash)
     login-inflight:
       inFlightReq:

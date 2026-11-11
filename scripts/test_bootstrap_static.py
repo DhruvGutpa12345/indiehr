@@ -405,3 +405,60 @@ class HostDnsTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class HostMetricsTests(unittest.TestCase):
+    """P1-T9a: the timer that feeds node_exporter's textfile collector (no Docker socket in any
+    container)."""
+
+    def test_service_runs_as_the_deploy_user_every_minute(self):
+        service, timer = heredoc("metrics_service"), heredoc("metrics_timer")
+        self.assertIn("User=$DEPLOY_USER", service)
+        self.assertIn("SupplementaryGroups=systemd-journal", service)
+        self.assertIn("ExecStart=$SRV_DIR/scripts/staging.sh monitoring-textfile", service)
+        self.assertIn("ExecCondition=/usr/bin/test -x $SRV_DIR/scripts/staging.sh", service)
+        self.assertIn("NoNewPrivileges=yes", service)
+        self.assertNotIn("User=root", service)
+        self.assertIn("OnUnitActiveSec=1min", timer)
+        self.assertIn("WantedBy=timers.target", timer)
+        self.assertEqual(assignment("TEXTFILE_DIR"), "/var/lib/indiehr/textfile")
+
+    def test_apply_and_check_agree(self):
+        self.assertIn('install -d -m 755 -o "$DEPLOY_USER" -g "$DEPLOY_USER" "$TEXTFILE_DIR"', BOOTSTRAP)
+        self.assertIn('systemctl enable --now "$METRICS_UNIT.timer"', BOOTSTRAP)
+        check = function("run_check")
+        self.assertIn('same_content "/etc/systemd/system/$METRICS_UNIT.service" "$(metrics_service)"', check)
+        self.assertIn('same_content "/etc/systemd/system/$METRICS_UNIT.timer" "$(metrics_timer)"', check)
+        self.assertIn('systemctl is-active --quiet "$METRICS_UNIT.timer"', check)
+        self.assertIn("ihr_host.prom", check)
+        # the root step's output is checked too (the deploy user cannot read chrony)
+        self.assertIn('$CHRONY_READ_DIR/sources.csv" "$CHRONY_READ_DIR/tracking.csv" -mmin -5', check)
+        self.assertIn("ihr_ntp_reading_ok 1", check)
+        self.assertIn('"root 755"', check)
+
+    def test_chrony_read_as_root_by_a_fixed_line_only(self):
+        """chronyd answers root only (cmdport 0): one root step of the unit reads it, writing into
+        a root-owned folder; nothing the deploy user can change runs as root."""
+        service = heredoc("metrics_service")
+        self.assertIn("cmdport 0", BOOTSTRAP)
+        pre = [line for line in service.splitlines() if line.startswith("ExecStartPre=")]
+        self.assertEqual(len(pre), 1, pre)
+        line = pre[0]
+        self.assertTrue(line.startswith("ExecStartPre=+/bin/sh -c '") and line.endswith("'"), line)
+        for part in ("install -d -m 755 -o root -g root $CHRONY_READ_DIR", "cd $CHRONY_READ_DIR",
+                     "/usr/bin/chronyc -N -c sources > sources.new", "/usr/bin/chronyc -c tracking > tracking.new",
+                     "mv -f sources.new sources.csv", "mv -f tracking.new tracking.csv",
+                     # a failed read leaves no stale file: the metrics say "unknown"
+                     "else rm -f sources.new tracking.new sources.csv tracking.csv"):
+            self.assertIn(part, line)
+        for banned in ("$SRV_DIR", "$TEXTFILE_DIR", "$DEPLOY_USER", "staging.sh", "%", "$$"):
+            self.assertNotIn(banned, line)
+        self.assertEqual(assignment("CHRONY_READ_DIR"), "/run/indiehr-chrony")
+        host_metrics = (ROOT / "deploy/monitoring/host-metrics.sh").read_text()
+        self.assertIn('CHRONY_DIR="/run/indiehr-chrony"', host_metrics)
+        # the script itself never runs chronyc (it would fail as the deploy user, silently)
+        code = "\n".join(line for line in host_metrics.splitlines() if not line.lstrip().startswith("#"))
+        self.assertNotRegex(code, r"(\$\(|^\s*|\|\s*|&&\s*)chronyc\s")
+        # the deploy user never joins chrony's group (its socket takes every control command)
+        self.assertNotRegex(BOOTSTRAP, r"(usermod|gpasswd|adduser)[^\n]*chrony")
+        self.assertNotIn("chrony", service.split("SupplementaryGroups=", 1)[1].splitlines()[0])

@@ -42,6 +42,10 @@ services:
         ipv4_address: ${IHR_ACME_API_IP:-172.30.53.5}
       # A plain bridge for the published DNS port (an internal network cannot publish ports)
       dns: {}
+      # The DNS probe (P1-T9a, compose.monitoring.yaml) asks it a question here: a network of
+      # its own with blackbox-exporter alone, never the shared `monitoring` one (this container
+      # faces the internet). The API stays on the acme network's address only (config.cfg).
+      dnsprobe: {}
     mem_limit: 64m
     pids_limit: 64
 
@@ -79,6 +83,12 @@ services:
       - --entrypoints.websecure.http.aliasHeadersStrategy=delete
       - --entrypoints.ping.address=:8082
       - --ping.entrypoint=ping
+      # Metrics for Prometheus (P1-T9a) on their own port, served only by the "metrics" router
+      # in routes.yml, which answers Prometheus's fixed address alone (never a public port)
+      - --entrypoints.metrics.address=:8083
+      - --metrics.prometheus=true
+      - --metrics.prometheus.manualrouting=true
+      - --metrics.prometheus.addRoutersLabels=true
       - --providers.file.filename=/etc/traefik/routes.yml
       - --api.dashboard=false
       - --accesslog=true

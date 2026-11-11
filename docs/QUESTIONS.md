@@ -76,6 +76,10 @@
 | Q-K18 | **Key rotation: manual every 180 days** (owner, 2026-11-11): `staging.sh keys rotate`; smoke warns at 150 days, fails at 365; never a side effect of a deploy | P1-T8d2 |
 | Q-K19 | **Dev token viewer retired** (owner, 2026-11-11): the real hospital sign-in replaces it | P1-T8d2 |
 | Q-K20 | **Suspected key theft: rotate at once and end every staff and operator session** (owner, 2026-11-11) | P1-T8d2 |
+| Q-O1 | **P1-T9 split in four** (owner, 2026-11-11): T9a metrics + e-mail alerts (+ stop Postgres writing query values into logs, first) → T9b log collection with username redaction + log alerts → T9c 180-day retention (measured sizing, daily locked archive) → T9d dashboards and access | PLAN |
+| Q-O2 | **Log store: VictoriaLogs**, not Loki (owner, 2026-11-11): Apache-2.0, a hard disk cap, about a third of Loki's memory; it accepts Loki's push format | ADR-013 (T9b) |
+| Q-O3 | **The 180-day log record (CERT-In) is the log store plus a daily locked archive** in the Indian backup-region bucket (400 days, built from the redacted logs); the server's journal becomes a 14-day buffer (owner, 2026-11-11) | P1-T9c |
+| Q-O4 | **Outside uptime checks: free healthchecks.io (dead-man switch) + UptimeRobot (public status URL)** (owner, 2026-11-11): only pings and probes leave the server, no data; the owner creates both accounts; optionally a small second VM in India at go-live | P1-T9a |
 | Q-G4 | **`/goal` and `/advisor` = second-opinion reviews:** an independent Opus agent reviews each finished phase against the plan | Working agreement §5 |
 
 **Still open:** Q-B4 (final MVP module list: assumed as in PLAN.md Phase 2) and Q-B6/B7 (pricing, timeline). Q-F2 is moot while AI is deferred.

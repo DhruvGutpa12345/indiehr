@@ -6,6 +6,7 @@
 #   compose.local.yaml  a proof run on this machine (self-signed certificate, 127.0.0.1)
 #   compose.acme.yaml   Let's Encrypt certificates on the VM (added in P1-T8b, with the DNS)
 #   generated/client-keys/  the public halves of the signing keys (staging.sh keys; no secrets)
+#   compose.monitoring.yaml  metrics and e-mail alerts (P1-T9a; staging.sh monitoring-init)
 # Each container gets only the secrets it uses: the web app never sees Keycloak's admin
 # credential, each worker only its own narrow Keycloak account (P1-T5f). They sign in to
 # Keycloak with a private key of their own (P1-T8d2), kept in a volume on this server only.
@@ -68,6 +69,12 @@ services:
       - --entrypoints.websecure.http.aliasHeadersStrategy=delete
       - --entrypoints.ping.address=:8082
       - --ping.entrypoint=ping
+      # Metrics for Prometheus (P1-T9a) on their own port, served only by the "metrics" router
+      # in routes.yml, which answers Prometheus's fixed address alone (never a public port)
+      - --entrypoints.metrics.address=:8083
+      - --metrics.prometheus=true
+      - --metrics.prometheus.manualrouting=true
+      - --metrics.prometheus.addRoutersLabels=true
       - --providers.file.filename=/etc/traefik/routes.yml
       - --api.dashboard=false
       # Access log without paths or query strings: setup links and searches carry secrets
@@ -84,13 +91,21 @@ services:
     environment:
       IHR_TENANT_DOMAIN_SUFFIX: ${IHR_TENANT_DOMAIN_SUFFIX:?}
       IHR_SUFFIX_RE: ${IHR_SUFFIX_RE:?}
+      # The only address allowed to read Traefik's metrics (routes.yml; compose.monitoring.yaml)
+      IHR_PROMETHEUS_IP: ${IHR_PROMETHEUS_IP:-10.203.0.70}
     ports:
       - "${IHR_BIND:-0.0.0.0}:${IHR_HTTP_PORT:-80}:8000"
       - "${IHR_BIND:-0.0.0.0}:${IHR_HTTPS_PORT:-443}:8443"
     volumes:
       - ./traefik/routes.yml:/etc/traefik/routes.yml:ro
-    # kcproxy: Traefik -> Keycloak only (Keycloak trusts forwarded headers from that range alone)
-    networks: [edge, kcproxy]
+    # kcproxy: Traefik -> Keycloak only (Keycloak trusts forwarded headers from that range alone).
+    # monitoring (P1-T9a): Prometheus reads the metrics port, and the probes reach the public
+    # addresses by these names, through Traefik itself (port 8443) with its real certificate.
+    networks:
+      edge: {}
+      kcproxy: {}
+      monitoring:
+        aliases: ["auth.${IHR_TENANT_DOMAIN_SUFFIX:?}", "status.${IHR_TENANT_DOMAIN_SUFFIX:?}"]
     healthcheck:
       test: ["CMD", "traefik", "healthcheck", "--ping", "--ping.entrypoint=ping", "--entrypoints.ping.address=:8082"]
       interval: 15s
@@ -115,8 +130,17 @@ services:
       - shared_buffers=${IHR_PG_SHARED_BUFFERS:-512MB}
       - -c
       - max_connections=100
+      # No query values in the logs (P1-T9a). Django binds parameters on the client side, so a
+      # logged statement carries literal values (names and phone numbers in searches); an
+      # error's DETAIL line carries the duplicate key's value. So: no slow-statement logging,
+      # never the statement behind an error, and errors in their short form only. Slow queries
+      # are found through statistics instead (P1-T9b), never through the log.
       - -c
-      - log_min_duration_statement=2000
+      - log_min_duration_statement=-1
+      - -c
+      - log_min_error_statement=panic
+      - -c
+      - log_error_verbosity=terse
       - -c
       - password_encryption=scram-sha-256
       # WAL archiving for backups (P1-T8c, compose.backup.yaml): on when backups are set up.
@@ -154,9 +178,13 @@ services:
       # The password reaches Redis on standard input ("-"), never in the process list. The
       # image's entrypoint still runs (the data folder is owned by the redis user), and Redis
       # ends up as process 1, so a stop lets it write its last changes to disk.
+      # With monitoring (P1-T9a) a second, read-only user for the exporter: INFO, PING and the
+      # length of the Celery queue; no other key and no CONFIG (it would show the password).
+      # Redis gets only the SHA-256 of its password (secrets/redis.env).
       - |
         exec docker-entrypoint.sh redis-server - --appendonly yes --appendfsync everysec --maxmemory ${IHR_REDIS_MAXMEMORY:-256mb} --maxmemory-policy noeviction <<CONF
         requirepass "$$REDIS_PASSWORD"
+        $${IHR_REDIS_MONITOR_SHA256:+user ihr-monitor on #$$IHR_REDIS_MONITOR_SHA256 resetkeys ~celery resetchannels -@all +ping +info +select +type +llen +memory|usage}
         CONF
     volumes:
       - redisdata:/data
@@ -253,6 +281,8 @@ services:
       IHR_CLIENT_KEY_PURPOSE: backend
     volumes:
       - clientkey-backend:/run/ihr-keys:ro
+    # monitoring (P1-T9a): the health probe calls http://backend:9000/health/
+    networks: [internal, edge, monitoring]
     # CARE's start.sh, without its wait scripts (they expect POSTGRES_* variables and would
     # create databases): Compose already waits for a healthy database and Redis. The access
     # log has the path only (%(U)s), never the query string.
@@ -364,6 +394,9 @@ services:
       # Traefik calls Keycloak by this name, which exists only on kcproxy (routes.yml)
       kcproxy:
         aliases: [keycloak-proxy]
+      # Prometheus reads :9000/metrics and the probe :9000/health/ready (P1-T9a): the management
+      # port, never routed by Traefik
+      monitoring: {}
     ports:
       - "127.0.0.1:${IHR_KEYCLOAK_ADMIN_PORT:-8081}:8080"
     depends_on:
@@ -407,6 +440,21 @@ networks:
       config:
         - subnet: ${IHR_PROXY_NET:-10.203.0.0/28}
   internal:
+    internal: true
+  # Prometheus and what it reads (P1-T9a, compose.monitoring.yaml); no way out. A fixed range:
+  # Prometheus has a fixed address in it (.70: Traefik's metrics answer only Prometheus, and the
+  # operator's SSH tunnel reaches it), outside the part Docker hands out (.96-.127). Alertmanager
+  # is not on it (its own `alerting` network). Change IHR_MONITORING_NET and the address if the
+  # server already uses it.
+  monitoring:
+    internal: true
+    ipam:
+      config:
+        - subnet: ${IHR_MONITORING_NET:-10.203.0.64/26}
+          ip_range: ${IHR_MONITORING_DYNAMIC:-10.203.0.96/27}
+  # acme-dns (compose.acme.yaml) and blackbox-exporter's DNS probe (compose.monitoring.yaml)
+  # only; no way out. Keeps the internet-facing DNS server off `monitoring` (P1-T9a).
+  dnsprobe:
     internal: true
 
 volumes:

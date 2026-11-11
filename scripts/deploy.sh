@@ -12,7 +12,8 @@
 #
 # The server must have been set up by deploy/host/bootstrap.sh (user ihr, Docker, /srv/indiehr).
 # Layout on the server mirrors the repository, because compose.yaml uses ../keycloak and
-# ../docker: /srv/indiehr/{deploy/staging,deploy/keycloak,deploy/docker,scripts/{staging,client-keys}.sh}.
+# ../docker: /srv/indiehr/{deploy/staging,deploy/keycloak,deploy/docker,deploy/monitoring,
+# scripts/{staging,client-keys}.sh}. The monitoring images (P1-T9a) are pulled by the server.
 # Secrets (.env and secrets/ from `scripts/staging.sh init`) go over SSH as a tar stream, mode
 # 600, never in arguments or logs. The backend image is built from the committed files only
 # (git archive; with --allow-dirty, tracked + new files), never from git-ignored ones (local
@@ -198,7 +199,7 @@ ship_image "$KEYCLOAK"
 
 # ---- 3. Stack files (tracked files only: never a stray .env or secret) ----------------------
 log "Sending the stack files to $REMOTE_ROOT"
-git ls-files -z deploy/staging deploy/s3 deploy/keycloak/password-blocklist \
+git ls-files -z deploy/staging deploy/s3 deploy/monitoring deploy/keycloak/password-blocklist \
     deploy/docker/frontend-nginx.conf.template scripts/staging.sh scripts/client-keys.sh \
   | tar --null -T - -czf - \
   | remote "tar -C $REMOTE_ROOT --no-same-owner -xzf -"

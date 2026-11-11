@@ -1,0 +1,37 @@
+# Alerts in a proof (P1-T9a). Added by scripts/staging.sh when .env sets IHR_MONITORING=test
+# (`scripts/staging.sh monitoring-init --test`, automatic in local-proof); never run directly.
+#
+# Nothing leaves the machine: alert mails go to the Mailpit stand-in (compose.mailtest.yaml:
+# STARTTLS required, certificate checked against the proof's throwaway CA, password required),
+# and the dead-man switch's pings go to a small local stand-in that only counts them
+# (deploy/monitoring/heartbeat-stub.py; `scripts/staging.sh alerts` shows the count).
+services:
+  alertmanager:
+    volumes:
+      - ./generated/mailtest/ca.pem:/proof/ca.pem:ro
+
+  # The mail stand-in (compose.mailtest.yaml) joins Alertmanager's own way out under its name,
+  # so Alertmanager never needs the stack's `internal` network
+  smtp-test:
+    networks:
+      alertmail:
+        aliases: ["mail.ihr-proof.test"]
+
+  heartbeat-stub:
+    image: ${IHR_BACKEND_IMAGE:?set IHR_BACKEND_IMAGE}
+    security_opt: ["no-new-privileges:true"]
+    cap_drop: ["ALL"]
+    read_only: true
+    restart: unless-stopped
+    logging:
+      driver: ${IHR_LOG_DRIVER:-journald}
+      options:
+        tag: "indiehr/{{.Name}}"
+    entrypoint: ["python", "-I", "/stub/heartbeat-stub.py"]
+    volumes:
+      - ../monitoring/heartbeat-stub.py:/stub/heartbeat-stub.py:ro
+    # Where Alertmanager pings it (http://heartbeat-stub:8080/ping)
+    networks: [alerting]
+    healthcheck:
+      disable: true
+    mem_limit: 48m

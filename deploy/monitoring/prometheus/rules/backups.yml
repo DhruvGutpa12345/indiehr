@@ -1,0 +1,58 @@
+# Backup alerts (P1-T9a). The host timer reads the backup service's own markers (the files
+# deploy/docker/backup/health.sh checks) with `docker exec`; Postgres's archiver comes from
+# postgres_exporter. Nothing here fires on a stack without backups (no backup metrics at all).
+# Tests: ../tests/backups.yml.
+groups:
+  - name: backups
+    rules:
+      - alert: BackupUnhealthy
+        expr: ihr_backup_healthy == 0
+        for: 15m
+        labels:
+          severity: critical
+          service: backup
+        annotations:
+          summary: "The backup service reports unhealthy (scripts/staging.sh backup-status says why)"
+
+      - alert: BackupTooOld
+        expr: time() - ihr_backup_last_success_timestamp_seconds > 26 * 3600
+        labels:
+          severity: critical
+          service: backup
+        annotations:
+          summary: "No good database backup for more than 26 hours"
+
+      - alert: BackupCheckStale
+        expr: time() - ihr_backup_last_check_timestamp_seconds > 2 * 3600
+        labels:
+          severity: critical
+          service: backup
+        annotations:
+          summary: "No passing archive check for more than 2 hours: WAL may not reach the backup bucket"
+
+      # A WAL file waiting this long means point-in-time recovery has a growing gap
+      - alert: WalSpoolStuck
+        expr: ihr_backup_spool_oldest_seconds > 600
+        labels:
+          severity: critical
+          service: backup
+        annotations:
+          summary: "A WAL file has waited more than 10 minutes in the spool"
+
+      # The spool refuses WAL beyond its cap; Postgres then keeps it and the disk fills
+      - alert: WalSpoolNearCap
+        expr: ihr_backup_spool_bytes / ihr_backup_spool_max_bytes > 0.75 and ihr_backup_spool_max_bytes > 0
+        for: 5m
+        labels:
+          severity: critical
+          service: backup
+        annotations:
+          summary: "The WAL spool is more than 75% full"
+
+      - alert: WalArchiveFailing
+        expr: increase(pg_stat_archiver_failed_count[15m]) > 0
+        labels:
+          severity: critical
+          service: backup
+        annotations:
+          summary: "Postgres failed to archive WAL in the last 15 minutes"

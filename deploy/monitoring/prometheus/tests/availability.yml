@@ -1,0 +1,245 @@
+# promtool unit tests for ../rules/availability.yml (scripts/check-monitoring.sh runs them with the
+# pinned Prometheus image). Times start at 1970-01-01 00:00 UTC (05:30 IST).
+rule_files:
+  - ../rules/availability.yml
+evaluation_interval: 30s
+
+tests:
+  - name: watchdog and daily heartbeat
+    interval: 1m
+    input_series: []
+    alert_rule_test:
+      - eval_time: 1m
+        alertname: Watchdog
+        exp_alerts:
+          - exp_labels: {severity: none}
+            exp_annotations:
+              summary: "Alerting pipeline heartbeat (always firing; goes to the outside dead-man switch)"
+      # 03:29 UTC = 08:59 IST: not yet
+      - eval_time: 3h29m
+        alertname: DailyHeartbeat
+        exp_alerts: []
+      # 03:35 UTC = 09:05 IST
+      - eval_time: 3h35m
+        alertname: DailyHeartbeat
+        exp_alerts:
+          - exp_labels: {severity: info}
+            exp_annotations:
+              summary: "Daily check that alert e-mails arrive (09:00 IST). No action needed."
+      - eval_time: 3h45m
+        alertname: DailyHeartbeat
+        exp_alerts: []
+      - eval_time: 27h35m
+        alertname: DailyHeartbeat
+        exp_alerts:
+          - exp_labels: {severity: info}
+            exp_annotations:
+              summary: "Daily check that alert e-mails arrive (09:00 IST). No action needed."
+
+  - name: alerting pipeline health
+    interval: 1m
+    input_series:
+      - series: 'alertmanager_notifications_failed_total{integration="email", job="alertmanager"}'
+        values: '0x5 1+1x30'
+      - series: 'alertmanager_notifications_failed_total{integration="webhook", job="alertmanager"}'
+        values: '0x35'
+      - series: 'alertmanager_config_last_reload_successful{job="alertmanager"}'
+        values: '1x5 0x20'
+      - series: 'prometheus_rule_evaluation_failures_total{rule_group="/etc/prometheus/rules/capacity.yml;capacity", job="prometheus"}'
+        values: '0x5 2+2x20'
+      - series: 'prometheus_notifications_errors_total{alertmanager="http://alertmanager:9093/api/v2/alerts", job="prometheus"}'
+        values: '0x30'
+      - series: 'prometheus_notifications_alertmanagers_discovered{job="prometheus"}'
+        values: '1x5 0x20'
+    alert_rule_test:
+      - eval_time: 5m
+        alertname: AlertmanagerNotificationsFailing
+        exp_alerts: []
+      - eval_time: 20m
+        alertname: AlertmanagerNotificationsFailing
+        exp_alerts:
+          - exp_labels: {severity: critical, integration: email}
+            exp_annotations:
+              summary: "Alertmanager could not deliver email notifications in the last 10 minutes"
+      - eval_time: 17m
+        alertname: AlertmanagerConfigNotLoaded
+        exp_alerts:
+          - exp_labels: {severity: warning, job: alertmanager}
+            exp_annotations:
+              summary: "Alertmanager kept its old settings: the new alertmanager.yml did not load"
+      - eval_time: 20m
+        alertname: PrometheusRuleFailures
+        exp_alerts:
+          - exp_labels: {severity: warning, rule_group: "/etc/prometheus/rules/capacity.yml;capacity"}
+            exp_annotations:
+              summary: "Alert rules in group /etc/prometheus/rules/capacity.yml;capacity fail to evaluate"
+      - eval_time: 17m
+        alertname: PrometheusCannotReachAlertmanager
+        exp_alerts:
+          - exp_labels: {severity: warning, job: prometheus}
+            exp_annotations:
+              summary: "Prometheus cannot hand alerts to Alertmanager"
+
+  - name: host metrics timer stops
+    interval: 1m
+    input_series:
+      # written every minute until minute 10, then never again
+      - series: 'ihr_host_metrics_last_run_timestamp_seconds{job="node", instance="node-exporter:9100"}'
+        values: '0+60x10 600x30'
+    alert_rule_test:
+      - eval_time: 12m
+        alertname: HostMetricsStale
+        exp_alerts: []
+      - eval_time: 27m
+        alertname: HostMetricsStale
+        exp_alerts:
+          - exp_labels: {severity: warning, job: node, instance: "node-exporter:9100"}
+            exp_annotations:
+              summary: "The host's metrics timer has not run for more than 5 minutes (container, backup and key alerts are blind)"
+
+  - name: host metrics never written
+    interval: 1m
+    input_series: []
+    alert_rule_test:
+      - eval_time: 11m
+        alertname: HostMetricsStale
+        exp_alerts:
+          - exp_labels: {severity: warning}
+            exp_annotations:
+              summary: "The host's metrics timer has not run for more than 5 minutes (container, backup and key alerts are blind)"
+
+  - name: endpoints and targets
+    interval: 1m
+    input_series:
+      - series: 'probe_success{job="probe-public", endpoint="status"}'
+        values: '1 1 0x10'
+      - series: 'probe_success{job="probe-public", endpoint="auth"}'
+        values: '1x12'
+      - series: 'up{job="traefik"}'
+        values: '1 0x10'
+      - series: 'up{job="blackbox"}'
+        values: '1 0x10'
+      - series: 'up{job="keycloak"}'
+        values: '1x12'
+      - series: 'probe_success{job="probe-internal", service="backend"}'
+        values: '0x10'
+      - series: 'probe_success{job="probe-internal", service="keycloak"}'
+        values: '1 1 1 1 0x10'
+    alert_rule_test:
+      - eval_time: 4m
+        alertname: PublicEndpointDown
+        exp_alerts: []
+      - eval_time: 6m
+        alertname: PublicEndpointDown
+        exp_alerts:
+          - exp_labels: {severity: critical, job: probe-public, endpoint: status}
+            exp_annotations:
+              summary: "Public address status does not answer 200 through Traefik"
+      - eval_time: 7m
+        alertname: TargetDown
+        exp_alerts:
+          - exp_labels: {severity: critical, job: traefik}
+            exp_annotations:
+              summary: "Prometheus cannot read traefik for 5 minutes"
+          - exp_labels: {severity: warning, job: blackbox}
+            exp_annotations:
+              summary: "Prometheus cannot read blackbox for 5 minutes"
+      - eval_time: 4m
+        alertname: BackendHealth
+        exp_alerts:
+          - exp_labels: {severity: critical, job: probe-internal, service: backend}
+            exp_annotations:
+              summary: "The web app's health check fails (database, cache or Celery queue)"
+      - eval_time: 6m
+        alertname: KeycloakNotReady
+        exp_alerts: []
+      - eval_time: 8m
+        alertname: KeycloakNotReady
+        exp_alerts:
+          - exp_labels: {severity: critical, job: probe-internal, service: keycloak}
+            exp_annotations:
+              summary: "Keycloak is not ready: nobody can sign in"
+
+  - name: containers
+    interval: 1m
+    input_series:
+      - series: 'ihr_container_running{service="db"}'
+        values: '0x10'
+      - series: 'ihr_container_running{service="provisioner"}'
+        values: '0x10'
+      - series: 'ihr_container_running{service="backend"}'
+        values: '1x10'
+      - series: 'ihr_container_unhealthy{service="backup"}'
+        values: '0 0 1x10'
+      - series: 'ihr_container_unhealthy{service="backend"}'
+        values: '0x12'
+      - series: 'ihr_container_restarts_total{service="keycloak"}'
+        values: '0 0 1 2 3 4x10'
+      - series: 'ihr_container_restarts_total{service="redis"}'
+        values: '0 1x10'
+    alert_rule_test:
+      - eval_time: 6m
+        alertname: ContainerNotRunning
+        exp_alerts:
+          - exp_labels: {severity: critical, service: db}
+            exp_annotations:
+              summary: "Container db is not running"
+          - exp_labels: {severity: warning, service: provisioner}
+            exp_annotations:
+              summary: "Container provisioner is not running"
+      - eval_time: 8m
+        alertname: ContainerUnhealthy
+        exp_alerts:
+          - exp_labels: {severity: critical, service: backup}
+            exp_annotations:
+              summary: "Container backup reports unhealthy"
+      - eval_time: 6m
+        alertname: ContainerRestarting
+        exp_alerts:
+          - exp_labels: {severity: warning, service: keycloak}
+            exp_annotations:
+              summary: "Container keycloak restarted more than twice in 15 minutes"
+
+  # The exporters answer (up 1) while their login or their server fails
+  - name: exporters cannot reach postgres or redis
+    interval: 1m
+    input_series:
+      - series: 'up{job="postgres", instance="postgres-exporter:9187"}'
+        values: '1x12'
+      - series: 'pg_up{job="postgres", instance="postgres-exporter:9187"}'
+        values: '1 0x11'
+      - series: 'up{job="redis", instance="redis-exporter:9121"}'
+        values: '1x12'
+      - series: 'redis_up{job="redis", instance="redis-exporter:9121"}'
+        values: '1 1 1 0x9'
+    alert_rule_test:
+      - eval_time: 4m
+        alertname: PostgresDown
+        exp_alerts: []
+      - eval_time: 7m
+        alertname: PostgresDown
+        exp_alerts:
+          - exp_labels: {severity: critical, service: db, job: postgres, instance: "postgres-exporter:9187"}
+            exp_annotations:
+              summary: "postgres_exporter cannot reach the database (database down, or the ihr_monitor login fails)"
+      - eval_time: 7m
+        alertname: RedisDown
+        exp_alerts: []
+      - eval_time: 9m
+        alertname: RedisDown
+        exp_alerts:
+          - exp_labels: {severity: critical, service: redis, job: redis, instance: "redis-exporter:9121"}
+            exp_annotations:
+              summary: "redis_exporter cannot reach Redis (Redis down, or the ihr-monitor user fails)"
+      - {eval_time: 9m, alertname: TargetDown, exp_alerts: []}
+
+  - name: exporters healthy
+    interval: 1m
+    input_series:
+      - series: 'pg_up{job="postgres"}'
+        values: '1x12'
+      - series: 'redis_up{job="redis"}'
+        values: '1x12'
+    alert_rule_test:
+      - {eval_time: 10m, alertname: PostgresDown, exp_alerts: []}
+      - {eval_time: 10m, alertname: RedisDown, exp_alerts: []}

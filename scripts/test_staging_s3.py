@@ -84,7 +84,10 @@ class InternalApisStayPrivate(unittest.TestCase):
     def test_files_network_is_internal(self):
         self.assertTrue(OVERLAY["networks"]["files"]["internal"])
         nets = OVERLAY["services"]["s3"]["networks"]
-        self.assertEqual(sorted(nets), ["files", "internal"])
+        # monitoring (P1-T9a): Prometheus reads the gateway's metrics port; internal, no way out
+        self.assertEqual(sorted(nets), ["files", "internal", "monitoring"])
+        self.assertIn("-metricsPort=9327", START)
+        self.assertNotIn("-metricsIp", START)  # follows -ip.bind; the storage stays on 127.0.0.1
 
 
 class Hardening(unittest.TestCase):

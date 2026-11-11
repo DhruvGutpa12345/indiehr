@@ -45,10 +45,12 @@ services:
       - ../s3/s3.template.json:/etc/seaweedfs/s3.template.json:ro
     tmpfs:
       - /tmp:uid=1000,gid=1000,mode=0700,size=16m
-    # internal: the web app and Celery; files: Traefik and the one-off s3-tool
+    # internal: the web app and Celery; files: Traefik and the one-off s3-tool; monitoring:
+    # Prometheus reads the gateway's metrics on :9327 (P1-T9a)
     networks:
       internal: {}
       files: {}
+      monitoring: {}
     healthcheck:
       test: ["CMD-SHELL", "wget -q -O /dev/null http://127.0.0.1:8333/healthz && wget -q -O /dev/null http://127.0.0.1:8888/healthz"]
       interval: 15s

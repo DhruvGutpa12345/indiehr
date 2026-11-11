@@ -41,6 +41,21 @@ class TraefikTests(unittest.TestCase):
         extra = acme[len(base):]
         self.assertTrue(extra and all(a.startswith("--certificatesresolvers.le.acme.") for a in extra), extra)
 
+    def test_metrics_entry_point_kept_with_the_certificate(self):
+        # P1-T9a: the overlay replaces the whole list, so Prometheus's metrics port must be in it
+        acme = ACME["services"]["traefik"]["command"]
+        for flag in ("--entrypoints.metrics.address=:8083", "--metrics.prometheus=true",
+                     "--metrics.prometheus.manualrouting=true"):
+            self.assertIn(flag, acme)
+        # The DNS probe reaches acme-dns on `dnsprobe` (acme-dns and blackbox-exporter alone), never
+        # on the shared `monitoring` network: an internet-facing container must not reach the
+        # backend, Keycloak, Prometheus or Alertmanager directly (P1-T9a review)
+        nets = ACME["services"]["acme-dns"]["networks"]
+        self.assertEqual(sorted(nets), ["acme", "dns", "dnsprobe"])
+        self.assertTrue(BASE["networks"]["dnsprobe"]["internal"])
+        # the API still answers only on the acme network's fixed address
+        self.assertFalse(nets["dnsprobe"])
+
     def test_resolver_settings(self):
         cmd = "\n".join(ACME["services"]["traefik"]["command"])
         self.assertIn("dnschallenge.provider=acmedns", cmd)

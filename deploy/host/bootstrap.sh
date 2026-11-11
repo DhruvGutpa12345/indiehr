@@ -45,6 +45,15 @@ RESOLVED_DROPIN="/etc/systemd/resolved.conf.d/60-indiehr.conf"
 RESOLV_TARGET="/run/systemd/resolve/resolv.conf"
 SWAP_SIZE="2G"
 SELF_INSTALL="/usr/local/sbin/ihr-bootstrap"
+# Host signals for Prometheus (P1-T9a): a timer writes files node_exporter reads, so no container
+# needs the Docker socket (deploy/monitoring/host-metrics.sh, via scripts/staging.sh)
+TEXTFILE_DIR="/var/lib/indiehr/textfile"
+METRICS_UNIT="ihr-host-metrics"
+# chronyd answers root only (cmdport 0 below): the timer's unit reads it as root into this
+# root-owned folder (never the deploy user's: a planted link there would be written through as
+# root), and host-metrics.sh parses the files. The deploy user never joins _chrony (that socket
+# takes every control command).
+CHRONY_READ_DIR="/run/indiehr-chrony"
 STATE_DIR="/etc/indiehr"
 ADMIN_FILE="$STATE_DIR/admin-user"        # the admin chosen on the first run (kept)
 INSTALLED_FILE="$STATE_DIR/installed-at"  # first run's date: --check compares log age with it
@@ -243,6 +252,53 @@ resolved_conf() {
 # the host reads its upstream resolvers directly (/etc/resolv.conf -> /run/systemd/resolve/resolv.conf).
 [Resolve]
 DNSStubListener=no
+EOF
+}
+
+metrics_service() {
+  cat <<EOF
+# Managed by deploy/host/bootstrap.sh (P1-T9a). Writes $TEXTFILE_DIR/*.prom for node_exporter:
+# container states, journal size, NTP source, backups, client-key age. Does nothing until the
+# stack has monitoring (IHR_MONITORING in $SRV_DIR/deploy/staging/.env).
+[Unit]
+Description=IndieHR host metrics for Prometheus
+After=docker.service
+Requires=docker.service
+
+[Service]
+Type=oneshot
+User=$DEPLOY_USER
+Group=$DEPLOY_USER
+# Reads the system journal's own "Suppressed" lines (the deploy user is not in this group)
+SupplementaryGroups=systemd-journal
+WorkingDirectory=$SRV_DIR
+# Skipped (not failed) until the first deploy has put the stack's scripts here
+ExecCondition=/usr/bin/test -x $SRV_DIR/scripts/staging.sh
+# "+": as root, only this fixed line (never a file the deploy user can change). chrony's sources
+# and tracking as CSV into $CHRONY_READ_DIR; when chronyc fails both files go, so the metrics
+# show "unknown" (ihr_ntp_reading_ok 0) instead of a false "not an Indian source".
+ExecStartPre=+/bin/sh -c 'install -d -m 755 -o root -g root $CHRONY_READ_DIR && cd $CHRONY_READ_DIR && if /usr/bin/chronyc -N -c sources > sources.new 2>/dev/null && /usr/bin/chronyc -c tracking > tracking.new 2>/dev/null; then chmod 644 sources.new tracking.new && mv -f sources.new sources.csv && mv -f tracking.new tracking.csv; else rm -f sources.new tracking.new sources.csv tracking.csv; fi'
+ExecStart=$SRV_DIR/scripts/staging.sh monitoring-textfile
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectSystem=full
+TimeoutStartSec=5min
+EOF
+}
+
+metrics_timer() {
+  cat <<EOF
+# Managed by deploy/host/bootstrap.sh (P1-T9a): every minute
+[Unit]
+Description=IndieHR host metrics for Prometheus, every minute
+
+[Timer]
+OnBootSec=2min
+OnUnitActiveSec=1min
+AccuracySec=10s
+
+[Install]
+WantedBy=timers.target
 EOF
 }
 
@@ -511,6 +567,24 @@ run_check() {
     expect "sysctl $name = $v" [ "$(sysctl -n "$name" 2>/dev/null)" == "$v" ]
   done < <(sysctl_conf)
   expect "$SRV_DIR owned by $DEPLOY_USER" [ "$(stat -c '%U' "$SRV_DIR" 2>/dev/null)" == "$DEPLOY_USER" ]
+
+  # host metrics for Prometheus (P1-T9a)
+  expect "$TEXTFILE_DIR owned by $DEPLOY_USER, mode 755" \
+    [ "$(stat -c '%U %a' "$TEXTFILE_DIR" 2>/dev/null)" == "$DEPLOY_USER 755" ]
+  expect "$METRICS_UNIT.service as managed" same_content "/etc/systemd/system/$METRICS_UNIT.service" "$(metrics_service)"
+  expect "$METRICS_UNIT.timer as managed" same_content "/etc/systemd/system/$METRICS_UNIT.timer" "$(metrics_timer)"
+  expect "$METRICS_UNIT.timer enabled and active" systemctl is-active --quiet "$METRICS_UNIT.timer"
+  if [[ -f "$SRV_DIR/deploy/staging/.env" ]] && grep -q '^IHR_MONITORING=' "$SRV_DIR/deploy/staging/.env"; then
+    v="$(find "$TEXTFILE_DIR/ihr_host.prom" -mmin -5 2>/dev/null)"
+    expect "host metrics written in the last 5 minutes ($TEXTFILE_DIR/ihr_host.prom)" [ -n "$v" ]
+    # The root step of the unit read chrony (the deploy user cannot)
+    v="$(find "$CHRONY_READ_DIR/sources.csv" "$CHRONY_READ_DIR/tracking.csv" -mmin -5 2>/dev/null | grep -c . || true)"
+    expect "chrony read for the metrics in the last 5 minutes ($CHRONY_READ_DIR)" [ "$v" -eq 2 ]
+    expect "the timer reports chrony's state (ihr_ntp_reading_ok 1)" grep -qx 'ihr_ntp_reading_ok 1' "$TEXTFILE_DIR/ihr_host.prom"
+    expect "$CHRONY_READ_DIR owned by root, mode 755" [ "$(stat -c '%U %a' "$CHRONY_READ_DIR" 2>/dev/null)" == "root 755" ]
+  else
+    info "monitoring not set up in $SRV_DIR/deploy/staging/.env yet: the timer writes nothing"
+  fi
 
   echo
   if ((FAILS)); then echo "$FAILS check(s) FAILED"; return 1; fi
@@ -947,8 +1021,22 @@ if [[ ! -d "$SRV_DIR" ]]; then act "created $SRV_DIR" install -d -m 750 -o "$DEP
 if [[ "$(stat -c '%U:%G %a' "$SRV_DIR" 2>/dev/null)" != "$DEPLOY_USER:$DEPLOY_USER 750" ]] && ! ((DRY_RUN)); then
   act "$SRV_DIR owned by $DEPLOY_USER, mode 750" bash -c "chown '$DEPLOY_USER:$DEPLOY_USER' '$SRV_DIR' && chmod 750 '$SRV_DIR'"
 fi
+
 if [[ -f "${BASH_SOURCE[0]}" && "$(realpath "${BASH_SOURCE[0]}")" != "$SELF_INSTALL" ]]; then
   write_file "$SELF_INSTALL" 755 < "${BASH_SOURCE[0]}"
+fi
+
+# ---- 12. Host metrics for Prometheus (P1-T9a) -------------------------------------------------------
+log "Host metrics timer ($METRICS_UNIT.timer -> $TEXTFILE_DIR)"
+if [[ "$(stat -c '%U:%G %a' "$TEXTFILE_DIR" 2>/dev/null)" != "$DEPLOY_USER:$DEPLOY_USER 755" ]]; then
+  act "$TEXTFILE_DIR owned by $DEPLOY_USER, mode 755" \
+    install -d -m 755 -o "$DEPLOY_USER" -g "$DEPLOY_USER" "$TEXTFILE_DIR"
+fi
+write_file "/etc/systemd/system/$METRICS_UNIT.service" 644 < <(metrics_service); units_changed=$WROTE
+write_file "/etc/systemd/system/$METRICS_UNIT.timer" 644 < <(metrics_timer); ((WROTE)) && units_changed=1
+if ((units_changed)) && ! ((DRY_RUN)); then systemctl daemon-reload; fi
+if ! systemctl is-enabled --quiet "$METRICS_UNIT.timer" 2>/dev/null || ! systemctl is-active --quiet "$METRICS_UNIT.timer"; then
+  act "$METRICS_UNIT.timer enabled and started" systemctl enable --now "$METRICS_UNIT.timer"
 fi
 
 # ---- Summary ------------------------------------------------------------------------------------------

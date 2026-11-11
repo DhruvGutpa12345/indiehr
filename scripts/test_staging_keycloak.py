@@ -127,6 +127,19 @@ class Limits(unittest.TestCase):
         self.assertNotIn("/resources/", self.routers["auth"]["rule"])
         self.assertNotIn("middlewares", self.routers["auth-resources"])
 
+    def test_status_and_ops_hosts_never_reach_the_web_app(self):
+        # P1-T9a: "status" and "ops" match the hospitals' host pattern; the closed router (above
+        # the hospitals and the hospital sign-in) takes them, status/healthz sits above it
+        closed, status = self.routers["closed"], self.routers["status"]
+        for host in ("status", "ops"):
+            self.assertIn(f'Host(`{host}.{{{{ env "IHR_TENANT_DOMAIN_SUFFIX" }}}}`)', closed["rule"])
+        self.assertGreater(closed["priority"], self.routers["hospital-auth"]["priority"])
+        self.assertGreater(closed["priority"], self.routers["hospitals"]["priority"])
+        self.assertGreater(status["priority"], closed["priority"])
+        self.assertIn("status-ratelimit", status["middlewares"])
+        # Keycloak's metrics stay off the public address (management port, monitoring network)
+        self.assertNotIn("/metrics", self.routers["auth"]["rule"])
+
     def test_smoke_checks_the_limit(self):
         smoke = (ROOT / "scripts" / "staging.sh").read_text().split("smoke() {", 1)[1].split("\n}\n", 1)[0]
         self.assertIn("sign-in submissions limited per address", smoke)

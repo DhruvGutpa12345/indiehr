@@ -1,0 +1,199 @@
+# promtool unit tests for ../rules/time-certs-keys.yml (scripts/check-monitoring.sh).
+rule_files:
+  - ../rules/time-certs-keys.yml
+evaluation_interval: 30s
+
+tests:
+  - name: clock
+    interval: 1m
+    input_series:
+      - series: 'node_timex_sync_status{instance="n"}'
+        values: '0x20'
+      # chrony's own offset; the kernel's timex offset stays 0 under chrony and is not used
+      - series: 'ihr_ntp_offset_seconds{instance="n"}'
+        values: '-0.5x20'
+      - series: 'node_timex_offset_seconds{instance="n"}'
+        values: '0x20'
+      - series: 'ihr_ntp_indian_source_selected{instance="n"}'
+        values: '0x40'
+      - series: 'ihr_ntp_reading_ok{instance="n"}'
+        values: '1x40'
+    alert_rule_test:
+      - eval_time: 10m
+        alertname: NtpUnsynced
+        exp_alerts: []
+      - eval_time: 16m
+        alertname: NtpUnsynced
+        exp_alerts:
+          - exp_labels: {severity: critical, instance: n}
+            exp_annotations:
+              summary: "The server clock is not synchronised"
+      - eval_time: 16m
+        alertname: NtpOffset
+        exp_alerts:
+          - exp_labels: {severity: warning, instance: n}
+            exp_annotations:
+              summary: "The server clock is more than 100 ms off"
+      - eval_time: 31m
+        alertname: NtpSourceNotIndian
+        exp_alerts:
+          - exp_labels: {severity: warning, instance: n}
+            exp_annotations:
+              summary: "chrony is not following a NIC or NPL time server (CERT-In)"
+      - {eval_time: 31m, alertname: NtpReadingFailed, exp_alerts: []}
+
+  # The root step could not read chrony: no source or offset is written, only "unknown"
+  - name: chrony not readable
+    interval: 1m
+    input_series:
+      - series: 'node_timex_sync_status{instance="n"}'
+        values: '1x40'
+      - series: 'ihr_ntp_reading_ok{instance="n"}'
+        values: '0x40'
+    alert_rule_test:
+      - {eval_time: 31m, alertname: NtpSourceNotIndian, exp_alerts: []}
+      - {eval_time: 31m, alertname: NtpOffset, exp_alerts: []}
+      - {eval_time: 20m, alertname: NtpReadingFailed, exp_alerts: []}
+      - eval_time: 31m
+        alertname: NtpReadingFailed
+        exp_alerts:
+          - exp_labels: {severity: warning, instance: n}
+            exp_annotations:
+              summary: "The host timer cannot read chrony: the time source and offset are not watched (CERT-In)"
+
+  - name: clock good
+    interval: 1m
+    input_series:
+      - series: 'ihr_ntp_offset_seconds{instance="n"}'
+        values: '0.002x40'
+      - series: 'ihr_ntp_indian_source_selected{instance="n"}'
+        values: '1x40'
+      - series: 'ihr_ntp_reading_ok{instance="n"}'
+        values: '1x40'
+    alert_rule_test:
+      - {eval_time: 35m, alertname: NtpOffset, exp_alerts: []}
+      - {eval_time: 35m, alertname: NtpSourceNotIndian, exp_alerts: []}
+      - {eval_time: 35m, alertname: NtpReadingFailed, exp_alerts: []}
+
+  - name: clock far off
+    interval: 1m
+    input_series:
+      - series: 'ihr_ntp_offset_seconds{instance="n"}'
+        values: '2x20'
+    alert_rule_test:
+      - eval_time: 16m
+        alertname: NtpOffset
+        exp_alerts:
+          - exp_labels: {severity: warning, instance: n}
+            exp_annotations:
+              summary: "The server clock is more than 100 ms off"
+          - exp_labels: {severity: critical, instance: n}
+            exp_annotations:
+              summary: "The server clock is more than 1 s off"
+
+  - name: certificates and acme-dns
+    interval: 1m
+    input_series:
+      # auth: 10 days left (warning); status: 5 days left (both); a fresh one: 80 days
+      - series: 'probe_ssl_earliest_cert_expiry{job="probe-public", endpoint="auth"}'
+        values: '864000x40'
+      - series: 'probe_ssl_earliest_cert_expiry{job="probe-public", endpoint="status"}'
+        values: '432000x40'
+      - series: 'probe_ssl_earliest_cert_expiry{job="probe-public", endpoint="fresh"}'
+        values: '6912000x40'
+      - series: 'probe_success{job="probe-dns", service="acme-dns"}'
+        values: '0x40'
+    alert_rule_test:
+      - eval_time: 31m
+        alertname: TlsCertExpiry
+        exp_alerts:
+          - exp_labels: {severity: warning, job: probe-public, endpoint: auth}
+            exp_annotations:
+              summary: "The certificate of auth expires in under 21 days (renewal should have happened at 30)"
+          - exp_labels: {severity: warning, job: probe-public, endpoint: status}
+            exp_annotations:
+              summary: "The certificate of status expires in under 21 days (renewal should have happened at 30)"
+          - exp_labels: {severity: critical, job: probe-public, endpoint: status}
+            exp_annotations:
+              summary: "The certificate of status expires in under 7 days"
+      - eval_time: 20m
+        alertname: AcmeDnsDown
+        exp_alerts: []
+      - eval_time: 31m
+        alertname: AcmeDnsDown
+        exp_alerts:
+          - exp_labels: {severity: warning, job: probe-dns, service: acme-dns}
+            exp_annotations:
+              summary: "acme-dns does not answer DNS: certificate renewals will fail"
+
+  - name: client keys
+    interval: 1m
+    input_series:
+      - series: 'ihr_client_key_active_age_days{purpose="backend"}'
+        values: '151x20'
+      - series: 'ihr_client_key_active_age_days{purpose="staff"}'
+        values: '400x20'
+      - series: 'ihr_client_key_active_age_days{purpose="onboarding"}'
+        values: '20x20'
+      - series: 'ihr_client_key_active{purpose="onboarding"}'
+        values: '0x20'
+      - series: 'ihr_client_key_active{purpose="backend"}'
+        values: '1x20'
+    alert_rule_test:
+      - eval_time: 1m
+        alertname: ClientKeyAge
+        exp_alerts:
+          - exp_labels: {severity: warning, purpose: backend}
+            exp_annotations:
+              summary: "The backend client key is 151 days old: rotate it (scripts/staging.sh keys rotate backend)"
+          - exp_labels: {severity: warning, purpose: staff}
+            exp_annotations:
+              summary: "The staff client key is 400 days old: rotate it (scripts/staging.sh keys rotate staff)"
+          - exp_labels: {severity: critical, purpose: staff}
+            exp_annotations:
+              summary: "The staff client key is 400 days old: rotate it now"
+      - eval_time: 11m
+        alertname: ClientKeyMissing
+        exp_alerts:
+          - exp_labels: {severity: critical, purpose: onboarding}
+            exp_annotations:
+              summary: "No active onboarding client key: it cannot sign in to Keycloak"
+
+  - name: key check stops
+    interval: 1h
+    input_series:
+      - series: 'ihr_client_keys_checked_timestamp_seconds{instance="n"}'
+        values: '0x10'
+    alert_rule_test:
+      - eval_time: 2h
+        alertname: ClientKeyCheckStale
+        exp_alerts: []
+      - eval_time: 4h
+        alertname: ClientKeyCheckStale
+        exp_alerts:
+          - exp_labels: {severity: warning, instance: n}
+            exp_annotations:
+              summary: "The client keys have not been checked for more than 3 hours"
+
+  # The key file was never written (every read failed from the start): no series at all
+  - name: key check never ran
+    interval: 1m
+    input_series: []
+    alert_rule_test:
+      - eval_time: 1h
+        alertname: ClientKeyCheckStale
+        exp_alerts: []
+      - eval_time: 2h1m
+        alertname: ClientKeyCheckStale
+        exp_alerts:
+          - exp_labels: {severity: warning}
+            exp_annotations:
+              summary: "The client keys have never been checked on this server (scripts/staging.sh monitoring-textfile --keys says why)"
+
+  - name: key check fresh
+    interval: 10m
+    input_series:
+      - series: 'ihr_client_keys_checked_timestamp_seconds{instance="n"}'
+        values: '0+600x30'
+    alert_rule_test:
+      - {eval_time: 4h, alertname: ClientKeyCheckStale, exp_alerts: []}

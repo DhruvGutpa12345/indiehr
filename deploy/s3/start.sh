@@ -63,8 +63,10 @@ until up 9333/cluster/status && up 9340/status && up 8888/healthz; do
   sleep 1
 done
 
+# -metricsPort: the gateway's request counts and latencies for Prometheus (P1-T9a), read only
+# over the monitoring network (compose.s3.yaml); counters, no object names or keys
 set -- -filer=127.0.0.1:8888 -config="$CONFIG" -ip.bind=0.0.0.0 -port=8333 \
-  -port.iceberg=0 -port.lance=0 -iam=false
+  -port.iceberg=0 -port.lance=0 -iam=false -metricsPort=9327
 # Behind Traefik (staging): the public address presigned URLs are signed for
 [ -z "${IHR_S3_EXTERNAL_URL:-}" ] || set -- "$@" -externalUrl="$IHR_S3_EXTERNAL_URL"
 /usr/bin/weed -logtostderr s3 "$@" &

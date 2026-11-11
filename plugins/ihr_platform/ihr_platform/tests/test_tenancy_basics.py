@@ -3,6 +3,7 @@
 from care.users.models import User
 from django.conf import settings
 from django.core.cache import cache
+from django.core.exceptions import ValidationError
 from django.db import connection
 from django.test import SimpleTestCase
 from django_tenants.utils import schema_context
@@ -129,3 +130,12 @@ class TenancyBasicsTests(SimpleTestCase):
     def test_unknown_host_is_refused(self):
         response = self.client.get("/ping/", HTTP_HOST="unknown.example.test")
         self.assertEqual(response.status_code, 404)
+
+    def test_platform_addresses_are_reserved_slugs(self):
+        # Hosts Traefik routes itself (routes.yml) never become a hospital's address: a
+        # hospital called "status" would take the uptime check's address (P1-T9a)
+        for slug in ("console", "auth", "files", "status", "ops"):
+            hospital = Hospital(slug=slug, name="Reserved", schema_name="h_reserved00")
+            with self.assertRaises(ValidationError, msg=slug) as raised:
+                hospital.clean()
+            self.assertIn("slug", raised.exception.message_dict)
