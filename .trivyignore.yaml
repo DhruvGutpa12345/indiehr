@@ -49,3 +49,16 @@ misconfigurations:
     paths:
       - "apps/frontend/Dockerfile"
     statement: Same unused upstream image as above.
+vulnerabilities:
+  # ---- deploy/docker/keycloak.Dockerfile (P1-T8d1) ----
+  - id: CVE-2026-102554
+    paths:
+      - "opt/keycloak/lib/lib/main/com.google.guava.guava-33.6.0-jre.jar"
+    statement: >-
+      Guava inside Keycloak 26.8.2 itself (fixed in Guava 33.7.2; no Keycloak release carries it
+      yet, 2026-11-11). The flaw needs untrusted data fed to Java's native deserialization
+      (ObjectInputStream) into CompactHashMap/MapMakerInternalMap (GHSA-mvr2-9pj6-7w5j). Keycloak
+      reads JSON and forms, and with the single-node cache (KC_CACHE=local) it receives no
+      serialized data from other nodes. Remove when a Keycloak release with Guava 33.7.2 or later
+      is pinned; the expiry forces a fresh look.
+    expired_at: 2026-12-31

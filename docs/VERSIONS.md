@@ -129,7 +129,7 @@ Backend lock fully re-resolved on 2026-11-04 (latest compatible for every packag
 | Item | Version | Checked |
 |---|---|---|
 | Keycloak | 26.8.2 (2026-11-05; fixes a 2FA-setup bypass, an organisation-login takeover and a minimum-ACR bypass in older 26.x; still the newest release on 2026-11-11, no 26.8.3 or 27.x) — `quay.io/keycloak/keycloak:26.8.2@sha256:723b1d6e254c0fc96d5cffec860c7e0744d6a3277822b865bb538cf891575e41` (quay's re-push `26.8.2-1` of 2026-11-09: same source revision, refreshed base OS; was `…3879c623…`, `26.8.2-0`) in dev, CI and as the base of our staging build | 2026-11-11 |
-| Keycloak, staging (P1-T8d1) | `deploy/docker/keycloak.Dockerfile`: the image above pre-built (`kc.sh build`: Postgres, health, metrics, device-flow/CIBA/impersonation/Kerberos off), `start --optimized`, single-node cache (`KC_CACHE=local`), forwarded headers trusted from Traefik's fixed address only; built by `scripts/deploy.sh`, CI job "Keycloak image" (build, smoke, Trivy) | 2026-11-11 |
+| Keycloak, staging (P1-T8d1) | `deploy/docker/keycloak.Dockerfile`: the image above pre-built (`kc.sh build`: Postgres, health, metrics, device-flow/CIBA/impersonation/Kerberos off), `start --optimized`, single-node cache (`KC_CACHE=local`), forwarded headers trusted from Traefik's fixed address only; built by `scripts/deploy.sh`, CI job "Keycloak image" (build, smoke, Trivy). One reviewed Trivy exception: CVE-2026-102554 in Keycloak's own Guava 33.6.0 (needs Java native deserialization of untrusted data, which Keycloak does not do; `.trivyignore.yaml`, expires 2026-12-31) | 2026-11-11 |
 | Keycloak database (dev) | the dev Postgres 17.11, own database and owner role `keycloak` | 2026-11-06 |
 | Keycloak database (CI) | `postgres:18.6-alpine@sha256:123b17998ccaf47e53b502e8c6a1e79afd8f579c6f3eec83c563da026f957395` | 2026-11-06 |
 | Password block list | SecLists commit `2f31b22e1f9963ec2fd2b12606c00f0fb04910f1` (MIT), filtered to 12+ characters | 2026-11-06 |
@@ -198,4 +198,4 @@ machine only). Add other platforms with `tofu providers lock -platform=…` when
 | Item | Version | Pinned how | Checked |
 |---|---|---|---|
 | pgBackRest | 2.60.0 (18-10-2026; Alpine packages 2.58) built from the release tarball (tag commit 2e1c4f2b) | `ADD --checksum=sha256:7409309d…22d0` in `deploy/docker/postgres.Dockerfile` | 2026-11-09 |
-| Postgres image | `postgres:18.6-alpine3.23@sha256:a0cbdbbcc57f7317ca183ac9d10eb3af72b5b05b2f25acad58e765bd2b139099` + pgBackRest; `gosu` removed (old Go, 26 CVEs; never needed as the image runs as postgres) | digest | 2026-11-09 |
+| Postgres image | `postgres:18.6-alpine3.23@sha256:f1031bf693d8d60b0a0380c51a3510607c7a93c7c1d18bf7af94a3a8dbeb40b8` (re-pinned 2026-11-11) + pgBackRest; `krb5-libs` ≥ 1.22.3-r0 installed on top (the base still has 1.22.1-r0: 18 HIGH advisories); `gosu` removed (old Go, 26 CVEs; never needed as the image runs as postgres) | digest | 2026-11-09 |

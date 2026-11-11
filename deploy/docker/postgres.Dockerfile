@@ -4,7 +4,7 @@
 #   docker buildx build -f deploy/docker/postgres.Dockerfile -t <tag> deploy/docker
 ARG PGBACKREST_VERSION=2.60.0
 
-FROM postgres:18.6-alpine3.23@sha256:a0cbdbbcc57f7317ca183ac9d10eb3af72b5b05b2f25acad58e765bd2b139099 AS build
+FROM postgres:18.6-alpine3.23@sha256:f1031bf693d8d60b0a0380c51a3510607c7a93c7c1d18bf7af94a3a8dbeb40b8 AS build
 ARG PGBACKREST_VERSION
 ADD --checksum=sha256:7409309d5b69365ecc21f3f9c377056a6a4cdc327ce062e41354a442989d22d0 \
     https://github.com/pgbackrest/pgbackrest/archive/refs/tags/release/${PGBACKREST_VERSION}.tar.gz /src.tar.gz
@@ -19,12 +19,14 @@ RUN apk add --no-cache build-base meson ninja pkgconf openssl-dev libxml2-dev lz
  && strip build/src/pgbackrest \
  && build/src/pgbackrest version
 
-FROM postgres:18.6-alpine3.23@sha256:a0cbdbbcc57f7317ca183ac9d10eb3af72b5b05b2f25acad58e765bd2b139099
+FROM postgres:18.6-alpine3.23@sha256:f1031bf693d8d60b0a0380c51a3510607c7a93c7c1d18bf7af94a3a8dbeb40b8
 ARG PGBACKREST_VERSION
 LABEL org.opencontainers.image.title="indiehr-postgres" \
       ihr.pgbackrest.version="${PGBACKREST_VERSION}"
-# pgBackRest's runtime libraries (libpq is the image's own)
-RUN apk add --no-cache libxml2 lz4-libs zstd-libs zlib libbz2 yaml \
+# pgBackRest's runtime libraries (libpq is the image's own). krb5-libs at least 1.22.3-r0:
+# the base image still has 1.22.1-r0 (18 HIGH advisories, 2026-11-11); the build fails if the
+# fixed package is not available
+RUN apk add --no-cache libxml2 lz4-libs zstd-libs zlib libbz2 yaml 'krb5-libs>=1.22.3-r0' \
  && install -d -o postgres -g postgres -m 750 /var/lib/pgbackrest /var/spool/pgbackrest /tmp/pgbackrest
 COPY --from=build /src/build/src/pgbackrest /usr/local/bin/pgbackrest
 # archive_command (database) and the schedule (backup service), P1-T8c; the spool belongs to
