@@ -6,24 +6,28 @@ It also delivers staff invitations queued by hospitals' "Add user" (P1-T5e1), ca
 hospital admins' requests (reset a lost authenticator, resend or cancel an invitation) and
 withdraws invitations nobody accepted in time (P1-T5e2).
 
-Two processes (P1-T5f, owner): ``--role onboarding`` (hospital runs, its secret
-IHR_KEYCLOAK_ONBOARDING_SECRET) and ``--role staff`` (everything about staff accounts,
-IHR_KEYCLOAK_STAFF_SECRET), each a narrow service account of the hospitals' realm
-(keycloak/accounts.py). Neither may hold the bootstrap admin credential, and the console and
-the hospitals' web app and worker hold none. Work is claimed with row locks (skip locked), so
-several workers never take the same item.
+Two processes (P1-T5f, owner): ``--role onboarding`` (hospital runs) and ``--role staff``
+(everything about staff accounts), each a narrow service account of the hospitals' realm
+(keycloak/accounts.py) that signs in with its own key (P1-T8d2): the key folder
+IHR_CLIENT_KEY_DIR (/run/ihr-keys, a volume only this container mounts) must hold the role's
+own key. Neither may hold the bootstrap admin credential or any old client secret, and the
+console and the hospitals' web app and worker hold none. Work is claimed with row locks (skip
+locked), so several workers never take the same item.
 """
 
 import logging
 import os
 import time
 
+from django.conf import settings
 from django.core.management.base import BaseCommand, CommandError
 from django.db import close_old_connections, connection, transaction
 from django.utils import timezone
 from ihr_audit import context as audit
+from ihr_identity import client_auth
 
 from ihr_platform import invitations
+from ihr_platform.keycloak.kc_http import KeycloakError
 from ihr_platform.models import TenantOperation
 from ihr_platform.provisioning import runner
 
@@ -56,7 +60,7 @@ ROLES = ("onboarding", "staff")
 def work_once(role=None):
     """One unit of work. ``role`` (P1-T5f): "onboarding" runs queued hospital operations,
     "staff" delivers invitations, carries out admins' requests and expires invitations;
-    None does both (tests). Each role's process holds only its own Keycloak secret. True if
+    None does both (tests). Each role's process holds only its own Keycloak key. True if
     there was something to do."""
     if role in (None, "onboarding") and run_one_operation():
         return True
@@ -109,6 +113,53 @@ def run_one_operation():
     return True
 
 
+def check_credentials(role):
+    """Refuse to start unless this worker holds exactly its own key, and Keycloak accepts it
+    (one admin token, fetched before "ready"). Fails closed on anything else."""
+    if os.environ.get("IHR_KEYCLOAK_ADMIN_CLIENT_SECRET"):
+        raise CommandError(
+            "The bootstrap admin credential is in this worker's environment: "
+            "workers sign in only with their own key (P1-T5f, P1-T8d2)."
+        )
+    # Any IHR_KEYCLOAK_*_SECRET is a leftover of the shared-secret days (e.g. an old
+    # provisioner.env): it must be removed, not silently ignored.
+    if leftover := sorted(
+        name
+        for name, value in os.environ.items()
+        if name.startswith("IHR_KEYCLOAK_") and name.endswith("_SECRET") and value
+    ):
+        msg = (
+            f"{', '.join(leftover)} is in the {role} worker's environment: workers sign "
+            "in with their own key now (P1-T8d2); remove the old secret."
+        )
+        raise CommandError(msg)
+    store = client_auth.store()
+    try:
+        held = store.purpose()
+        if held is None:
+            msg = (
+                f"No client key in {settings.IHR_CLIENT_KEY_DIR}: give this worker its "
+                f"own key (keys ensure {role})."
+            )
+            raise CommandError(msg)
+        if held != role:
+            msg = (
+                f"{settings.IHR_CLIENT_KEY_DIR} holds the {held} key: the {role} worker "
+                "holds only its own key (P1-T8d2)."
+            )
+            raise CommandError(msg)
+        store.check()
+    except client_auth.ClientKeyError as exc:
+        raise CommandError(str(exc)) from exc
+    from ihr_platform.management.commands.ihr_keycloak_sync import keycloak_admin
+
+    try:
+        keycloak_admin(purpose=role)._access_token()  # noqa: SLF001
+    except KeycloakError as exc:
+        msg = f"Keycloak refused the {role} worker's key: {exc}"
+        raise CommandError(msg) from exc
+
+
 class Command(BaseCommand):
     help = "Run the provisioning operations queued from the operator console."
 
@@ -118,22 +169,7 @@ class Command(BaseCommand):
         parser.add_argument("--interval", type=float, default=3.0)
 
     def handle(self, *args, role, once, interval, **options):
-        secret = f"IHR_KEYCLOAK_{role.upper()}_SECRET"
-        if not os.environ.get(secret):
-            msg = f"Set {secret}: each worker uses only its own account."
-            raise CommandError(msg)
-        if os.environ.get("IHR_KEYCLOAK_ADMIN_CLIENT_SECRET"):
-            raise CommandError(
-                "The bootstrap admin credential is in this worker's environment: "
-                "workers get only their own narrow secret (P1-T5f)."
-            )
-        for other in ROLES:
-            if other != role and os.environ.get(f"IHR_KEYCLOAK_{other.upper()}_SECRET"):
-                msg = (
-                    f"IHR_KEYCLOAK_{other.upper()}_SECRET is in the {role} worker's "
-                    "environment: each worker holds only its own account (P1-T5f)."
-                )
-                raise CommandError(msg)
+        check_credentials(role)
         self.stdout.write(f"provisioner ready ({role})")
         while True:
             close_old_connections()

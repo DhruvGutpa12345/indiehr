@@ -2,7 +2,9 @@
 
 Hospital ``alpha`` gets:
   - organisation ``alpha`` (its staff are unmanaged members: one person, many hospitals);
-  - public client ``ihr-h-alpha`` (PKCE, MFA, no full scope, no password grant);
+  - confidential client ``ihr-h-alpha``: the backend proves itself with an assertion signed by
+    its own key, published in the client's ``jwks.string`` (P1-T8d2, ADR-012); PKCE, MFA, no
+    full scope, no password grant;
   - client role ``ihr-h-alpha.member``, the only role Keycloak holds; job roles live in CARE;
   - flow ``ihr-hospital-alpha``, which refuses anyone without that role, on every login,
     including single sign-on from another hospital.
@@ -14,6 +16,7 @@ import json
 from dataclasses import dataclass
 from http import HTTPStatus
 
+from .jwks import same_keys
 from .kc_http import KeycloakError, q
 from .realm import (
     CORE_SHAPE,
@@ -61,6 +64,8 @@ class HospitalLogin:
     uuid: str = ""
     # Where Keycloak posts logout tokens (P1-T5d): one internal address for all hospitals.
     backchannel_url: str = ""
+    # The backend's public key set (P1-T8d2): the only keys this client accepts assertions from.
+    jwks: str = ""
 
 
 @dataclass(frozen=True)
@@ -78,6 +83,10 @@ def ensure_hospital(admin, h, org_id=None):
     reachable through the realm flow. ``org_id`` is the id already stored for this hospital;
     a different organisation under the same alias is an error, never silently adopted.
     """
+    if not h.jwks:
+        # A client with no key would refuse every sign-in: stop before changing anything.
+        msg = f"{h.slug}: no public key set for the backend (keys ensure, IHR_CLIENT_JWKS_DIR)"
+        raise KeycloakError(msg)
     fresh = org_id is None
     org_id = _ensure_org(admin, h, org_id)
     client = _find_client(admin, client_id_for(h.slug))
@@ -132,6 +141,7 @@ def _check_client_settings(h, client, org_id):
     for key in (
         "enabled",
         "publicClient",
+        "clientAuthenticatorType",
         "standardFlowEnabled",
         "implicitFlowEnabled",
         "directAccessGrantsEnabled",
@@ -144,7 +154,14 @@ def _check_client_settings(h, client, org_id):
             issues.append(f"{h.slug}: client {key} is {client.get(key)!r}")
     for key, value in want["attributes"].items():
         # Keycloak drops an attribute set to "" (e.g. no back-channel address in tests)
-        if (client.get("attributes", {}).get(key) or "") != value:
+        have = client.get("attributes", {}).get(key) or ""
+        if key == "jwks.string":
+            # Compared as a set of keys: an added, changed or missing key is drift.
+            if not h.jwks:
+                issues.append(f"{h.slug}: no backend key set here to compare with")
+            elif not same_keys(have, value):
+                issues.append(f"{h.slug}: client keys differ from the backend's set")
+        elif have != value:
             issues.append(f"{h.slug}: client attribute {key} is not {value!r}")
     for key in OVERRIDE_ATTRIBUTES:
         if client.get("attributes", {}).get(key):
@@ -351,6 +368,20 @@ def _find_client(admin, client_id):
     return found[0] if found else None
 
 
+def client_key_attributes(jwks):
+    """Client attributes for signed-JWT client authentication with exactly the keys in
+    ``jwks`` (P1-T8d2). Keys are pinned in ``jwks.string``, never fetched from a URL: Keycloak
+    would trust whatever that address returns, and the drift check could not see it."""
+    return {
+        "use.jwks.string": "true",
+        "jwks.string": jwks,
+        "use.jwks.url": "false",
+        "jwks.url": "",
+        "token.endpoint.auth.signing.alg": "ES256",
+        "token.endpoint.auth.signing.max.exp": "60",
+    }
+
+
 def _client_rep(h, org_id, flow_ids, enabled):
     rep = {
         "clientId": client_id_for(h.slug),
@@ -358,7 +389,10 @@ def _client_rep(h, org_id, flow_ids, enabled):
         "description": f"Staff login for {h.name}",
         "enabled": enabled,
         "protocol": "openid-connect",
-        "publicClient": True,
+        # Confidential (P1-T8d2): code exchange, refresh and logout need the backend's
+        # signed assertion, so a stolen code or refresh token is useless on its own.
+        "publicClient": False,
+        "clientAuthenticatorType": "client-jwt",
         "bearerOnly": False,
         "consentRequired": False,
         "standardFlowEnabled": True,
@@ -387,6 +421,7 @@ def _client_rep(h, org_id, flow_ids, enabled):
             "backchannel.logout.url": h.backchannel_url,
             "backchannel.logout.session.required": "true",
             "backchannel.logout.revoke.offline.tokens": "false",
+            **client_key_attributes(h.jwks),
         },
         "defaultClientScopes": list(DEFAULT_SCOPES),
         "optionalClientScopes": [],

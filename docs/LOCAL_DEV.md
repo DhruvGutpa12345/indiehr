@@ -18,12 +18,12 @@ Then open **http://alpha.localhost:8080** or **http://beta.localhost:8080** (bro
 
 ## Keycloak (staff sign-in, P1-T3)
 
-Keycloak is optional: it needs about 540 MB more. The web app does not use it yet; it switches over in P1-T4. Until then the token viewer shows what a hospital's sign-in returns.
+Keycloak is optional: it needs about 540 MB more. Staff sign in through it at http://alpha.localhost:8080 and http://beta.localhost:8080 (P1-T4). The backend and the two workers prove who they are to Keycloak with their own keys (P1-T8d2), made and published by `keycloak up`.
 
 ```bash
 scripts/care-dev.sh keycloak up        # own database "keycloak", start, create/repair realm + both hospitals
 scripts/care-dev.sh keycloak seed      # demo staff with fresh passwords + authenticator keys -> TEST_USERS.md
-scripts/care-dev.sh keycloak devtools  # token viewer at http://alpha.localhost:8082/ and http://beta.localhost:8082/
+scripts/care-dev.sh keycloak keys status   # the three client keys (rotate <purpose|all>, probe [--negative])
 scripts/care-dev.sh keycloak otp dr.meera   # current 6-digit code for a demo user
 scripts/care-dev.sh keycloak sync --all --check   # report drift from the baseline (exit 1 if any)
 scripts/keycloak-test.sh               # live tests in a throwaway realm (~45 s)
@@ -118,5 +118,4 @@ The overrides live in `deploy/dev/care-local.override.yaml`; CARE's files are un
 | http://localhost:9100 | File storage S3 API (pre-signed file URLs): SeaweedFS since P1-T8b3 (`deploy/s3/`, no web console). Keys in `deploy/dev/s3-gateway.env` (git-ignored); `scripts/care-dev.sh s3-check` tests every key and lock |
 | localhost:5433 / 6380 | Postgres / Redis |
 | http://auth.localhost:8081 | Keycloak (staff sign-in), realm `indiehr`; admin console at `/admin/` |
-| http://alpha.localhost:8082 · http://beta.localhost:8082 | Dev token viewer: signs in through Keycloak and shows the token |
 | localhost:9002 | Keycloak health (`/health/ready`) |

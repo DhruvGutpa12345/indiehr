@@ -12,7 +12,7 @@
 #
 # The server must have been set up by deploy/host/bootstrap.sh (user ihr, Docker, /srv/indiehr).
 # Layout on the server mirrors the repository, because compose.yaml uses ../keycloak and
-# ../docker: /srv/indiehr/{deploy/staging,deploy/keycloak,deploy/docker,scripts/staging.sh}.
+# ../docker: /srv/indiehr/{deploy/staging,deploy/keycloak,deploy/docker,scripts/{staging,client-keys}.sh}.
 # Secrets (.env and secrets/ from `scripts/staging.sh init`) go over SSH as a tar stream, mode
 # 600, never in arguments or logs. The backend image is built from the committed files only
 # (git archive; with --allow-dirty, tracked + new files), never from git-ignored ones (local
@@ -199,13 +199,15 @@ ship_image "$KEYCLOAK"
 # ---- 3. Stack files (tracked files only: never a stray .env or secret) ----------------------
 log "Sending the stack files to $REMOTE_ROOT"
 git ls-files -z deploy/staging deploy/s3 deploy/keycloak/password-blocklist \
-    deploy/docker/frontend-nginx.conf.template scripts/staging.sh \
+    deploy/docker/frontend-nginx.conf.template scripts/staging.sh scripts/client-keys.sh \
   | tar --null -T - -czf - \
   | remote "tar -C $REMOTE_ROOT --no-same-owner -xzf -"
 
 # ---- 4. Site settings and secrets, mode 600, through the SSH connection only -----------------
 log "Sending .env and secrets/ from $ENV_DIR (mode 600)"
-tar -C "$ENV_DIR" -cf - .env secrets \
+# Not the workers' Keycloak secrets of before P1-T8d2: they sign with keys made on the server
+# now, and an old copy left here must not travel again (delete it: deploy/staging/README.md)
+tar -C "$ENV_DIR" --exclude=secrets/provisioner.env --exclude=secrets/staff-worker.env -cf - .env secrets \
   | remote "umask 077 && mkdir -p $REMOTE_ROOT/deploy/staging \
       && tar -C $REMOTE_ROOT/deploy/staging --no-same-owner -xf - \
       && chmod 700 $REMOTE_ROOT/deploy/staging/secrets \

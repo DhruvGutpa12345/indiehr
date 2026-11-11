@@ -3,16 +3,25 @@
 Each run builds a throwaway realm ``ihrtest_<8 hex>`` with the production baseline code, two
 hospitals and fresh users, drives the real login pages with a scripted browser, and deletes the
 realm at the end. Skipped unless IHR_KC_TEST_URL is set (so the Django suite skips it).
+
+Every client authenticates with assertions signed by throwaway keys made for this run, in a
+temporary folder (P1-T8d2): the backend's key for the hospital and console clients, and each
+worker's own key for its account.
 """
 
+import atexit
 import os
 import re
 import secrets
+import shutil
+import tempfile
 import time
 import unittest
 import uuid
+from pathlib import Path
 from urllib.parse import urlencode
 
+from ihr_platform import client_keys
 from ihr_platform.keycloak.browser import Browser, decode_jwt
 from ihr_platform.keycloak.hospital import (
     HospitalLogin,
@@ -54,12 +63,43 @@ SMTP = {
 MAILPIT = os.environ.get("IHR_KC_TEST_MAILPIT", "http://127.0.0.1:8025")
 REALM_RE = re.compile(r"^ihrtest_[0-9a-f]{8}$")
 NOT_MEMBER = "You are not a member of this hospital."
+_KEYS = {}
 
 
-def hospital(slug):
+def key_store(purpose):
+    """This run's key folder of ``purpose`` (made on first use, removed at exit)."""
+    if not _KEYS:
+        root = tempfile.mkdtemp(prefix="ihr-live-keys-")
+        atexit.register(shutil.rmtree, root, ignore_errors=True)
+        for name in client_keys.PURPOSES:
+            _KEYS[name] = client_keys.KeyStore(Path(root) / name)
+            _KEYS[name].ensure(name)
+    return _KEYS[purpose]
+
+
+def backend_auth(client_id, audience):
+    """What the backend's signer adds to its token and logout requests."""
+    return key_store("backend").fields(client_id, audience)
+
+
+def worker_jwks():
+    return {
+        client: key_store(purpose).public_jwks()
+        for purpose, client in (
+            ("onboarding", "ihr-onboarding"),
+            ("staff", "ihr-staff-worker"),
+        )
+    }
+
+
+def hospital(slug, jwks=None):
     origin = f"http://{slug}.localhost:8099"
     return HospitalLogin(
-        slug, f"{slug.title()} Test Hospital", (origin,), (f"{origin}/cb",)
+        slug,
+        f"{slug.title()} Test Hospital",
+        (origin,),
+        (f"{origin}/cb",),
+        jwks=jwks or key_store("backend").public_jwks(),
     )
 
 
@@ -96,8 +136,40 @@ class KeycloakLiveTest(unittest.TestCase):
             ensure_member(self.admin, self.ids[slug], user_id)
         return user_id, username, password, secret
 
-    def browser(self):
-        return Browser(URL, self.realm)
+    def browser(self, client_auth=backend_auth):
+        return Browser(URL, self.realm, client_auth=client_auth)
+
+    @property
+    def issuer(self):
+        return f"{URL}/realms/{self.realm}"
+
+    def token_call(self, form, realm=None):
+        """One raw request to the realm's token endpoint: (HTTP status, error code)."""
+        resp = request(
+            "POST",
+            f"{URL}/realms/{realm or self.realm}/protocol/openid-connect/token",
+            headers={"Content-Type": "application/x-www-form-urlencoded"},
+            body=urlencode(form),
+        )
+        try:
+            error = (resp.json() or {}).get("error", "")
+        except ValueError:
+            error = ""
+        return resp.status, error
+
+    def client_check(self, client_id, fields, realm=None):
+        """Keycloak's verdict on a hospital or console client's authentication: a junk refresh
+        token, so "invalid_grant" means the client was accepted, "invalid_client" refused."""
+        _, error = self.token_call(
+            {
+                "grant_type": "refresh_token",
+                "refresh_token": "junk.junk.junk",
+                "client_id": client_id,
+                **fields,
+            },
+            realm,
+        )
+        return error
 
     def login(self, browser, slug, username, password, secret, **kw):
         return browser.login(
@@ -294,14 +366,12 @@ class KeycloakLiveTest(unittest.TestCase):
         browser = self.browser()
         alpha = self.login(browser, "alpha", name, pw, secret).tokens
         beta = self.login(browser, "beta", None, None, None).tokens
-        resp = request(
-            "POST",
-            f"{URL}/realms/{self.realm}/protocol/openid-connect/logout",
-            headers={"Content-Type": "application/x-www-form-urlencoded"},
-            body=urlencode(
-                {"client_id": "ihr-h-alpha", "refresh_token": alpha["refresh_token"]}
-            ),
+        unsigned = Browser(URL, self.realm).logout(
+            "ihr-h-alpha", alpha["refresh_token"]
         )
+        # A client must prove itself (Keycloak: 400 when the assertion is missing).
+        self.assertIn('"error":"invalid_client"', unsigned.text)
+        resp = browser.logout("ihr-h-alpha", alpha["refresh_token"])
         self.assertEqual(resp.status, 204, resp.text)
         self.assertEqual(
             browser.refresh("ihr-h-beta", beta["refresh_token"]).status, 400
@@ -363,9 +433,10 @@ class KeycloakLiveTest(unittest.TestCase):
             "http://console.localhost:8099/ops/callback/",
             "http://console.localhost:8099",
         )
-        ensure_ops_realm(ops, redirect, origin)
-        ensure_ops_realm(ops, redirect, origin)  # idempotent
-        self.assertEqual(check_ops_realm(ops, redirect, origin), [])
+        jwks = key_store("backend").public_jwks()
+        ensure_ops_realm(ops, redirect, origin, jwks)
+        ensure_ops_realm(ops, redirect, origin, jwks)  # idempotent
+        self.assertEqual(check_ops_realm(ops, redirect, origin, jwks), [])
 
         def operator(with_role):
             name, pw, secret = (
@@ -379,7 +450,7 @@ class KeycloakLiveTest(unittest.TestCase):
                     f"users/{sub}/role-mappings/realm",
                     [ops.get(f"roles/{OPERATOR_ROLE}")],
                 )
-            return Browser(URL, ops_realm).login(
+            return Browser(URL, ops_realm, client_auth=backend_auth).login(
                 "ihr-console", redirect, name, pw, secret
             )
 
@@ -406,6 +477,16 @@ class KeycloakLiveTest(unittest.TestCase):
         plain = operator(with_role=False)
         with self.assertRaisesRegex(TokenRejectedError, "not an operator"):
             verify_operator_token(plain.tokens["access_token"], **args)
+        # The console client is confidential too: no assertion, no token.
+        self.assertEqual(
+            self.client_check("ihr-console", {}, ops_realm), "invalid_client"
+        )
+        self.assertEqual(
+            self.client_check(
+                "ihr-console", backend_auth("ihr-console", args["issuer"]), ops_realm
+            ),
+            "invalid_grant",
+        )
 
         # Drift: an extra scope mapping is reported, and the next sync removes it.
         client = ops.get("clients?clientId=ihr-console")[0]
@@ -413,10 +494,10 @@ class KeycloakLiveTest(unittest.TestCase):
         ops.post(f"clients/{client['id']}/scope-mappings/realm", [extra])
         self.assertIn(
             "operator realm: console client scope mappings changed",
-            check_ops_realm(ops, redirect, origin),
+            check_ops_realm(ops, redirect, origin, jwks),
         )
-        ensure_ops_realm(ops, redirect, origin)
-        self.assertEqual(check_ops_realm(ops, redirect, origin), [])
+        ensure_ops_realm(ops, redirect, origin, jwks)
+        self.assertEqual(check_ops_realm(ops, redirect, origin, jwks), [])
 
     # --- back-channel logout (P1-T5d) ---------------------------------------------------
 
@@ -447,12 +528,17 @@ class KeycloakLiveTest(unittest.TestCase):
 
     # --- the workers' narrow accounts (P1-T5f) -------------------------------------------
 
-    def narrow(self, client_id):
-        from ihr_platform.keycloak.accounts import secret_of
-
-        secret = secret_of(self.admin, client_id)
+    def narrow(self, client_id, store=None):
+        """The worker's admin client, signing with the worker's own key."""
+        purpose = {"ihr-onboarding": "onboarding", "ihr-staff-worker": "staff"}
+        store = store or key_store(purpose[client_id])
         return KeycloakAdmin(
-            URL, client_id, secret, self.realm, account_realm=self.realm
+            URL,
+            client_id,
+            None,
+            self.realm,
+            account_realm=self.realm,
+            client_auth=lambda: store.fields(client_id, self.issuer),
         )
 
     def test_each_worker_account_does_its_job_and_nothing_else(self):  # noqa: PLR0915 (one story)
@@ -461,9 +547,9 @@ class KeycloakLiveTest(unittest.TestCase):
             ensure_service_accounts,
         )
 
-        ensure_service_accounts(self.admin)
-        ensure_service_accounts(self.admin)  # repeatable
-        self.assertEqual(check_service_accounts(self.admin), [])
+        ensure_service_accounts(self.admin, worker_jwks())
+        ensure_service_accounts(self.admin, worker_jwks())  # repeatable
+        self.assertEqual(check_service_accounts(self.admin, worker_jwks()), [])
         self.assertEqual(check_realm(self.admin, smtp=SMTP), [])
         onboarding = self.narrow("ihr-onboarding")
         staff = self.narrow("ihr-staff-worker")
@@ -579,7 +665,7 @@ class KeycloakLiveTest(unittest.TestCase):
         self.admin.put(
             f"clients/{staff_client['id']}/default-client-scopes/{scopes['roles']}"
         )
-        issues = check_service_accounts(self.admin)
+        issues = check_service_accounts(self.admin, worker_jwks())
         self.assertTrue(any("holds" in i for i in issues), issues)
         self.assertTrue(any("fullScopeAllowed" in i for i in issues), issues)
         self.assertTrue(any("client scopes" in i for i in issues), issues)
@@ -590,14 +676,227 @@ class KeycloakLiveTest(unittest.TestCase):
         current = self.admin.get(f"clients/{staff_client['id']}")
         self.admin.put(
             f"clients/{staff_client['id']}",
-            dict(current, clientAuthenticatorType="client-jwt"),
+            dict(current, clientAuthenticatorType="client-secret"),
         )
-        issues = check_service_accounts(self.admin)
+        issues = check_service_accounts(self.admin, worker_jwks())
         self.assertTrue(any("holds roles of" in i for i in issues), issues)
         self.assertTrue(any("clientAuthenticatorType" in i for i in issues), issues)
-        ensure_service_accounts(self.admin)
-        self.assertEqual(check_service_accounts(self.admin), [])
+        ensure_service_accounts(self.admin, worker_jwks())
+        self.assertEqual(check_service_accounts(self.admin, worker_jwks()), [])
         self._drop_hospital(ids)
+
+    # --- client authentication with keys (P1-T8d2, ADR-012) ------------------------------
+
+    def bad_assertions(self, client_id, store, issuer):
+        """Every kind of client authentication Keycloak must refuse, by label."""
+        from cryptography.hazmat.primitives.asymmetric import rsa
+
+        kid = store.active_kid()
+        key = store.private_key(kid)
+        stranger = client_keys.new_private_key()
+        now = int(time.time())
+
+        def signed(signing_key=key, signing_kid=kid, audience=issuer, **kw):
+            return client_keys.assertion_fields(
+                client_keys.make_assertion(
+                    signing_key, signing_kid, client_id, audience, **kw
+                )
+            )
+
+        return {
+            "no assertion": {},
+            "a client secret": {"client_secret": secrets.token_urlsafe(32)},
+            "another key under the right kid": signed(stranger),
+            "an unknown kid": signed(stranger, "backend-unknownunknown00"),
+            "an expired assertion": signed(now=now - 120),
+            # Keycloak bounds the age (now - iat <= max.exp 60 s), not exp - iat: a long
+            # exp is refused once the assertion is older than 60 s.
+            "issued over 60 s ago, not yet expired": signed(now=now - 90, lifetime=120),
+            "two audiences": signed(
+                audience=[issuer, f"{issuer}/protocol/openid-connect/token"]
+            ),
+            "RS256 where ES256 is pinned": signed(
+                rsa.generate_private_key(public_exponent=65537, key_size=2048),
+                algorithm="RS256",
+            ),
+            "HS256": signed(secrets.token_bytes(32), algorithm="HS256"),
+            "another realm as audience": signed(audience=f"{URL}/realms/master"),
+        }
+
+    def test_hospital_clients_refuse_every_bad_assertion(self):
+        store = key_store("backend")
+        good = backend_auth("ihr-h-alpha", self.issuer)
+        self.assertEqual(self.client_check("ihr-h-alpha", good), "invalid_grant")
+        for label, fields in self.bad_assertions(
+            "ihr-h-alpha", store, self.issuer
+        ).items():
+            with self.subTest(label):
+                self.assertEqual(
+                    self.client_check("ihr-h-alpha", fields), "invalid_client"
+                )
+        # A jti is single-use ("Token reuse detected").
+        once = backend_auth("ihr-h-alpha", self.issuer)
+        self.assertEqual(self.client_check("ihr-h-alpha", once), "invalid_grant")
+        self.assertEqual(self.client_check("ihr-h-alpha", once), "invalid_client")
+        # Signed for one client, sent as another.
+        self.assertEqual(
+            self.client_check("ihr-h-beta", backend_auth("ihr-h-alpha", self.issuer)),
+            "invalid_client",
+        )
+
+    def test_a_published_key_without_use_is_ignored(self):
+        """Keycloak skips a jwks.string key with no "use" member: ours always carry it."""
+        import json
+
+        store = client_keys.KeyStore(tempfile.mkdtemp(prefix="ihr-live-nouse-"))
+        self.addCleanup(shutil.rmtree, store.dir, ignore_errors=True)
+        store.ensure("backend")
+        bare = json.loads(store.public_jwks())
+        bare["keys"][0].pop("use")
+        client_id, uuid_ = self._scratch_client(
+            publicClient=False,
+            clientAuthenticatorType="client-jwt",
+            attributes={"use.jwks.string": "true", "jwks.string": json.dumps(bare)},
+        )
+        fields = store.fields(client_id, self.issuer)
+        self.assertEqual(self.client_check(client_id, fields), "invalid_client")
+        client = self.admin.get(f"clients/{uuid_}")
+        client["attributes"]["jwks.string"] = store.public_jwks()
+        self.admin.put(f"clients/{uuid_}", client)
+        fresh = store.fields(client_id, self.issuer)
+        self.assertEqual(self.client_check(client_id, fresh), "invalid_grant")
+
+    def test_cut_over_gate_a_public_client_ignores_the_assertion(self):
+        """Migration gate (i): the backend can sign before its clients are switched."""
+        client_id, _ = self._scratch_client()
+        stranger = client_keys.KeyStore(tempfile.mkdtemp(prefix="ihr-live-gate-"))
+        self.addCleanup(shutil.rmtree, stranger.dir, ignore_errors=True)
+        stranger.ensure("backend")
+        for fields in ({}, stranger.fields(client_id, self.issuer)):
+            self.assertEqual(self.client_check(client_id, fields), "invalid_grant")
+
+    def test_cut_over_gate_sessions_survive_the_switch(self):
+        """Migration gate (ii): a refresh token issued while the client was public refreshes,
+        with an assertion, once it is confidential; without one it is refused."""
+        h = hospital("gate")
+        ids = ensure_hospital(self.admin, h)
+        self.addCleanup(self._drop_hospital, ids)
+        client = self.admin.get(f"clients/{ids.client_uuid}")
+        self.admin.put(
+            f"clients/{ids.client_uuid}",
+            dict(client, publicClient=True, clientAuthenticatorType="client-secret"),
+        )
+        user_id, name, pw, secret = self.user([])
+        ensure_member(self.admin, ids, user_id)
+        old = Browser(URL, self.realm).login(
+            ids.client_id, h.redirect_uris[0], name, pw, secret
+        )
+        self.assertIsNotNone(old.tokens, f"{old.pages} {old.error}")
+        ensure_hospital(self.admin, h, ids.org_id)  # the sync switches the client
+        self.assertEqual(check_hospital(self.admin, h, ids.org_id), [])
+        refresh = old.tokens["refresh_token"]
+        unsigned = Browser(URL, self.realm).refresh(ids.client_id, refresh)
+        self.assertIn('"error":"invalid_client"', unsigned.text)
+        resp = self.browser().refresh(ids.client_id, refresh)
+        self.assertEqual(resp.status, 200, resp.text)
+
+    def test_rotation_new_key_works_at_once_and_the_old_one_stops_at_once(self):
+        """Migration gate (iii): no cache wait in either direction (jwks.string)."""
+        store = client_keys.KeyStore(tempfile.mkdtemp(prefix="ihr-live-rotate-"))
+        self.addCleanup(shutil.rmtree, store.dir, ignore_errors=True)
+        old, _ = store.ensure("backend")
+        h = hospital("rot", jwks=store.public_jwks())
+        ids = ensure_hospital(self.admin, h)
+        self.addCleanup(self._drop_hospital, ids)
+
+        def check(kid):
+            fields = store.fields(ids.client_id, self.issuer, kid)
+            return self.client_check(ids.client_id, fields)
+
+        self.assertEqual(check(old), "invalid_grant")
+        new = store.stage()
+        self.assertEqual(check(new), "invalid_client")  # not published yet
+        both = hospital("rot", jwks=store.public_jwks())
+        ensure_hospital(self.admin, both, ids.org_id)
+        self.assertEqual(check(new), "invalid_grant")  # right after the update
+        self.assertEqual(check(old), "invalid_grant")
+        store.activate(new)
+        store.retire(old)
+        only_new = hospital("rot", jwks=store.public_jwks())
+        # The drift check sees the extra key until the sync removes it.
+        self.assertIn(
+            "rot: client keys differ from the backend's set",
+            check_hospital(self.admin, only_new, ids.org_id),
+        )
+        ensure_hospital(self.admin, only_new, ids.org_id)
+        self.assertEqual(check(old), "invalid_client")  # right after retirement
+        self.assertEqual(check(new), "invalid_grant")
+        self.assertEqual(check_hospital(self.admin, only_new, ids.org_id), [])
+
+    def test_workers_sign_in_with_their_keys_and_old_secrets_die(self):
+        from ihr_platform.keycloak.accounts import (
+            check_service_accounts,
+            ensure_service_accounts,
+        )
+
+        ensure_service_accounts(self.admin, worker_jwks())
+        staff = self.admin.get("clients?clientId=ihr-staff-worker")[0]
+        # As before P1-T8d2: a secret-based account, its secret exported to a worker.
+        self.admin.put(
+            f"clients/{staff['id']}",
+            dict(staff, clientAuthenticatorType="client-secret"),
+        )
+        old_secret = self.admin.get(f"clients/{staff['id']}/client-secret")["value"]
+        with_secret = KeycloakAdmin(
+            URL, "ihr-staff-worker", old_secret, self.realm, account_realm=self.realm
+        )
+        self.assertTrue(with_secret.get("users?max=1") is not None)
+        ensure_service_accounts(self.admin, worker_jwks())  # the switch
+        self.assertEqual(check_service_accounts(self.admin, worker_jwks()), [])
+        form = {"grant_type": "client_credentials", "client_id": "ihr-staff-worker"}
+        self.assertEqual(
+            self.token_call({**form, "client_secret": old_secret})[1], "invalid_client"
+        )
+        # Even switched back to secrets, the exported one stays dead (it was replaced).
+        current = self.admin.get(f"clients/{staff['id']}")
+        self.admin.put(
+            f"clients/{staff['id']}",
+            dict(current, clientAuthenticatorType="client-secret"),
+        )
+        # A wrong secret: Keycloak says unauthorized_client ("Invalid client credentials").
+        self.assertEqual(
+            self.token_call({**form, "client_secret": old_secret})[1],
+            "unauthorized_client",
+        )
+        ensure_service_accounts(self.admin, worker_jwks())
+        # Each worker with its own key; never with the other's.
+        status, _ = self.token_call(
+            {**form, **key_store("staff").fields("ihr-staff-worker", self.issuer)}
+        )
+        self.assertEqual(status, 200)
+        other = key_store("onboarding").fields("ihr-staff-worker", self.issuer)
+        self.assertEqual(self.token_call({**form, **other})[1], "invalid_client")
+        for label, fields in self.bad_assertions(
+            "ihr-staff-worker", key_store("staff"), self.issuer
+        ).items():
+            with self.subTest(label):
+                self.assertEqual(
+                    self.token_call({**form, **fields})[1], "invalid_client"
+                )
+
+    def test_revoking_sessions_ends_every_sign_in(self):
+        """Owner, Q-K20: after a suspected leak of the backend's key, every session ends."""
+        from ihr_platform.keycloak.realm import end_all_sessions
+
+        _, name, pw, secret = self.user(["alpha"])
+        tokens = self.login(self.browser(), "alpha", name, pw, secret).tokens
+        time.sleep(1)  # "not before" has a one-second grain
+        self.assertGreaterEqual(end_all_sessions(self.admin), int(time.time()) - 5)
+        resp = self.browser().refresh("ihr-h-alpha", tokens["refresh_token"])
+        self.assertEqual(resp.status, 400, resp.text)
+        time.sleep(1)  # later tests sign in after "not before"
+        again = self.login(self.browser(), "alpha", name, pw, secret)
+        self.assert_hospital_token(again, "alpha")
 
     # --- first-admin setup e-mail (P1-T5c) ----------------------------------------------
 

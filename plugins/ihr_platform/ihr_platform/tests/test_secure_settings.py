@@ -39,7 +39,6 @@ GOOD_SETTINGS = {
     "IHR_KEYCLOAK_PUBLIC_URL": "https://auth.app.hospital-test.in",
     "IHR_CONSOLE_URL": "https://console.app.hospital-test.in",
     "IHR_FRONTEND_URL_TEMPLATE": "https://{domain}",
-    "IHR_KEYCLOAK_DEV_REDIRECTS": False,
     "SESSION_COOKIE_SECURE": True,
     "CSRF_COOKIE_SECURE": True,
     "IHR_SESSION_COOKIE_SECURE": True,
@@ -84,7 +83,6 @@ class SecureRulesTests(SimpleTestCase):
             "IHR_FRONTEND_URL_TEMPLATE": {
                 "IHR_FRONTEND_URL_TEMPLATE": "http://{domain}"
             },
-            "DEV_REDIRECTS must be off": {"IHR_KEYCLOAK_DEV_REDIRECTS": True},
             "SESSION_COOKIE_SECURE must be on": {"SESSION_COOKIE_SECURE": False},
             "IHR_SESSION_COOKIE_SECURE must be on": {
                 "IHR_SESSION_COOKIE_SECURE": False
@@ -179,6 +177,26 @@ class DeploymentSettingsImportTests(SimpleTestCase):
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("SENTRY_DSN must stay unset", result.stderr)
         self.assertNotIn("sentry_sdk", result.stderr)
+
+    def test_the_backend_refuses_to_start_without_its_client_key(self):
+        """P1-T8d2: a process that signs (IHR_CLIENT_KEY_PURPOSE) must hold its own key."""
+        import tempfile
+
+        from ihr_platform import client_keys
+
+        root = tempfile.mkdtemp()
+        self.addCleanup(__import__("shutil").rmtree, root)
+        env = GOOD_ENV | {
+            "JWKS_BASE64": generate_encoded_jwks(),
+            "IHR_CLIENT_KEY_PURPOSE": "backend",
+            "IHR_CLIENT_KEY_DIR": root,
+        }
+        result = self._import(env)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("No backend client key", result.stderr)
+        client_keys.KeyStore(root).ensure("backend")
+        result = self._import(env)
+        self.assertEqual(result.returncode, 0, result.stderr[-2000:])
 
     def test_refuses_care_defaults_and_names_every_problem(self):
         result = self._import({"DATABASE_URL": GOOD_ENV["DATABASE_URL"]})

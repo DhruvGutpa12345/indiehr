@@ -5,8 +5,10 @@
 #   traefik/routes.yml  the public routes (a fixed file: Traefik never gets the Docker socket)
 #   compose.local.yaml  a proof run on this machine (self-signed certificate, 127.0.0.1)
 #   compose.acme.yaml   Let's Encrypt certificates on the VM (added in P1-T8b, with the DNS)
+#   generated/client-keys/  the public halves of the signing keys (staging.sh keys; no secrets)
 # Each container gets only the secrets it uses: the web app never sees Keycloak's admin
-# credential, each worker only its own narrow Keycloak account (P1-T5f).
+# credential, each worker only its own narrow Keycloak account (P1-T5f). They sign in to
+# Keycloak with a private key of their own (P1-T8d2), kept in a volume on this server only.
 name: indiehr-staging
 
 x-logging: &logging
@@ -188,14 +190,53 @@ services:
     healthcheck:
       disable: true
 
-  # One-off commands (scripts/staging.sh manage, and the Keycloak set-up). Never logged:
-  # some print secrets (a worker's Keycloak secret), and the journal is kept 180 days.
+  # One-off commands (scripts/staging.sh manage, and the Keycloak set-up). Never logged: the
+  # Keycloak set-up holds the bootstrap credential, and the journal is kept 180 days.
   admin:
     <<: *app
     profiles: ["admin"]
     restart: "no"
     logging:
       driver: none
+    # The public keys the sync writes to Keycloak's clients (P1-T8d2); never a private key
+    volumes:
+      - ./generated/client-keys:/run/ihr-jwks:ro
+    healthcheck:
+      disable: true
+
+  # One-off key tool (P1-T8d2; scripts/staging.sh keys): makes, lists, switches and deletes the
+  # keys the web app and the two workers sign their Keycloak sign-ins with. One volume per key
+  # holder, on this server only: never on the deploying machine, never backed up (owner,
+  # 11-11-2026). A lost key is replaced by a new one, enrolled with the bootstrap credential.
+  # No network and no logs: it prints only kids, ages and public keys.
+  keytool:
+    <<: *hardening
+    image: ${IHR_BACKEND_IMAGE:?set IHR_BACKEND_IMAGE}
+    profiles: ["keys"]
+    restart: "no"
+    network_mode: none
+    logging:
+      driver: none
+    # Root only to hand a new, empty volume (Docker makes it root's) to the app user; the tool
+    # itself runs as that user, so the keys are the app user's alone (600, in a 700 folder).
+    # Mounted under /run/ihr-keytool, not /run/ihr-keys: the image makes that one the app
+    # user's (mode 700), and root here has no right to look inside other users' folders.
+    user: root
+    cap_add: ["CHOWN", "SETUID", "SETGID"]
+    entrypoint:
+      - bash
+      - -c
+      - |
+        set -e
+        for d in /run/ihr-keytool/backend /run/ihr-keytool/onboarding /run/ihr-keytool/staff; do
+          if [ "$$(stat -c %u "$$d")" = 0 ]; then chmod 700 "$$d"; chown django:django "$$d"; fi
+        done
+        exec setpriv --reuid=django --regid=django --clear-groups python -m ihr_platform.client_keys "$$@"
+      - keytool
+    volumes:
+      - clientkey-backend:/run/ihr-keytool/backend
+      - clientkey-onboarding:/run/ihr-keytool/onboarding
+      - clientkey-staff:/run/ihr-keytool/staff
     healthcheck:
       disable: true
 
@@ -205,6 +246,13 @@ services:
       - secrets/app.env
       # Read-only key of the audit fingerprint bucket (P1-T6b): verify and export
       - secrets/anchor-read.env
+    # Its own signing key (P1-T8d2), for every hospital's client and the console; the
+    # purpose makes the server refuse to start without a usable key (settings/secure.py)
+    environment:
+      <<: *app-env
+      IHR_CLIENT_KEY_PURPOSE: backend
+    volumes:
+      - clientkey-backend:/run/ihr-keys:ro
     # CARE's start.sh, without its wait scripts (they expect POSTGRES_* variables and would
     # create databases): Compose already waits for a healthy database and Redis. The access
     # log has the path only (%(U)s), never the query string.
@@ -242,12 +290,17 @@ services:
       - printf celery-beat > /tmp/container-role && touch /tmp/healthy && exec celery --app=config.celery_app beat --loglevel=info --schedule=/tmp/celerybeat-schedule
     mem_limit: 384m
 
-  # The two Keycloak workers (P1-T5b/f), each with only its own narrow service account.
+  # The two Keycloak workers (P1-T5b/f), each with only its own narrow service account, which
+  # it signs in to with its own key (P1-T8d2): no Keycloak secret in any env file.
   provisioner:
     <<: *app
-    env_file:
-      - secrets/app.env
-      - secrets/provisioner.env
+    environment:
+      <<: *app-env
+      IHR_CLIENT_KEY_PURPOSE: onboarding
+    volumes:
+      - clientkey-onboarding:/run/ihr-keys:ro
+      # The web app's public keys, for the client of each new hospital it creates
+      - ./generated/client-keys:/run/ihr-jwks:ro
     command: ["python", "manage.py", "ihr_provision_worker", "--role", "onboarding"]
     healthcheck:
       disable: true
@@ -255,9 +308,11 @@ services:
 
   staff-worker:
     <<: *app
-    env_file:
-      - secrets/app.env
-      - secrets/staff-worker.env
+    environment:
+      <<: *app-env
+      IHR_CLIENT_KEY_PURPOSE: staff
+    volumes:
+      - clientkey-staff:/run/ihr-keys:ro
     command: ["python", "manage.py", "ihr_provision_worker", "--role", "staff"]
     healthcheck:
       disable: true
@@ -357,3 +412,7 @@ networks:
 volumes:
   pgdata:
   redisdata:
+  # Signing keys (P1-T8d2): one per holder, never backed up (a lost one is replaced)
+  clientkey-backend:
+  clientkey-onboarding:
+  clientkey-staff:

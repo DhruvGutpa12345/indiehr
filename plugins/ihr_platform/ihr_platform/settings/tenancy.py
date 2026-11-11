@@ -137,7 +137,13 @@ def apply_tenancy(settings):  # noqa: PLR0915 (one flat list of settings)
     # Keycloak (P1-T3, ADR-008): one realm for all hospitals. Admin credentials are never
     # settings: ihr_keycloak_sync reads them from its own environment.
     settings.setdefault("IHR_KEYCLOAK_REALM", "indiehr")
-    settings.setdefault("IHR_KEYCLOAK_DEV_REDIRECTS", False)
+    # Keys for client authentication (P1-T8d2, ADR-012): this process's own private key
+    # folder (a volume only its container mounts), the public key sets the sync writes into
+    # Keycloak, and which key this process must hold ("backend", "onboarding", "staff", or ""
+    # for a process that signs nothing; checked at start outside development).
+    settings.setdefault("IHR_CLIENT_KEY_DIR", "/run/ihr-keys")
+    settings.setdefault("IHR_CLIENT_JWKS_DIR", "/run/ihr-jwks")
+    settings.setdefault("IHR_CLIENT_KEY_PURPOSE", "")
     # Internal address Keycloak posts logout tokens to (P1-T5d): the platform host's
     # /api/ihr/backchannel-logout/. Required outside development (ihr_identity.E006).
     settings.setdefault("IHR_BACKCHANNEL_LOGOUT_URL", "")

@@ -10,6 +10,12 @@
 #   scripts/staging.sh smoke                     check every public address through Traefik
 #   scripts/staging.sh manage <args>             one-off manage.py command (no admin credentials)
 #   scripts/staging.sh ps | logs [service] | down
+#   scripts/staging.sh keys ensure | status      the signing keys Keycloak knows the backend and
+#                                                workers by (P1-T8d2; made here, never copied)
+#   scripts/staging.sh keys rotate <backend|onboarding|staff|all> [--compromised]
+#                                                every 180 days, no downtime (--compromised: at
+#                                                once; for backend also ends every session)
+#   scripts/staging.sh keys probe [--negative]   each key holder signs in to Keycloak
 #   scripts/staging.sh local-proof               init (if needed) + up + smoke on this machine
 #   scripts/staging.sh acme-init <ca> <acme-zone> <ns-name>   add the wildcard certificate (P1-T8b2)
 #   scripts/staging.sh acme-register [--reset]   acme-dns account + the records for the registrar
@@ -47,6 +53,9 @@ OUT="${IHR_STAGING_OUT:-$DIR}"
 GEN="$DIR/generated"  # files made from .env on each start (names only, no secrets)
 compose() {  # the file list is worked out on each call: init may have just made .local
   local files=(-f "$DIR/compose.yaml") acme
+  # Made by us, not by Docker: a bind mount of a missing folder (generated/client-keys in admin
+  # and provisioner) would create it owned by root, and staging.sh could no longer write there
+  [[ -d "$GEN/client-keys" ]] || mkdir -p "$GEN/client-keys"
   [[ -f "$DIR/.local" ]] && files+=(-f "$DIR/compose.local.yaml")
   acme="$(env_get IHR_ACME)"
   if [[ -n "$acme" ]]; then
@@ -160,7 +169,7 @@ KC_BOOTSTRAP_ADMIN_PASSWORD=$admin_pw
 KC_BOOTSTRAP_ADMIN_CLIENT_ID=ihr-bootstrap
 KC_BOOTSTRAP_ADMIN_CLIENT_SECRET=$admin_secret
 EOF
-  for f in provisioner.env staff-worker.env anchor-read.env anchor-write.env; do
+  for f in anchor-read.env anchor-write.env; do
     write_secret "$f" < /dev/null
   done
   mv "$work/secrets" "$OUT/secrets"
@@ -185,11 +194,23 @@ admin_manage() {  # a one-off manage.py run holding the Keycloak bootstrap clien
     -e IHR_KEYCLOAK_ADMIN_CLIENT_SECRET "${extra[@]}" admin python manage.py "$@"
 }
 
-worker_secret() {  # worker_secret <role> <file> <variable>
-  local secret
-  secret="$(admin_manage ihr_keycloak_service_secret "$1" | tail -1)"
-  [[ -n "$secret" ]] || { echo "no secret for the $1 worker" >&2; exit 1; }
-  printf '%s=%s\n' "$3" "$secret" | write_secret "$2"
+# ---- Client keys (P1-T8d2): what scripts/client-keys.sh needs from this stack -------------------
+# shellcheck source=scripts/client-keys.sh disable=SC1091 # followed only when checked together
+source "$(dirname "$0")/client-keys.sh"
+# shellcheck disable=SC2034 # read by client-keys.sh
+KEY_JWKS_DIR="$GEN/client-keys"
+kt() {  # kt <purpose> <command> [args]: the key tool, offline, unlogged, as the app user
+  compose --profile keys run --rm --no-deps -T keytool "$2" --purpose "$1" --dir "/run/ihr-keytool/$1" "${@:3}"
+}
+key_publish_sync() { admin_manage ihr_keycloak_sync --realm --all; }
+key_check_sync() { admin_manage ihr_keycloak_sync --all --check; }
+key_probe_in() { compose exec -T "$1" python manage.py ihr_client_keys probe "${@:2}"; }
+key_revoke_sessions() { admin_manage ihr_client_keys revoke-sessions; }
+key_log() {  # kid and time only; journald keeps 180 days (CERT-In). A local proof keeps this
+  # machine's journal clean (compose.local.yaml)
+  echo "$*"
+  [[ -f "$DIR/.local" ]] && return 0
+  logger -t indiehr/keys -- "$* ($(date -Iseconds))" || echo "warning: could not write to the journal" >&2
 }
 
 up() {  # up [--new-database]: the flag only where an empty database is really meant (db_guard)
@@ -201,16 +222,31 @@ up() {  # up [--new-database]: the flag only where an empty database is really m
   db_guard "$new_db"
   compose up -d --wait db redis
   touch "$DIR/.db-created"
+  # Signing keys (P1-T8d2): made here where a volume is still empty (a new server, after
+  # down -v), and their public halves written for the sync below
+  keys_ensure
   [[ -z "$(env_get IHR_ACME)" ]] || acme_up
   [[ "$(env_get IHR_S3)" != local ]] || s3_up
   local extra=()
   if [[ "$(env_get IHR_MAIL)" == test ]]; then mail_test_files; extra=(smtp-test); fi
   if [[ -n "$(env_get IHR_BACKUP)" ]]; then backup_config; extra+=(backup); fi
-  compose up -d --wait "${extra[@]}" traefik keycloak backend celery-worker celery-beat frontend
+  compose up -d --wait "${extra[@]}" traefik keycloak
+  # Schema changes to the end first: the sync reads the hospitals from the database. Run here,
+  # once; the services below start without their dependency chain, so it does not run again.
+  compose run --rm --no-deps -T migrate
+  # The new backend first: on a server from before P1-T8d2 its clients are still public and
+  # ignore the assertion it now sends, so sign-ins go on while the old backend is replaced.
+  # The old workers stop: after the sync below their secrets are dead.
+  compose up -d --wait --no-deps backend
+  compose stop provisioner staff-worker
+  # Keycloak learns the current public keys (clients switch to keys; after a restore its
+  # database may hold older ones: sign-ins wait only for this step)
   admin_manage ihr_keycloak_sync --realm --all
-  worker_secret onboarding provisioner.env IHR_KEYCLOAK_ONBOARDING_SECRET
-  worker_secret staff staff-worker.env IHR_KEYCLOAK_STAFF_SECRET
-  compose up -d --force-recreate provisioner staff-worker
+  compose up -d --wait --no-deps celery-worker celery-beat frontend
+  compose up -d --no-deps provisioner staff-worker
+  # The workers' Keycloak secrets of before P1-T8d2: replaced by the sync above, so dead;
+  # their files go too
+  rm -f "$SECRETS/provisioner.env" "$SECRETS/staff-worker.env"
   compose ps --format 'table {{.Service}}\t{{.Status}}'
 }
 
@@ -293,6 +329,14 @@ smoke() {  # every public address through Traefik, as a browser would reach it
   issuer="$(curl "${curl_args[@]}" "https://auth.$suffix:$port/realms/indiehr/.well-known/openid-configuration" \
     | python3 -c 'import json,sys;print(json.load(sys.stdin).get("issuer",""))' 2>/dev/null || true)"
   check "token issuer is the public https address" "https://auth.$suffix/realms/indiehr" "$issuer"
+  # Signing keys (P1-T8d2): their age (rotate every 180 days: WARN from 150, FAIL from 365),
+  # Keycloak holding the current public keys of every client, and the web app's key accepted
+  # (a junk refresh token gets invalid_grant, so client authentication itself passed)
+  keys_age_check || fail=1
+  local p
+  for p in "${KEY_PURPOSES[@]}"; do kt_change "$p" public; done
+  check "Keycloak holds each client's current public keys (sync --check)" 0 "$(key_check_sync >/dev/null; echo $?)"
+  check "web app signs in to Keycloak with its key (probe)" 0 "$(key_probe_in backend >/dev/null; echo $?)"
   if [[ "$(env_get IHR_S3)" == local ]]; then
     check "files: nothing at the root" 418 "$(code "https://files.$suffix:$port/")"
     check "files: fingerprint bucket not public" 418 "$(code "https://files.$suffix:$port/$(env_get IHR_S3_ANCHOR_BUCKET)/anchors/x")"
@@ -1234,6 +1278,7 @@ case "${1:-}" in
   manage) compose --profile admin run --rm --no-deps -T admin python manage.py "${@:2}" ;;
   ps) compose ps ;;
   logs) compose logs --tail=200 "${@:2}" ;;
+  keys) keys_cmd "${@:2}" ;;
   down)  # with -v the volumes go on purpose: the next up may start an empty database
     compose down "${@:2}"
     if [[ " ${*:2} " == *" -v "* || " ${*:2} " == *" --volumes "* ]]; then rm -f "$DIR/.db-created"; fi ;;
@@ -1263,11 +1308,13 @@ case "${1:-}" in
     # ...and backups into that SeaweedFS (P1-T8c; same disk: a proof, not a real backup)
     grep -q '^IHR_BACKUP=' "$DIR/.env" || backup_init --local
     up
-    # A synthetic hospital for the address checks (no Keycloak client: sign-in is not tested)
+    # A synthetic hospital for the address checks, then its Keycloak organisation and client
+    # (smoke checks every hospital's client holds the web app's current key)
     compose --profile admin run --rm --no-deps -T admin python manage.py ihr_create_tenant \
       --slug alpha --name "Alpha Proof Hospital" --domain "alpha.$(env_get IHR_TENANT_DOMAIN_SUFFIX)" \
       >/dev/null 2>&1 || true
+    admin_manage ihr_keycloak_sync --all >/dev/null
     smoke
     ;;
-  *) sed -n '5,33p' "$0"; exit 1 ;;
+  *) sed -n '5,39p' "$0"; exit 1 ;;
 esac

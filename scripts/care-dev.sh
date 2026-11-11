@@ -27,6 +27,10 @@ if [[ ! -f "$KC_ENV" ]]; then
   } > "$KC_ENV")
 fi
 
+# The public signing keys (P1-T8d2), mounted into the web app and the onboarding worker. Made
+# here, not by Docker: a bind mount of a missing folder would create it owned by root.
+mkdir -p "$ROOT/deploy/dev/client-keys"
+
 # Object storage keys (P1-T8b3): one file for the SeaweedFS gateway (every identity), and from
 # it the single key each container gets: CARE's file buckets, the fingerprint writer (Celery),
 # the fingerprint reader (backend). Generated once, git-ignored, owner-only.
@@ -144,13 +148,21 @@ kc_manage() {
     backend python manage.py "$@"
 }
 
-# One worker's narrow Keycloak secret into its own git-ignored env file (P1-T5f).
-write_worker_env() {
-  local secret
-  secret="$(kc_manage ihr_keycloak_service_secret "$1" | tail -1)"
-  [[ -n "$secret" ]] || { echo "no secret for the $1 worker" >&2; exit 1; }
-  (umask 077; printf '%s=%s\n' "$3" "$secret" > "$ROOT/deploy/dev/$2"; chmod 600 "$ROOT/deploy/dev/$2")
+# Signing keys (P1-T8d2): the same commands and rotation as the staging server
+# (scripts/client-keys.sh), against the dev volumes of deploy/dev/keycloak.override.yaml.
+die() { echo "$*" >&2; exit 1; }
+# shellcheck source=scripts/client-keys.sh disable=SC1091 # followed only when checked together
+source "$ROOT/scripts/client-keys.sh"
+# shellcheck disable=SC2034 # read by client-keys.sh
+KEY_JWKS_DIR="$ROOT/deploy/dev/client-keys"
+kt() {  # kt <purpose> <command> [args]: the key tool, offline, unlogged
+  "${COMPOSE[@]}" --profile keys run --rm --no-deps -T keytool "$2" --purpose "$1" --dir "/run/ihr-keytool/$1" "${@:3}"
 }
+key_publish_sync() { kc_manage ihr_keycloak_sync --realm --all; }
+key_check_sync() { kc_manage ihr_keycloak_sync --all --check; }
+key_probe_in() { "${COMPOSE[@]}" --profile keycloak exec -T "$1" python manage.py ihr_client_keys probe "${@:2}"; }
+key_revoke_sessions() { kc_manage ihr_client_keys revoke-sessions; }
+key_log() { echo "$*"; }  # this machine's journal is not the platform's
 
 keycloak_cmd() {
   case "${1:-help}" in
@@ -170,12 +182,16 @@ SELECT 'CREATE DATABASE keycloak OWNER keycloak' WHERE NOT EXISTS (SELECT 1 FROM
 SQL
       # Mailpit (P1-T5c) catches Keycloak's setup e-mails; nothing leaves this machine.
       "${COMPOSE[@]}" --profile keycloak up -d --wait keycloak mailpit
+      # Signing keys (P1-T8d2) where a volume is still empty, and their public halves; then the
+      # web app with its key mounted (recreated only when its settings changed), the sync that
+      # tells Keycloak the public keys, and the two workers (P1-T5f), each with its own key and
+      # never the bootstrap admin credential
+      keys_ensure
+      "${COMPOSE[@]}" up -d --wait backend
       kc_manage ihr_keycloak_sync --realm --all
-      # The two workers (P1-T5f) each get only their own narrow service-account secret, in a
-      # file of their own; never the bootstrap admin credential.
-      write_worker_env onboarding provisioner.env IHR_KEYCLOAK_ONBOARDING_SECRET
-      write_worker_env staff staff-worker.env IHR_KEYCLOAK_STAFF_SECRET
-      "${COMPOSE[@]}" --profile keycloak up -d --force-recreate provisioner staff-worker
+      "${COMPOSE[@]}" --profile keycloak up -d provisioner staff-worker
+      # Their Keycloak secrets of before P1-T8d2 are dead (the sync replaced them)
+      rm -f "$ROOT/deploy/dev/provisioner.env" "$ROOT/deploy/dev/staff-worker.env"
       echo "Operator console: http://console.localhost:9000/ops/ (first time: scripts/care-dev.sh keycloak seed)"
       echo "Keycloak: http://auth.localhost:8081 (next, first time: scripts/care-dev.sh keycloak seed)"
       echo "E-mail inbox (setup links): http://127.0.0.1:8025"
@@ -192,16 +208,11 @@ SQL
       # Current 6-digit code for a demo user (reads the secret from TEST_USERS.md)
       python3 "$ROOT/scripts/keycloak_test_users.py" --otp "${2:?user}" "$ROOT/deploy/seed/TEST_USERS.md"
       ;;
-    devtools)
-      docker rm -f indiehr-kc-devtools >/dev/null 2>&1 || true
-      docker run -d --rm --name indiehr-kc-devtools --memory 48m -p 127.0.0.1:8082:8082 \
-        -v "$ROOT/deploy/keycloak/devtools:/srv:ro" --entrypoint python care_local \
-        -m http.server -d /srv 8082 >/dev/null
-      for slug in "${HOSPITALS[@]}"; do echo "Token viewer: http://$slug.localhost:8082/"; done
-      ;;
+    # ensure | status | rotate <backend|onboarding|staff|all> [--compromised] | probe [--negative]
+    keys) keys_cmd "${@:2}" ;;
     logs) "${COMPOSE[@]}" --profile keycloak logs --tail=100 keycloak provisioner staff-worker mailpit ;;
-    stop) "${COMPOSE[@]}" --profile keycloak stop provisioner staff-worker keycloak mailpit; docker rm -f indiehr-kc-devtools >/dev/null 2>&1 || true ;;
-    *) echo "scripts/care-dev.sh keycloak <up|seed|otp USER|devtools|sync [--check|--rebuild-flows]|logs|stop>"; exit 1 ;;
+    stop) "${COMPOSE[@]}" --profile keycloak stop provisioner staff-worker keycloak mailpit ;;
+    *) echo "scripts/care-dev.sh keycloak <up|seed|otp USER|keys ensure|status|rotate <key|all> [--compromised]|probe [--negative]|sync [--check|--rebuild-flows]|logs|stop>"; exit 1 ;;
   esac
 }
 
@@ -242,7 +253,7 @@ case "${1:-}" in
     s3_buckets
     echo "API is up. Next: scripts/care-dev.sh seed (first time), then scripts/care-dev.sh frontend"
     ;;
-  down) "${COMPOSE[@]}" --profile keycloak down; docker rm -f indiehr-frontend indiehr-kc-devtools >/dev/null 2>&1 || true ;;
+  down) "${COMPOSE[@]}" --profile keycloak down; docker rm -f indiehr-frontend >/dev/null 2>&1 || true ;;
   ps) "${COMPOSE[@]}" --profile keycloak ps; docker ps --filter name=indiehr-frontend --format '{{.Names}} {{.Status}} {{.Ports}}' ;;
   logs) "${COMPOSE[@]}" logs --tail=100 "${@:2}" ;;
   seed)

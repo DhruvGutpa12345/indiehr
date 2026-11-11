@@ -34,6 +34,10 @@ IHR_KEYCLOAK_URL = env("IHR_KEYCLOAK_URL", default="")
 IHR_CONSOLE_URL = env("IHR_CONSOLE_URL", default="")
 IHR_BACKCHANNEL_LOGOUT_URL = env("IHR_BACKCHANNEL_LOGOUT_URL", default="")
 IHR_SESSION_IDLE_SECONDS = env.int("IHR_SESSION_IDLE_SECONDS", default=1800)
+# Client keys (P1-T8d2): the key this container holds, if any (backend, onboarding, staff).
+IHR_CLIENT_KEY_PURPOSE = env("IHR_CLIENT_KEY_PURPOSE", default="")
+IHR_CLIENT_KEY_DIR = env("IHR_CLIENT_KEY_DIR", default="/run/ihr-keys")
+IHR_CLIENT_JWKS_DIR = env("IHR_CLIENT_JWKS_DIR", default="/run/ihr-jwks")
 # The operator console posts forms (Django CSRF): its https origin is trusted.
 CSRF_TRUSTED_ORIGINS = [IHR_CONSOLE_URL] if IHR_CONSOLE_URL else []
 
@@ -59,7 +63,9 @@ if os.environ.get("IHR_KEYCLOAK_SMTP_HOST"):
 
 apply_tenancy(globals())
 
-if _problems := secure.problems(globals(), os.environ):
+_problems = secure.problems(globals(), os.environ)
+_problems += secure.client_key_problems(IHR_CLIENT_KEY_PURPOSE, IHR_CLIENT_KEY_DIR)
+if _problems:
     raise ImproperlyConfigured(
         "Refusing to start with unsafe settings:\n- " + "\n- ".join(_problems)
     )

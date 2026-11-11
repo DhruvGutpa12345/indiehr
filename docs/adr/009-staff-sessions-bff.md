@@ -68,7 +68,7 @@ Five CARE test modules exercise the removed features and are left out of the ten
 **7. Keycloak clients stay public** (technical choice):
 - The backend's code exchange uses PKCE.
 - The only change on the Keycloak side is the redirect URI: `<hospital>/api/ihr/auth/callback/`.
-- Signing the backend's requests to Keycloak with a key (`private_key_jwt`) moves to P1-T8, together with key delivery.
+- Signing the backend's requests to Keycloak with a key (`private_key_jwt`) moves to P1-T8, together with key delivery. *(Done in P1-T8d2, ADR-012: the clients are no longer public.)*
 
 **8. One upstream patch:** CARE's batch endpoint now passes the cookie and our headers to each sub-request, so every sub-request is checked the same way.
 
@@ -108,5 +108,5 @@ Five CARE test modules exercise the removed features and are left out of the ten
 | Back-channel logout (instant), staff invitations, the CARE "set your password" e-mail replaced by an invitation | P1-T5 |
 | Rate limits on `/api/ihr/auth/` (per IP, Traefik) | done (P1-T8d1) |
 | Redis persistence and eviction policy for sessions (append-only file, `noeviction`) | done (P1-T8a) |
-| `private_key_jwt` client authentication, key delivery and rotation | P1-T8d2 |
+| `private_key_jwt` client authentication, key delivery and rotation | done (P1-T8d2, ADR-012) |
 | Playwright across two hospital addresses | P1-T1d |

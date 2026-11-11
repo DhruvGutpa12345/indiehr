@@ -56,4 +56,16 @@ def staff_sign_in_settings(app_configs, **kwargs):
     for name in ("IHR_KEYCLOAK_PUBLIC_URL", "IHR_KEYCLOAK_URL", "IHR_KEYCLOAK_REALM"):
         if not getattr(settings, name, None):
             errors.append(Error(f"Set {name}.", id="ihr_identity.E004"))
+    if not settings.DEBUG:
+        # The same check ihr_platform.settings.deployment makes at start (P1-T8d2), here so
+        # `manage.py check` names it too.
+        from ihr_platform.settings.secure import client_key_problems
+
+        errors += [
+            Error(problem, id="ihr_identity.E007")
+            for problem in client_key_problems(
+                getattr(settings, "IHR_CLIENT_KEY_PURPOSE", ""),
+                settings.IHR_CLIENT_KEY_DIR,
+            )
+        ]
     return errors

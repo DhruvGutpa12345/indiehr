@@ -19,6 +19,7 @@ found, which would skip the Deny step (fail open). ``check_realm`` and ``hospita
 therefore verify every gate's configuration, and the hospital gate's role must resolve.
 """
 
+import time
 from http import HTTPStatus
 
 from .kc_http import KeycloakError, q
@@ -350,6 +351,9 @@ def _check_clients(admin, hospital_client_ids):
             issues.append(f"built-in client {cid} does not demand MFA")
         if cid in BUILT_IN_CLIENTS and client.get("authenticationFlowBindingOverrides"):
             issues.append(f"built-in client {cid} has its own login flow")
+        if attrs.get("use.jwks.url") == "true":
+            # Keycloak would trust any key that address returns (P1-T8d2): keys are pinned.
+            issues.append(f"client {cid} takes its keys from a URL")
         kind = attrs.get("ihr.kind")
         if cid in BUILT_IN_CLIENTS:
             continue
@@ -361,6 +365,21 @@ def _check_clients(admin, hospital_client_ids):
         elif hospital_client_ids is not None and cid not in hospital_client_ids:
             issues.append(f"client {cid} belongs to no current hospital")
     return issues
+
+
+def end_all_sessions(admin):
+    """End every session in the realm and refuse every token issued before now (owner, Q-K20:
+    the response to a suspected leak of the backend's key). People sign in again; a stolen
+    refresh token stops working even if its thief also held the old key. Returns the realm's
+    new "not before" time."""
+    now = int(time.time())
+    admin.put(f"/{admin.realm}", {"notBefore": now})
+    admin.post("logout-all", ok=(200, 204))
+    not_before = admin.get(f"/{admin.realm}").get("notBefore") or 0
+    if not_before < now:
+        msg = f"realm {admin.realm} kept notBefore {not_before}"
+        raise KeycloakError(msg)
+    return not_before
 
 
 def default_role_names(admin, client_uuid=None):

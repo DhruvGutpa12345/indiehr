@@ -38,8 +38,13 @@ deploy/dev/frontend-build/
 
 # Local Keycloak secrets (P1-T3)
 deploy/dev/keycloak.env
+# The workers' secrets before P1-T8d2: no longer written (keycloak up deletes them), still
+# ignored so that a leftover copy can never be committed
 deploy/dev/provisioner.env
 deploy/dev/staff-worker.env
+# Public signing keys (P1-T8d2; scripts/care-dev.sh keycloak keys): no secrets, but made per
+# machine
+deploy/dev/client-keys/
 deploy/dev/audit-anchor-read.env
 deploy/dev/audit-anchor-write.env
 deploy/dev/s3-gateway.env

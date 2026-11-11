@@ -89,8 +89,6 @@ def problems(settings, environ):  # noqa: PLR0912 (one flat list of rules)
             found.append(f"{name} must be https://.")
     if not str(settings.get("IHR_FRONTEND_URL_TEMPLATE", "")).startswith("https://"):
         found.append("IHR_FRONTEND_URL_TEMPLATE must be https://.")
-    if settings.get("IHR_KEYCLOAK_DEV_REDIRECTS"):
-        found.append("IHR_KEYCLOAK_DEV_REDIRECTS must be off.")
 
     for name in (
         "SESSION_COOKIE_SECURE",
@@ -127,6 +125,37 @@ def problems(settings, environ):  # noqa: PLR0912 (one flat list of rules)
         )
     found += mail_problems(settings)
     return found
+
+
+def client_key_problems(purpose, key_dir):
+    """This process's Keycloak client key (P1-T8d2). Not pure: it reads the key folder.
+
+    A process that declares a purpose (the backend: "backend") must hold exactly that key,
+    readable, mode 600, with an active key that loads: otherwise every sign-in would fail, so
+    it refuses to start instead. Any process that finds a key must be able to use it."""
+    from ihr_platform.client_keys import PURPOSES, ClientKeyError, KeyStore
+
+    if purpose and purpose not in PURPOSES:
+        return [f"IHR_CLIENT_KEY_PURPOSE must be one of {', '.join(PURPOSES)}."]
+    store = KeyStore(key_dir)
+    try:
+        held = store.purpose()
+        if held is None:
+            if purpose:
+                return [
+                    f"No {purpose} client key in {key_dir}: mount its volume and run the "
+                    "key tool (keys ensure)."
+                ]
+            return []
+        if purpose and held != purpose:
+            return [
+                f"{key_dir} holds the {held} client key; this process signs as {purpose} "
+                "and must never hold another process's key."
+            ]
+        store.check()
+    except ClientKeyError as exc:
+        return [f"Client key: {exc}"]
+    return []
 
 
 def mail_problems(settings):

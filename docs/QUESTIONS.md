@@ -72,6 +72,10 @@
 | Q-K14 | **Keycloak keeps its own database and role on the shared Postgres server** (owner, 2026-11-09), already in the pgBackRest backups; an own Postgres instance is revisited with a second server | ADR-008 |
 | Q-K15 | **Lock-out bursts: logged now, alerts with P1-T9** (owner, 2026-11-09): Keycloak's login failures and lock-outs go to the 180-day journal | P1-T8d1, P1-T9 |
 | Q-K16 | **No WireGuard tunnel for now** (owner, 2026-11-09): the Keycloak admin console stays reachable only through an SSH tunnel to 127.0.0.1; WireGuard may become its own task | Q-E9 |
+| Q-K17 | **Client signing keys on the server only** (owner, 2026-11-11): backend, onboarding and staff keys each in their own Docker volume, readable only by their container; not on the deploying machine, not backed up — a lost key is replaced and re-enrolled with the bootstrap credential | P1-T8d2, ADR-012 |
+| Q-K18 | **Key rotation: manual every 180 days** (owner, 2026-11-11): `staging.sh keys rotate`; smoke warns at 150 days, fails at 365; never a side effect of a deploy | P1-T8d2 |
+| Q-K19 | **Dev token viewer retired** (owner, 2026-11-11): the real hospital sign-in replaces it | P1-T8d2 |
+| Q-K20 | **Suspected key theft: rotate at once and end every staff and operator session** (owner, 2026-11-11) | P1-T8d2 |
 | Q-G4 | **`/goal` and `/advisor` = second-opinion reviews:** an independent Opus agent reviews each finished phase against the plan | Working agreement §5 |
 
 **Still open:** Q-B4 (final MVP module list: assumed as in PLAN.md Phase 2) and Q-B6/B7 (pricing, timeline). Q-F2 is moot while AI is deferred.

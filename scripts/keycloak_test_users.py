@@ -37,8 +37,9 @@ def section(data):
         "needs a password **and** a 6-digit code. Get the current code with",
         "`scripts/care-dev.sh keycloak otp <username>`, or add the key to an authenticator app.",
         "",
-        "- Token viewer: http://alpha.localhost:8082/ and http://beta.localhost:8082/ "
-        "(start it with `scripts/care-dev.sh keycloak devtools`)",
+        "- Sign in through the web app: http://alpha.localhost:8080/ and "
+        "http://beta.localhost:8080/ (the backend finishes the sign-in; the old token "
+        "viewer is gone, P1-T8d2)",
         "- Operator console (P1-T5b): http://console.localhost:9000/ops/ — user `op.owner`",
         f"- Keycloak admin console: {data['keycloak']}/admin/ (realm `{data['realm']}`)"
         f" — temporary admin `{env.get('KC_BOOTSTRAP_ADMIN_USERNAME', '?')}`,"

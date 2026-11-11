@@ -60,14 +60,30 @@ class KeycloakAdmin:
 
     ``account_realm`` is the realm that holds the service account (``master`` for the dev/CI
     bootstrap client); ``realm`` is the realm being managed.
+
+    The account proves who it is either with ``client_secret`` (the operator's bootstrap client
+    only) or with ``client_auth``, a callable that returns fresh form fields for each token
+    request (the workers' signed assertions, P1-T8d2). It is injected so this module stays
+    standard library only: the signing lives in ``ihr_platform.client_keys``.
     """
 
     def __init__(
-        self, base_url, client_id, client_secret, realm, account_realm="master"
+        self,
+        base_url,
+        client_id,
+        client_secret,
+        realm,
+        account_realm="master",
+        *,
+        client_auth=None,
     ):
+        if (client_secret is None) == (client_auth is None):
+            msg = "Give the account either a client secret or client_auth, not both"
+            raise ValueError(msg)
         self.base_url = base_url.rstrip("/")
         self.realm = realm
-        self._client = (client_id, client_secret)
+        self.client_id = client_id
+        self._client_auth = client_auth or (lambda: {"client_secret": client_secret})
         self._account_realm = account_realm
         self._token = None
         self._token_expiry = 0.0
@@ -82,13 +98,18 @@ class KeycloakAdmin:
             body=urlencode(
                 {
                     "grant_type": "client_credentials",
-                    "client_id": self._client[0],
-                    "client_secret": self._client[1],
+                    "client_id": self.client_id,
+                    **self._client_auth(),
                 }
             ),
         )
         if resp.status != HTTPStatus.OK:
-            msg = f"Keycloak admin login failed: HTTP {resp.status}"
+            # Keycloak's error code only (e.g. invalid_client); our request is never shown.
+            try:
+                error = (resp.json() or {}).get("error", "")
+            except ValueError:
+                error = ""
+            msg = f"Keycloak admin login failed: HTTP {resp.status} {error}".rstrip()
             raise KeycloakError(msg)
         data = resp.json()
         self._token = data["access_token"]

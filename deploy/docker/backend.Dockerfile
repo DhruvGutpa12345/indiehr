@@ -83,6 +83,10 @@ COPY --from=plugins --chown=root:root --chmod=0755 ihr_platform /ihr/plugins/ihr
 ENV PYTHONPATH=/ihr/plugins/ihr_platform
 ENV DJANGO_SETTINGS_MODULE=ihr_platform.settings.deployment
 
+# The Keycloak client key's folder (P1-T8d2): the app user's alone. A new, empty volume
+# mounted here takes this owner and mode from the image.
+RUN install -d -o django -g django -m 700 /run/ihr-keys
+
 USER django
 
 HEALTHCHECK \

@@ -3,8 +3,40 @@
 #  - browser address http://auth.localhost:8081; the CARE containers reach it as http://keycloak:8080
 #  - its own database "keycloak" (owner role "keycloak") on the dev Postgres, never ihr_dev
 #  - secrets come from deploy/dev/keycloak.env (git-ignored, written by care-dev.sh)
+#  - the web app and each worker sign in to Keycloak with a key of their own (P1-T8d2), in a
+#    volume each (scripts/care-dev.sh keycloak keys); the public halves are in
+#    deploy/dev/client-keys/ (git-ignored)
 # Relative paths resolve against apps/backend (the compose project directory).
 services:
+  # The web app signs for every hospital's client and the console with its own key. Here it
+  # also runs the dev sync (care-dev.sh kc_manage), which reads the public keys.
+  backend:
+    volumes:
+      - clientkey-backend:/run/ihr-keys:ro
+      - ../../deploy/dev/client-keys:/run/ihr-jwks:ro
+
+  # One-off key tool (P1-T8d2; scripts/care-dev.sh keycloak keys): no network, no logs. It
+  # prints only kids, ages and public keys. Root, like every container of the dev image.
+  keytool:
+    image: care_local
+    profiles: ["keys"]
+    network_mode: none
+    logging:
+      driver: none
+    environment:
+      PYTHONPATH: "/ihr/plugins/ihr_platform"
+      PYTHONDONTWRITEBYTECODE: "1"
+    volumes:
+      - ../../plugins:/ihr/plugins:ro
+      - clientkey-backend:/run/ihr-keytool/backend
+      - clientkey-onboarding:/run/ihr-keytool/onboarding
+      - clientkey-staff:/run/ihr-keytool/staff
+    # Docker makes a new volume 755: the keys' folder is the owner's alone
+    entrypoint: ["bash", "-c", "chmod 700 /run/ihr-keytool/* && exec python -m ihr_platform.client_keys \"$$@\"", "keytool"]
+    healthcheck:
+      disable: true
+    restart: "no"
+
   keycloak:
     image: quay.io/keycloak/keycloak:26.8.2@sha256:723b1d6e254c0fc96d5cffec860c7e0744d6a3277822b865bb538cf891575e41
     profiles: ["keycloak"]
@@ -63,15 +95,13 @@ services:
 
   # The onboarding worker (P1-T5b, narrowed in P1-T5f): runs the hospital operations operators
   # queue in the console, with only the "ihr-onboarding" service account of the hospitals'
-  # realm. Neither worker holds the bootstrap admin credential; the web app and worker none.
+  # realm, which it signs in to with its own key (P1-T8d2). Neither worker holds the bootstrap
+  # admin credential or any Keycloak secret.
   provisioner:
     image: care_local
     profiles: ["keycloak"]
     env_file:
       - path: ./docker/.local.env
-        required: true
-      # Only its own narrow secret (written by care-dev.sh, git-ignored)
-      - path: ../../deploy/dev/provisioner.env
         required: true
     environment: &worker-env
       PYTHONPATH: "/ihr/plugins/ihr_platform"
@@ -79,11 +109,14 @@ services:
       DATABASE_URL: "postgres://postgres:postgres@db:5432/ihr_dev"
       SNOWSTORM_DEPLOYMENT_URL: "http://127.0.0.1:9/fhir"
       PYTHONDONTWRITEBYTECODE: "1"
-    volumes: &worker-volumes
+    volumes:
       # Read-only: the web app and worker can write the shared source folder, and nothing
       # they write may run in a process that holds a Keycloak admin credential.
       - .:/app:ro
       - ../../plugins:/ihr/plugins:ro
+      - clientkey-onboarding:/run/ihr-keys:ro
+      # The web app's public keys, for the client of each new hospital it creates
+      - ../../deploy/dev/client-keys:/run/ihr-jwks:ro
     entrypoint: ["bash", "-c", "./scripts/wait_for_db.sh && exec python manage.py ihr_provision_worker --role onboarding"]
     depends_on: &worker-deps
       db:
@@ -103,13 +136,21 @@ services:
     env_file:
       - path: ./docker/.local.env
         required: true
-      - path: ../../deploy/dev/staff-worker.env
-        required: true
     environment: *worker-env
-    volumes: *worker-volumes
+    volumes:
+      - .:/app:ro
+      - ../../plugins:/ihr/plugins:ro
+      - clientkey-staff:/run/ihr-keys:ro
     entrypoint: ["bash", "-c", "./scripts/wait_for_db.sh && exec python manage.py ihr_provision_worker --role staff"]
     depends_on: *worker-deps
     healthcheck:
       disable: true
     mem_limit: 300m
     restart: unless-stopped
+
+volumes:
+  # Signing keys (P1-T8d2): one per holder; `docker compose down -v` (or losing them) only means
+  # new ones at the next `scripts/care-dev.sh keycloak up`
+  clientkey-backend:
+  clientkey-onboarding:
+  clientkey-staff:

@@ -1,10 +1,14 @@
 """ihr_keycloak_sync without a Keycloak (P1-T3): the live behaviour is in keycloak/tests."""
 
 import os
+import tempfile
 import uuid
 from io import StringIO
+from pathlib import Path
 from unittest import mock
 
+import jwt
+from django.conf import settings
 from django.core.management import call_command
 from django.core.management.base import CommandError
 from django.test import SimpleTestCase, override_settings
@@ -88,15 +92,18 @@ class KeycloakSyncCommandTests(SimpleTestCase):
         ):
             self.run_sync("--slug", "testhosp", "--check")
 
-    @override_settings(IHR_KEYCLOAK_DEV_REDIRECTS=True, DEBUG=False)
-    def test_dev_redirects_are_refused_outside_development(self):
-        with (
-            schema_context("public"),
-            self.assertRaisesMessage(CommandError, "local development only"),
-        ):
-            ihr_keycloak_sync.hospital_login(self.hospital)
+    def test_sign_in_goes_to_the_backend_only_with_the_backends_keys(self):
+        """No other redirect (the dev token viewer's :8082 is gone, P1-T8d2), and the client
+        accepts exactly the backend's published keys."""
+        with schema_context("public"):
+            login = ihr_keycloak_sync.hospital_login(self.hospital)
+        self.assertTrue(login.redirect_uris)
+        self.assertTrue(
+            all(u.endswith("/api/ihr/auth/callback/") for u in login.redirect_uris)
+        )
+        self.assertNotIn(":8082", " ".join(login.origins))
+        self.assertEqual(login.jwks, ihr_keycloak_sync.public_jwks("backend"))
 
-    @override_settings(IHR_KEYCLOAK_DEV_REDIRECTS=False)
     def test_disabled_hospitals_get_a_disabled_login(self):
         with schema_context("public"):
             self.hospital.status = Hospital.Status.SUSPENDED
@@ -147,48 +154,98 @@ class MailServerTests(SimpleTestCase):
             self.assertIsNone(ihr_keycloak_sync.mail_server())
 
 
+def key_dir(purpose):
+    """The test run's key folder of ``purpose`` (settings/test.py makes all three)."""
+    return str(Path(settings.IHR_CLIENT_KEY_DIR).parent / purpose)
+
+
 @override_settings(
     IHR_KEYCLOAK_URL="http://keycloak.invalid", IHR_KEYCLOAK_REALM="indiehr"
 )
 class WorkerCredentialTests(SimpleTestCase):
-    """P1-T5f: each worker uses only its own narrow account of the hospitals' realm."""
+    """P1-T5f: each worker uses only its own narrow account of the hospitals' realm, and
+    (P1-T8d2) signs in to it with its own key."""
 
-    def test_purpose_picks_the_workers_own_account(self):
-        env = {"IHR_KEYCLOAK_STAFF_SECRET": "staff-x", **ENV}
-        with mock.patch.dict(os.environ, env, clear=True):
+    def test_purpose_picks_the_workers_own_account_and_key(self):
+        with (
+            override_settings(IHR_CLIENT_KEY_DIR=key_dir("staff")),
+            mock.patch.dict(os.environ, ENV, clear=True),
+        ):
             staff = ihr_keycloak_sync.keycloak_admin(purpose="staff")
             operator = ihr_keycloak_sync.keycloak_admin()
+            # The staff worker's key cannot stand in for the onboarding account.
+            onboarding = ihr_keycloak_sync.keycloak_admin(purpose="onboarding")
             with self.assertRaisesMessage(CommandError, "works in indiehr only"):
                 ihr_keycloak_sync.keycloak_admin("indiehr-ops", purpose="staff")
+            fields = staff._client_auth()
         self.assertEqual(
-            (staff._client, staff._account_realm, staff.realm),
-            (("ihr-staff-worker", "staff-x"), "indiehr", "indiehr"),
+            (staff.client_id, staff._account_realm, staff.realm),
+            ("ihr-staff-worker", "indiehr", "indiehr"),
+        )
+        self.assertNotIn("client_secret", fields)
+        claims = jwt.decode(
+            fields["client_assertion"], options={"verify_signature": False}
+        )
+        self.assertEqual(
+            (claims["sub"], claims["aud"]),
+            ("ihr-staff-worker", f"{settings.IHR_KEYCLOAK_PUBLIC_URL}/realms/indiehr"),
         )
         self.assertEqual(operator._account_realm, "master")  # the bootstrap one
+        self.assertEqual(onboarding.client_id, "test-admin")  # bootstrap, not a key
         with (
             mock.patch.dict(os.environ, {}, clear=True),
-            self.assertRaisesMessage(CommandError, "IHR_KEYCLOAK_ONBOARDING_SECRET"),
+            self.assertRaisesMessage(CommandError, "the onboarding key"),
         ):
             ihr_keycloak_sync.keycloak_admin(purpose="onboarding")
 
     def test_a_worker_refuses_to_run_with_the_wrong_credentials(self):
-        for env, message in (
-            ({}, "IHR_KEYCLOAK_STAFF_SECRET"),
+        staff, empty = key_dir("staff"), tempfile.mkdtemp()
+        self.addCleanup(Path(empty).rmdir)
+        for folder, env, message in (
+            (empty, {}, "No client key"),
+            (key_dir("onboarding"), {}, "holds the onboarding key"),
+            (key_dir("backend"), {}, "holds the backend key"),
+            (staff, ENV, "bootstrap admin credential"),
+            (staff, {"IHR_KEYCLOAK_STAFF_SECRET": "s"}, "IHR_KEYCLOAK_STAFF_SECRET"),
             (
-                {"IHR_KEYCLOAK_STAFF_SECRET": "s", **ENV},
-                "bootstrap admin credential",
-            ),
-            (
-                {
-                    "IHR_KEYCLOAK_STAFF_SECRET": "s",
-                    "IHR_KEYCLOAK_ONBOARDING_SECRET": "o",
-                },
+                staff,
+                {"IHR_KEYCLOAK_ONBOARDING_SECRET": "o"},
                 "IHR_KEYCLOAK_ONBOARDING_SECRET is in the staff worker",
             ),
         ):
             with (
                 self.subTest(message),
+                override_settings(IHR_CLIENT_KEY_DIR=folder),
                 mock.patch.dict(os.environ, env, clear=True),
                 self.assertRaisesMessage(CommandError, message),
             ):
                 call_command("ihr_provision_worker", role="staff", once=True)
+
+    def test_a_worker_is_ready_only_once_keycloak_accepts_its_key(self):
+        from ihr_platform.keycloak.kc_http import KeycloakAdmin, KeycloakError
+
+        with (
+            override_settings(IHR_CLIENT_KEY_DIR=key_dir("staff")),
+            mock.patch.dict(os.environ, {}, clear=True),
+        ):
+            with (
+                mock.patch.object(
+                    KeycloakAdmin,
+                    "_access_token",
+                    side_effect=KeycloakError("Keycloak admin login failed: HTTP 401"),
+                ),
+                self.assertRaisesMessage(CommandError, "Keycloak refused the staff"),
+            ):
+                call_command("ihr_provision_worker", role="staff", once=True)
+            out = StringIO()
+            with (
+                mock.patch.object(KeycloakAdmin, "_access_token", return_value="t"),
+                mock.patch(
+                    "ihr_platform.management.commands.ihr_provision_worker.work_once"
+                ) as work,
+            ):
+                call_command(
+                    "ihr_provision_worker", role="staff", once=True, stdout=out
+                )
+            self.assertIn("provisioner ready (staff)", out.getvalue())
+            work.assert_called_once_with("staff")

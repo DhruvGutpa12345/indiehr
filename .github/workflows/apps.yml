@@ -78,6 +78,10 @@ jobs:
             keycloak:
               - 'plugins/ihr_platform/ihr_platform/keycloak/**'
               - 'plugins/ihr_platform/ihr_identity/tokens.py'
+              # Signed-key client authentication the live tests exercise (P1-T8d2)
+              - 'plugins/ihr_platform/ihr_platform/client_keys.py'
+              - 'plugins/ihr_platform/ihr_identity/client_auth.py'
+              - 'plugins/ihr_platform/ihr_identity/oidc.py'
               - 'deploy/keycloak/**'
               - 'deploy/dev/keycloak*'
               - 'scripts/keycloak*'

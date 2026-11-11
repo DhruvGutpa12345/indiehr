@@ -22,7 +22,7 @@ The plan row for P1-T3 asked for job roles in Keycloak and MFA for admins only. 
 | Item | What it is |
 |---|---|
 | Organisation `<slug>` | Named "`<hospital name>` (`<slug>`)", because organisation names must be unique. Its staff are *unmanaged* members, so removing someone from one hospital never deletes their account. The organisation id is stored once in `Hospital.keycloak_org_id`. |
-| Public client `ihr-h-<slug>` | Authorization code + PKCE S256 only. No password grant, implicit flow, device flow, CIBA or token exchange. `fullScopeAllowed=false`. No optional scopes. Exact redirect URIs. |
+| Client `ihr-h-<slug>` (public until P1-T8d2; now signed-key authentication, ADR-012) | Authorization code + PKCE S256 only. No password grant, implicit flow, device flow, CIBA or token exchange. `fullScopeAllowed=false`. No optional scopes. Exact redirect URIs. |
 | Client role `ihr-h-<slug>.member` | The only role Keycloak holds. **Job roles (doctor, nurse, billing…) stay in CARE**, assigned by each hospital's admin (owner's choice). |
 | Login flow `ihr-hospital-<slug>` | Password, then a TOTP code, then a **gate**: anyone without `member` is refused. The gate also covers single sign-on from another hospital. |
 

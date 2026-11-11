@@ -4,6 +4,9 @@ It runs the real authorization-code + PKCE flow: it opens the authorize URL, fil
 username/password, OTP and "set up authenticator" forms it recognises, stops at the redirect
 back to the app and exchanges the code. Any other page ends the run, so an unexpected page
 (e.g. "update your profile") fails a test loudly instead of being skipped.
+
+Our clients are confidential (P1-T8d2): ``client_auth(client_id, audience)`` returns the form
+fields that authenticate the code exchange, refresh and logout, as the backend's signer does.
 """
 
 import base64
@@ -72,14 +75,24 @@ def decode_jwt(token):
 
 
 class Browser:
-    def __init__(self, base_url, realm):
+    def __init__(self, base_url, realm, client_auth=None):
         self.base_url = base_url.rstrip("/")
         self.realm = realm
         self.cookies = {}
+        self._client_auth = client_auth
+
+    @property
+    def issuer(self):
+        return f"{self.base_url}/realms/{self.realm}"
 
     @property
     def oidc(self):
-        return f"{self.base_url}/realms/{self.realm}/protocol/openid-connect"
+        return f"{self.issuer}/protocol/openid-connect"
+
+    def client_fields(self, client_id):
+        """``client_id`` plus its authentication, for the token and logout endpoints."""
+        auth = self._client_auth(client_id, self.issuer) if self._client_auth else {}
+        return {"client_id": client_id, **auth}
 
     def fetch(self, method, url, form=None):
         headers = {}
@@ -160,8 +173,8 @@ class Browser:
                         "grant_type": "authorization_code",
                         "code": result.code,
                         "redirect_uri": redirect_uri,
-                        "client_id": client_id,
                         "code_verifier": verifier,
+                        **self.client_fields(client_id),
                     }
                 ),
             )
@@ -331,8 +344,19 @@ class Browser:
                 {
                     "grant_type": "refresh_token",
                     "refresh_token": refresh_token,
-                    "client_id": client_id,
+                    **self.client_fields(client_id),
                 }
+            ),
+        )
+
+    def logout(self, client_id, refresh_token):
+        """End the Keycloak session behind ``refresh_token``, as the backend's sign-out does."""
+        return request(
+            "POST",
+            f"{self.oidc}/logout",
+            headers={"Content-Type": "application/x-www-form-urlencoded"},
+            body=urlencode(
+                {"refresh_token": refresh_token, **self.client_fields(client_id)}
             ),
         )
 

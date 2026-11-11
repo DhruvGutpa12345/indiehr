@@ -217,6 +217,33 @@ token refreshes an hour while working. At 100 hospitals with 100 people working 
 one address. Raise `login-ratelimit` in `traefik/routes.yml`, or give that hospital's address its
 own router with a higher limit (Traefik's `ClientIP` rule).
 
+## Client keys (P1-T8d2, ADR-012)
+
+The backend, the onboarding worker and the staff worker prove who they are to Keycloak with
+their own signing keys, not passwords: every hospital's sign-in client, the console and the two
+worker accounts accept only a signed assertion. No Keycloak secret is in any env file any more
+(the bootstrap admin of `master` stays, for operator one-offs and to enrol keys).
+
+| Command | What it does |
+|---|---|
+| `scripts/staging.sh keys status` | Each key: id, state, created, age. `smoke` warns at 150 days and fails at 365 |
+| `scripts/staging.sh keys rotate <backend\|onboarding\|staff\|all>` | **Every 180 days** (owner): a new key is made, published next to the old one, proven, switched to (no restart, no downtime), and after two minutes the old one is retired, proven refused and deleted. About 3 minutes per key; safe to run again if it stopped half-way |
+| `scripts/staging.sh keys rotate <purpose> --compromised` | **Suspected theft:** always a brand-new key, switched at once (calls in flight may fail for a few seconds); for `backend` it first ends every staff and operator session, so everyone signs in again. If it stops half-way, run it again: an ordinary rotation of that key is refused until it has finished. The workers' tokens last one minute, so a stolen worker key's tokens die within a minute |
+| `scripts/staging.sh keys revoke-sessions` | Ends every staff and operator session in both realms, on its own |
+| `scripts/staging.sh keys probe [--negative]` | The backend's key is accepted; with `--negative`, every bad assertion (wrong key, expired, replayed, wrong audience, a secret, other algorithms) is refused |
+
+**Where the keys are:** on the server only, each in its own Docker volume
+(`clientkey-backend`, `clientkey-onboarding`, `clientkey-staff`), readable only inside its own
+container; never on the deploying machine, never backed up. `up` creates them the first time
+and publishes the public halves to Keycloak before the backend starts. A lost key (new server,
+`down -v`) is simply replaced: `up` makes and enrols a new one. Rotations are logged to the
+journal (key id and time only).
+
+**First deploy after P1-T8d2 on an existing server:** `deploy.sh`, then `up` switches every
+client to keys and makes the old worker secrets worthless; staff and operators stay signed in.
+Then delete the old `deploy/staging/secrets/provisioner.env` and `staff-worker.env` on the
+deploying machine (deploy.sh no longer ships them; `up` removes the server's copies).
+
 ## Database backups and restore drill (P1-T8c)
 
 pgBackRest 2.60 keeps the whole database server (hospitals, platform, Keycloak) restorable to
@@ -289,6 +316,7 @@ lock mode (`IHR_AUDIT_ANCHOR_LOCK_MODE`).
 
 **Done in P1-T8d1:** Keycloak in production (above).
 
-**Not yet** (P1-T8d2): signed-key client authentication (`private_key_jwt`) for the backend and
-the two workers, with key delivery and rotation. Not backed up: SeaweedFS's files when they live on
-the server itself (owner, 09-11-2026: at go-live files are in the provider's versioned bucket).
+**Done in P1-T8d2:** client keys (above).
+
+**Not backed up:** SeaweedFS's files when they live on the server itself (owner, 09-11-2026: at
+go-live files are in the provider's versioned bucket).

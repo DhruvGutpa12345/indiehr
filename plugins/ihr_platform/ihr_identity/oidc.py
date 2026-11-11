@@ -2,9 +2,11 @@
 
 Tokens and codes travel only over the back channel (``IHR_KEYCLOAK_URL``); the issuer and the
 browser address are ``IHR_KEYCLOAK_PUBLIC_URL``. Response bodies are never logged: they hold
-tokens.
+tokens. Every call to the token and logout endpoints carries a client assertion signed with the
+backend's own key (P1-T8d2, ADR-012): the hospital and console clients are confidential.
 """
 
+import logging
 import threading
 import time
 from urllib.parse import urlencode
@@ -14,6 +16,10 @@ import requests
 from django.conf import settings
 from django.db import connection
 from ihr_platform.keycloak.hospital import client_id_for
+
+from ihr_identity import client_auth
+
+logger = logging.getLogger(__name__)
 
 TIMEOUT = 5
 JWKS_TTL = 600
@@ -47,8 +53,21 @@ def authorize_url(realm=None, **params):
 
 
 def _post(path, data, realm=None):
+    # client_id stays in the form: a client not yet switched to keys (public) accepts the
+    # request on client_id alone and ignores the assertion, so the backend can sign first.
     try:
-        resp = requests.post(_backchannel(path, realm), data=data, timeout=TIMEOUT)
+        auth = client_auth.assertion_fields(data["client_id"], realm)
+    except client_auth.ClientKeyError as exc:
+        # The message names the key folder only, never key material.
+        logger.error(
+            "cannot authenticate to Keycloak as %s: %s", data["client_id"], exc
+        )
+        msg = "client key"
+        raise KeycloakUnavailableError(msg) from exc
+    try:
+        resp = requests.post(
+            _backchannel(path, realm), data={**data, **auth}, timeout=TIMEOUT
+        )
     except requests.RequestException as exc:
         raise KeycloakUnavailableError(type(exc).__name__) from exc
     if resp.status_code >= 500:  # noqa: PLR2004
