@@ -196,6 +196,27 @@ with the password and a checked certificate; a wrong password is refused (535); 
 certificate is not trusted is refused; Keycloak delivered the first admin's setup e-mail when a
 hospital was provisioned; the password in no container's log.
 
+## Keycloak in production (P1-T8d1)
+
+| What | How |
+|---|---|
+| Image | Our pre-built Keycloak 26.8.2 (`deploy/docker/keycloak.Dockerfile`, built and shipped by `deploy.sh`): Postgres, health, metrics and the switched-off features are fixed at build time, and it starts with `start --optimized` (no rebuild at start; a runtime setting that contradicts the build stops the start) |
+| One server | `KC_CACHE=local`: no cluster discovery through the database, so a restart after a crash or power cut no longer reports "split-brain … should not be serving requests" for up to a minute. **Never run a second Keycloak container on the same database** (their caches would not see each other); `up` replaces the container, it never runs two |
+| Ready | The health check needs HTTP 200 from `/health/ready` (every check, incl. the database), so `up` waits until Keycloak has really finished starting |
+| Client addresses | Traefik reaches Keycloak over a network of their own (`kcproxy`, `IHR_PROXY_NET`, default 10.203.0.0/28; change it in `.env` if the server already uses that range), and Keycloak takes `X-Forwarded-For` only from that range. Traefik drops whatever a client sends in those headers and in look-alike names (`X.Forwarded.For`). So login events and lock-outs carry the real address; anything else that reaches Keycloak is logged with its own address |
+| Per-IP limits (Traefik) | Sign-in submissions (password, code, token): 5 a second, 10 at once in a burst, at most 10 in progress. "Forgot password" (sends an e-mail): 6 a minute. Sign-in pages: 30 a second (their CSS, scripts and fonts: no limit). Each hospital's sign-in start (`/api/ihr/auth/login/`): 5 a second; sign-out, the return from Keycloak and the session heartbeat are never limited, so a sign-out cannot be refused. Over the limit: HTTP 429 with `Retry-After`. Sized for about 200 staff behind one hospital address at a shift change; one account's password is protected by Keycloak's lock-out (5 failures) |
+| Overload | Beyond 500 waiting requests Keycloak answers 503 at once instead of piling up |
+| Events in the journal | Every sign-in, failure (WARN), lock-out (`USER_DISABLED_BY_TEMPORARY_LOCKOUT`) and admin change is a log line in the journal, kept 180 days, with the client address; they are also in Keycloak's database for 180 days. A password is never logged as such, but a failed sign-in records what was typed as the username: someone who types their password into the username box leaves it in the log (Keycloak's database keeps it too). P1-T9 removes the username of "user not found" events before shipping logs; alerts on bursts: P1-T9 |
+| Admin console | Only through an SSH tunnel to `127.0.0.1:8081` (never on the public address); unchanged |
+
+**Size of the event log (estimate):** 0.35–0.55 KB per event (measured); a staff member makes about a dozen
+token refreshes an hour while working. At 100 hospitals with 100 people working that is roughly
+1 GB a day before journald's compression; P1-T9 moves it to the log store.
+
+**If a hospital sees "Too many requests"** (HTTP 429) at a shift change: its whole staff share
+one address. Raise `login-ratelimit` in `traefik/routes.yml`, or give that hospital's address its
+own router with a higher limit (Traefik's `ClientIP` rule).
+
 ## Database backups and restore drill (P1-T8c)
 
 pgBackRest 2.60 keeps the whole database server (hospitals, platform, Keycloak) restorable to
@@ -266,5 +287,8 @@ ports, key-only SSH, NTP to NIC/NPL, journald one year, pinned Docker) and deplo
 **Done in P1-T8c:** database backups and the restore drill (above); the fingerprint bucket's
 lock mode (`IHR_AUDIT_ANCHOR_LOCK_MODE`).
 
-**Not yet** (P1-T8d): Keycloak's own hardening. Not backed up: SeaweedFS's files when they live on
+**Done in P1-T8d1:** Keycloak in production (above).
+
+**Not yet** (P1-T8d2): signed-key client authentication (`private_key_jwt`) for the backend and
+the two workers, with key delivery and rotation. Not backed up: SeaweedFS's files when they live on
 the server itself (owner, 09-11-2026: at go-live files are in the provider's versioned bucket).

@@ -102,6 +102,8 @@ init() {
     echo "IHR_TRAEFIK_DIGEST=$traefik"
     # Our build of postgres:18.6-alpine with pgBackRest (deploy/docker/postgres.Dockerfile, P1-T8c)
     echo "IHR_POSTGRES_IMAGE=${IHR_POSTGRES_IMAGE:-indiehr-postgres:staging}"
+    # Keycloak 26.8.2 pre-built with our build-time options (deploy/docker/keycloak.Dockerfile, P1-T8d1)
+    echo "IHR_KEYCLOAK_IMAGE=${IHR_KEYCLOAK_IMAGE:-indiehr-keycloak:staging}"
     echo "IHR_REDIS_DIGEST=$redis"
     if [[ "$local_run" == "--local" ]]; then
       echo "# Proof run on this machine: only 127.0.0.1, small memory, Docker's own log files"
@@ -281,6 +283,12 @@ smoke() {  # every public address through Traefik, as a browser would reach it
   check "Keycloak operators' realm" 200 "$(code "https://auth.$suffix:$port/realms/indiehr-ops/.well-known/openid-configuration")"
   check "Keycloak admin console not public" 418 "$(code "https://auth.$suffix:$port/admin/master/console/")"
   check "Keycloak master realm not public" 418 "$(code "https://auth.$suffix:$port/realms/master/.well-known/openid-configuration")"
+  # Per-IP limit on sign-in submissions (P1-T8d1): 20 quick POSTs from one address meet a 429
+  local i limited=no
+  for i in $(seq 1 20); do
+    if [[ "$(code -X POST "https://auth.$suffix:$port/realms/indiehr/login-actions/authenticate")" == 429 ]]; then limited=yes; break; fi
+  done
+  check "sign-in submissions limited per address" yes "$limited"
   local issuer
   issuer="$(curl "${curl_args[@]}" "https://auth.$suffix:$port/realms/indiehr/.well-known/openid-configuration" \
     | python3 -c 'import json,sys;print(json.load(sys.stdin).get("issuer",""))' 2>/dev/null || true)"
@@ -1129,7 +1137,10 @@ IHR_BACKEND_IMAGE=unused:proof
 IHR_FRONTEND_IMAGE=unused:proof
 IHR_TRAEFIK_DIGEST=$(digest traefik:v3.7.17)
 IHR_POSTGRES_IMAGE=unused:proof
+IHR_KEYCLOAK_IMAGE=unused:proof
 IHR_REDIS_DIGEST=unused
+# Its own Traefik-Keycloak range: never the same as a staging stack running beside it
+IHR_PROXY_NET=172.30.66.0/28
 IHR_LOG_DRIVER=json-file
 IHR_BIND=127.0.0.1
 IHR_HTTP_PORT=${IHR_PROOF_HTTP_PORT:-18080}

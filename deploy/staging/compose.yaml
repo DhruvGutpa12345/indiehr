@@ -61,6 +61,9 @@ services:
       # Uploads of up to 100 MB from slow hospital links (P1-T8b3): Traefik's 60 s default for
       # reading a whole request would cut them off
       - --entrypoints.websecure.transport.respondingTimeouts.readTimeout=15m
+      # Look-alike header names (X.Forwarded.For, X_Real_Ip) are removed, not passed on (P1-T8d1)
+      - --entrypoints.web.http.aliasHeadersStrategy=delete
+      - --entrypoints.websecure.http.aliasHeadersStrategy=delete
       - --entrypoints.ping.address=:8082
       - --ping.entrypoint=ping
       - --providers.file.filename=/etc/traefik/routes.yml
@@ -84,7 +87,8 @@ services:
       - "${IHR_BIND:-0.0.0.0}:${IHR_HTTPS_PORT:-443}:8443"
     volumes:
       - ./traefik/routes.yml:/etc/traefik/routes.yml:ro
-    networks: [edge]
+    # kcproxy: Traefik -> Keycloak only (Keycloak trusts forwarded headers from that range alone)
+    networks: [edge, kcproxy]
     healthcheck:
       test: ["CMD", "traefik", "healthcheck", "--ping", "--ping.entrypoint=ping", "--entrypoints.ping.address=:8082"]
       interval: 15s
@@ -261,16 +265,22 @@ services:
 
   keycloak:
     <<: *hardening
-    image: quay.io/keycloak/keycloak:26.8.2@sha256:3879c623248408de29a5303178b5816c77e8dfef3890c361f8c0bbeaa979ba3b
-    command: ["start"]
+    # Pre-built (deploy/docker/keycloak.Dockerfile, P1-T8d1): Postgres, health, metrics and the
+    # switched-off features are fixed in the image; `start --optimized` never rebuilds
+    image: ${IHR_KEYCLOAK_IMAGE:?set IHR_KEYCLOAK_IMAGE}
+    command: ["start", "--optimized"]
     env_file:
       - secrets/keycloak.env
     environment:
-      KC_DB: postgres
       KC_DB_URL_HOST: db
       KC_DB_URL_DATABASE: keycloak
       KC_DB_USERNAME: keycloak
       KC_DB_POOL_MAX_SIZE: "20"
+      # One server: caches stay in this process, no cluster discovery. With the default
+      # (a cluster found through the database) a restart after an unclean stop reported
+      # "split-brain ... should not be serving requests" for up to a minute (P1-T8b2).
+      # Never run two Keycloak containers on this database with this setting.
+      KC_CACHE: local
       # TLS ends at Traefik; tokens carry the public https address as issuer.
       KC_HOSTNAME: https://auth.${IHR_TENANT_DOMAIN_SUFFIX}
       # The admin console lives on the private address only (SSH tunnel to this port).
@@ -278,24 +288,42 @@ services:
       KC_HOSTNAME_BACKCHANNEL_DYNAMIC: "true"
       KC_HTTP_ENABLED: "true"
       KC_PROXY_HEADERS: xforwarded
-      KC_HEALTH_ENABLED: "true"
-      KC_FEATURES_DISABLED: device-flow,ciba,impersonation,kerberos
+      # Only forwarded headers arriving over kcproxy count (the client IP in login events and
+      # lock-outs): only Traefik and Keycloak are on it, and Traefik drops whatever a client
+      # sends in those headers. Other containers reach Keycloak over edge/internal: their
+      # X-Forwarded-For is ignored.
+      KC_PROXY_TRUSTED_ADDRESSES: ${IHR_PROXY_NET:-10.203.0.0/28}
+      # Beyond this many waiting requests Keycloak answers 503 at once instead of piling up
+      KC_HTTP_MAX_QUEUED_REQUESTS: "500"
+      # Login events in the journal (180 days): failures at WARN, and at INFO the sign-ins,
+      # lock-outs (USER_DISABLED_BY_TEMPORARY_LOCKOUT) and admin changes. Alerts: P1-T9.
+      KC_SPI_EVENTS_LISTENER__JBOSS_LOGGING__SUCCESS_LEVEL: info
+      KC_SPI_EVENTS_LISTENER__JBOSS_LOGGING__ERROR_LEVEL: warn
       KC_SPI_PASSWORD_POLICY__PASSWORD_BLACKLIST__BLACKLISTS_PATH: /opt/keycloak/data/password-blacklists
       JAVA_OPTS_KC_HEAP: "-XX:MaxRAMPercentage=60 -XX:InitialRAMPercentage=25"
     volumes:
       - ../keycloak/password-blocklist:/opt/keycloak/data/password-blacklists:ro
-    networks: [internal, edge]
+    networks:
+      internal: {}
+      edge: {}
+      # Traefik calls Keycloak by this name, which exists only on kcproxy (routes.yml)
+      kcproxy:
+        aliases: [keycloak-proxy]
     ports:
       - "127.0.0.1:${IHR_KEYCLOAK_ADMIN_PORT:-8081}:8080"
     depends_on:
       db:
         condition: service_healthy
+    # Ready = HTTP 200 from /health/ready (all checks, incl. the database). Matching "UP" in
+    # the body was wrong: one passing sub-check showed it while the whole was DOWN.
     healthcheck:
-      test: ["CMD-SHELL", "exec 3<>/dev/tcp/127.0.0.1/9000 && printf 'GET /health/ready HTTP/1.0\\r\\nHost: localhost\\r\\n\\r\\n' >&3 && grep -q '\"UP\"' <&3"]
+      test: ["CMD-SHELL", "exec 3<>/dev/tcp/127.0.0.1/9000 && printf 'GET /health/ready HTTP/1.0\\r\\nHost: localhost\\r\\n\\r\\n' >&3 && head -n1 <&3 | grep -q '^HTTP/1.[01] 200'"]
       interval: 15s
       timeout: 5s
       retries: 40
       start_period: 120s
+    # Keycloak's own shutdown takes up to 11 s (delay + timeout); Docker's default is 10
+    stop_grace_period: 30s
     mem_limit: ${IHR_KEYCLOAK_MEMORY:-1g}
 
   frontend:
@@ -316,6 +344,13 @@ services:
 
 networks:
   edge:
+  # Traefik <-> Keycloak only (P1-T8d1); a fixed range for KC_PROXY_TRUSTED_ADDRESSES. Change
+  # IHR_PROXY_NET in .env if the server already uses 10.203.0.0/28.
+  kcproxy:
+    internal: true
+    ipam:
+      config:
+        - subnet: ${IHR_PROXY_NET:-10.203.0.0/28}
   internal:
     internal: true
 

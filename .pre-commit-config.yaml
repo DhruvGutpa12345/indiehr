@@ -89,6 +89,14 @@ repos:
         additional_dependencies: ["pyyaml==6.0.3"]
         files: ^(deploy/docker/postgres\.Dockerfile$|deploy/docker/backup/|deploy/staging/|scripts/staging\.sh$|scripts/test_staging_backup\.py$)
         pass_filenames: false
+      # Keycloak (P1-T8d1): pre-built image, single node, trusted proxy, per-IP sign-in limits
+      - id: staging-keycloak-static
+        name: Keycloak keeps its production settings
+        entry: python -m unittest scripts/test_staging_keycloak.py
+        language: python
+        additional_dependencies: ["pyyaml==6.0.3"]
+        files: ^(deploy/docker/keycloak\.Dockerfile$|deploy/staging/|deploy/dev/keycloak|plugins/ihr_platform/ihr_platform/keycloak/realm\.py$|\.github/workflows/apps\.yml$|scripts/test_staging_keycloak\.py$)
+        pass_filenames: false
       # Mail (P1-T8b4): token never on a command line, stand-in like the real service
       - id: staging-mail-static
         name: mail settings keep their required shape

@@ -74,6 +74,9 @@ services:
       # Uploads of up to 100 MB from slow hospital links (P1-T8b3): Traefik's 60 s default for
       # reading a whole request would cut them off
       - --entrypoints.websecure.transport.respondingTimeouts.readTimeout=15m
+      # Look-alike header names (X.Forwarded.For, X_Real_Ip) are removed, not passed on (P1-T8d1)
+      - --entrypoints.web.http.aliasHeadersStrategy=delete
+      - --entrypoints.websecure.http.aliasHeadersStrategy=delete
       - --entrypoints.ping.address=:8082
       - --ping.entrypoint=ping
       - --providers.file.filename=/etc/traefik/routes.yml

@@ -22,9 +22,48 @@ http:
     # Sign-in pages for staff and operators only: Keycloak's admin console, the master realm
     # and its metrics never reach the public address (admin: SSH tunnel to 127.0.0.1:8081).
     auth:
-      rule: 'Host(`auth.{{ env "IHR_TENANT_DOMAIN_SUFFIX" }}`) && (PathPrefix(`/realms/indiehr/`) || PathPrefix(`/realms/indiehr-ops/`) || PathPrefix(`/resources/`))'
+      rule: 'Host(`auth.{{ env "IHR_TENANT_DOMAIN_SUFFIX" }}`) && (PathPrefix(`/realms/indiehr/`) || PathPrefix(`/realms/indiehr-ops/`))'
       entryPoints: [websecure]
       service: keycloak
+      middlewares: [auth-ratelimit]
+      tls: {}
+    # The sign-in pages' own CSS, scripts and fonts: static and cheap, a dozen per page on a
+    # cold browser, so a room of staff signing in together must not run into a limit
+    auth-resources:
+      rule: 'Host(`auth.{{ env "IHR_TENANT_DOMAIN_SUFFIX" }}`) && PathPrefix(`/resources/`)'
+      entryPoints: [websecure]
+      service: keycloak
+      tls: {}
+    # Per-IP limits (P1-T8d1). Sized for a hospital whose ~200 staff share one public address
+    # at a shift change (about 3 submissions per sign-in: password, code, maybe a typo). They
+    # protect the server's CPU (each password check is a deliberate, slow hash) and slow down
+    # guessing across many usernames; guessing one account's password is stopped by Keycloak's
+    # own lock-out (5 failures). Anything but GET/HEAD counts, so "post" in any case does too.
+    auth-login:
+      rule: 'Host(`auth.{{ env "IHR_TENANT_DOMAIN_SUFFIX" }}`) && PathRegexp(`^/realms/(indiehr|indiehr-ops)/(login-actions|protocol/openid-connect/(token|auth))`) && !Method(`GET`) && !Method(`HEAD`)'
+      entryPoints: [websecure]
+      service: keycloak
+      middlewares: [login-inflight, login-ratelimit]
+      priority: 1000
+      tls: {}
+    # "Forgot password" sends an e-mail: much tighter
+    auth-reset:
+      rule: 'Host(`auth.{{ env "IHR_TENANT_DOMAIN_SUFFIX" }}`) && PathRegexp(`^/realms/(indiehr|indiehr-ops)/login-actions/reset-credentials`) && !Method(`GET`) && !Method(`HEAD`)'
+      entryPoints: [websecure]
+      service: keycloak
+      middlewares: [login-inflight, reset-ratelimit]
+      priority: 1100
+      tls: {}
+    # Our own sign-in start on every hospital's address. Only the start: sign-out, the
+    # callback and the session heartbeat are never limited (a refused sign-out would leave a
+    # shared computer signed in). Priority between the hospitals (10) and the closed hosts
+    # (20, 25): the pattern also matches console., auth. and files., which must stay closed.
+    hospital-auth:
+      rule: 'HostRegexp(`^[a-z][a-z0-9-]{2,30}\.{{ env "IHR_SUFFIX_RE" }}$`) && PathPrefix(`/api/ihr/auth/login/`)'
+      entryPoints: [websecure]
+      service: frontend
+      middlewares: [hospital-auth-ratelimit]
+      priority: 15
       tls: {}
     # Anything else on the console or auth host goes nowhere. Without this, the hospitals'
     # catch-all would not match them, but a later, looser rule might.
@@ -64,10 +103,44 @@ http:
     backend:
       loadBalancer:
         servers: [{url: "http://backend:9000"}]
+    # Over kcproxy only (compose.yaml): Keycloak trusts this hop's forwarded headers
     keycloak:
       loadBalancer:
-        servers: [{url: "http://keycloak:8080"}]
+        servers: [{url: "http://keycloak-proxy:8080"}]
   middlewares:
+    # Token buckets per client address (Traefik sees it directly; never X-Forwarded-For, which
+    # a client could forge). Over the limit: 429 with Retry-After. Keep each burst at most
+    # average x 2 s: Traefik forgets a bucket idle for 2 s (11 s for reset-ratelimit), and a
+    # larger burst would then come back full. IPv6 counts per /64.
+    login-ratelimit:
+      rateLimit:
+        average: 5
+        period: 1s
+        burst: 10
+        sourceCriterion: {ipStrategy: {ipv6Subnet: 64}}
+    reset-ratelimit:
+      rateLimit:
+        average: 6
+        period: 1m
+        burst: 1
+        sourceCriterion: {ipStrategy: {ipv6Subnet: 64}}
+    auth-ratelimit:
+      rateLimit:
+        average: 30
+        period: 1s
+        burst: 60
+        sourceCriterion: {ipStrategy: {ipv6Subnet: 64}}
+    hospital-auth-ratelimit:
+      rateLimit:
+        average: 5
+        period: 1s
+        burst: 10
+        sourceCriterion: {ipStrategy: {ipv6Subnet: 64}}
+    # At most 10 sign-in submissions of one address in progress at once (each runs a slow hash)
+    login-inflight:
+      inFlightReq:
+        amount: 10
+        sourceCriterion: {ipStrategy: {ipv6Subnet: 64}}
     # {{ if env "IHR_FILES_BUCKETS" }}
     files-headers:
       headers:

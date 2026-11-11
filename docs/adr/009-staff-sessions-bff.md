@@ -106,5 +106,7 @@ Five CARE test modules exercise the removed features and are left out of the ten
 |---|---|
 | Web-app patches and the owner's click-through | P1-T4b |
 | Back-channel logout (instant), staff invitations, the CARE "set your password" e-mail replaced by an invitation | P1-T5 |
-| `private_key_jwt` client authentication, key delivery and rotation; rate limits on `/api/ihr/auth/login/`; Redis persistence and eviction policy for sessions | P1-T8 |
+| Rate limits on `/api/ihr/auth/` (per IP, Traefik) | done (P1-T8d1) |
+| Redis persistence and eviction policy for sessions (append-only file, `noeviction`) | done (P1-T8a) |
+| `private_key_jwt` client authentication, key delivery and rotation | P1-T8d2 |
 | Playwright across two hospital addresses | P1-T1d |

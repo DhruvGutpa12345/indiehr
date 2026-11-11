@@ -170,6 +170,9 @@ def realm_settings(realm, smtp=None):
         # Login and admin events, kept 180 days (CERT-In) in the Indian-region database.
         "eventsEnabled": True,
         "eventsExpiration": 15552000,
+        # ... and as log lines in the server's journal (180 days; alerts on lock-out bursts:
+        # P1-T9). Pinned so the drift check notices if someone removes it (P1-T8d1).
+        "eventsListeners": ["jboss-logging"],
         "adminEventsEnabled": True,
         "adminEventsDetailsEnabled": True,
         # Hindi login pages need a reviewed translation (P1-T7); Keycloak ships none.

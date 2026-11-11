@@ -275,7 +275,7 @@ jobs:
     timeout-minutes: 20
     env:
       # Same image as deploy/dev/keycloak.override.yaml (docs/VERSIONS.md)
-      KEYCLOAK_IMAGE: quay.io/keycloak/keycloak:26.8.2@sha256:3879c623248408de29a5303178b5816c77e8dfef3890c361f8c0bbeaa979ba3b
+      KEYCLOAK_IMAGE: quay.io/keycloak/keycloak:26.8.2@sha256:723b1d6e254c0fc96d5cffec860c7e0744d6a3277822b865bb538cf891575e41
       POSTGRES_IMAGE: postgres:18.6-alpine@sha256:123b17998ccaf47e53b502e8c6a1e79afd8f579c6f3eec83c563da026f957395
       # Catches the setup e-mails (P1-T5c); same image as the dev stack
       MAILPIT_IMAGE: axllent/mailpit:v1.33.0@sha256:9b3a463be15354c0f0eba91697d80e3e0d8a5623ef0e627cacc836bc17fd5231
@@ -549,6 +549,63 @@ jobs:
         with:
           scan-type: image
           image-ref: indiehr-postgres:ci
+          scanners: vuln,secret
+          severity: CRITICAL,HIGH
+          ignore-unfixed: true
+          trivyignores: .trivyignore.yaml
+          exit-code: "1"
+          format: table
+
+  keycloak-image:
+    name: Keycloak image (optimized build, smoke, Trivy)
+    needs: changes
+    if: needs.changes.outputs.infra == 'true' || github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    env:
+      POSTGRES_IMAGE: postgres:18.6-alpine@sha256:123b17998ccaf47e53b502e8c6a1e79afd8f579c6f3eec83c563da026f957395
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+
+      - name: Build (deploy/docker/keycloak.Dockerfile)
+        run: docker buildx build --load -f deploy/docker/keycloak.Dockerfile -t indiehr-keycloak:ci deploy/docker
+
+      - name: Smoke (starts optimized, single-node cache, ready only with HTTP 200, build options fixed)
+        run: |
+          set -euo pipefail
+          test "$(docker image inspect indiehr-keycloak:ci --format '{{.Config.User}}')" = 1000
+          docker run --rm indiehr-keycloak:ci show-config | grep -E 'kc\.db +=  postgres \(Persisted\)'
+          pw="$(openssl rand -hex 16)"
+          docker network create kc
+          docker run -d --name kc-db --network kc -e POSTGRES_USER=keycloak -e POSTGRES_PASSWORD="$pw" -e POSTGRES_DB=keycloak "$POSTGRES_IMAGE"
+          for _ in $(seq 1 30); do docker exec kc-db pg_isready -q -U keycloak && break; sleep 2; done
+          docker run -d --name kc --network kc --cap-drop ALL --security-opt no-new-privileges:true \
+            -e KC_DB_URL_HOST=kc-db -e KC_DB_URL_DATABASE=keycloak -e KC_DB_USERNAME=keycloak -e KC_DB_PASSWORD="$pw" \
+            -e KC_CACHE=local -e KC_HOSTNAME=https://auth.example.test -e KC_HTTP_ENABLED=true \
+            -e KC_PROXY_HEADERS=xforwarded -e KC_PROXY_TRUSTED_ADDRESSES=10.203.0.2 \
+            indiehr-keycloak:ci start --optimized
+          ready=0
+          for _ in $(seq 1 60); do
+            if docker exec kc bash -c "exec 3<>/dev/tcp/127.0.0.1/9000 && printf 'GET /health/ready HTTP/1.0\r\nHost: localhost\r\n\r\n' >&3 && head -n1 <&3 | grep -q '^HTTP/1.[01] 200'"; then ready=1; break; fi
+            sleep 3
+          done
+          docker logs kc 2>&1 | tail -20
+          test "$ready" = 1
+          # No cluster discovery at all, and no rebuild at start
+          # (clustered mode would log a JGroups start: ISPN000078; the local proof checks both ways)
+          if docker logs kc 2>&1 | grep -qiE 'jgroups|ISPN000078|split-brain|Updating the configuration and installing'; then exit 1; fi
+          # A runtime value that differs from the image's build options is refused
+          if docker run --rm -e KC_DB=mysql indiehr-keycloak:ci start --optimized --hostname=https://x.test --http-enabled=true > other.log 2>&1; then exit 1; fi
+          grep -q 'differ from what is persisted' other.log
+          docker rm -f kc kc-db
+
+      - name: Trivy image scan (fail on fixable HIGH/CRITICAL)
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          scan-type: image
+          image-ref: indiehr-keycloak:ci
           scanners: vuln,secret
           severity: CRITICAL,HIGH
           ignore-unfixed: true

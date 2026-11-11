@@ -102,7 +102,8 @@ Removing a member also ends that person's sessions, because a refresh does not r
 | Operator realm `indiehr-ops` and platform super-admin | P1-T5 |
 | Hindi login pages (Keycloak ships no Hindi): a reviewed translation | P1-T7 |
 | Hospital-branded login pages (theme) | P1-T4 / P1-T7 |
-| Keycloak production settings: own database instance, `start --optimized`, proxy limits on `/admin` and `/realms/master`, per-IP rate limit, alerts on lock-out bursts | P1-T8 |
+| Keycloak production settings: ~~own database instance~~ (owner 2026-11-09: own database and role on the shared Postgres server, Q-K14), `start --optimized` with a pre-built image, single-node cache, proxy limits on `/admin` and `/realms/master` (P1-T8a), trusted proxy address, per-IP rate limits, login and lock-out events in the 180-day journal | done (P1-T8d1) |
+| Alerts on lock-out bursts | P1-T9 (owner 2026-11-09, Q-K15) |
 | A small Keycloak extension whose gate fails closed by itself (would replace the per-hospital flow copies) | When there are about 50 hospitals, or a template change becomes frequent |
 | HPR id as a verified user attribute and token claim (§4.10) | ABDM phase |
 

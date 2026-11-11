@@ -6,7 +6,7 @@
 # Relative paths resolve against apps/backend (the compose project directory).
 services:
   keycloak:
-    image: quay.io/keycloak/keycloak:26.8.2@sha256:3879c623248408de29a5303178b5816c77e8dfef3890c361f8c0bbeaa979ba3b
+    image: quay.io/keycloak/keycloak:26.8.2@sha256:723b1d6e254c0fc96d5cffec860c7e0744d6a3277822b865bb538cf891575e41
     profiles: ["keycloak"]
     command: ["start-dev"]
     env_file:
@@ -34,8 +34,9 @@ services:
       db:
         condition: service_healthy
     # No curl in the image; bash's /dev/tcp reads the readiness endpoint on the management port.
+    # Ready means HTTP 200 (every check passed), not just an "UP" somewhere in the body.
     healthcheck:
-      test: ["CMD-SHELL", "exec 3<>/dev/tcp/127.0.0.1/9000 && printf 'GET /health/ready HTTP/1.0\\r\\nHost: localhost\\r\\n\\r\\n' >&3 && grep -q '\"UP\"' <&3"]
+      test: ["CMD-SHELL", "exec 3<>/dev/tcp/127.0.0.1/9000 && printf 'GET /health/ready HTTP/1.0\\r\\nHost: localhost\\r\\n\\r\\n' >&3 && head -n1 <&3 | grep -q '^HTTP/1.[01] 200'"]
       interval: 10s
       timeout: 5s
       retries: 30

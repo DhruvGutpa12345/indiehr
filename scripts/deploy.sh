@@ -79,9 +79,11 @@ env_get() { sed -n "s/^$1=//p" "$ENV_DIR/.env" | tail -1; }
 backend_image() { [[ -f "$ENV_DIR/.env" ]] && env_get IHR_BACKEND_IMAGE || echo "indiehr-backend:staging"; }
 frontend_image() { [[ -f "$ENV_DIR/.env" ]] && env_get IHR_FRONTEND_IMAGE || echo "indiehr-frontend:staging"; }
 postgres_image() { local v=""; [[ -f "$ENV_DIR/.env" ]] && v="$(env_get IHR_POSTGRES_IMAGE)"; echo "${v:-indiehr-postgres:staging}"; }
+keycloak_image() { local v=""; [[ -f "$ENV_DIR/.env" ]] && v="$(env_get IHR_KEYCLOAK_IMAGE)"; echo "${v:-indiehr-keycloak:staging}"; }
 BACKEND="$(backend_image)"
 FRONTEND="$(frontend_image)"
 POSTGRES="$(postgres_image)"
+KEYCLOAK="$(keycloak_image)"
 REV_LABEL="org.opencontainers.image.revision"
 if ((BUILD)); then
   # Build context: a fresh copy of the committed files, so git-ignored files in the working
@@ -111,6 +113,10 @@ if ((BUILD)); then
   log "Building $POSTGRES (deploy/docker/postgres.Dockerfile: postgres 18.6 + pgBackRest)"
   docker buildx build -q --load -f deploy/docker/postgres.Dockerfile \
     --label "$REV_LABEL=$SHA" --label "ihr.git-dirty=$DIRTY" -t "$POSTGRES" deploy/docker >/dev/null
+  # Keycloak pre-built for `start --optimized` (P1-T8d1): pinned upstream image, our build options
+  log "Building $KEYCLOAK (deploy/docker/keycloak.Dockerfile: Keycloak 26.8.2, optimized)"
+  docker buildx build -q --load -f deploy/docker/keycloak.Dockerfile \
+    --label "$REV_LABEL=$SHA" --label "ihr.git-dirty=$DIRTY" -t "$KEYCLOAK" deploy/docker >/dev/null
 fi
 label_of() {  # label_of <image> <label>: the label's value, or "unknown"
   local v; v="$(docker image inspect -f "{{index .Config.Labels \"$2\"}}" "$1" 2>/dev/null || true)"
@@ -131,12 +137,12 @@ if ((BUILD)) && [[ -n "$ACMEDNS" ]]; then
   docker buildx build -q --load -f deploy/docker/acme-dns.Dockerfile \
     --label "$REV_LABEL=$SHA" --label "ihr.git-dirty=$DIRTY" -t "$ACMEDNS" deploy/docker >/dev/null
 fi
-((BUILD_ONLY)) && { log "Images built: $BACKEND, $FRONTEND, $POSTGRES${ACMEDNS:+, $ACMEDNS}"; exit 0; }
+((BUILD_ONLY)) && { log "Images built: $BACKEND, $FRONTEND, $POSTGRES, $KEYCLOAK${ACMEDNS:+, $ACMEDNS}"; exit 0; }
 
 [[ -f "$ENV_DIR/.env" && -d "$ENV_DIR/secrets" ]] \
   || die "no $ENV_DIR/.env and secrets/: run scripts/staging.sh init <suffix> first"
 [[ -f "$ENV_DIR/.local" ]] && die "$ENV_DIR was made for a proof on this machine (init --local); use init without --local, or --local-proof"
-for img in "$BACKEND" "$FRONTEND" "$POSTGRES" ${ACMEDNS:+"$ACMEDNS"}; do
+for img in "$BACKEND" "$FRONTEND" "$POSTGRES" "$KEYCLOAK" ${ACMEDNS:+"$ACMEDNS"}; do
   docker image inspect "$img" >/dev/null 2>&1 || die "image $img not found here (drop --no-build)"
   # With --no-build the images may come from another commit: DEPLOYED must not claim HEAD
   rev="$(label_of "$img" "$REV_LABEL")"
@@ -187,6 +193,7 @@ ship_image() {  # ship_image <image>
 ship_image "$BACKEND"
 ship_image "$FRONTEND"
 ship_image "$POSTGRES"
+ship_image "$KEYCLOAK"
 [[ -z "$ACMEDNS" ]] || ship_image "$ACMEDNS"
 
 # ---- 3. Stack files (tracked files only: never a stray .env or secret) ----------------------
@@ -231,6 +238,7 @@ remote "docker image prune -f >/dev/null"
   echo "frontend_image=$FRONTEND $(docker image inspect -f '{{.Id}}' "$FRONTEND")"
   echo "frontend_revision=$(label_of "$FRONTEND" "$REV_LABEL") bundle=$(label_of "$FRONTEND" ihr.bundle)"
   echo "postgres_image=$POSTGRES $(docker image inspect -f '{{.Id}}' "$POSTGRES") pgbackrest=$(label_of "$POSTGRES" ihr.pgbackrest.version)"
+  echo "keycloak_image=$KEYCLOAK $(docker image inspect -f '{{.Id}}' "$KEYCLOAK")"
   [[ -z "$ACMEDNS" ]] || echo "acmedns_image=$ACMEDNS $(docker image inspect -f '{{.Id}}' "$ACMEDNS") source=$(label_of "$ACMEDNS" ihr.acme-dns.commit)"
 } | remote "cat > $REMOTE_ROOT/DEPLOYED.tmp && mv $REMOTE_ROOT/DEPLOYED.tmp $REMOTE_ROOT/DEPLOYED && rm -f $REMOTE_ROOT/DEPLOYING"
 log "Deployed $(label_of "$BACKEND" "$REV_LABEL") (dirty: $(label_of "$BACKEND" ihr.git-dirty)) to $HOST; recorded in $REMOTE_ROOT/DEPLOYED"

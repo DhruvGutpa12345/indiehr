@@ -128,7 +128,8 @@ Backend lock fully re-resolved on 2026-11-04 (latest compatible for every packag
 
 | Item | Version | Checked |
 |---|---|---|
-| Keycloak | 26.8.2 (2026-11-05; fixes a 2FA-setup bypass, an organisation-login takeover and a minimum-ACR bypass in older 26.x) — `quay.io/keycloak/keycloak:26.8.2@sha256:3879c623248408de29a5303178b5816c77e8dfef3890c361f8c0bbeaa979ba3b` | 2026-11-06 |
+| Keycloak | 26.8.2 (2026-11-05; fixes a 2FA-setup bypass, an organisation-login takeover and a minimum-ACR bypass in older 26.x; still the newest release on 2026-11-11, no 26.8.3 or 27.x) — `quay.io/keycloak/keycloak:26.8.2@sha256:723b1d6e254c0fc96d5cffec860c7e0744d6a3277822b865bb538cf891575e41` (quay's re-push `26.8.2-1` of 2026-11-09: same source revision, refreshed base OS; was `…3879c623…`, `26.8.2-0`) in dev, CI and as the base of our staging build | 2026-11-11 |
+| Keycloak, staging (P1-T8d1) | `deploy/docker/keycloak.Dockerfile`: the image above pre-built (`kc.sh build`: Postgres, health, metrics, device-flow/CIBA/impersonation/Kerberos off), `start --optimized`, single-node cache (`KC_CACHE=local`), forwarded headers trusted from Traefik's fixed address only; built by `scripts/deploy.sh`, CI job "Keycloak image" (build, smoke, Trivy) | 2026-11-11 |
 | Keycloak database (dev) | the dev Postgres 17.11, own database and owner role `keycloak` | 2026-11-06 |
 | Keycloak database (CI) | `postgres:18.6-alpine@sha256:123b17998ccaf47e53b502e8c6a1e79afd8f579c6f3eec83c563da026f957395` | 2026-11-06 |
 | Password block list | SecLists commit `2f31b22e1f9963ec2fd2b12606c00f0fb04910f1` (MIT), filtered to 12+ characters | 2026-11-06 |
