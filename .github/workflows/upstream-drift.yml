@@ -1,0 +1,24 @@
+name: Upstream drift
+
+# How far the CARE pins (upstream.lock) are behind upstream, weekly (P1-T17). Read-only: it
+# fetches upstream and reports; it never syncs. Warns at 30 days, fails after 60 (PLAN §8:
+# monthly syncs).
+on:
+  schedule:
+    - cron: "0 22 * * 0" # Mondays 03:30 IST
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  drift:
+    name: Upstream drift (report)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0 # the pinned upstream commits are in our history (squashed subtrees)
+      - name: Report drift
+        run: scripts/check-upstream-drift.sh

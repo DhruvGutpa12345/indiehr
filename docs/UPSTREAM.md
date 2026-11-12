@@ -37,12 +37,56 @@ uses that have no Hindi (`apps/frontend/public/locale/en.json` minus upstream `h
 P1-T7f), translate them with the glossary (`docs/i18n/hi-glossary.md`) and add a review
 sheet. A string listed as unused that the new code now shows moves out of that list.
 
+## After every sync, even a clean merge (P1-T17)
+
+A clean merge can still change what one of our patches means. In the P1-T17 trial,
+upstream changed a hook's signature next to our patch and git merged it without a word.
+After each sync, before pushing:
+
+1. **Patched files.** For each file the dry run flagged ("upstream also changed our patched
+   file"), check that our patch is still there and still right against the new code. Update its
+   UPSTREAM_PATCHES.md row.
+2. **Lock files.** Did upstream change `Pipfile`, `Pipfile.lock`, `package.json`,
+   `package-lock.json` or `.node-version`? If it did, compare versions with our security bumps
+   even without a conflict.
+3. **Our plugins' assumptions.** Look through upstream's diff for:
+   - new CARE test modules that use routes we block on hospital addresses → add them to
+     `plugins/ihr_platform/ihr_platform/care_tests_excluded.txt`, with the reason;
+   - new `emr` models → classify them in `ihr_audit/unlinked_models.txt`, or check they have a
+     patient link;
+   - new routes → `ihr_identity/blocked.py`, the isolation crawl's `crawl_skips.txt` or
+     `anonymous_allowlist.txt` (the suite fails until they are reviewed);
+   - changed system value sets → rebuild the pack: `scripts/pack-build.sh care-valuesets` (the
+     drift test fails until you do);
+   - new raw cache, lock or Redis keys → TENANCY_DESIGN §6 (the test runner fails on any key
+     without the hospital prefix);
+   - new settings → `ihr_platform/settings/secure.py` if deployment must pin them;
+   - INSTALLED_APPS changes → `ihr_platform/settings/tenancy.py`;
+   - permission or role changes → the guarded role sync and `ihr_roles`;
+   - new Playwright specs → check them against our India date formats.
+4. **Translations.** Diff the English *values* in `apps/frontend/public/locale/en.json`, not just
+   the keys. A reworded English string leaves our Hindi out of date, and
+   `merge-locale.py --check` does not notice.
+5. **Tests in tenant mode** before pushing: the plugin suites and the isolation suite
+   (`scripts/care-tenancy.sh test …`), then Apps CI.
+
+**To rehearse a sync without touching `main`:** use a worktree on a branch of its own:
+
+```bash
+git worktree add -b sync-trial ~/indiehr-sync-trial origin/main
+```
+
+Run the script there. The `upstream-*` remotes it adds live in the shared `.git` config.
+`IHR_COMMIT_TRAILER` adds a trailer, such as an attribution line, to the script's own commits.
+The weekly **Upstream drift** workflow reports how far behind we are: it warns at 30 days and
+fails after 60.
+
 ## Conflict runbook
 
 A sync stops with "MERGE CONFLICT" when upstream changed lines we also changed. `upstream.lock` is left untouched until the merge is finished.
 
 1. `git status` lists the conflicted files.
-2. **Lock files** (`apps/backend/Pipfile`, `Pipfile.lock`, `apps/frontend/package-lock.json`) conflict on most syncs, because we carry security bumps (UPSTREAM_PATCHES.md):
+2. **Lock files** (`apps/backend/Pipfile`, `Pipfile.lock`, `apps/frontend/package-lock.json`) conflict whenever upstream changes them, because we carry security bumps (UPSTREAM_PATCHES.md). The P1-T17 trial touched none. When they do conflict:
    - take **upstream's** version: `git checkout --theirs <file>`;
    - backend: re-apply any of our versions that are still newer than upstream's, using the same container method as P0-T9/P1-T12 (`pipenv upgrade "pkg==x.y.z"` inside `python:3.13-slim-bookworm` with pipenv 2025.1.1);
    - frontend: re-apply only the changed entries (transplant method from P0-T9/P1-T12);

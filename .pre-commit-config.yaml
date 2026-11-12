@@ -67,6 +67,13 @@ repos:
         always_run: true
         pass_filenames: false
       # The check itself, in throwaway repositories (CI also runs it with --base, ci.yml)
+      # The upstream drift report's thresholds (P1-T17; run weekly by upstream-drift.yml)
+      - id: upstream-drift-tests
+        name: upstream drift check tests
+        entry: python3 -m unittest scripts/test_check_upstream_drift.py
+        language: system
+        files: ^scripts/(check-upstream-drift\.sh|test_check_upstream_drift\.py)$
+        pass_filenames: false
       - id: pack-versions-tests
         name: pack version check tests
         entry: python3 -m unittest scripts/test_check_pack_versions.py
