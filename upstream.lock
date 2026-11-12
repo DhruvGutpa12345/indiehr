@@ -7,5 +7,5 @@ backend.date=2026-11-10
 frontend.prefix=apps/frontend
 frontend.repo=https://github.com/ohcnetwork/care_fe.git
 frontend.branch=develop
-frontend.sha=57205b8978045d67b0299c1bd7c2d03fe640d945
-frontend.date=2026-11-02
+frontend.sha=c9519b7f3f50cb5e7ab841bbaae99bf1899b7278
+frontend.date=2026-11-12
