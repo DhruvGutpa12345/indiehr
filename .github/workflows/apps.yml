@@ -57,7 +57,8 @@ jobs:
               - 'scripts/merge-locale.py'
               - 'scripts/check-bundle-egress.sh'
               - '.github/workflows/apps.yml'
-            # Mutation runs cost ~10 jobs: only when an isolation control or its tests change
+            # Mutation runs cost one full-stack job per row (26 today: scripts/isolation-mutation.sh
+            # list), so they run only when an isolation control or its tests change
             isolation:
               - 'plugins/ihr_platform/**'
               - 'scripts/isolation-mutation.sh'
@@ -214,8 +215,8 @@ jobs:
       - id: list
         run: echo "names=$(scripts/isolation-mutation.sh list | jq -Rnc '[inputs]')" >> "$GITHUB_OUTPUT"
 
-  # TENANCY_DESIGN.md §11.2: remove one isolation control at a time; the isolation suite must
-  # then fail on the test that guards it. A green run here means a test has stopped guarding.
+  # TENANCY_DESIGN.md §11.2 (and P1-T16a): remove one isolation or security control at a time;
+  # the test that guards it must then fail. A green run here means a test has stopped guarding.
   isolation-mutation:
     name: Isolation mutation (${{ matrix.mutation }} must fail)
     needs: mutation-list

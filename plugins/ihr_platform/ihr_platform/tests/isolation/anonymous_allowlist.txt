@@ -17,6 +17,7 @@
 /swagger/                           # as above, non-production only
 /redoc/                             # as above, non-production only
 /api/v1/^plug_config/$              # frontend plugin list, needed before login. FOLLOW-UP: PlugConfig.meta must never hold secrets (admin-only writes)
+/api/v1/^plug_config/(?P<slug>[^/.]+)/$   # P1-T16a: one plugin's config, the detail of the list above; CARE gives GET no authentication (users/api/viewsets/plug_config.py). Same FOLLOW-UP: meta must never hold secrets. Open in every run since P1-T16b seeds a row (extras.py)
 /api/v1/^getallfacilities/$         # public facility finder (is_public=True only), used by the patient portal
 /api/v1/^govt/organization/$        # geography picker for addresses. FOLLOW-UP: restrict to government geography (TENANCY_DESIGN §6.6 / §10)
 /api/v1/^govt/organization/(?P<external_id>[^/.]+)/$   # as above (FOLLOW-UP)

@@ -30,14 +30,38 @@ from ihr_platform.test_runner import (
     WRITTEN_REDIS_KEYS,
     unprefixed_redis_keys,
 )
-from ihr_platform.tests.isolation.routes import SHARED_VALUE_PARAMS, fill, get_routes
-from ihr_platform.tests.isolation.world import UUID_RE, build_world, drop_world
+from ihr_platform.tests.isolation.routes import (
+    CONVERTER_RE,
+    SHARED_VALUE_PARAMS,
+    fill,
+    get_routes,
+)
+from ihr_platform.tests.isolation.world import UUID_RE, build_world
 
 HERE = Path(__file__).parent
 ANONYMOUS_ALLOW_LIST = HERE / "anonymous_allowlist.txt"
 CRAWL_SKIPS = HERE / "crawl_skips.txt"
 # A crawl as one tenant's admin must get real data back from at least this many routes.
-MIN_ROUTES_WITH_OWN_DATA = 60
+# Observed 132-134 per crawl once extras.py seeded its rows (P1-T16b, 2026-11-13; 78-80 before),
+# and 134 on the first crawl, 135 on each later one in four runs once world.py fixed the first
+# facility public (review R1). It stays a floor: CARE's fixtures still pick some values at random.
+MIN_ROUTES_WITH_OWN_DATA = 120
+# Routes with path() converters, filled by routes.fill(); each must answer its owner. fill()
+# picks a converter's value by its name alone, so the owner test also requires that these are
+# exactly the GET converter routes fill() fills: a new one fails until it is reviewed here.
+CONVERTER_ROUTES = (
+    "api/ihr/staff/<str:username>/access/",
+    "api/ihr/audit/entries/<int:pk>/",
+    "api/ihr/pincode/<str:pincode>/",
+)
+# Detail routes of the rows extras.py seeds for the crawl (P1-T16b), per tenant.
+SEEDED_ROUTES = 31
+# Filled for nobody: POST-only (staff_urls.py), so the GET crawl never requests it.
+POST_ONLY_ROUTE = "api/ihr/staff/<str:username>/<slug:action>/"
+# Its value is this tenant's own audit entry of a Patient UPDATE (world.py, _collect_ids).
+AUDIT_ENTRY_ROUTE = "api/ihr/audit/entries/<int:pk>/"
+# Open anonymously in every run: world.py makes the facility fill() puts in it public.
+PUBLIC_FACILITY_ROUTE = "/api/v1/^getallfacilities/(?P<external_id>[^/.]+)/$"
 
 
 def _reviewed_list(path):
@@ -87,15 +111,17 @@ class CrossTenantIsolationTests(SimpleTestCase):
     @classmethod
     def setUpClass(cls):
         super().setUpClass()
-        cls.a, cls.b = build_world()
+        # Class clean-ups run last-in first-out, also when setUpClass fails part-way: each
+        # write to public registers its own removal as it is made (world.py).
+        cls.addClassCleanup(connection.set_schema, TEST_SCHEMA)
+        cls.a, cls.b = build_world(cls.addClassCleanup)
         cls.routes = get_routes()
         cls._keycloak = testing.fake_keycloak()
         cls._keycloak.__enter__()
+        cls.addClassCleanup(cls._keycloak.__exit__, None, None, None)
 
     @classmethod
     def tearDownClass(cls):
-        cls._keycloak.__exit__(None, None, None)
-        drop_world(cls.a, cls.b)
         connection.set_schema(TEST_SCHEMA)
         super().tearDownClass()
 
@@ -209,10 +235,96 @@ class CrossTenantIsolationTests(SimpleTestCase):
             [],
             "Anonymous 2xx on routes not in anonymous_allowlist.txt",
         )
-        # Some entries are open only for certain data (e.g. a public facility), so entries that
-        # did not answer are reported, not failed.
+        # The public facility's detail: open every run (world.py fixes the facility public).
+        self.assertIn(PUBLIC_FACILITY_ROUTE, allowed)
+        self.assertIn(PUBLIC_FACILITY_ROUTE, open_routes)
+        # Some entries are open only for certain data, so entries that did not answer are
+        # reported, not failed.
         if stale := sorted(allowed - open_routes):
             print(f"\n[isolation] allow-listed but not open this run: {stale}")
+
+    def test_every_seeded_and_converter_route_answers_its_owner(self):
+        """The crawl counts a filled route that answers 403 or 404 as crawled, with nothing
+        seen. So each converter route, and each route seeded for the crawl, must answer its own
+        tenant's admin with 200; the PIN lookup must name that tenant's own organisations."""
+        routes = {route: (cls, allows_get) for route, cls, allows_get in self.routes}
+        with self.subTest(route=POST_ONLY_ROUTE):
+            self.assertIn(POST_ONLY_ROUTE, routes)
+            self.assertFalse(routes[POST_ONLY_ROUTE][1], "must not be crawled by GET")
+        for tenant, other in ((self.a, self.b), (self.b, self.a)):
+            client = self._staff_client(tenant)
+            with self.subTest(tenant=tenant.hospital.slug, route="converter routes"):
+                filled = {
+                    route
+                    for route, (cls, allows_get) in routes.items()
+                    if allows_get
+                    and CONVERTER_RE.search(route)
+                    and fill(route, cls, tenant)
+                }
+                self.assertEqual(
+                    sorted(filled),
+                    sorted(CONVERTER_ROUTES),
+                    "a converter route filled by name and not reviewed in CONVERTER_ROUTES",
+                )
+            for route in CONVERTER_ROUTES:
+                with self.subTest(tenant=tenant.hospital.slug, route=route):
+                    self.assertIn(route, routes)
+                    path = fill(route, routes[route][0], tenant)
+                    self.assertIsNotNone(path, "converter route not filled")
+                    response = client.get(path)
+                    self.assertEqual(response.status_code, 200, response.content[:300])
+                    self.assertEqual(_leaks(response, other), set())
+                    if (
+                        route == AUDIT_ENTRY_ROUTE
+                    ):  # an entry of its own, not a look-alike
+                        self.assertTrue(
+                            _owns(response, tenant)
+                            or tenant.canary.lower() in _body(response),
+                            "no own id or canary in the audit entry",
+                        )
+            with self.subTest(tenant=tenant.hospital.slug, route="pincode places"):
+                response = client.get(f"/api/ihr/pincode/{tenant.pincode}/")
+                self.assertEqual(response.status_code, 200, response.content[:300])
+                orgs = {
+                    place[key]
+                    for place in response.json()["places"]
+                    for key in ("state_organization", "geo_organization")
+                }
+                self.assertTrue(orgs)
+                self.assertNotIn(None, orgs, "no organisation for the PIN's place")
+                self.assertEqual(orgs - tenant.ids, set(), "not this tenant's own")
+                self.assertEqual(orgs & other.ids, set())
+            # the crawl's own paths: a seeded row must be the one fill() puts in the path
+            crawled = {
+                fill(route, cls, tenant)
+                for route, (cls, allows_get) in routes.items()
+                if allows_get
+            }
+            with self.subTest(tenant=tenant.hospital.slug, route="seeded rows"):
+                paths = {path for path, _ in tenant.seeded_routes}
+                self.assertEqual(len(paths), SEEDED_ROUTES)
+            # _owns proves the route is reached with its owner's row (each seeded detail
+            # carries its own id). It does not prove where the canary is rendered: the canary
+            # is also in staff and patient names nested in most bodies. So where extras.py put
+            # it in a field the read spec renders (``canary_field``), that field itself must
+            # hold it.
+            for path, canary_field in tenant.seeded_routes:
+                with self.subTest(tenant=tenant.hospital.slug, seeded=path):
+                    self.assertIn(path, crawled, "not the path the crawl requests")
+                    response = client.get(path)
+                    self.assertEqual(response.status_code, 200, response.content[:300])
+                    self.assertTrue(
+                        _owns(response, tenant)
+                        or tenant.canary.lower() in _body(response),
+                        "no own id or canary in the body",
+                    )
+                    if canary_field:
+                        rendered = str(response.json().get(canary_field)).lower()
+                        self.assertIn(
+                            tenant.canary.lower(),
+                            rendered,
+                            f"canary not rendered in {canary_field!r}",
+                        )
 
     # --- tokens ----------------------------------------------------------------------------
 

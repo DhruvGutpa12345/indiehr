@@ -1,41 +1,11 @@
 # Routes the crawl cannot fill for a tenant: one route per line, as in anonymous_allowlist.txt.
 # The crawl fails on any skipped route not listed here, so new upstream routes cannot go
-# uncrawled silently. Reviewed 2026-11-06 (P1-T1b).
+# uncrawled silently. Reviewed 2026-11-06 (P1-T1b); 33 of the 34 entries then listed are now
+# seeded by extras.py and crawled (P1-T16b, 2026-11-13).
 #
-# Reason for every entry below: CARE's demo fixture script seeds no row of the route's model, so
-# there is no id to put in the path. Their list routes are still crawled. FOLLOW-UP: seed these
-# models in the isolation world (TRACKER), then delete the entries.
-/api/v1/^facility/(?P<facility_external_id>[^/.]+)/device/(?P<device_external_id>[^/.]+)/encounter_history/(?P<external_id>[^/.]+)/$
-/api/v1/^facility/(?P<facility_external_id>[^/.]+)/device/(?P<device_external_id>[^/.]+)/location_history/(?P<external_id>[^/.]+)/$
-/api/v1/^facility/(?P<facility_external_id>[^/.]+)/device/(?P<device_external_id>[^/.]+)/service_history/(?P<external_id>[^/.]+)/$
+# Encounter-to-location association (FacilityLocationEncounter): fill() takes the first location
+# by pk, which is the fixtures' "Ward A", a location kind. CARE refuses an encounter on a kind
+# (FacilityLocationEncounterViewSet._validate_data), and a row hung off a bed would sit under a
+# location fill() never uses (a silent 404), so no valid row can be seeded. Its list route is
+# still crawled.
 /api/v1/^facility/(?P<facility_external_id>[^/.]+)/location/(?P<location_external_id>[^/.]+)/association/(?P<external_id>[^/.]+)/$
-/api/v1/^facility/(?P<facility_external_id>[^/.]+)/order/dispense/(?P<external_id>[^/.]+)/$
-/api/v1/^facility/(?P<facility_external_id>[^/.]+)/schedule_exceptions/(?P<external_id>[^/.]+)/$
-/api/v1/^facility/(?P<facility_external_id>[^/.]+)/service_request/(?P<external_id>[^/.]+)/$
-/api/v1/^facility/(?P<facility_external_id>[^/.]+)/specimen/(?P<external_id>[^/.]+)/$
-/api/v1/^facility/(?P<facility_external_id>[^/.]+)/token/queue/(?P<token_queue_external_id>[^/.]+)/token/(?P<external_id>[^/.]+)/$
-/api/v1/^files/(?P<external_id>[^/.]+)/$
-/api/v1/^form_submission/(?P<external_id>[^/.]+)/$
-/api/v1/^medication/dispense/(?P<external_id>[^/.]+)/$
-/api/v1/^meta_artifacts/(?P<external_id>[^/.]+)/$
-/api/v1/^patient/(?P<patient_external_id>[^/.]+)/allergy_intolerance/(?P<external_id>[^/.]+)/$
-/api/v1/^patient/(?P<patient_external_id>[^/.]+)/consent/(?P<external_id>[^/.]+)/$
-/api/v1/^patient/(?P<patient_external_id>[^/.]+)/diagnosis/(?P<external_id>[^/.]+)/$
-/api/v1/^patient/(?P<patient_external_id>[^/.]+)/diagnostic_report/(?P<external_id>[^/.]+)/$
-/api/v1/^patient/(?P<patient_external_id>[^/.]+)/medication/administration/(?P<external_id>[^/.]+)/$
-/api/v1/^patient/(?P<patient_external_id>[^/.]+)/medication/prescription/(?P<external_id>[^/.]+)/$
-/api/v1/^patient/(?P<patient_external_id>[^/.]+)/medication/request/(?P<external_id>[^/.]+)/$
-/api/v1/^patient/(?P<patient_external_id>[^/.]+)/medication/statement/(?P<external_id>[^/.]+)/$
-/api/v1/^patient/(?P<patient_external_id>[^/.]+)/observation/(?P<external_id>[^/.]+)/$
-/api/v1/^patient/(?P<patient_external_id>[^/.]+)/questionnaire_response/(?P<external_id>[^/.]+)/$
-/api/v1/^patient/(?P<patient_external_id>[^/.]+)/symptom/(?P<external_id>[^/.]+)/$
-/api/v1/^patient/(?P<patient_external_id>[^/.]+)/thread/(?P<external_id>[^/.]+)/$
-/api/v1/^patient/(?P<patient_external_id>[^/.]+)/thread/(?P<thread_external_id>[^/.]+)/note/$
-/api/v1/^patient/(?P<patient_external_id>[^/.]+)/thread/(?P<thread_external_id>[^/.]+)/note/(?P<external_id>[^/.]+)/$
-/api/v1/^plug_config/(?P<slug>[^/.]+)/$
-/api/v1/^questionnaire_response_template/(?P<external_id>[^/.]+)/$
-/api/v1/^resource/(?P<external_id>[^/.]+)/$
-/api/v1/^resource/(?P<resource_external_id>[^/.]+)/comment/$
-/api/v1/^resource/(?P<resource_external_id>[^/.]+)/comment/(?P<external_id>[^/.]+)/$
-/api/v1/^tag_config/(?P<external_id>[^/.]+)/$
-/api/v1/^template_reports/(?P<external_id>[^/.]+)/$

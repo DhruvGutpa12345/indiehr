@@ -107,10 +107,6 @@ class SecureRulesTests(SimpleTestCase):
                 "DATABASES": {"default": {"NAME": "bench_terminology"}}
             },
             "nor marked throwaway": {"IHR_TERMINOLOGY_THROWAWAY_DB": True},
-            # CARE's switch opens every patient to every signed-in user (P1-T11a)
-            "PATIENT_GLOBAL_EDIT_ACCESS_ENABLED must stay off": {
-                "PATIENT_GLOBAL_EDIT_ACCESS_ENABLED": True
-            },
             "USE_TZ must be on": {"USE_TZ": False},
             "EMAIL_HOST is not set": {"EMAIL_HOST": "localhost"},
             "EMAIL_BACKEND must be": {
@@ -137,6 +133,16 @@ class SecureRulesTests(SimpleTestCase):
                 found = secure.problems(GOOD_SETTINGS | change, GOOD_ENV)
                 self.assertEqual(len(found), 1, found)
                 self.assertIn(expected, found[0])
+
+    def test_patient_global_edit_access_is_refused(self):
+        """CARE's switch opens every patient to every signed-in user (P1-T11a). Its own
+        method, so its mutation row fails here and nowhere it could hide (P1-T16a)."""
+        found = secure.problems(
+            GOOD_SETTINGS | {"PATIENT_GLOBAL_EDIT_ACCESS_ENABLED": True}, GOOD_ENV
+        )
+        self.assertEqual(
+            found, ["PATIENT_GLOBAL_EDIT_ACCESS_ENABLED must stay off (P1-T11a)."]
+        )
 
     def test_random_keys_are_never_called_placeholders(self):
         # Random keys contain words like "test" or "secret" by chance; only a key written

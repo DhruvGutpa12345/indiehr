@@ -96,7 +96,9 @@ class StaffAccessView(APIView):
             hospital=connection.tenant, care_user_id=user.pk
         ).first()
 
-    def get(self, request, username):
+    def get(self, request, username, action=None):
+        if action is not None:  # staff_urls.py routes only POST to an action
+            raise ValidationError({"action": ["Ask for an action with POST."]})
         user = self._target(request, username)
         invitation = self._invitation(user)
         recent = StaffAccessRequest.objects.filter(
@@ -125,7 +127,7 @@ class StaffAccessView(APIView):
             }
         )
 
-    def post(self, request, username, action):
+    def post(self, request, username, action=None):
         if action not in ACTIONS:
             raise ValidationError({"action": ["Unknown action."]})
         if username == request.user.username:

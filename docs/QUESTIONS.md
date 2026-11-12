@@ -288,6 +288,31 @@ These are within your Q-T10 answer and TENANCY §5. Each is a rule in one module
 
 **To reverse:** change the rule in `engine.py` and its test.
 
+### Q-K26 — P1-T16 split into a and b (auto-accepted by Claude, 2026-11-13, awaiting owner confirmation)
+
+- **A ⭐ (taken).**
+  - **P1-T16a:** the isolation crawl.
+    - It fails closed on routes it cannot fill, and fills Django path-converter routes.
+    - It fixes the staff-access route that would have answered GET with a server error.
+    - Seven mutation rows (audit coverage, terminology refusal, role guard, global-edit refusal,
+      packs), plus the guard tests they need.
+  - **P1-T16b:** seeded rows for the models behind the skipped crawl routes, and a test that
+    each one answers its own hospital.
+- B. One task: two sittings of different kinds (test infrastructure, then 31 seeded models).
+
+### Q-K27 — Browser isolation tests (P1-T1d; auto-accepted by Claude, 2026-11-13, awaiting owner confirmation)
+
+- **A ⭐ (taken).**
+  - The browser tests run in GitHub Actions on every relevant change and weekly, with
+    Playwright's own Chromium (hash-checked) downloaded there.
+  - Nothing secret is uploaded: no traces, videos or HTML reports, only screenshots without
+    form fields.
+  - The hospital switcher test is skipped until the switcher exists. It is not built (TENANCY
+    §9) and has no task yet.
+  - The patient sign-out now also clears the doctor a patient picked in the public booking
+    flow, so a shared kiosk does not show it.
+- B. Run them only by hand (cheaper, but a sign-in or clean-up regression would go unnoticed).
+
 **Still open:** Q-B4 (final MVP module list: assumed as in PLAN.md Phase 2) and Q-B6/B7 (pricing, timeline). Q-F2 is moot while AI is deferred.
 
 ---

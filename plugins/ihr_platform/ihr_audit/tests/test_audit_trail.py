@@ -21,7 +21,7 @@ from model_bakery import baker
 from rest_framework.test import APIClient
 
 from ihr_audit import context, reads, seal
-from ihr_audit.install import coverage, ensure_triggers
+from ihr_audit.install import EXEMPT, coverage, ensure_triggers
 from ihr_audit.middleware import purpose_of
 from ihr_audit.seal import seal_once, verify
 
@@ -79,6 +79,19 @@ class AuditCase(SimpleTestCase):
 class CoverageTests(AuditCase):
     def test_every_table_is_covered_and_every_secret_looking_column_classified(self):
         self.assertEqual(coverage(connection, TEST_SCHEMA), [])
+
+    def test_only_the_reviewed_tables_are_exempt(self):
+        """An exempt table leaves the trail and the coverage check together, so a fifth name
+        here would drop a table silently (P1-T16a). Change this only with a review."""
+        self.assertEqual(
+            EXEMPT,
+            {
+                "ihr_audit_entry",
+                "ihr_audit_seal",
+                "django_migrations",
+                "django_session",
+            },
+        )
 
     def test_a_new_table_or_secret_column_is_reported(self):
         with transaction.atomic():

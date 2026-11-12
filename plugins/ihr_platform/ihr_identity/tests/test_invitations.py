@@ -23,10 +23,12 @@ from ihr_platform import invitations
 from ihr_platform.keycloak.invite import ExistingAccountError
 from ihr_platform.models import Hospital, StaffInvitation
 from ihr_platform.test_runner import TEST_SCHEMA
+from rest_framework.exceptions import ValidationError
 from rest_framework.test import APIClient
 
 from ihr_identity import oidc, sessions, testing
 from ihr_identity.models import StaffIdentity
+from ihr_identity.staff_access import StaffAccessView
 
 HOST = "testserver"
 USERS = "/api/v1/users/"
@@ -597,6 +599,23 @@ class RecoveryTests(InvitationCase):
         self.assertEqual(
             self.api.post("/api/ihr/staff/nobody-here/reset-sign-in/").status_code, 404
         )
+
+    def test_each_route_takes_only_its_own_methods(self):
+        """P1-T16a: GET on an action and POST on access/ are 405, never a 500."""
+        user, _ = self.active_staff()
+        base = f"/api/ihr/staff/{user.username}"
+        self.assertEqual(self.api.get(f"{base}/access/").status_code, 200)
+        self.assertEqual(self.api.head(f"{base}/access/").status_code, 200)
+        self.assertEqual(self.api.get(f"{base}/reset-sign-in/").status_code, 405)
+        self.assertEqual(self.api.post(f"{base}/access/").status_code, 405)
+        self.assertEqual(self.api.put(f"{base}/reset-sign-in/").status_code, 405)
+        self.assertEqual(self.requests(user), [])  # nothing was queued
+        # The handlers themselves never need the argument they might be called without
+        view = StaffAccessView()
+        with self.assertRaises(ValidationError):
+            view.post(SimpleNamespace(), user.username)
+        with self.assertRaises(ValidationError):
+            view.get(SimpleNamespace(), user.username, "reset-sign-in")
 
     def test_nothing_while_it_is_being_sent(self):
         user, _ = self.invite()  # queued, not delivered yet

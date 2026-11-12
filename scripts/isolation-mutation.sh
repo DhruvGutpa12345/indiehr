@@ -1,11 +1,11 @@
 #!/usr/bin/env bash
-# Mutation runs for the cross-tenant isolation suite (TENANCY_DESIGN.md §11.2, P1-T1b).
-# Each mutation removes one isolation control from the working tree. The suite must then go red
-# on the named test, which proves that test really guards that control.
+# Mutation runs for isolation and security controls (TENANCY_DESIGN.md §11.2, P1-T1b; P1-T16a).
+# Each mutation removes one isolation or security control from the working tree. The tests must
+# then go red on the named test, which proves that test really guards that control.
 #
 # Usage:
 #   scripts/isolation-mutation.sh list           # mutation names, one per line
-#   scripts/isolation-mutation.sh check          # every target still exists (no edits)
+#   scripts/isolation-mutation.sh check          # every target and named test exists (no edits)
 #   scripts/isolation-mutation.sh apply <name>   # edit the working tree (CI checkout only)
 #   scripts/isolation-mutation.sh test <name>    # the test labels to run for <name>
 #   scripts/isolation-mutation.sh expect <name>  # regexes (one per line) the run's log must match
@@ -16,7 +16,9 @@ set -euo pipefail
 ROOT="${IHR_ROOT:-$(git -C "$(dirname "$0")" rev-parse --show-toplevel)}"  # IHR_ROOT: a scratch copy
 CLS="ihr_platform.tests.isolation.test_isolation.CrossTenantIsolationTests"
 
+# Isolation and security controls, one row each:
 # name | file | exact text to find | replacement | tests that must all fail | leak signature
+# The text to find must occur exactly once as a substring (not merely as a whole line).
 # "leak signature": only where the leak already breaks building the two-tenant world (that is how
 # the identifier-config leak first showed up), a regex for that leak's own error. A log line
 # matching it counts in place of the test's FAIL; any other setUpClass error does not.
@@ -40,6 +42,13 @@ revocation-check|plugins/ihr_platform/ihr_identity/authentication.py|    if vali
 backchannel-sid|plugins/ihr_platform/ihr_identity/authentication.py|        if sessions.sign_in_ended(session):  # Keycloak said so (back-channel, P1-T5d)|        if False:|ihr_identity.tests.test_backchannel.BackChannelLogoutTests.test_a_signed_logout_token_ends_that_sign_in_here_at_once|
 backchannel-aud|plugins/ihr_platform/ihr_identity/tokens.py|    if _audiences(claims) != [client_id]:\n        raise TokenRejectedError("logout token for another client")||ihr_identity.tests.test_backchannel.BackChannelLogoutTests.test_the_token_check_itself_demands_this_hospitals_client|
 care-login-blocked|plugins/ihr_platform/ihr_platform/urls_tenant.py|    *blocked_urlpatterns(),  # CARE's own staff sign-in is off (ADR-009); must come first\n||ihr_identity.tests.test_staff_sign_in.StaffSessionTests.test_care_password_sign_in_routes_are_gone|
+audit-trigger-every-table|plugins/ihr_platform/ihr_audit/install.py|            if table in EXEMPT:|            if table in EXEMPT or table == "emr_patient":|ihr_audit.tests.test_audit_trail.CoverageTests.test_every_table_is_covered_and_every_secret_looking_column_classified|
+audit-coverage-missing|plugins/ihr_platform/ihr_audit/install.py|                    problems.append(f"{schema}.{table}: trigger {name} is missing")|                    pass|ihr_audit.tests.test_audit_trail.CoverageTests.test_a_new_table_or_secret_column_is_reported|
+terminology-remote-refusal|plugins/ihr_platform/ihr_terminology/client.py|    care_client.FHIRClient.query = _refuse|    pass|ihr_terminology.tests.test_terminology.NothingLeaves.test_care_client_is_ours_and_the_remote_one_refuses|
+terminology-install|plugins/ihr_platform/ihr_terminology/apps.py|        client.install()|        pass|ihr_terminology.tests.test_terminology.NothingLeaves.test_care_client_is_ours_and_the_remote_one_refuses,ihr_terminology.tests.test_terminology.NothingLeaves.test_no_http_during_terminology_calls|
+role-sync-guard|plugins/ihr_platform/ihr_roles/management/commands/sync_permissions_roles.py|        if held:|        if False:|ihr_roles.tests.test_guarded_sync.GuardedSync.test_refuses_to_delete_a_held_role|
+patient-global-edit-refused|plugins/ihr_platform/ihr_platform/settings/secure.py|    if settings.get("PATIENT_GLOBAL_EDIT_ACCESS_ENABLED"):|    if False:|ihr_platform.tests.test_secure_settings.SecureRulesTests.test_patient_global_edit_access_is_refused|
+packs-edited-row-kept|plugins/ihr_platform/ihr_refdata/engine.py|        elif record is not None and record.applied_sha256 == have:|        elif record is not None:|ihr_refdata.tests.test_engine.RuleTests.test_an_edited_row_waits_for_the_admin|
 TABLE
 )
 
@@ -65,6 +74,47 @@ print(f"{name}: {'mutated' if mode == 'write' else 'target found in'} {path}")
 PY
 }
 
+# Every named test must exist as Class.method in its module (stdlib only: the CI list job has
+# no Django). A renamed test then fails here, not later as an ERROR in its matrix job.
+tests_exist() {
+  local labels=()
+  for t in ${TESTS//,/ }; do
+    [[ "$t" == *.* ]] || t="$CLS.$t"
+    labels+=("$t")
+  done
+  python3 -I - "$ROOT" "$NAME" "${labels[@]}" <<'PY'
+import ast
+import sys
+from pathlib import Path
+
+root, name, *labels = sys.argv[1:]
+roots = [Path(root, "plugins", "ihr_platform"), Path(root, "apps", "backend")]
+missing = []
+for label in labels:
+    parts = label.split(".")
+    *module, cls, method = parts
+    files = [r.joinpath(*module).with_suffix(".py") for r in roots]
+    found = False
+    for path in files:
+        if not path.is_file():
+            continue
+        tree = ast.parse(path.read_text(), str(path))
+        for node in tree.body:
+            if isinstance(node, ast.ClassDef) and node.name == cls:
+                found = any(
+                    isinstance(item, (ast.FunctionDef, ast.AsyncFunctionDef))
+                    and item.name == method
+                    for item in node.body
+                )
+        break
+    if not found:
+        missing.append(label)
+if missing:
+    sys.exit(f"{name}: named test not found: {', '.join(missing)}")
+print(f"{name}: {len(labels)} named test(s) found")
+PY
+}
+
 case "${1:-}" in
   list) cut -d'|' -f1 <<<"$MUTATIONS" ;;
   apply)
@@ -72,7 +122,7 @@ case "${1:-}" in
     mutate write
     ;;
   check)
-    while read -r name; do row "$name"; mutate check; done < <(cut -d'|' -f1 <<<"$MUTATIONS")
+    while read -r name; do row "$name"; mutate check; tests_exist; done < <(cut -d'|' -f1 <<<"$MUTATIONS")
     ;;
   # A test is a method of the isolation class, or a full dotted label for any other test.
   test)
