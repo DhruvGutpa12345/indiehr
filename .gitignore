@@ -66,3 +66,6 @@ infra/**/*.tfplan
 infra/**/backend.hcl
 infra/**/terraform.tfvars
 infra/**/*.auto.tfvars
+
+# Browser specs (P1-T1d): failure screenshots and JSON
+apps/frontend/test-results-ihr/

@@ -95,6 +95,30 @@ repos:
         language: system
         files: ^scripts/(check-date-formats|test_check_date_formats)\.py$
         pass_filenames: false
+  # Browser storage (P1-T1d): every localStorage/sessionStorage key in the web app is allowed to
+  # remain after sign-out (apps/frontend/tests-ihr/storage-keys.json) or cleared by
+  # clearStaffStorage. Always runs: apps/ is excluded above, and the check is cheap (<1 s).
+  # The CI dev-secret mask fails closed on new shapes; its tests run here too.
+  - repo: local
+    hooks:
+      - id: browser-storage-keys
+        name: web app storage keys are classified
+        entry: python3 scripts/check-storage-keys.py
+        language: system
+        always_run: true
+        pass_filenames: false
+      - id: browser-storage-keys-tests
+        name: check-storage-keys tests
+        entry: python3 -m unittest scripts/test_check_storage_keys.py
+        language: system
+        files: ^scripts/(check-storage-keys|test_check_storage_keys)\.py$
+        pass_filenames: false
+      - id: ci-mask-dev-secrets-tests
+        name: CI dev-secret mask tests
+        entry: python3 -m unittest scripts/test_ci_mask_dev_secrets.py
+        language: system
+        files: ^scripts/(ci-mask-dev-secrets|test_ci_mask_dev_secrets)\.py$
+        pass_filenames: false
   # Host kit (P1-T8b1): the bootstrap's required controls (NIC/NPL time, SSH, 180-day logs,
   # firewall) and no provider names in the kit (ADR-011).
   - repo: local

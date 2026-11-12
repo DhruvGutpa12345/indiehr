@@ -164,3 +164,51 @@ the sections above disagree, this section wins.
 12. **Local runs.** The dev machine cannot *build* the bundle, but can run the specs against the
     CI-built bundle in `deploy/dev/frontend-build` with Playwright's Chromium installed locally.
     Only the new clean-up patch needs a fresh bundle, so its check is proven in CI.
+
+## After the code review (2026-11-13)
+
+An independent review of the built job and specs found 14 issues; a second agent challenged
+each (2 refuted, S2 and T4). What changed:
+
+- **Masks first, even on failure (S1).** The steps that write secrets (`care-dev.sh up`, `seed`,
+  `keycloak up` + `keycloak seed`) register the masks from an `EXIT` trap, so they hold when
+  the step fails. The failure log dump masks again before printing anything.
+- **The mask fails closed (S5).** `scripts/ci-mask-dev-secrets.py` exits non-zero on an env key
+  that is neither secret-named nor on its reviewed non-secret list, on a `TEST_USERS.md`
+  password or key cell (or hospital password line, or `raw:` comment) that yields nothing, and
+  on a file with no value at all. It still masks what it found first. Tests:
+  `scripts/test_ci_mask_dev_secrets.py` (pre-commit).
+- **No cookie value is ever asserted (S3).** Specs ask `hasSessionCookie()` (true or false); the
+  few value comparisons happen inside the spec and assert booleans. Evidence also scrubs every
+  `ihr_session` value it sees (`Set-Cookie` headers and the jars at save time).
+- **Scrub regex (S4)** anchors on `?`, `&`, `#` or `;`, so `session_code` is removed too.
+- **Checkout tokens (S6).** Every `actions/checkout` in `.github/workflows/` sets
+  `persist-credentials: false`; no job pushes or calls the API with that token.
+- **Clean-up checked before the sign-in page runs (T1).** An init script copies storage at the
+  start of each `/login` load; the leftovers check runs on that copy as well as on the page.
+  The planted persisted query cache now carries the app's own buster and a dehydrated query
+  marked to persist, so start-up code would restore it, not discard it.
+- **Single sign-on waits (T2)** wait to leave for the sign-in route or Keycloak before waiting
+  for the return, and the session poll tolerates a navigation in progress.
+- **Server-ended sessions clean up as much as a sign-out (T3).** The patient portal's token,
+  the booking `user` key and `selectedPatient` moved into `clearStaffStorage`, which both
+  `endLocally` and `endExpiredSession` call. `other-tabs.spec.ts` now checks leftovers after
+  `reason=session_ended` (alpha's own clean-up, no peer tab) and in the second tab's own
+  sessionStorage.
+- **Refused-code flag (T5)** is cleared at the start of each run (`lib/global-setup.ts`); the
+  used steps stay. Both error messages name the state file.
+- **Every storage key classified (T6).** `scripts/check-storage-keys.py` reads
+  `apps/frontend/src` and fails on any key that is neither in
+  `tests-ihr/storage-keys.json` (the spec's allow-list, now shared) nor cleared by
+  `clearStaffStorage`. It runs in pre-commit and in the Frontend job. It found two
+  unclassified keys on its first run: `care:developer_mode` (allowed) and `selectedPatient`
+  (now cleared).
+- **Time limit (T7)** 60 minutes until measured runs give a figure.
+
+**Known gap (S7), item 10 amended.** `user`, `care_patient_token` and `selectedPatient` are
+cleared on an explicit sign-out only: the patient's own, or any staff session end (sign-out,
+another tab, idle, server-ended). A patient session that lapses (the portal treats its token as
+valid for 14 minutes, and nothing clears it afterwards) or a kiosk simply abandoned keeps all
+three. This is upstream behaviour; clearing them on load when the token is stale was rejected
+for now (the `user` key is written before sign-in, so a reload mid-booking would lose the
+chosen practitioner).

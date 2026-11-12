@@ -16,6 +16,7 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          persist-credentials: false # no step pushes or calls the API with it
           fetch-depth: 0 # the released pack check below reads the commit before the push
       - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
         with:
@@ -38,6 +39,7 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          persist-credentials: false # no step pushes or calls the API with it
           fetch-depth: 0
       - name: gitleaks over every commit (reviewed false positives in .gitleaksignore)
         run: |

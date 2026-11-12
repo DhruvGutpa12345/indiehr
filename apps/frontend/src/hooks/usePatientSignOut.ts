@@ -11,6 +11,8 @@ export const usePatientSignOut = () => {
   const signOut = useCallback(async () => {
     localStorage.removeItem(LocalStorageKeys.patientTokenKey);
     localStorage.removeItem("selectedPatient");
+    // IndieHR (P1-T1d): the practitioner picked while booking (name, username) goes too
+    localStorage.removeItem("user");
 
     const redirectURL = getRedirectURL();
     navigate(redirectURL ? `/login?redirect=${redirectURL}` : "/login");

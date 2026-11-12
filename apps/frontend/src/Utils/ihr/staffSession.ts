@@ -12,6 +12,7 @@ import {
 } from "@/Utils/ihr/idleRules";
 import { invalidateAllPaymentReconcilationLocationCaches } from "@/atoms/paymentReconcilationLocationAtom";
 import { clearQueuePractitionerCache } from "@/atoms/queuePractitionerAtom";
+import { LocalStorageKeys } from "@/common/constants";
 
 export const SIGN_IN_URL = "/api/ihr/auth/login/";
 const SIGN_OUT_URL = "/api/ihr/auth/logout/";
@@ -28,6 +29,15 @@ const LEGACY_KEYS = [
   "mfa_temp_token",
 ];
 const PERSISTED_QUERIES_KEY = "REACT_QUERY_OFFLINE_CACHE";
+// Left by the public patient portal on this computer: its token, the practitioner a patient
+// picked while booking (name, username) and an older version's selected patient. Cleared with
+// every staff session end too (P1-T1d), so a server-ended session cleans up as much as a
+// sign-out here.
+const PATIENT_PORTAL_KEYS = [
+  LocalStorageKeys.patientTokenKey,
+  "user",
+  "selectedPatient",
+];
 // Cached per-person data kept outside react-query
 const CACHED_PREFIXES = ["pharmacy-dispense-service--"];
 
@@ -112,12 +122,18 @@ export function forgetLegacyTokens() {
   }
 }
 
-/** Everything cached for the signed-in person in this browser (not the patient portal's). */
+/** Everything cached for the signed-in person in this browser, plus the patient portal's
+ * token and booking choice (PATIENT_PORTAL_KEYS). Every staff session end calls this:
+ * endLocally (sign-out here or in another tab, idle) and endExpiredSession (server-ended). */
 export function clearStaffStorage() {
   try {
     const store = storage();
     if (store) {
-      for (const key of [...LEGACY_KEYS, PERSISTED_QUERIES_KEY]) {
+      for (const key of [
+        ...LEGACY_KEYS,
+        PERSISTED_QUERIES_KEY,
+        ...PATIENT_PORTAL_KEYS,
+      ]) {
         store.removeItem(key);
       }
       for (const key of Object.keys(store)) {

@@ -259,3 +259,22 @@ sha256, and checked on load. Nothing is fetched at run time.
 |---|---|---|---|
 | HL7 Terminology (THO), `hl7.terminology.r4` | 7.5.0 (CC0-1.0; latest on packages.fhir.org 2026-11-12). Package sha256 `1da3004587602c3f5120061abc2309fef1f96668a477a9964354fa9af6fa6e60`. Seven code systems copied: v2-0074, v2-0487, v2-0493, v2-0916, v3-ObservationInterpretation, service-type, container-cap | sha256 per file | 2026-11-12 |
 | FHIR R4 core, `hl7.fhir.r4.core` | 4.0.1 (CC0-1.0; the only R4 release). Package sha256 `ebd7731df7d36b5b7d39d5fb6c9d77b44bb7fe5742f1a2e87f164738c3289d44`. `ValueSet-ucum-common` copied (1,364 entries, 1,357 codes; UCUM © Regenstrief, royalty-free terms) | sha256 per file | 2026-11-12 |
+
+## Browser specs in CI — P1-T1d
+
+Playwright comes from `apps/frontend/package-lock.json` (no new npm dependency). Its browser
+is downloaded in CI only, by the job "Browser isolation (Playwright)" in `apps.yml`: the job
+fetches the two archives itself, checks them with `sha256sum -c`, serves them on 127.0.0.1 and
+points `PLAYWRIGHT_DOWNLOAD_HOST` at that copy, so `playwright install` installs exactly the
+checked files (its own installer checks no hash). The same hashes were obtained from a second
+source on 13-11-2026: Google's Chrome for Testing bucket
+(`storage.googleapis.com/chrome-for-testing-public/149.0.7827.55/linux64/chrome-headless-shell-linux64.zip`)
+and Microsoft's mirror (`playwright.download.prss.microsoft.com/dbazure/download/playwright/builds/ffmpeg/1011/ffmpeg-linux.zip`).
+`--with-deps` takes Chromium's system libraries from the runner's own Ubuntu archive. On a
+Playwright bump the job fails until the paths and hashes below are updated.
+
+| Item | Version | Pinned how | Checked |
+|---|---|---|---|
+| @playwright/test / playwright-core | 1.61.1 (lock file; `package.json` range `^1.60.0` is upstream's) | lock file | 2026-11-13 |
+| Chrome Headless Shell (Playwright `chromium-headless-shell` v1228) | Chrome for Testing 149.0.7827.55 — `https://cdn.playwright.dev/builds/cft/149.0.7827.55/linux64/chrome-headless-shell-linux64.zip`, 119,778,157 bytes, sha256 `410c9407d5de3fea80d9398666be06f2aa09154a3fa7b327dc254e336bb4c4b7` | sha256 | 2026-11-13 |
+| FFmpeg (Playwright `ffmpeg` v1011; installed with every Chromium, unused: no video) | `https://cdn.playwright.dev/dbazure/download/playwright/builds/ffmpeg/1011/ffmpeg-linux.zip`, 2,376,500 bytes, sha256 `ebc74fc5b94830176a3c2914ae96bd8bc7f6a91f4f33890230f84a172ee61ccc` | sha256 | 2026-11-13 |

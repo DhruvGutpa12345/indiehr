@@ -1,0 +1,48 @@
+{
+  "_about": "IndieHR (P1-T1d, Q-T9): every browser storage key the web app uses, classified. Read by tests-ihr/lib/storage.ts (what may stay after sign-out) and by scripts/check-storage-keys.py (every key in apps/frontend/src is listed here or cleared by clearStaffStorage). A key that is neither fails both until it is reviewed. 'may_remain' keys hold no person, patient or token.",
+  "may_remain": {
+    "exact": {
+      "i18nextLng": "language",
+      "app-version": "app version check (lib/appVersion.ts)",
+      "app-last-updated": "app version check",
+      "app-updated": "app version check",
+      "care_login_preference": "staff or patient tab on the sign-in page",
+      "users": "view preference (Utils/useView.ts): card or list",
+      "resource": "view preference",
+      "appointments": "view preference",
+      "locations": "view preference",
+      "care_schedule_service_type": "which resource type the schedule screen shows",
+      "care_queue_service_points": "service-point ids chosen on the queue screen",
+      "care_queues_preferred_service_point_category": "service-point category chosen on the queue screen",
+      "encounter-command-dialog-recent-actions": "names of app actions, not patients",
+      "patient_identifier_filter_search_type": "which identifier type to search by",
+      "last_used_camera_device_id": "this computer's camera",
+      "care:developer_mode": "a developer-mode switch (true or false)",
+      "ihr_last_activity": "a time stamp (idle time-out)",
+      "ihr_sign_out_pending": "\"1\" until the backend confirms a sign-out (staffSession.ts)"
+    },
+    "prefixes": {
+      "nav-expansion-state--": "which menu groups are open"
+    }
+  },
+  "content_checked": {
+    "local": ["REACT_QUERY_OFFLINE_CACHE"],
+    "session": ["care-auth-user"]
+  },
+  "cleared_by_helpers": {
+    "filters--": "FiltersCache.invalidateAll",
+    "payment_reconcilation_location_cache--": "invalidateAllPaymentReconcilationLocationCaches",
+    "care_queue_practitioner--": "clearQueuePractitionerCache"
+  },
+  "key_helpers": {
+    "useView": "local"
+  },
+  "dynamic_sites": {
+    "Utils/FiltersCache.tsx": ["filters--"],
+    "Utils/ViewCache.ts": ["users", "resource", "appointments"],
+    "Utils/useView.ts": [],
+    "Utils/ihr/staffSession.ts": [],
+    "atoms/paymentReconcilationLocationAtom.ts": [],
+    "atoms/queuePractitionerAtom.ts": []
+  }
+}

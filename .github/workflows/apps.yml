@@ -35,8 +35,11 @@ jobs:
       infra: ${{ steps.filter.outputs.infra }}
       isolation: ${{ steps.filter.outputs.isolation }}
       keycloak: ${{ steps.filter.outputs.keycloak }}
+      browser: ${{ steps.filter.outputs.browser }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false # no step pushes or calls the API with it
       - uses: dorny/paths-filter@ceb8a2b8f2d89434be7ff52d3de7ec3738c5cc9d # v4.0.3
         id: filter
         with:
@@ -56,6 +59,7 @@ jobs:
               - 'deploy/locale/**'
               - 'scripts/merge-locale.py'
               - 'scripts/check-bundle-egress.sh'
+              - 'scripts/*check-storage-keys.py'
               - '.github/workflows/apps.yml'
             # Mutation runs cost one full-stack job per row (26 today: scripts/isolation-mutation.sh
             # list), so they run only when an isolation control or its tests change
@@ -87,6 +91,25 @@ jobs:
               - 'deploy/dev/keycloak*'
               - 'scripts/keycloak*'
               - '.github/workflows/apps.yml'
+            # Browser specs (P1-T1d): the frontend and Keycloak areas, plus everything the dev
+            # stack they run on is built from
+            browser:
+              - 'apps/frontend/**'
+              - 'apps/backend/**'
+              - 'plugins/**'
+              - 'deploy/docker/frontend*'
+              - 'deploy/frontend*'
+              - 'deploy/locale/**'
+              - 'deploy/keycloak/**'
+              - 'deploy/dev/**'
+              - 'deploy/s3/**'
+              - 'scripts/merge-locale.py'
+              - 'scripts/check-bundle-egress.sh'
+              - 'scripts/keycloak*'
+              - 'scripts/care-dev.sh'
+              - 'scripts/client-keys.sh'
+              - 'scripts/ci-mask-dev-secrets.py'
+              - '.github/workflows/apps.yml'
             infra:
               - 'deploy/**'
               - 'infra/**'
@@ -105,6 +128,8 @@ jobs:
         working-directory: apps/backend
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false # no step pushes or calls the API with it
       - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
         with:
           python-version: "3.13"
@@ -168,6 +193,8 @@ jobs:
       COMPOSE: docker compose -f docker-compose.yaml -f docker-compose.local.yaml -f ../../deploy/ci/tenancy.override.yaml
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false # no step pushes or calls the API with it
 
       - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
 
@@ -210,6 +237,8 @@ jobs:
       names: ${{ steps.list.outputs.names }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false # no step pushes or calls the API with it
       - name: Every mutation target still exists
         run: scripts/isolation-mutation.sh check
       - id: list
@@ -234,6 +263,8 @@ jobs:
       MUTATION: ${{ matrix.mutation }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false # no step pushes or calls the API with it
 
       - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
 
@@ -286,6 +317,8 @@ jobs:
       MAILPIT_IMAGE: axllent/mailpit:v1.33.0@sha256:9b3a463be15354c0f0eba91697d80e3e0d8a5623ef0e627cacc836bc17fd5231
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false # no step pushes or calls the API with it
 
       - name: Start Postgres, Mailpit and Keycloak (throwaway secrets)
         run: |
@@ -343,6 +376,8 @@ jobs:
         working-directory: apps/frontend
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false # no step pushes or calls the API with it
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version-file: apps/frontend/.node-version
@@ -357,6 +392,13 @@ jobs:
 
       - name: Type check
         run: npm run typecheck
+      - name: Type check (browser specs, tests-ihr, P1-T1d)
+        run: npx tsc -p tests-ihr/tsconfig.json
+      - name: Browser storage keys are classified (tests-ihr/storage-keys.json, P1-T1d)
+        working-directory: .
+        run: |
+          python3 -m unittest scripts/test_check_storage_keys.py
+          python3 scripts/check-storage-keys.py
 
       - name: Lint
         run: npm run lint -- --quiet
@@ -403,6 +445,163 @@ jobs:
           test "$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:8080/api/ihr/bootstrap.js)" = 404
           docker rm -f fe
 
+  # P1-T1d (TENANCY_DESIGN §11.4): Playwright on two hospital addresses against the dev stack
+  # (scripts/care-dev.sh, tenant mode, Keycloak), with a same-origin bundle built here exactly
+  # like frontend-bundle.yml. Specs: apps/frontend/tests-ihr. The repository and its artifacts
+  # are public: every generated secret is masked first, no trace/video/report is kept, and a
+  # failure uploads only screenshots (never with a password or code field) and small JSON files.
+  browser:
+    name: Browser isolation (Playwright)
+    needs: changes
+    if: needs.changes.outputs.browser == 'true' || github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-24.04
+    # Unmeasured yet (a cache miss rebuilds the dev image): tighten to the measured time plus
+    # a margin after the first real runs, one with the gha cache hit and one without.
+    timeout-minutes: 60
+    env:
+      # Playwright 1.61.1's Chromium (headless shell) and its FFmpeg, pinned by SHA-256
+      # (docs/VERSIONS.md). Fetched and checked here, then served to `playwright install`
+      # from 127.0.0.1, so it installs exactly the checked archives and nothing else.
+      PW_CHROMIUM_PATH: builds/cft/149.0.7827.55/linux64/chrome-headless-shell-linux64.zip
+      PW_CHROMIUM_SHA256: 410c9407d5de3fea80d9398666be06f2aa09154a3fa7b327dc254e336bb4c4b7
+      PW_FFMPEG_PATH: builds/ffmpeg/1011/ffmpeg-linux.zip
+      PW_FFMPEG_SHA256: ebc74fc5b94830176a3c2914ae96bd8bc7f6a91f4f33890230f84a172ee61ccc
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false # no step pushes or calls the API with it
+
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+
+      - name: Build dev image (gha cache, with the label care-dev.sh checks so it never rebuilds)
+        run: |
+          want="$(cat apps/backend/Pipfile.lock apps/backend/docker/dev.Dockerfile | sha256sum | cut -c1-16)"
+          docker buildx build \
+            --file apps/backend/docker/dev.Dockerfile \
+            --tag care_local \
+            --label "indiehr.deps=$want" \
+            --cache-from type=gha,scope=backend \
+            --load apps/backend
+
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version-file: apps/frontend/.node-version
+          cache: npm
+          cache-dependency-path: apps/frontend/package-lock.json
+
+      - name: Install dependencies
+        working-directory: apps/frontend
+        run: npm ci
+
+      - name: Our translations (deploy/locale, P1-T7c)
+        run: python3 scripts/merge-locale.py
+
+      - name: Build bundle, same origin (as frontend-bundle.yml with an empty api_url)
+        working-directory: apps/frontend
+        run: |
+          set -a; . ../../deploy/frontend.env; set +a
+          REACT_APP_TITLE="IndieHR (dev)" REACT_CARE_API_URL="" npm run build
+          grep -qF '<script src="/api/ihr/bootstrap.js"></script>' build/index.html
+
+      - name: Egress check (no unreviewed external hosts in bundle)
+        run: |
+          scripts/check-bundle-egress.sh apps/frontend/build
+          rm -rf deploy/dev/frontend-build
+          cp -r apps/frontend/build deploy/dev/frontend-build
+
+      # care-dev.sh writes its own git-ignored env files on first use, each with fresh random
+      # values (deploy/dev/keycloak.env, s3-gateway.env, s3-care.env, audit-anchor-*.env, and
+      # the client-keys folder): throwaway secrets that die with the runner. Each step that
+      # writes new ones masks them from an EXIT trap, so the masks are registered even when the
+      # step fails (the failure dumps below run afterwards). The mask script fails closed: if
+      # its inputs change shape, the step fails (exit inside the trap sets the step's status).
+      - name: Start the dev stack (tenant mode), then mask its generated secrets
+        run: |
+          trap 'python3 scripts/ci-mask-dev-secrets.py || exit 1' EXIT
+          scripts/care-dev.sh up
+
+      - name: Two synthetic hospitals (alpha, beta), then mask their passwords
+        run: |
+          trap 'python3 scripts/ci-mask-dev-secrets.py || exit 1' EXIT
+          scripts/care-dev.sh seed
+
+      - name: Keycloak, then its synthetic staff; mask their passwords and authenticator keys
+        run: |
+          trap 'python3 scripts/ci-mask-dev-secrets.py || exit 1' EXIT
+          scripts/care-dev.sh keycloak up
+          scripts/care-dev.sh keycloak seed
+
+      - name: Serve the bundle (hospital addresses on 127.0.0.1:8080)
+        run: |
+          scripts/care-dev.sh frontend
+          for slug in alpha beta; do
+            curl -fsS --retry 10 --retry-all-errors --retry-delay 2 \
+              --resolve "$slug.localhost:8080:127.0.0.1" \
+              "http://$slug.localhost:8080/api/ihr/bootstrap.js" | grep -q '__IHR_AUTH__'
+          done
+
+      - name: Chromium for Playwright 1.61.1 (archives checked by SHA-256, installed from them)
+        working-directory: apps/frontend
+        run: |
+          set -euo pipefail
+          test "$(npx playwright --version)" = "Version 1.61.1"
+          # Playwright must want exactly the pinned archives (a version bump fails here)
+          plan="$(npx playwright install --dry-run --only-shell chromium)"
+          grep -qF "/$PW_CHROMIUM_PATH" <<<"$plan"
+          grep -qF "/$PW_FFMPEG_PATH" <<<"$plan"
+          mirror="$RUNNER_TEMP/pw-mirror"
+          mkdir -p "$mirror/$(dirname "$PW_CHROMIUM_PATH")" "$mirror/$(dirname "$PW_FFMPEG_PATH")"
+          curl -fsSL --retry 5 --retry-all-errors -o "$mirror/$PW_CHROMIUM_PATH" "https://cdn.playwright.dev/$PW_CHROMIUM_PATH"
+          curl -fsSL --retry 5 --retry-all-errors -o "$mirror/$PW_FFMPEG_PATH" "https://cdn.playwright.dev/dbazure/download/playwright/$PW_FFMPEG_PATH"
+          printf '%s  %s\n' "$PW_CHROMIUM_SHA256" "$mirror/$PW_CHROMIUM_PATH" \
+            "$PW_FFMPEG_SHA256" "$mirror/$PW_FFMPEG_PATH" | sha256sum -c -
+          python3 -m http.server 8099 --bind 127.0.0.1 --directory "$mirror" >/dev/null 2>&1 &
+          server=$!
+          sleep 1
+          # --with-deps: system libraries from the runner's own Ubuntu archive (apt)
+          PLAYWRIGHT_DOWNLOAD_HOST=http://127.0.0.1:8099 \
+            npx playwright install --with-deps --only-shell --no-progress chromium
+          kill "$server"
+          rm -rf "$mirror"
+
+      - name: One-time codes match RFC 6238 and our Keycloak rule
+        working-directory: apps/frontend
+        run: node --import tsx --test tests-ihr/lib/totp.test.ts
+
+      # The "preflight" project signs in once first; if Keycloak refuses the code, no other
+      # spec types one (no account is locked). Sign-in parameters are stripped from the output.
+      - name: Browser specs (alpha.localhost and beta.localhost)
+        working-directory: apps/frontend
+        env:
+          IHR_E2E_STATE: ${{ runner.temp }}/ihr-e2e-totp-state.json
+        run: |
+          set -o pipefail
+          npx playwright test -c playwright.ihr.config.ts 2>&1 \
+            | sed -E 's/(code|state|session_state)=[^&[:space:]"]*/\1=[removed]/g'
+
+      - name: Failure evidence (screenshots without password or code fields, scrubbed JSON)
+        if: failure()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: browser-isolation-failures
+          path: |
+            apps/frontend/test-results-ihr/**/*.png
+            apps/frontend/test-results-ihr/**/failure.json
+          retention-days: 7
+          if-no-files-found: ignore
+
+      - name: Service logs on failure (secrets masked first, sign-in parameters stripped)
+        if: failure()
+        run: |
+          # Backstop: register every mask again before anything is printed (fails closed)
+          python3 scripts/ci-mask-dev-secrets.py
+          {
+            scripts/care-dev.sh ps
+            scripts/care-dev.sh logs backend celery
+            scripts/care-dev.sh keycloak logs
+            docker logs --tail=100 indiehr-frontend
+          } 2>&1 | sed -E 's/(code|state|session_state)=[^&[:space:]"]*/\1=[removed]/g'
+
   security:
     name: Security scan (Trivy)
     needs: changes
@@ -411,6 +610,8 @@ jobs:
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false # no step pushes or calls the API with it
       - name: Scan dependencies and IaC (report all)
         uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
         with:
@@ -444,6 +645,8 @@ jobs:
     timeout-minutes: 40
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false # no step pushes or calls the API with it
 
       - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
 
@@ -497,6 +700,8 @@ jobs:
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false # no step pushes or calls the API with it
 
       - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
 
@@ -533,6 +738,8 @@ jobs:
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false # no step pushes or calls the API with it
 
       - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
 
@@ -571,6 +778,8 @@ jobs:
       POSTGRES_IMAGE: postgres:18.6-alpine@sha256:123b17998ccaf47e53b502e8c6a1e79afd8f579c6f3eec83c563da026f957395
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false # no step pushes or calls the API with it
 
       - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
 
@@ -626,6 +835,8 @@ jobs:
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false # no step pushes or calls the API with it
 
       - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
 
@@ -693,6 +904,8 @@ jobs:
       TOFU_KEY_FPR: E3E6E43D84CB852EADB0051D0C0AF313E5FD9F80
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false # no step pushes or calls the API with it
 
       - name: Install OpenTofu (signature and checksum checked)
         run: |
@@ -733,6 +946,8 @@ jobs:
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false # no step pushes or calls the API with it
       - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
         with:
           python-version: "3.14"

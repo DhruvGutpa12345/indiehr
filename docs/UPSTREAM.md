@@ -63,7 +63,10 @@ After each sync, before pushing:
    - new settings → `ihr_platform/settings/secure.py` if deployment must pin them;
    - INSTALLED_APPS changes → `ihr_platform/settings/tenancy.py`;
    - permission or role changes → the guarded role sync and `ihr_roles`;
-   - new Playwright specs → check them against our India date formats.
+   - new Playwright specs → check them against our India date formats;
+   - new browser storage keys (localStorage, sessionStorage, `atomWithStorage`) → classify them
+     in `apps/frontend/tests-ihr/storage-keys.json` or clear them in `clearStaffStorage`
+     (`scripts/check-storage-keys.py` fails until you do, P1-T1d).
 4. **Translations.** Diff the English *values* in `apps/frontend/public/locale/en.json`, not just
    the keys. A reworded English string leaves our Hindi out of date, and
    `merge-locale.py --check` does not notice.
@@ -76,7 +79,7 @@ After each sync, before pushing:
 git worktree add -b sync-trial ~/indiehr-sync-trial origin/main
 ```
 
-Run the script there. The `upstream-*` remotes it adds live in the shared `.git` config.
+Run the script there. The `upstream-*` remotes it adds live in the shared `.git` config. To run the tests in the worktree, first copy two git-ignored items into it: the dev key `apps/backend/jwks.b64.txt` (the test settings read it) and the collected `apps/backend/staticfiles/` (error pages render a static favicon, and without the manifest every 404 becomes a 500). The test container mounts the code read-only, so neither can be created there.
 `IHR_COMMIT_TRAILER` adds a trailer, such as an attribution line, to the script's own commits.
 The weekly **Upstream drift** workflow reports how far behind we are: it warns at 30 days and
 fails after 60.

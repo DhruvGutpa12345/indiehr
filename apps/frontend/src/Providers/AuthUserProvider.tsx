@@ -99,8 +99,7 @@ export default function AuthUserProvider({
     (reason: EndReason) => {
       setStaffSignedIn(false);
       queryClient.clear();
-      clearStaffStorage();
-      localStorage.removeItem(LocalStorageKeys.patientTokenKey);
+      clearStaffStorage(); // also the patient portal's token and booking "user" (P1-T1d)
       // A full page load, so nothing of the session stays in memory either.
       window.location.replace(`/login?${new URLSearchParams({ reason })}`);
     },

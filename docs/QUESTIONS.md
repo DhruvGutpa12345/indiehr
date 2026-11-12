@@ -313,6 +313,23 @@ These are within your Q-T10 answer and TENANCY §5. Each is a rule in one module
     flow, so a shared kiosk does not show it.
 - B. Run them only by hand (cheaper, but a sign-in or clean-up regression would go unnoticed).
 
+### Q-K28 — Merge the trial upstream sync? (P1-T17; auto-accepted by Claude, 2026-11-13, awaiting owner confirmation)
+
+The trial synced CARE (backend 10 commits, frontend 7) on the branch `p1-t17-sync-trial`, with
+no conflicts and our tests passing.
+
+- **A ⭐ (taken). Do not merge it into `main` in this run.** The PLAN row asks for a trial, and
+  the sync brings about 8,700 lines of upstream change: an admin sign-in rework, token
+  revocation, safer report rendering. The branch stays ready, and the next sync (or your "go")
+  merges it after a rebase.
+- B. Merge now: less drift. But an unreviewed upstream bump would land in the same run that
+  built the rehearsal for it.
+
+Before merging, also do these (found by the trial):
+- pin `REPORT_ALLOWED_RESOURCE_ORIGINS` empty in deployment;
+- add Hindi for `file_too_large`;
+- re-translate `pin_page_limit_reached` (its English changed).
+
 **Still open:** Q-B4 (final MVP module list: assumed as in PLAN.md Phase 2) and Q-B6/B7 (pricing, timeline). Q-F2 is moot while AI is deferred.
 
 ---
