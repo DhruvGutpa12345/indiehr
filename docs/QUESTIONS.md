@@ -142,6 +142,17 @@ Why A: CARE needs only a small subset, and the 8 GB server is tight. **To revers
 synthetic SNOMED-scale benchmark is the trigger for that. Evidence:
 docs/reviews/p1-t10a/scorecard.md, ADR-016.
 
+**Benchmark result (P1-T10a2, 2026-11-12; A kept, auto-accepted by Claude, awaiting owner
+confirmation):**
+- **Queries:** every limit passes with room once the engine has one expression index. Multi-word
+  p95 was 107–145 ms against 300 ms, with no timeouts, in runs 4–7.
+- **Loads:** the 30-minute limit was met in 2 of 4 fresh loads (21–22 min). It was missed in the
+  2 taken under heavy host swap on this 6.7 GB desktop (34 and 49 min). No run met the strict
+  no-swap rule.
+- **To settle it:** one clean run on an 8 GB VM before P1-T10b's first real load. If that load
+  still takes more than 30 min with no swap, tune the load path, or reopen this question.
+- Details: docs/reviews/p1-t10a2/bench-results.md.
+
 ### Q-F7 — What counts as a valid code? (P1-T10a1)
 
 - **A ⭐ (taken). Strict.**

@@ -30,7 +30,7 @@ sampler=""
 cleanup() {
   [[ -n "$sampler" ]] && kill "$sampler" 2>/dev/null || true
   [[ "${KEEP:-}" == 1 ]] && { echo "Kept: container $DB, network $NETWORK, release $WORK"; return; }
-  docker rm -f "$DB" >/dev/null 2>&1 || true
+  docker rm -fv "$DB" >/dev/null 2>&1 || true
   docker network rm "$NETWORK" >/dev/null 2>&1 || true
   rm -rf "$WORK"
 }
@@ -76,7 +76,7 @@ if [[ "${REUSE:-}" == 1 ]]; then
   exit 0
 fi
 docker network create "$NETWORK" >/dev/null 2>&1 || true
-docker rm -f "$DB" >/dev/null 2>&1 || true
+docker rm -fv "$DB" >/dev/null 2>&1 || true
 # /dev/shm as on staging (compose.yaml shm_size 256m): Docker's 64 MB default made a parallel query
 # fail under 4 clients in run 5
 docker run -d --name "$DB" --network "$NETWORK" --memory 1536m --memory-swap 1536m --shm-size=256m \

@@ -1,5 +1,10 @@
 # P1-T10a2 benchmark results: our engine at SNOMED scale (decides Q-F6)
 
+**Verdict in brief** (details at the end): every query limit passes with room once the engine has
+one expression index (runs 4–7). The 30-minute load limit was met in 2 of 4 fresh loads; the 2
+misses were taken under heavy host swap on this desktop. Our engine stays, provisionally; one
+clean run on an 8 GB VM before the first real SNOMED load settles the load limit.
+
 Synthetic release (`ihr_terminology_bench generate`; made-up ids and words, never SNOMED content):
 
 - **Edition:** 520,000 concepts (370,000 active and 150,000 inactive), 1,558,529 descriptions,
@@ -186,3 +191,71 @@ parallel query under 4 clients needed more than 64 MB. Two fixes:
   sample.
 
 Runs 1–4 had no such error (their logs were checked).
+
+## Runs 6 and 7 (2026-11-12, 20:43–21:45 and 22:12–22:59 IST): fresh, end to end, the shipped code
+
+Each run generated the release, loaded it with the shipped loader (ANALYZE at the end),
+migrated and measured: exactly the code as committed. Postgres had staging's 256 MB `/dev/shm`.
+Run 7 also had the fixed disk sampler. Both releases were calibrated (620,000 concepts, 1.86M
+descriptions, within 5 % of the targets).
+
+**The load:**
+
+| Measure | Run 6 | Run 7 | Limit | |
+|---|---|---|---|---|
+| Load, end to end | **2,941 s (49 min)** | **2,030 s (34 min)** | ≤ 30 min | ❌ both |
+| Host swap during the load | 3,125 pages | **879,437 pages (about 3.4 GB)** | none | ❌ precondition |
+| Postgres peak / OOM kills | 684 MB / 0 | 712 MB / 0 | within 1,536 MB | ✅ |
+| Loader peak memory | 162 MB | 162 MB | ≤ 1 GB | ✅ |
+| WAL / temp / data directory peak | 3,006 / 2,899 / 1,734 MB | 3,002 / 2,899 / 1,730 MB | informative | |
+| Disk of one loaded version | 0.99 GB | 0.99 GB | ≤ 3 GB | ✅ |
+
+The loader did the same work as in runs 1 and 2: the same rows and the same 12,602,823 ancestor
+pairs. ANALYZE took about 2 seconds. Between runs 2 and 6 this desktop's free memory fell: its swap
+was 100 % full before run 6, and Claude's own scratch files in RAM-backed /tmp held 1.6 GB (removed
+before run 7). The loads that missed the limit are the ones taken under heavy host swap.
+
+**Queries:**
+
+| Query shape | Run 6 p95 | Run 7 p50 | Run 7 p95 | Run 7 max | timeouts (both) | Limit (p95) | |
+|---|---|---|---|---|---|---|---|
+| 2–3 words of one real term | 135 ms | 10 ms | **107 ms** | 433 ms | 0 | ≤ 300 ms | ✅ |
+| one word, 3 letters | 310 ms | 108 ms | 308 ms | 372 ms | 0 | ≤ 1 s | ✅ |
+| one letter | 434 ms | 349 ms | 435 ms | 541 ms | 0 | ≤ 1 s, no timeout | ✅ |
+| two letters | 367 ms | 320 ms | 370 ms | 410 ms | 0 | ≤ 1 s, no timeout | ✅ |
+| picker opened (empty) | 47 ms | 43 ms | 45 ms | 48 ms | 0 | ≤ 500 ms | ✅ |
+| medication picker opened | 205 ms | 182 ms | 186 ms | 247 ms | 0 | ≤ 500 ms | ✅ |
+| medication, first letter | 247 ms | 121 ms | 236 ms | 293 ms | 0 | ≤ 500 ms | ✅ |
+| medication, a word | 107 ms | 27 ms | 107 ms | 172 ms | 0 | ≤ 500 ms | ✅ |
+| `$validate-code` | 2.8 ms | 2.3 ms | 2.6 ms | 3.2 ms | 0 | ≤ 20 ms | ✅ |
+| `$lookup` | 3.5 ms | 3.0 ms | 3.6 ms | 8.2 ms | 0 | ≤ 50 ms | ✅ |
+| 4 clients, mixed (200 samples each run) | 780 ms | 398 ms | 822 ms | 1,027 ms | 0 | (informative) | |
+
+Host swap while measuring: 292 pages (run 6) and 3,715 pages (run 7), so neither run is valid by
+the strict rule. Backend peak 168–180 MB.
+
+## Verdict on Q-F6 (by Claude, 2026-11-12, for the owner to accept)
+
+**Our own engine stays (Q-F6 A), provisionally.**
+
+1. **Every query limit is met, with room, in runs 4–7.** Those runs cover the tuned engine, a
+   reused and a fresh database, a busy and a quiet host. Multi-word search p95 is 107–145 ms
+   against 300 ms. The first letter is at most 485 ms against 1 s. There were no timeouts in any
+   of the 11 timed shapes (10 single-client, plus the 4-client mix) in any of the four runs. Q-F6's reason for Snowstorm Lite was query
+   speed, and that reason is gone.
+2. **The load limit (≤ 30 min) is not settled on this machine.** It was met in runs 1–2 (21 and
+   22 min) and missed in runs 6–7 (49 and 34 min). Both misses came under heavy host swap.
+3. **No run met the strict precondition** of no host swap. This 6.7 GB desktop always swapped a
+   little. The limits were fixed before measuring and are not moved here.
+4. **What settles it:** run `scripts/terminology-scale-bench.sh` on an 8 GB VM like staging, or on
+   this machine after its 32 GB upgrade, with nothing else running. Do this before P1-T10b's first
+   real load. If the load still takes more than 30 min with no swap, the load path is tuned and
+   measured again, or Q-F6 is reopened. Snowstorm Lite's own import was never measured on this
+   host, so these numbers give no argument for it.
+
+How the runs went, briefly:
+- run 1 failed without statistics;
+- run 3 failed with them, and a profile found the unindexed `UPPER(code)` lookup;
+- runs 4–7 passed with one expression index;
+- run 5 exposed a harness gap (the shared-memory size, and a hidden dead client), now fixed;
+- runs 6 and 7 measured the shipped code from scratch.

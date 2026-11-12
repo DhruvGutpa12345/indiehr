@@ -115,5 +115,10 @@ Added by the unattended run that built the SNOMED-ready loader and the scale ben
   WAL and as much in temp files, and holds the version's tables. Hospitals keep answering from
   the active version meanwhile; run it in an off-hours window and check disk first (runbook
   `deploy/staging/README.md`).
-- **The benchmark result decides Q-F6** (our engine, or Snowstorm Lite for SNOMED): see
-  bench-results.md for the verdict and its preconditions, which the owner must accept.
+- **Code as typed:** an expression index on (system, UPPER(code)) serves the case-insensitive
+  code lookup that every search starts with (migration 0005). Without it, every search read the
+  whole value set: 171 ms at SNOMED scale.
+- **The benchmark result (Q-F6):** every query limit passes with room. The 30-minute load limit
+  is met only when the host does not swap. Our engine therefore stays, provisionally, until one
+  clean run on an 8 GB VM before P1-T10b. Details and preconditions, which the owner must accept:
+  bench-results.md.
