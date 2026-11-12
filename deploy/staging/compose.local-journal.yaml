@@ -1,0 +1,22 @@
+# A proof on this machine whose logs go to its journal like a server's (P1-T9b): set
+# IHR_LOG_DRIVER=journald in .env, and scripts/staging.sh adds this after compose.local.yaml,
+# which otherwise keeps the stack's logs in Docker's own files. Fluent Bit (compose.logs.yaml)
+# then finds them in the journal; it starts at the journal's end (IHR_LOGS_FROM_TAIL=on).
+x-journal: &journal
+  logging: !override
+    driver: journald
+    options:
+      tag: "indiehr/{{.Name}}"
+      labels: com.docker.compose.service
+services:
+  traefik: *journal
+  db: *journal
+  redis: *journal
+  migrate: *journal
+  backend: *journal
+  celery-worker: *journal
+  celery-beat: *journal
+  provisioner: *journal
+  staff-worker: *journal
+  keycloak: *journal
+  frontend: *journal

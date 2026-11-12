@@ -414,3 +414,132 @@ duplicate-key error's DETAIL line carried the key's value.
 **Not proven yet** (needs the stack running; this task checked the settings statically and with
 the pinned images): targets up, mails arriving, the dead-man pings, memory use, the host timer on
 a server.
+
+## Logs: collection, redaction and log alerts (P1-T9b, ADR-013)
+
+Every line the server writes to its journal goes to a log store you can search, with personal
+data and secrets removed first, and sign-in abuse raises an alert mail (owner, 12-11-2026,
+Q-O5 to Q-O8). The 180-day archive and the shorter journal follow in P1-T9c, and dashboards in
+P1-T9d.
+
+**What runs** (`compose.logs.yaml`, together with the monitoring; about 35 MB in use, limits
+448 MB):
+
+- **Fluent Bit 5.2.0** reads the whole journal from a read-only mount, as `nobody` with the
+  host's `systemd-journal` group. That covers every container (each tagged with its compose
+  service) and the host's own SSH, sudo, firewall and systemd lines.
+  - Its read position and unsent lines are kept in its volume `fbstate`.
+  - If the log store is away, lines wait on disk (up to 1 GB) and are sent once it is back.
+- **VictoriaLogs v1.53.0** keeps the redacted lines for 180 days, never using more than
+  `IHR_LOGS_MAX_SIZE` of disk (default 20GiB; past that, the oldest days go).
+- **vmalert v1.156.0** runs the log alerts every minute and hands them to the existing
+  Alertmanager.
+
+All three are pinned by digest, read-only, with no capabilities, and not running as root.
+
+**Isolation:**
+
+- The three share the internal `logs` network (`IHR_LOGS_NET`, default 10.203.0.32/28) with
+  Prometheus and nobody else. The web app, Traefik and the exporters cannot reach the store.
+- The store asks for a password even for reading: user `ihr-logs`, password in
+  `secrets/logs-http-password`. Fluent Bit and vmalert hold it, and you type it in the browser.
+- It sends no cross-origin headers, so a web page open in your browser while the SSH tunnel runs
+  cannot read it. DNS rebinding meets the password.
+- Its `/metrics` has a key of its own (`secrets/logs-metrics-key`). Prometheus's target file
+  carries it; it shows counters only.
+- Anything that deletes or rewrites logs (delete, drop a partition, force merge or flush) or shows
+  its settings needs the key in `secrets/logs-admin-key`. Only the operator holds that key;
+  nothing on the network has it.
+
+**Redaction** (`deploy/logs/fluent-bit/redact.lua`), before anything leaves Fluent Bit:
+
+- **Journald's own fields** (command lines, IDs) are dropped.
+- **Only Docker's own lines count as a container's.** journald's trusted fields must say Docker
+  wrote the line. A host process that tags its lines `keycloak` or `traefik`, or adds Docker's
+  field names, stays a host line and can never pass for one of them.
+- **Keycloak sign-in events:**
+  - Each event is parsed strictly. Every value must be quoted, a backslash escapes only a quote,
+    no key may repeat, and Keycloak's fixed head (type, realm, client, user, address, error) must
+    come first. Event fields (`kc_event`, `kc_error`, `kc_user`, `client_ip`) come from that head
+    only.
+  - Text typed into the username box therefore cannot pose as an event field or another address.
+    A line that fails these checks loses everything from its username to the end, and gets no
+    event fields.
+  - Each event is rebuilt from a list of known fields; unknown fields are dropped and named in
+    `kc_dropped`.
+  - The username someone typed is dropped when no account matched (it may be a password typed
+    into the wrong box). A real account's username is kept, for lock-out checks (owner's choice).
+  - E-mail details are replaced by a marker. Return addresses lose their query.
+- **Every other text** has these masked:
+  - tokens: JWTs, Bearer and Basic values, `password=`/`token=`/`secret=` style values;
+  - anything after `?` in an address, including a relative one (`users?email=...`);
+  - values echoed in database errors, from the marker to the end of the line (values may hold
+    unbalanced brackets or quotes);
+  - e-mail addresses, also URL-encoded;
+  - Indian mobile numbers in their usual shapes;
+  - 12-digit (Aadhaar-like) numbers;
+  - ABHA numbers and addresses;
+  - usernames in `/api/v1/users/<name>/`.
+- **Kept on purpose:** IP addresses (CERT-In), UUIDs and times.
+- **On failure:** a script error drops that one line, never ships it unmasked. Prometheus alerts
+  on such drops.
+- **Tests:** `scripts/check-logs.py` runs the redaction cases (`deploy/logs/tests/`) through the
+  pinned images (pre-commit and CI). A new kind of line that leaks is fixed by adding a case.
+
+**Log alerts** (`deploy/logs/alerts/sign-in.yml`). The mail names the address (`client_ip`,
+checked to be an IP address before it is stored):
+
+| Alert | When | Severity |
+|---|---|---|
+| SignInLockoutsFromAddress | 3 or more distinct staff accounts locked out from one address in 15 min | warning, mailed day or night |
+| SignInLockoutStorm | 10 or more distinct accounts locked out in 15 min, all addresses | critical |
+| FailedSignInsFromAddress | 30 or more failed sign-ins from one address in 15 min: wrong passwords, unknown users, tries on a locked or disabled account (session errors such as an expired sign-in page do not count) | warning, mailed day or night |
+| RateLimitedAddress | 100 or more "too many requests" (429) answers to one address in 10 min, for 5 min | warning, mailed day or night |
+
+The three per-address alerts carry `notify: anytime`. Alertmanager mails them at once, day or
+night, at most daily per address (owner, Q-O9). Other warnings still wait for 08:00–22:00 IST.
+They arrive about 2 minutes after the event: vmalert waits 30 s for late lines, then runs once a
+minute. Only container lines count. A hospital whose staff share one address and outgrow the per-address limit shows up as
+RateLimitedAddress: raise its limit (see "Per-IP limits" above).
+
+**The pipeline itself** (Prometheus, `rules/logs.yml`):
+
+- LogRedactionDrops
+- LogShippingFailing (15 min)
+- LogLinesLost
+- LogIngestStalled (nothing for 30 min)
+- LogLinesRejected
+- LogStoreReadOnly (critical)
+- LogStoreNearCap (85 % of `IHR_LOGS_MAX_SIZE` for 1 h)
+- LogAlertsFailing
+
+TargetDown and ContainerNotRunning cover the three services (warnings: the journal still holds
+every line).
+
+| Command | What it does |
+|---|---|
+| `scripts/staging.sh monitoring-init …` | Also writes the log store's secrets: `logs-admin-key`, `logs-http-password` (+ `logs-shipper.env` for Fluent Bit) and `logs-metrics-key`, all mode 600. `up` makes any that are missing on a server set up before P1-T9b |
+| `scripts/staging.sh up` / `smoke` | `up` starts the three services and recreates Fluent Bit or vmalert when their settings changed. `smoke` writes a test line with a synthetic e-mail, mobile, Aadhaar-like number, token and query into the journal and checks it arrives masked, with none of the values. It also checks the host's own lines arrive, vmalert's rules run, reading without the password and deleting without the key are both refused (401), and the web app cannot reach the store. It reads the store through a one-off container on its network, with the password on stdin |
+| `scripts/staging.sh ops-tunnel ihr@<server>` | Also: the log store's search page at http://127.0.0.1:9428/select/vmui/ (user `ihr-logs`, password from `secrets/logs-http-password`) and vmalert at http://127.0.0.1:8880 |
+| `scripts/check-logs.py` | Redaction cases, the store and the log alerts with the pinned images (pre-commit and CI; Docker, about 30 s) |
+
+**Searching** (vmui, LogsQL):
+
+- `service:=keycloak kc_event:=LOGIN_ERROR`
+- `service:=traefik http_status:=429 | stats by (client_ip) count()`
+- `source:=host service:=sshd`
+
+Stored fields are `host`, `source` (container or host), `service`, `container`, `image`,
+`unit`, `pid`, `priority`, plus `kc_event`, `kc_error`, `kc_user` (the account id, real accounts
+only) and `client_ip` on Keycloak events, and
+`client_ip`, `http_status` and `router` on Traefik's access lines.
+
+**A proof on this machine** writes the stack's logs to this machine's journal only when `.env`
+says `IHR_LOG_DRIVER=journald`. That adds `compose.local-journal.yaml`, and Fluent Bit then
+starts at the journal's end (`IHR_LOGS_FROM_TAIL=on`). On a server, the first start reads the
+whole existing journal once.
+
+**Also in this task:** CARE's deployment settings switched off gunicorn's, Django's and Celery's
+loggers, so a server error on staging left no trace at all. They are on again
+(`disable_existing_loggers: False` in our deployment settings), and their lines are redacted like
+all others.

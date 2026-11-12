@@ -1,0 +1,81 @@
+# The log pipeline itself (P1-T9b, ADR-013): Fluent Bit -> VictoriaLogs, and vmalert's log
+# alerts. Down services are TargetDown / ContainerNotRunning (availability.yml). Lost lines are
+# still in the server's journal (its buffer), so these are warnings: look within the day.
+# Tests: ../tests/logs.yml.
+groups:
+  - name: logs
+    rules:
+      # redact.lua never drops a line on purpose: a drop is a Lua error, and the line is lost to
+      # the store (never stored unredacted)
+      - alert: LogRedactionDrops
+        expr: sum(increase(fluentbit_filter_drop_records_total{name=~"shape|redact"}[15m])) > 0
+        labels:
+          severity: warning
+          service: fluent-bit
+        annotations:
+          summary: 'The log redaction dropped {{ $value | printf "%.0f" }} lines in 15 minutes (a script error; they are not in the log store)'
+
+      # VictoriaLogs refuses or is unreachable; the lines wait on disk (1 GB) and in the journal
+      - alert: LogShippingFailing
+        expr: sum(increase(fluentbit_output_errors_total{name="victorialogs"}[10m])) > 0
+        for: 15m
+        labels:
+          severity: warning
+          service: fluent-bit
+        annotations:
+          summary: "Fluent Bit cannot hand lines to the log store for 15 minutes (they wait on disk)"
+
+      - alert: LogLinesLost
+        expr: sum(increase(fluentbit_output_dropped_records_total{name="victorialogs"}[15m]) + increase(fluentbit_output_retries_failed_total{name="victorialogs"}[15m])) > 0
+        labels:
+          severity: warning
+          service: fluent-bit
+        annotations:
+          summary: "Fluent Bit gave up on some lines (its disk buffer was full); they are only in the server's journal"
+
+      # The journal always has something (the host's own timer logs every minute)
+      - alert: LogIngestStalled
+        expr: (sum(rate(vl_rows_ingested_total[15m])) or vector(0)) == 0 and on() (count(up{job="victorialogs"} == 1) > 0)
+        for: 15m
+        labels:
+          severity: warning
+          service: victorialogs
+        annotations:
+          summary: "The log store received no lines for 30 minutes"
+
+      - alert: LogLinesRejected
+        expr: sum(increase(vl_rows_dropped_total[1h])) + sum(increase(vl_too_long_lines_skipped_total[1h])) > 0
+        labels:
+          severity: warning
+          service: victorialogs
+        annotations:
+          summary: 'The log store refused {{ $value | printf "%.0f" }} lines in the last hour (too long, too many fields, or a wrong time)'
+
+      - alert: LogStoreReadOnly
+        expr: max(vl_storage_is_read_only) == 1
+        for: 5m
+        labels:
+          severity: critical
+          service: victorialogs
+        annotations:
+          summary: "The log store has switched to read-only (disk full): no lines are being stored"
+
+      # Beyond its cap the store deletes its oldest days: fewer than 180 days would be kept
+      # (the cap is IHR_LOGS_MAX_SIZE, written by the host's timer; sized in P1-T9c)
+      - alert: LogStoreNearCap
+        expr: sum(vl_data_size_bytes) > 0.85 * max(ihr_logs_max_bytes)
+        for: 1h
+        labels:
+          severity: warning
+          service: victorialogs
+        annotations:
+          summary: "The log store uses more than 85 % of its cap (IHR_LOGS_MAX_SIZE): its oldest days will be deleted early"
+
+      - alert: LogAlertsFailing
+        expr: sum(increase(vmalert_execution_errors_total[15m])) + sum(increase(vmalert_alerts_send_errors_total[15m])) > 0
+        for: 15m
+        labels:
+          severity: warning
+          service: vmalert
+        annotations:
+          summary: "Log alerts fail to run or to reach Alertmanager (sign-in abuse would go unnoticed)"

@@ -27,6 +27,7 @@ services:
       driver: ${IHR_LOG_DRIVER:-journald}
       options:
         tag: "indiehr/{{.Name}}"
+        labels: com.docker.compose.service
     entrypoint: ["python", "-I", "/stub/heartbeat-stub.py"]
     volumes:
       - ../monitoring/heartbeat-stub.py:/stub/heartbeat-stub.py:ro

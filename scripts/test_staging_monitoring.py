@@ -172,9 +172,11 @@ class Hardening(unittest.TestCase):
         self.assertEqual(nets["alerting"]["ipam"]["config"][0]["subnet"], "${IHR_ALERTING_NET:-10.203.0.16/28}")
         self.assertEqual(nets["alerting"]["ipam"]["config"][0]["ip_range"], "${IHR_ALERTING_DYNAMIC:-10.203.0.24/29}")
         self.assertNotIn("internal", nets["alertmail"] or {})  # its way out
-        # alerting: Prometheus and Alertmanager (and the dead-man stand-in, in a proof only)
+        # alerting: Prometheus and Alertmanager, vmalert (the log alerts, P1-T9b), and the
+        # dead-man stand-in in a proof only
         self.assertEqual(members("alerting"), {("compose.monitoring.yaml", "prometheus"),
                                                ("compose.monitoring.yaml", "alertmanager"),
+                                               ("compose.logs.yaml", "vmalert"),
                                                ("compose.monitoring.test.yaml", "heartbeat-stub")})
         # alertmail: Alertmanager alone (and the mail stand-in, in a proof only)
         self.assertEqual(members("alertmail"), {("compose.monitoring.yaml", "alertmanager"),
@@ -323,7 +325,8 @@ class PrometheusSettings(unittest.TestCase):
     def test_jobs(self):
         jobs = {j["job_name"]: j for j in PROMETHEUS["scrape_configs"]}
         self.assertEqual(set(jobs), {"prometheus", "alertmanager", "node", "blackbox", "postgres", "redis",
-                                     "traefik", "keycloak", "s3", "probe-public", "probe-internal", "probe-dns"})
+                                     "traefik", "keycloak", "s3", "probe-public", "probe-internal", "probe-dns",
+                                     "fluent-bit", "victorialogs", "vmalert"})
         self.assertEqual(jobs["traefik"]["static_configs"][0]["targets"], ["traefik:8083"])
         self.assertEqual(jobs["keycloak"]["static_configs"][0]["targets"], ["keycloak:9000"])
         for j in jobs.values():
@@ -465,7 +468,7 @@ class AlertmanagerSettings(unittest.TestCase):
 class StagingCommands(unittest.TestCase):
     def test_overlays_follow_env(self):
         c = func("compose")
-        self.assertIn('files+=(-f "$DIR/compose.monitoring.yaml")', c)
+        self.assertIn('files+=(-f "$DIR/compose.monitoring.yaml" -f "$DIR/compose.logs.yaml")', c)
         self.assertIn('[[ "$mon" == test ]] && files+=(-f "$DIR/compose.monitoring.test.yaml")', c)
 
     def test_tokens_never_on_a_command_line(self):
@@ -489,7 +492,8 @@ class StagingCommands(unittest.TestCase):
         """Settings are single files mounted read-only and rewritten as new files: a running
         container keeps the old ones until it is recreated."""
         up = func("monitoring_up")
-        self.assertIn("for s in prometheus alertmanager blackbox-exporter; do", up)
+        self.assertIn("restamp=(prometheus alertmanager blackbox-exporter fluent-bit vmalert)", up)
+        self.assertEqual(up.count('for s in "${restamp[@]}"; do'), 2)
         self.assertIn('compose up -d --wait --no-deps --force-recreate "${stale[@]}"', up)
         self.assertIn('monitoring_settings_sum "$s" > "$GEN/monitoring/.settings-$s"', up)
         # the stale check runs before the stamps are rewritten
@@ -498,6 +502,8 @@ class StagingCommands(unittest.TestCase):
         self.assertIn('"$MON_DIR/prometheus/prometheus.yml" "$MON_DIR"/prometheus/rules/*.yml', settings)
         self.assertIn('"$GEN/monitoring/alertmanager.yml"', settings)
         self.assertIn('"$MON_DIR/blackbox/blackbox.yml"', settings)
+        self.assertIn('"$LOGS_DIR"/fluent-bit/*', settings)
+        self.assertIn('"$LOGS_DIR"/alerts/*.yml', settings)
         self.assertIn('MON_DIR="$DIR/../monitoring"', STAGING_SH)
         # the files the overlay mounts are the files hashed
         for svc, mount in (("prometheus", "../monitoring/prometheus/prometheus.yml:"),

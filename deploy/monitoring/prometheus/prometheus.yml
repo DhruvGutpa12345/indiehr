@@ -56,6 +56,21 @@ scrape_configs:
     static_configs:
       - targets: ["keycloak:9000"]
 
+  # The log pipeline (P1-T9b, compose.logs.yaml), on the `logs` network
+  - job_name: fluent-bit
+    metrics_path: /api/v2/metrics/prometheus
+    static_configs:
+      - targets: ["fluent-bit:2020"]
+
+  # Its /metrics key (__param_authKey) comes with the target file staging.sh writes
+  - job_name: victorialogs
+    file_sd_configs:
+      - files: ["/etc/prometheus/targets/victorialogs.json"]
+
+  - job_name: vmalert
+    static_configs:
+      - targets: ["vmalert:8880"]
+
   # SeaweedFS's gateway, when files are kept on this server (IHR_S3=local); empty otherwise
   - job_name: s3
     file_sd_configs:

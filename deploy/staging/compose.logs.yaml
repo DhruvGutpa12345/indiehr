@@ -1,0 +1,175 @@
+# Log collection, redaction and log alerts (P1-T9b, ADR-013; owner decisions Q-O5...Q-O8).
+# Added by scripts/staging.sh together with compose.monitoring.yaml (the alerts go through its
+# Alertmanager); never run directly. Runbook: deploy/staging/README.md, "Logs".
+#
+# - Fluent Bit reads the whole server's journal (every container: Docker's journald driver; the
+#   host: SSH, sudo, the firewall, systemd) from a read-only mount, as nobody with the journal's
+#   group, and redacts every line before it leaves (deploy/logs/fluent-bit/redact.lua): a line
+#   is stored masked or not at all. Its read position and unsent lines wait in `fbstate`.
+# - VictoriaLogs keeps the redacted lines (180 days, at most IHR_LOGS_MAX_SIZE of disk). It is
+#   on `logs` alone (Fluent Bit, vmalert and Prometheus, nobody else) and asks for a password
+#   (user ihr-logs, secrets/logs-http-password): Fluent Bit and vmalert hold it, and the operator
+#   types it in the browser. No cross-origin reads (a web page open while the SSH tunnel runs
+#   cannot read it, and DNS rebinding meets the password). Its /metrics has a key of its own
+#   (secrets/logs-metrics-key, in Prometheus's target file: it shows counters only). Deleting
+#   logs or dropping partitions needs the key in secrets/logs-admin-key, which only the operator
+#   holds.
+# - vmalert runs the log alerts (deploy/logs/alerts/) against VictoriaLogs and hands them to
+#   Alertmanager over `alerting`, like Prometheus.
+# - Nothing is published on the host. The operator reaches VictoriaLogs's own web page through the
+#   SSH tunnel (scripts/staging.sh ops-tunnel).
+#
+# Images: pinned by digest (multi-arch index), all Apache-2.0; docs/VERSIONS.md. Every service:
+# read-only root, no capabilities, no-new-privileges, a memory limit, not root.
+x-logging: &logging
+  driver: ${IHR_LOG_DRIVER:-journald}
+  options:
+    tag: "indiehr/{{.Name}}"
+    labels: com.docker.compose.service
+
+x-logs: &logs
+  security_opt: ["no-new-privileges:true"]
+  cap_drop: ["ALL"]
+  read_only: true
+  restart: unless-stopped
+  logging: *logging
+
+services:
+  # The data volumes belong to the users the services run as (new named volumes are root's).
+  # A one-off with only the two capabilities it needs, no network; a no-op once done. (The
+  # Alertmanager image: it has a shell; the others have none.)
+  logs-data:
+    image: prom/alertmanager:v0.35.0@sha256:e638797febd034838eca8b98cdbd46f951e9bf7f178777aa8669167406a9946c
+    user: "0:0"
+    security_opt: ["no-new-privileges:true"]
+    cap_drop: ["ALL"]
+    cap_add: ["CHOWN", "FOWNER"]
+    network_mode: none
+    entrypoint:
+      - /bin/sh
+      - -c
+      - >-
+        [ "$$(stat -c %u:%a /vlogs)" = "${IHR_SECRETS_UID:?}:700" ] || { chown ${IHR_SECRETS_UID:?}:${IHR_SECRETS_GID:?} /vlogs && chmod 700 /vlogs; };
+        [ "$$(stat -c %u:%a /fbstate)" = "65534:700" ] || { chown 65534:65534 /fbstate && chmod 700 /fbstate; }
+    volumes:
+      - vldata:/vlogs
+      - fbstate:/fbstate
+    logging: *logging
+    restart: "no"
+
+  victorialogs:
+    <<: *logs
+    image: victoriametrics/victoria-logs:v1.53.0@sha256:251121fa882af99b95ba0c230a4a2f412ea602d2698c64a96c58dc9842bb755d
+    # The user that owns secrets/ (it reads the admin key from there, mode 600)
+    user: "${IHR_SECRETS_UID:?}:${IHR_SECRETS_GID:?}"
+    command:
+      - -storageDataPath=/vlogs
+      # CERT-In: 180 days (the daily locked archive of P1-T9c is the long-term record)
+      - -retentionPeriod=${IHR_LOGS_RETENTION:-180d}
+      # Never more than this of the disk the database shares: the oldest days go first
+      # (sized from measured volume in P1-T9c; LogStoreNearCap warns before)
+      - -retention.maxDiskSpaceUsageBytes=${IHR_LOGS_MAX_SIZE:-20GiB}
+      - -httpListenAddr=:9428
+      # A password for everything (reading included); no CORS; never framed
+      - -httpAuth.username=ihr-logs
+      - -httpAuth.password=file:///run/ihr-logs/http-password
+      - -http.disableCORS
+      - -http.header.frameOptions=DENY
+      - -metricsAuthKey=file:///run/ihr-logs/metrics-key
+      # Anything that removes or rewrites stored logs needs the operator's key, not the password
+      - -deleteAuthKey=file:///run/ihr-logs/admin-key
+      - -partitionManageAuthKey=file:///run/ihr-logs/admin-key
+      - -forceMergeAuthKey=file:///run/ihr-logs/admin-key
+      - -forceFlushAuthKey=file:///run/ihr-logs/admin-key
+      - -logNewStreamsAuthKey=file:///run/ihr-logs/admin-key
+      - -flagsAuthKey=file:///run/ihr-logs/admin-key
+      - -pprofAuthKey=file:///run/ihr-logs/admin-key
+      - -search.maxConcurrentRequests=4
+    volumes:
+      - vldata:/vlogs
+      - ./secrets/logs-admin-key:/run/ihr-logs/admin-key:ro
+      - ./secrets/logs-http-password:/run/ihr-logs/http-password:ro
+      - ./secrets/logs-metrics-key:/run/ihr-logs/metrics-key:ro
+    networks:
+      logs:
+        ipv4_address: ${IHR_VICTORIALOGS_IP:-10.203.0.36}
+    depends_on:
+      logs-data:
+        condition: service_completed_successfully
+    mem_limit: ${IHR_VICTORIALOGS_MEMORY:-256m}
+
+  fluent-bit:
+    <<: *logs
+    image: fluent/fluent-bit:5.2.0@sha256:a48190bf67679495a332fd61025421a46e7e4d168380185a8e16da2e9acc3126
+    # nobody, with the host's systemd-journal group (staging.sh reads its number): it can read
+    # the journal and nothing else of the host
+    user: "65534:65534"
+    group_add: ["${IHR_JOURNAL_GID:?}"]
+    command: ["-c", "/fluent-bit/etc/ihr/fluent-bit.yaml"]
+    environment:
+      # A server reads its whole journal on the first start; a proof on a desktop only new lines
+      IHR_LOGS_FROM_TAIL: ${IHR_LOGS_FROM_TAIL:-off}
+    # IHR_LOGS_HTTP_PASSWORD: the store's password (Fluent Bit reads it from its environment)
+    env_file:
+      - secrets/logs-shipper.env
+    volumes:
+      - ../logs/fluent-bit:/fluent-bit/etc/ihr:ro
+      - /var/log/journal:/var/log/journal:ro
+      - fbstate:/state
+    networks: [logs]
+    depends_on:
+      logs-data:
+        condition: service_completed_successfully
+      victorialogs:
+        condition: service_started
+    mem_limit: 128m
+
+  vmalert:
+    <<: *logs
+    image: victoriametrics/vmalert:v1.156.0-scratch@sha256:e1ee6661c4c2f5fe811090a03069a9b8b75f55c137d7892acd2197dba34ec47b
+    # The user that owns secrets/ (it reads the store's password from there, mode 600)
+    user: "${IHR_SECRETS_UID:?}:${IHR_SECRETS_GID:?}"
+    command:
+      - -rule=/etc/vmalert/rules/*.yml
+      - -rule.defaultRuleType=vlogs
+      - -datasource.url=http://victorialogs:9428
+      - -datasource.basicAuth.username=ihr-logs
+      - -datasource.basicAuth.passwordFile=/run/ihr-logs/http-password
+      # Alertmanager's fixed address on `alerting`, the only one it listens on
+      - -notifier.url=http://${IHR_ALERTMANAGER_IP:-10.203.0.20}:9093
+      - -evaluationInterval=1m
+      - -httpListenAddr=:8880
+      # The alert's "source" link in mails: vmalert through the operator's SSH tunnel
+      - -external.url=http://127.0.0.1:8880
+    volumes:
+      - ../logs/alerts:/etc/vmalert/rules:ro
+      - ./secrets/logs-http-password:/run/ihr-logs/http-password:ro
+    networks:
+      logs:
+        ipv4_address: ${IHR_VMALERT_IP:-10.203.0.37}
+      alerting: {}
+    depends_on:
+      victorialogs:
+        condition: service_started
+    mem_limit: 64m
+
+  # Prometheus reads the three above (metrics only) on `logs`
+  prometheus:
+    networks:
+      logs: {}
+
+networks:
+  # Fluent Bit, VictoriaLogs, vmalert and Prometheus only; no way out. A fixed range between
+  # kcproxy (.0/28), alerting (.16/28) and monitoring (.64/26): VictoriaLogs (.36) and vmalert
+  # (.37) have fixed addresses for the SSH tunnel; Docker hands out .40-.47. Change
+  # IHR_LOGS_NET, its range and the two addresses together if the server already uses it.
+  logs:
+    internal: true
+    ipam:
+      config:
+        - subnet: ${IHR_LOGS_NET:-10.203.0.32/28}
+          ip_range: ${IHR_LOGS_DYNAMIC:-10.203.0.40/29}
+
+volumes:
+  vldata:
+  fbstate:

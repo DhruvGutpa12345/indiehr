@@ -222,3 +222,17 @@ a flag, eventrecorder outputs need names; neither used here).
 
 Memory limits: Prometheus 384 MB, Alertmanager 64 MB, the exporters 48–64 MB each (about 0.7 GB in
 all). Not measured live yet (the stack was not started in this task).
+
+## Log collection, redaction and log alerts — P1-T9b
+
+Pinned by multi-arch index digest in `deploy/staging/compose.logs.yaml` (digests read from the
+registry and pulled; each is the project's latest stable release on GitHub, checked 2026-11-12).
+`scripts/check-logs.py` reads the digests from there.
+
+| Item | Version | Pinned how | Checked |
+|---|---|---|---|
+| Fluent Bit | 5.2.0 (09-11-2026; Apache-2.0) — `fluent/fluent-bit:5.2.0@sha256:a48190bf67679495a332fd61025421a46e7e4d168380185a8e16da2e9acc3126`; distroless, in_systemd and LuaJIT built in; the image runs as root, we run it as nobody with the journal's group. 5.1.5 is the previous line; the cursor-rewrite issue #12778 is in both | digest | 2026-11-12 |
+| VictoriaLogs | v1.53.0 (01-10-2026; Apache-2.0; v1.52.1 is the LTS line) — `victoriametrics/victoria-logs:v1.53.0@sha256:251121fa882af99b95ba0c230a4a2f412ea602d2698c64a96c58dc9842bb755d`; runs as the owner of `secrets/` (reads the admin key) | digest | 2026-11-12 |
+| vmalert | v1.156.0 (09-11-2026; Apache-2.0) — `victoriametrics/vmalert:v1.156.0-scratch@sha256:e1ee6661c4c2f5fe811090a03069a9b8b75f55c137d7892acd2197dba34ec47b` (no shell); runs as nobody. `vmalert-tool` cannot test LogsQL rules yet (upstream #11049): `scripts/check-logs.py` runs vmalert itself on fixtures | digest | 2026-11-12 |
+
+Memory limits: VictoriaLogs 256 MB, Fluent Bit 128 MB, vmalert 64 MB.

@@ -69,7 +69,9 @@ class Service(unittest.TestCase):
         self.assertIn("kcproxy", TRAEFIK["networks"])
         # Only Traefik and Keycloak on kcproxy, in every compose file of the stack
         for f in (ROOT / "deploy" / "staging").glob("compose*.yaml"):
-            for name, svc in (yaml.safe_load(f.read_text()).get("services") or {}).items():
+            # (compose.local-journal.yaml uses Compose's !override tag: read as a plain value)
+            text = re.sub(r"!(override|reset)\b", "", f.read_text())
+            for name, svc in (yaml.safe_load(text).get("services") or {}).items():
                 if "kcproxy" in (svc.get("networks") or []):
                     self.assertIn(name, ("traefik", "keycloak"), f.name)
         # Traefik reaches Keycloak by the kcproxy-only name, never "keycloak" (another network)

@@ -1,0 +1,72 @@
+# Log alerts (P1-T9b, ADR-013; owner decision Q-O8). vmalert runs these LogsQL queries against
+# VictoriaLogs every minute and hands the results to Alertmanager, which mails them like the
+# metric alerts (critical at once, warnings 08:00-22:00 IST).
+#
+# The address involved is the label client_ip: the client address Keycloak recorded (only
+# Traefik's, P1-T8d1) or Traefik's own ClientHost, checked to look like an IP address by
+# deploy/logs/fluent-bit/redact.lua before it was stored. Mails name it (owner, Q-O8).
+# Every query reads container lines only (source:=container: journald's own fields say Docker
+# wrote them), so no host process can forge one. The per-address alerts carry notify: anytime,
+# so Alertmanager mails them day or night (owner, Q-O9).
+# Tests: scripts/check-logs.py (cases in deploy/logs/tests/alert-cases.json).
+groups:
+  - name: sign-in-abuse
+    type: vlogs
+    interval: 1m
+    rules:
+      # Keycloak locks an account for a while after 5 wrong passwords (realm.py). Several
+      # accounts locked from one address: someone is guessing passwords across accounts.
+      - alert: SignInLockoutsFromAddress
+        # Distinct accounts (kc_user, the account id): one account hammered until it locks
+        # again and again is not "several accounts"
+        expr: '_time:15m source:=container service:=keycloak kc_event:in(USER_DISABLED_BY_TEMPORARY_LOCKOUT, USER_DISABLED_BY_PERMANENT_LOCKOUT) client_ip:* kc_user:* | stats by (client_ip) count_uniq(kc_user) as accounts | filter accounts:>=3'
+        labels:
+          severity: warning
+          service: keycloak
+          notify: anytime
+        annotations:
+          summary: '{{ $value }} staff accounts locked out from {{ $labels.client_ip }} in 15 minutes'
+          action: 'Check the address (a hospital''s own, or unknown?); block it at the firewall if it is an attack'
+
+      # Many lock-outs from many addresses at once: a spread-out attack, or staff locked out
+      # across hospitals (sign-in broken for real users)
+      - alert: SignInLockoutStorm
+        expr: '_time:15m source:=container service:=keycloak kc_event:in(USER_DISABLED_BY_TEMPORARY_LOCKOUT, USER_DISABLED_BY_PERMANENT_LOCKOUT) kc_user:* | stats count_uniq(kc_user) as accounts | filter accounts:>=10'
+        labels:
+          severity: critical
+          service: keycloak
+        annotations:
+          summary: '{{ $value }} staff accounts locked out in 15 minutes (all addresses)'
+          action: 'Staff may be unable to sign in: look at the lock-outs in the log store (scripts/staging.sh ops-tunnel)'
+
+      # Failed sign-ins from one address that stay under the lock-out (a few tries on many
+      # accounts, or unknown user names). Credential errors only: session errors (an expired
+      # sign-in page, cookies off) are not guessing, and a script without a session never has
+      # its password checked (RateLimitedAddress covers it)
+      - alert: FailedSignInsFromAddress
+        expr: '_time:15m source:=container service:=keycloak kc_event:=LOGIN_ERROR kc_error:in(invalid_user_credentials, user_not_found, invalid_user, user_temporarily_disabled, user_disabled) client_ip:* | stats by (client_ip) count() as failures | filter failures:>=30'
+        labels:
+          severity: warning
+          service: keycloak
+          notify: anytime
+        annotations:
+          summary: '{{ $value }} failed sign-ins from {{ $labels.client_ip }} in 15 minutes'
+          action: 'Check the address; block it at the firewall if it is an attack'
+
+  - name: rate-limits
+    type: vlogs
+    interval: 1m
+    rules:
+      # Traefik's per-address limits (P1-T8d1) refusing one address again and again, for at
+      # least 5 minutes: a script hammering sign-in, or a hospital whose many staff share one
+      # address and outgrow the limit (raise it for that address: README, "Per-IP limits")
+      - alert: RateLimitedAddress
+        expr: '_time:10m source:=container service:=traefik http_status:=429 client_ip:* | stats by (client_ip) count() as refused | filter refused:>=100'
+        for: 5m
+        labels:
+          severity: warning
+          service: traefik
+          notify: anytime
+        annotations:
+          summary: '{{ $value }} requests from {{ $labels.client_ip }} refused as too many (429) in 10 minutes, for 5 minutes now'
+          action: 'An attack (block the address) or a hospital outgrowing its limit (raise it for that address)'

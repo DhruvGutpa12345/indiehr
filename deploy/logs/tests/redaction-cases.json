@@ -1,0 +1,1073 @@
+[
+ {
+  "name": "keycloak: user not found, typed user name dropped, query cut from redirect_uri, unknown key dropped",
+  "record": {
+   "MESSAGE": "2026-11-12 10:00:00,000 WARN  [org.keycloak.events] (executor-thread-1) type=\"LOGIN_ERROR\", realmId=\"r1\", realmName=\"indiehr\", clientId=\"ihr-h-alpha\", userId=\"null\", ipAddress=\"203.0.113.7\", error=\"user_not_found\", auth_method=\"openid-connect\", auth_type=\"code\", redirect_uri=\"https://alpha.app.example.in/api/ihr/auth/callback/?code=abc#x\", code_id=\"c1\", username=\"Hunter2-typed-in-wrong-box\", authSessionParentId=\"p1\", authSessionTabId=\"t1\"",
+   "_HOSTNAME": "srv1",
+   "PRIORITY": "3",
+   "_CMDLINE": "/usr/bin/dockerd --secret-flag Hunter2Cmdline",
+   "_CAP_EFFECTIVE": "1ff",
+   "_BOOT_ID": "b1",
+   "CONTAINER_NAME": "indiehr-staging-keycloak-1",
+   "COM_DOCKER_COMPOSE_SERVICE": "keycloak",
+   "IMAGE_NAME": "img:1",
+   "CONTAINER_ID_FULL": "abc",
+   "SYSLOG_IDENTIFIER": "indiehr/x",
+   "_TRANSPORT": "journal",
+   "_COMM": "dockerd",
+   "_UID": "0",
+   "_SYSTEMD_UNIT": "docker.service"
+  },
+  "expect": {
+   "kc_event": "LOGIN_ERROR",
+   "kc_error": "user_not_found",
+   "client_ip": "203.0.113.7",
+   "kc_dropped": "code_id",
+   "service": "keycloak",
+   "source": "container"
+  },
+  "expect_msg": "2026-11-12 10:00:00,000 WARN  [org.keycloak.events] (executor-thread-1) type=\"LOGIN_ERROR\", realmId=\"r1\", realmName=\"indiehr\", clientId=\"ihr-h-alpha\", userId=\"null\", ipAddress=\"203.0.113.7\", error=\"user_not_found\", auth_method=\"openid-connect\", auth_type=\"code\", redirect_uri=\"https://alpha.app.example.in/api/ihr/auth/callback/\", username=\"<dropped>\", authSessionParentId=\"p1\", authSessionTabId=\"t1\"",
+  "forbid": [
+   "Hunter2",
+   "code=abc"
+  ]
+ },
+ {
+  "name": "keycloak: wrong password for a real account keeps its user name (lock-out checks)",
+  "record": {
+   "MESSAGE": "2026-11-12 10:00:00,000 WARN  [org.keycloak.events] (executor-thread-1) type=\"LOGIN_ERROR\", realmId=\"r1\", realmName=\"indiehr\", clientId=\"ihr-h-alpha\", userId=\"6f1c2d3e-0000-4000-8000-000000000001\", ipAddress=\"203.0.113.7\", error=\"invalid_user_credentials\", auth_method=\"openid-connect\", username=\"dr.meera@alpha-hospital.example.in\"",
+   "_HOSTNAME": "srv1",
+   "PRIORITY": "3",
+   "_CMDLINE": "/usr/bin/dockerd --secret-flag Hunter2Cmdline",
+   "_CAP_EFFECTIVE": "1ff",
+   "_BOOT_ID": "b1",
+   "CONTAINER_NAME": "indiehr-staging-keycloak-1",
+   "COM_DOCKER_COMPOSE_SERVICE": "keycloak",
+   "IMAGE_NAME": "img:1",
+   "CONTAINER_ID_FULL": "abc",
+   "SYSLOG_IDENTIFIER": "indiehr/x",
+   "_TRANSPORT": "journal",
+   "_COMM": "dockerd",
+   "_UID": "0",
+   "_SYSTEMD_UNIT": "docker.service"
+  },
+  "expect": {
+   "kc_event": "LOGIN_ERROR",
+   "kc_error": "invalid_user_credentials",
+   "client_ip": "203.0.113.7"
+  },
+  "expect_msg": "2026-11-12 10:00:00,000 WARN  [org.keycloak.events] (executor-thread-1) type=\"LOGIN_ERROR\", realmId=\"r1\", realmName=\"indiehr\", clientId=\"ihr-h-alpha\", userId=\"6f1c2d3e-0000-4000-8000-000000000001\", ipAddress=\"203.0.113.7\", error=\"invalid_user_credentials\", auth_method=\"openid-connect\", username=\"dr.meera@alpha-hospital.example.in\""
+ },
+ {
+  "name": "keycloak: lock-out event, address taken from it",
+  "record": {
+   "MESSAGE": "2026-11-12 10:00:00,000 INFO  [org.keycloak.events] (executor-thread-2) type=\"USER_DISABLED_BY_TEMPORARY_LOCKOUT\", realmId=\"r1\", realmName=\"indiehr\", clientId=\"null\", userId=\"6f1c2d3e-0000-4000-8000-000000000001\", ipAddress=\"198.51.100.9\"",
+   "_HOSTNAME": "srv1",
+   "PRIORITY": "3",
+   "_CMDLINE": "/usr/bin/dockerd --secret-flag Hunter2Cmdline",
+   "_CAP_EFFECTIVE": "1ff",
+   "_BOOT_ID": "b1",
+   "CONTAINER_NAME": "indiehr-staging-keycloak-1",
+   "COM_DOCKER_COMPOSE_SERVICE": "keycloak",
+   "IMAGE_NAME": "img:1",
+   "CONTAINER_ID_FULL": "abc",
+   "SYSLOG_IDENTIFIER": "indiehr/x",
+   "_TRANSPORT": "journal",
+   "_COMM": "dockerd",
+   "_UID": "0",
+   "_SYSTEMD_UNIT": "docker.service"
+  },
+  "expect": {
+   "kc_event": "USER_DISABLED_BY_TEMPORARY_LOCKOUT",
+   "client_ip": "198.51.100.9"
+  }
+ },
+ {
+  "name": "keycloak: admin event, e-mail detail kept as a marker only",
+  "record": {
+   "MESSAGE": "2026-11-12 10:00:00,000 INFO  [org.keycloak.events] (executor-thread-2) operationType=\"UPDATE\", realmId=\"r1\", realmName=\"master\", clientId=\"ihr-ops\", userId=\"u1\", ipAddress=\"10.203.0.9\", resourceType=\"USER\", resourcePath=\"users/6f1c2d3e-0000-4000-8000-000000000001\", email=\"asha.k@example.in\", representation=\"{\\\"email\\\":\\\"asha.k@example.in\\\"}\"",
+   "_HOSTNAME": "srv1",
+   "PRIORITY": "3",
+   "_CMDLINE": "/usr/bin/dockerd --secret-flag Hunter2Cmdline",
+   "_CAP_EFFECTIVE": "1ff",
+   "_BOOT_ID": "b1",
+   "CONTAINER_NAME": "indiehr-staging-keycloak-1",
+   "COM_DOCKER_COMPOSE_SERVICE": "keycloak",
+   "IMAGE_NAME": "img:1",
+   "CONTAINER_ID_FULL": "abc",
+   "SYSLOG_IDENTIFIER": "indiehr/x",
+   "_TRANSPORT": "journal",
+   "_COMM": "dockerd",
+   "_UID": "0",
+   "_SYSTEMD_UNIT": "docker.service"
+  },
+  "expect": {
+   "kc_event": "UPDATE",
+   "kc_dropped": "representation"
+  },
+  "expect_msg": "2026-11-12 10:00:00,000 INFO  [org.keycloak.events] (executor-thread-2) operationType=\"UPDATE\", realmId=\"r1\", realmName=\"master\", clientId=\"ihr-ops\", userId=\"u1\", ipAddress=\"10.203.0.9\", resourceType=\"USER\", resourcePath=\"users/6f1c2d3e-0000-4000-8000-000000000001\", email=\"<email>\"",
+  "forbid": [
+   "asha.k"
+  ]
+ },
+ {
+  "name": "keycloak: a line that cannot be parsed loses every user name",
+  "record": {
+   "MESSAGE": "2026-11-12 10:00:00,000 WARN  [org.keycloak.events] (executor-thread-1) type=\"LOGIN_ERROR\", realmId=\"r1\", userId=\"null\", error=\"user_not_found\", username=\"Hunter2-unterminated",
+   "_HOSTNAME": "srv1",
+   "PRIORITY": "3",
+   "_CMDLINE": "/usr/bin/dockerd --secret-flag Hunter2Cmdline",
+   "_CAP_EFFECTIVE": "1ff",
+   "_BOOT_ID": "b1",
+   "CONTAINER_NAME": "indiehr-staging-keycloak-1",
+   "COM_DOCKER_COMPOSE_SERVICE": "keycloak",
+   "IMAGE_NAME": "img:1",
+   "CONTAINER_ID_FULL": "abc",
+   "SYSLOG_IDENTIFIER": "indiehr/x",
+   "_TRANSPORT": "journal",
+   "_COMM": "dockerd",
+   "_UID": "0",
+   "_SYSTEMD_UNIT": "docker.service"
+  },
+  "expect": {
+   "kc_parse": "failed"
+  },
+  "forbid": [
+   "Hunter2"
+  ]
+ },
+ {
+  "name": "keycloak: an event that is not on the events logger is masked like any line",
+  "record": {
+   "MESSAGE": "2026-11-12 10:00:00,000 WARN  [org.keycloak.services] (executor-thread-1) KC-SERVICES0013: Failed authentication for asha.k@example.in",
+   "_HOSTNAME": "srv1",
+   "PRIORITY": "3",
+   "_CMDLINE": "/usr/bin/dockerd --secret-flag Hunter2Cmdline",
+   "_CAP_EFFECTIVE": "1ff",
+   "_BOOT_ID": "b1",
+   "CONTAINER_NAME": "indiehr-staging-keycloak-1",
+   "COM_DOCKER_COMPOSE_SERVICE": "keycloak",
+   "IMAGE_NAME": "img:1",
+   "CONTAINER_ID_FULL": "abc",
+   "SYSLOG_IDENTIFIER": "indiehr/x",
+   "_TRANSPORT": "journal",
+   "_COMM": "dockerd",
+   "_UID": "0",
+   "_SYSTEMD_UNIT": "docker.service"
+  },
+  "expect_msg": "2026-11-12 10:00:00,000 WARN  [org.keycloak.services] (executor-thread-1) KC-SERVICES0013: Failed authentication for <email>"
+ },
+ {
+  "name": "traefik access log: numbers untouched, address, status and router as fields",
+  "record": {
+   "MESSAGE": "{\"ClientHost\":\"203.0.113.50\",\"DownstreamStatus\":429,\"Duration\":234567890123,\"OriginDuration\":6123456789,\"RequestHost\":\"alpha.app.example.in\",\"RequestMethod\":\"POST\",\"RouterName\":\"auth-login@file\",\"level\":\"info\",\"msg\":\"\",\"time\":\"2026-11-12T10:00:00+05:30\"}",
+   "_HOSTNAME": "srv1",
+   "PRIORITY": "3",
+   "_CMDLINE": "/usr/bin/dockerd --secret-flag Hunter2Cmdline",
+   "_CAP_EFFECTIVE": "1ff",
+   "_BOOT_ID": "b1",
+   "CONTAINER_NAME": "indiehr-staging-traefik-1",
+   "COM_DOCKER_COMPOSE_SERVICE": "traefik",
+   "IMAGE_NAME": "img:1",
+   "CONTAINER_ID_FULL": "abc",
+   "SYSLOG_IDENTIFIER": "indiehr/x",
+   "_TRANSPORT": "journal",
+   "_COMM": "dockerd",
+   "_UID": "0",
+   "_SYSTEMD_UNIT": "docker.service"
+  },
+  "expect": {
+   "client_ip": "203.0.113.50",
+   "http_status": 429,
+   "router": "auth-login@file"
+  },
+  "expect_msg": "{\"ClientHost\":\"203.0.113.50\",\"DownstreamStatus\":429,\"Duration\":234567890123,\"OriginDuration\":6123456789,\"RequestHost\":\"alpha.app.example.in\",\"RequestMethod\":\"POST\",\"RouterName\":\"auth-login@file\",\"level\":\"info\",\"msg\":\"\",\"time\":\"2026-11-12T10:00:00+05:30\"}"
+ },
+ {
+  "name": "traefik access log: a forged client address is not taken",
+  "record": {
+   "MESSAGE": "{\"ClientHost\":\"x\\\" onmouseover=1\",\"DownstreamStatus\":200,\"RequestMethod\":\"GET\",\"RequestHost\":\"a\",\"RouterName\":\"r\"}",
+   "_HOSTNAME": "srv1",
+   "PRIORITY": "3",
+   "_CMDLINE": "/usr/bin/dockerd --secret-flag Hunter2Cmdline",
+   "_CAP_EFFECTIVE": "1ff",
+   "_BOOT_ID": "b1",
+   "CONTAINER_NAME": "indiehr-staging-traefik-1",
+   "COM_DOCKER_COMPOSE_SERVICE": "traefik",
+   "IMAGE_NAME": "img:1",
+   "CONTAINER_ID_FULL": "abc",
+   "SYSLOG_IDENTIFIER": "indiehr/x",
+   "_TRANSPORT": "journal",
+   "_COMM": "dockerd",
+   "_UID": "0",
+   "_SYSTEMD_UNIT": "docker.service"
+  },
+  "expect": {
+   "client_ip": null,
+   "http_status": 200,
+   "router": "r"
+  }
+ },
+ {
+  "name": "nginx error log: query strings cut from request and upstream",
+  "record": {
+   "MESSAGE": "2026/11/12 10:00:00 [error] 29#29: *1 upstream timed out (110: Connection timed out) while reading response header from upstream, client: 10.0.0.5, server: , request: \"GET /api/v1/patient/?phone_number=9876543210&name=Asha HTTP/1.1\", upstream: \"http://backend:9000/api/v1/patient/?phone_number=9876543210\", host: \"alpha.app.example.in\"",
+   "_HOSTNAME": "srv1",
+   "PRIORITY": "3",
+   "_CMDLINE": "/usr/bin/dockerd --secret-flag Hunter2Cmdline",
+   "_CAP_EFFECTIVE": "1ff",
+   "_BOOT_ID": "b1",
+   "CONTAINER_NAME": "indiehr-staging-frontend-1",
+   "COM_DOCKER_COMPOSE_SERVICE": "frontend",
+   "IMAGE_NAME": "img:1",
+   "CONTAINER_ID_FULL": "abc",
+   "SYSLOG_IDENTIFIER": "indiehr/x",
+   "_TRANSPORT": "journal",
+   "_COMM": "dockerd",
+   "_UID": "0",
+   "_SYSTEMD_UNIT": "docker.service"
+  },
+  "expect_msg": "2026/11/12 10:00:00 [error] 29#29: *1 upstream timed out (110: Connection timed out) while reading response header from upstream, client: 10.0.0.5, server: , request: \"GET /api/v1/patient/?<q> HTTP/1.1\", upstream: \"http://backend:9000/api/v1/patient/?<q>\", host: \"alpha.app.example.in\""
+ },
+ {
+  "name": "database values in psycopg DETAIL lines",
+  "record": {
+   "MESSAGE": "DETAIL:  Key (phone_number)=(+919876543210) already exists.",
+   "_HOSTNAME": "srv1",
+   "PRIORITY": "3",
+   "_CMDLINE": "/usr/bin/dockerd --secret-flag Hunter2Cmdline",
+   "_CAP_EFFECTIVE": "1ff",
+   "_BOOT_ID": "b1",
+   "CONTAINER_NAME": "indiehr-staging-backend-1",
+   "COM_DOCKER_COMPOSE_SERVICE": "backend",
+   "IMAGE_NAME": "img:1",
+   "CONTAINER_ID_FULL": "abc",
+   "SYSLOG_IDENTIFIER": "indiehr/x",
+   "_TRANSPORT": "journal",
+   "_COMM": "dockerd",
+   "_UID": "0",
+   "_SYSTEMD_UNIT": "docker.service"
+  },
+  "expect_msg": "DETAIL:  Key (phone_number)=(<x>)"
+ },
+ {
+  "name": "database: failing row",
+  "record": {
+   "MESSAGE": "DETAIL:  Failing row contains (12, Asha Kumari, 1990-01-01, null).",
+   "_HOSTNAME": "srv1",
+   "PRIORITY": "3",
+   "_CMDLINE": "/usr/bin/dockerd --secret-flag Hunter2Cmdline",
+   "_CAP_EFFECTIVE": "1ff",
+   "_BOOT_ID": "b1",
+   "CONTAINER_NAME": "indiehr-staging-backend-1",
+   "COM_DOCKER_COMPOSE_SERVICE": "backend",
+   "IMAGE_NAME": "img:1",
+   "CONTAINER_ID_FULL": "abc",
+   "SYSLOG_IDENTIFIER": "indiehr/x",
+   "_TRANSPORT": "journal",
+   "_COMM": "dockerd",
+   "_UID": "0",
+   "_SYSTEMD_UNIT": "docker.service"
+  },
+  "expect_msg": "DETAIL:  Failing row contains (<x>)"
+ },
+ {
+  "name": "Postgres input errors",
+  "record": {
+   "MESSAGE": "ERROR:  invalid input syntax for type uuid: \"Asha Kumari\" at character 20",
+   "_HOSTNAME": "srv1",
+   "PRIORITY": "3",
+   "_CMDLINE": "/usr/bin/dockerd --secret-flag Hunter2Cmdline",
+   "_CAP_EFFECTIVE": "1ff",
+   "_BOOT_ID": "b1",
+   "CONTAINER_NAME": "indiehr-staging-db-1",
+   "COM_DOCKER_COMPOSE_SERVICE": "db",
+   "IMAGE_NAME": "img:1",
+   "CONTAINER_ID_FULL": "abc",
+   "SYSLOG_IDENTIFIER": "indiehr/x",
+   "_TRANSPORT": "journal",
+   "_COMM": "dockerd",
+   "_UID": "0",
+   "_SYSTEMD_UNIT": "docker.service"
+  },
+  "expect_msg": "ERROR:  invalid input syntax for type uuid: \"<x>\""
+ },
+ {
+  "name": "Keycloak admin API error with a URL-encoded e-mail in the address and one in the body",
+  "record": {
+   "MESSAGE": "ERROR invitations KeycloakError: GET /admin/realms/indiehr/users?email=asha.k%40example.in: HTTP 409 {\"errorMessage\":\"User exists with same email asha.k@example.in\"}",
+   "_HOSTNAME": "srv1",
+   "PRIORITY": "3",
+   "_CMDLINE": "/usr/bin/dockerd --secret-flag Hunter2Cmdline",
+   "_CAP_EFFECTIVE": "1ff",
+   "_BOOT_ID": "b1",
+   "CONTAINER_NAME": "indiehr-staging-backend-1",
+   "COM_DOCKER_COMPOSE_SERVICE": "backend",
+   "IMAGE_NAME": "img:1",
+   "CONTAINER_ID_FULL": "abc",
+   "SYSLOG_IDENTIFIER": "indiehr/x",
+   "_TRANSPORT": "journal",
+   "_COMM": "dockerd",
+   "_UID": "0",
+   "_SYSTEMD_UNIT": "docker.service"
+  },
+  "expect_msg": "ERROR invitations KeycloakError: GET /admin/realms/indiehr/users?<q> HTTP 409 {\"errorMessage\":\"User exists with same email <email>\"}",
+  "forbid": [
+   "asha.k"
+  ]
+ },
+ {
+  "name": "URL-encoded e-mail outside an address",
+  "record": {
+   "MESSAGE": "SMTP refused asha.k%40example.in",
+   "_HOSTNAME": "srv1",
+   "PRIORITY": "3",
+   "_CMDLINE": "/usr/bin/dockerd --secret-flag Hunter2Cmdline",
+   "_CAP_EFFECTIVE": "1ff",
+   "_BOOT_ID": "b1",
+   "CONTAINER_NAME": "indiehr-staging-backend-1",
+   "COM_DOCKER_COMPOSE_SERVICE": "backend",
+   "IMAGE_NAME": "img:1",
+   "CONTAINER_ID_FULL": "abc",
+   "SYSLOG_IDENTIFIER": "indiehr/x",
+   "_TRANSPORT": "journal",
+   "_COMM": "dockerd",
+   "_UID": "0",
+   "_SYSTEMD_UNIT": "docker.service"
+  },
+  "expect_msg": "SMTP refused <email>"
+ },
+ {
+  "name": "mobile numbers in their usual shapes",
+  "record": {
+   "MESSAGE": "call +91 98765 43210, +91-9876543210, 98765-43210, 987-654-3210, 09876543210, 919876543210 or 9876543210.",
+   "_HOSTNAME": "srv1",
+   "PRIORITY": "3",
+   "_CMDLINE": "/usr/bin/dockerd --secret-flag Hunter2Cmdline",
+   "_CAP_EFFECTIVE": "1ff",
+   "_BOOT_ID": "b1",
+   "CONTAINER_NAME": "indiehr-staging-backend-1",
+   "COM_DOCKER_COMPOSE_SERVICE": "backend",
+   "IMAGE_NAME": "img:1",
+   "CONTAINER_ID_FULL": "abc",
+   "SYSLOG_IDENTIFIER": "indiehr/x",
+   "_TRANSPORT": "journal",
+   "_COMM": "dockerd",
+   "_UID": "0",
+   "_SYSTEMD_UNIT": "docker.service"
+  },
+  "expect_msg": "call <phone>, <phone>, <phone>, <phone>, <phone>, <phone> or <phone>."
+ },
+ {
+  "name": "Aadhaar-like 12-digit numbers",
+  "record": {
+   "MESSAGE": "aadhaar 2345 6789 0123, 2345-6789-0123 and 234567890123",
+   "_HOSTNAME": "srv1",
+   "PRIORITY": "3",
+   "_CMDLINE": "/usr/bin/dockerd --secret-flag Hunter2Cmdline",
+   "_CAP_EFFECTIVE": "1ff",
+   "_BOOT_ID": "b1",
+   "CONTAINER_NAME": "indiehr-staging-backend-1",
+   "COM_DOCKER_COMPOSE_SERVICE": "backend",
+   "IMAGE_NAME": "img:1",
+   "CONTAINER_ID_FULL": "abc",
+   "SYSLOG_IDENTIFIER": "indiehr/x",
+   "_TRANSPORT": "journal",
+   "_COMM": "dockerd",
+   "_UID": "0",
+   "_SYSTEMD_UNIT": "docker.service"
+  },
+  "expect_msg": "aadhaar <aadhaar>, <aadhaar> and <aadhaar>"
+ },
+ {
+  "name": "ABHA numbers and addresses",
+  "record": {
+   "MESSAGE": "abha 91-1234-5678-9012, 12345678901234, asha.k@abdm and ravi_1@sbx",
+   "_HOSTNAME": "srv1",
+   "PRIORITY": "3",
+   "_CMDLINE": "/usr/bin/dockerd --secret-flag Hunter2Cmdline",
+   "_CAP_EFFECTIVE": "1ff",
+   "_BOOT_ID": "b1",
+   "CONTAINER_NAME": "indiehr-staging-backend-1",
+   "COM_DOCKER_COMPOSE_SERVICE": "backend",
+   "IMAGE_NAME": "img:1",
+   "CONTAINER_ID_FULL": "abc",
+   "SYSLOG_IDENTIFIER": "indiehr/x",
+   "_TRANSPORT": "journal",
+   "_COMM": "dockerd",
+   "_UID": "0",
+   "_SYSTEMD_UNIT": "docker.service"
+  },
+  "expect_msg": "abha <abha>, <abha>, <abha> and <abha>"
+ },
+ {
+  "name": "tokens and secrets",
+  "record": {
+   "MESSAGE": "auth Authorization: Bearer abc.def-ghi_jkl and eyJhbGciOiJSUzI1NiJ9.eyJzdWIiOiIxIn0.c2lnbmF0dXJl, password=Secr3t!x client_secret: x {\"password\": \"hunter2x\", \"token\": \"t0k3n\"} api_key='k3y' basic Basic dXNlcjpwYXNzd29yZA==",
+   "_HOSTNAME": "srv1",
+   "PRIORITY": "3",
+   "_CMDLINE": "/usr/bin/dockerd --secret-flag Hunter2Cmdline",
+   "_CAP_EFFECTIVE": "1ff",
+   "_BOOT_ID": "b1",
+   "CONTAINER_NAME": "indiehr-staging-backend-1",
+   "COM_DOCKER_COMPOSE_SERVICE": "backend",
+   "IMAGE_NAME": "img:1",
+   "CONTAINER_ID_FULL": "abc",
+   "SYSLOG_IDENTIFIER": "indiehr/x",
+   "_TRANSPORT": "journal",
+   "_COMM": "dockerd",
+   "_UID": "0",
+   "_SYSTEMD_UNIT": "docker.service"
+  },
+  "expect_msg": "auth Authorization: Bearer <redacted> and <jwt>, password=<redacted> client_secret: <redacted> {\"password\": \"<redacted>\", \"token\": \"<redacted>\"} api_key='<redacted>' basic Basic <redacted>",
+  "forbid": [
+   "Secr3t",
+   "hunter2x",
+   "t0k3n",
+   "k3y'",
+   "dXNlcjpw"
+  ]
+ },
+ {
+  "name": "sudo command line: a password flag masked, the working folder kept",
+  "record": {
+   "MESSAGE": "ihr : TTY=pts/0 ; PWD=/home/ihr ; USER=root ; COMMAND=/usr/bin/psql --password Hunter2x -h db",
+   "_HOSTNAME": "srv1",
+   "PRIORITY": "3",
+   "_CMDLINE": "/usr/bin/dockerd --secret-flag Hunter2Cmdline",
+   "_CAP_EFFECTIVE": "1ff",
+   "_BOOT_ID": "b1",
+   "SYSLOG_IDENTIFIER": "sudo",
+   "_SYSTEMD_UNIT": "sudo.service",
+   "_PID": "321",
+   "_COMM": "sudo"
+  },
+  "expect": {
+   "source": "host",
+   "service": "sudo",
+   "unit": "sudo.service",
+   "pid": "321"
+  },
+  "expect_msg": "ihr : TTY=pts/0 ; PWD=/home/ihr ; USER=root ; COMMAND=/usr/bin/psql --password <redacted> -h db"
+ },
+ {
+  "name": "Redis echoing its settings on an error",
+  "record": {
+   "MESSAGE": "*** FATAL CONFIG FILE ERROR (Redis 8.10.3) *** >>> 'requirepass \"S3cretRedisPw\"' and user ihr-monitor on #abababababababababababababababababababababababababababababababab",
+   "_HOSTNAME": "srv1",
+   "PRIORITY": "3",
+   "_CMDLINE": "/usr/bin/dockerd --secret-flag Hunter2Cmdline",
+   "_CAP_EFFECTIVE": "1ff",
+   "_BOOT_ID": "b1",
+   "CONTAINER_NAME": "indiehr-staging-redis-1",
+   "COM_DOCKER_COMPOSE_SERVICE": "redis",
+   "IMAGE_NAME": "img:1",
+   "CONTAINER_ID_FULL": "abc",
+   "SYSLOG_IDENTIFIER": "indiehr/x",
+   "_TRANSPORT": "journal",
+   "_COMM": "dockerd",
+   "_UID": "0",
+   "_SYSTEMD_UNIT": "docker.service"
+  },
+  "expect_msg": "*** FATAL CONFIG FILE ERROR (Redis 8.10.3) *** >>> 'requirepass <redacted>' and user ihr-monitor on #<sha256>",
+  "forbid": [
+   "S3cretRedisPw"
+  ]
+ },
+ {
+  "name": "user names in API paths",
+  "record": {
+   "MESSAGE": "172.18.0.5 [12/Nov/2026:10:00:00 +0530] \"GET /api/v1/users/dr.meera/ HTTP/1.1\" 200 512 0.034",
+   "_HOSTNAME": "srv1",
+   "PRIORITY": "3",
+   "_CMDLINE": "/usr/bin/dockerd --secret-flag Hunter2Cmdline",
+   "_CAP_EFFECTIVE": "1ff",
+   "_BOOT_ID": "b1",
+   "CONTAINER_NAME": "indiehr-staging-frontend-1",
+   "COM_DOCKER_COMPOSE_SERVICE": "frontend",
+   "IMAGE_NAME": "img:1",
+   "CONTAINER_ID_FULL": "abc",
+   "SYSLOG_IDENTIFIER": "indiehr/x",
+   "_TRANSPORT": "journal",
+   "_COMM": "dockerd",
+   "_UID": "0",
+   "_SYSTEMD_UNIT": "docker.service"
+  },
+  "expect_msg": "172.18.0.5 [12/Nov/2026:10:00:00 +0530] \"GET /api/v1/users/<user>/ HTTP/1.1\" 200 512 0.034"
+ },
+ {
+  "name": "Celery's message dump",
+  "record": {
+   "MESSAGE": "Received unregistered task of type 'x'. The message has been ignored and discarded. body was: b'[[\"asha.k@example.in\", \"Asha\"], {}]'",
+   "_HOSTNAME": "srv1",
+   "PRIORITY": "3",
+   "_CMDLINE": "/usr/bin/dockerd --secret-flag Hunter2Cmdline",
+   "_CAP_EFFECTIVE": "1ff",
+   "_BOOT_ID": "b1",
+   "CONTAINER_NAME": "indiehr-staging-celery-worker-1",
+   "COM_DOCKER_COMPOSE_SERVICE": "celery-worker",
+   "IMAGE_NAME": "img:1",
+   "CONTAINER_ID_FULL": "abc",
+   "SYSLOG_IDENTIFIER": "indiehr/x",
+   "_TRANSPORT": "journal",
+   "_COMM": "dockerd",
+   "_UID": "0",
+   "_SYSTEMD_UNIT": "docker.service"
+  },
+  "expect_msg": "Received unregistered task of type 'x'. The message has been ignored and discarded. body was: b'[[\"<email>\", \"Asha\"], {}]'"
+ },
+ {
+  "name": "SSH log kept as it is (CERT-In)",
+  "record": {
+   "MESSAGE": "Invalid user admin from 203.0.113.9 port 42422",
+   "_HOSTNAME": "srv1",
+   "PRIORITY": "3",
+   "_CMDLINE": "/usr/bin/dockerd --secret-flag Hunter2Cmdline",
+   "_CAP_EFFECTIVE": "1ff",
+   "_BOOT_ID": "b1",
+   "SYSLOG_IDENTIFIER": "sshd",
+   "_SYSTEMD_UNIT": "sshd.service",
+   "_PID": "321",
+   "_COMM": "sshd"
+  },
+  "expect": {
+   "source": "host",
+   "service": "sshd"
+  },
+  "expect_msg": "Invalid user admin from 203.0.113.9 port 42422"
+ },
+ {
+  "name": "things that look like numbers or addresses but are not personal data stay",
+  "record": {
+   "MESSAGE": "id 550e8400-e29b-41d4-a716-446655440000 at 2026-11-12T10:00:00.123456789+05:30 wal 000000010000000000000003 took 0.9876543210s on 10.203.0.70:9090 image prom/prometheus:v3.16.0@sha256:e04987641b57704f408e31f6373ba4138ecf27cb4a165d24aabb6c38fddd0f06 celery@abc123 at 1794458590048 pid 9876543 ts 1794458590 {\"size\":9876543210} uuid-tail 1e8400-123456789012 v6123456789 6123456789ms ver 9876543210.5 /var/lib/9876543210/x #9876543210",
+   "_HOSTNAME": "srv1",
+   "PRIORITY": "3",
+   "_CMDLINE": "/usr/bin/dockerd --secret-flag Hunter2Cmdline",
+   "_CAP_EFFECTIVE": "1ff",
+   "_BOOT_ID": "b1",
+   "CONTAINER_NAME": "indiehr-staging-backend-1",
+   "COM_DOCKER_COMPOSE_SERVICE": "backend",
+   "IMAGE_NAME": "img:1",
+   "CONTAINER_ID_FULL": "abc",
+   "SYSLOG_IDENTIFIER": "indiehr/x",
+   "_TRANSPORT": "journal",
+   "_COMM": "dockerd",
+   "_UID": "0",
+   "_SYSTEMD_UNIT": "docker.service"
+  },
+  "expect_msg": "id 550e8400-e29b-41d4-a716-446655440000 at 2026-11-12T10:00:00.123456789+05:30 wal 000000010000000000000003 took 0.9876543210s on 10.203.0.70:9090 image prom/prometheus:v3.16.0@sha256:e04987641b57704f408e31f6373ba4138ecf27cb4a165d24aabb6c38fddd0f06 celery@abc123 at 1794458590048 pid 9876543 ts 1794458590 {\"size\":9876543210} uuid-tail 1e8400-123456789012 v6123456789 6123456789ms ver 9876543210.5 /var/lib/9876543210/x #9876543210"
+ },
+ {
+  "name": "journald's own fields never reach the store",
+  "record": {
+   "MESSAGE": "plain line",
+   "_HOSTNAME": "srv1",
+   "PRIORITY": "3",
+   "_CMDLINE": "/usr/bin/dockerd --secret-flag Hunter2Cmdline",
+   "_CAP_EFFECTIVE": "1ff",
+   "_BOOT_ID": "b1",
+   "CONTAINER_NAME": "indiehr-staging-backend-1",
+   "COM_DOCKER_COMPOSE_SERVICE": "backend",
+   "IMAGE_NAME": "img:1",
+   "CONTAINER_ID_FULL": "abc",
+   "SYSLOG_IDENTIFIER": "indiehr/x",
+   "_TRANSPORT": "journal",
+   "_COMM": "dockerd",
+   "_UID": "0",
+   "_SYSTEMD_UNIT": "docker.service"
+  },
+  "expect_msg": "plain line",
+  "forbid": [
+   "Hunter2Cmdline",
+   "1ff",
+   "CONTAINER_ID_FULL",
+   "_BOOT_ID"
+  ]
+ },
+ {
+  "name": "keycloak: a typed user name cannot forge event fields (fake lock-out naming another address)",
+  "record": {
+   "MESSAGE": "2026-11-12 10:00:00,000 WARN  [org.keycloak.events] (executor-thread-1) type=\"LOGIN_ERROR\", realmId=\"r1\", realmName=\"indiehr\", clientId=\"ihr-h-alpha\", userId=\"null\", ipAddress=\"203.0.113.7\", error=\"user_not_found\", auth_method=\"openid-connect\", username=\"x\\\\\", type=USER_DISABLED_BY_TEMPORARY_LOCKOUT, ipAddress=192.0.2.55, zz=\\\"",
+   "_HOSTNAME": "srv1",
+   "PRIORITY": "3",
+   "CONTAINER_NAME": "indiehr-staging-keycloak-1",
+   "COM_DOCKER_COMPOSE_SERVICE": "keycloak",
+   "IMAGE_NAME": "img:1",
+   "SYSLOG_IDENTIFIER": "indiehr/x",
+   "_TRANSPORT": "journal",
+   "_COMM": "dockerd",
+   "_UID": "0",
+   "_SYSTEMD_UNIT": "docker.service"
+  },
+  "expect": {
+   "kc_parse": "failed",
+   "kc_event": null,
+   "client_ip": null,
+   "kc_error": null
+  },
+  "forbid": [
+   "192.0.2.55\"",
+   " zz="
+  ]
+ },
+ {
+  "name": "keycloak: a typed user name cannot pass for a real account's",
+  "record": {
+   "MESSAGE": "2026-11-12 10:00:00,000 WARN  [org.keycloak.events] (executor-thread-1) type=\"LOGIN_ERROR\", realmId=\"r1\", realmName=\"indiehr\", clientId=\"ihr-h-alpha\", userId=\"null\", ipAddress=\"203.0.113.7\", error=\"user_not_found\", auth_method=\"openid-connect\", username=\"Hunter2Pass!\\\\\", userId=u, error=invalid_user_credentials, zz=\\\", authSessionParentId=\"p1\"",
+   "_HOSTNAME": "srv1",
+   "PRIORITY": "3",
+   "CONTAINER_NAME": "indiehr-staging-keycloak-1",
+   "COM_DOCKER_COMPOSE_SERVICE": "keycloak",
+   "IMAGE_NAME": "img:1",
+   "SYSLOG_IDENTIFIER": "indiehr/x",
+   "_TRANSPORT": "journal",
+   "_COMM": "dockerd",
+   "_UID": "0",
+   "_SYSTEMD_UNIT": "docker.service"
+  },
+  "expect": {
+   "kc_parse": "failed",
+   "kc_error": null
+  },
+  "forbid": [
+   "Hunter2Pass"
+  ]
+ },
+ {
+  "name": "keycloak: a typed password with a quote and a trailing backslash leaves nothing behind",
+  "record": {
+   "MESSAGE": "2026-11-12 10:00:00,000 WARN  [org.keycloak.events] (executor-thread-1) type=\"LOGIN_ERROR\", realmId=\"r1\", realmName=\"indiehr\", clientId=\"ihr-h-alpha\", userId=\"null\", ipAddress=\"203.0.113.7\", error=\"user_not_found\", auth_method=\"openid-connect\", username=\"Pa\\\"ssw0rd\\\", authSessionTabId=\"t1\"",
+   "_HOSTNAME": "srv1",
+   "PRIORITY": "3",
+   "CONTAINER_NAME": "indiehr-staging-keycloak-1",
+   "COM_DOCKER_COMPOSE_SERVICE": "keycloak",
+   "IMAGE_NAME": "img:1",
+   "SYSLOG_IDENTIFIER": "indiehr/x",
+   "_TRANSPORT": "journal",
+   "_COMM": "dockerd",
+   "_UID": "0",
+   "_SYSTEMD_UNIT": "docker.service"
+  },
+  "forbid": [
+   "ssw0rd"
+  ]
+ },
+ {
+  "name": "keycloak: a typed password with an escaped quote leaves nothing behind",
+  "record": {
+   "MESSAGE": "2026-11-12 10:00:00,000 WARN  [org.keycloak.events] (executor-thread-1) type=\"LOGIN_ERROR\", realmId=\"r1\", realmName=\"indiehr\", clientId=\"ihr-h-alpha\", userId=\"null\", ipAddress=\"203.0.113.7\", error=\"user_not_found\", auth_method=\"openid-connect\", username=\"Pa\\\\\"ssw0rd-Secret\"",
+   "_HOSTNAME": "srv1",
+   "PRIORITY": "3",
+   "CONTAINER_NAME": "indiehr-staging-keycloak-1",
+   "COM_DOCKER_COMPOSE_SERVICE": "keycloak",
+   "IMAGE_NAME": "img:1",
+   "SYSLOG_IDENTIFIER": "indiehr/x",
+   "_TRANSPORT": "journal",
+   "_COMM": "dockerd",
+   "_UID": "0",
+   "_SYSTEMD_UNIT": "docker.service"
+  },
+  "forbid": [
+   "ssw0rd"
+  ]
+ },
+ {
+  "name": "keycloak: an account id with error user_not_found still drops the typed name",
+  "record": {
+   "MESSAGE": "2026-11-12 10:00:00,000 WARN  [org.keycloak.events] (executor-thread-1) type=\"LOGIN_ERROR\", realmId=\"r1\", realmName=\"indiehr\", clientId=\"ihr-h-alpha\", userId=\"6f1c2d3e-0000-4000-8000-000000000001\", ipAddress=\"203.0.113.7\", error=\"user_not_found\", auth_method=\"openid-connect\", username=\"Typed-user_not_found-Value\"",
+   "_HOSTNAME": "srv1",
+   "PRIORITY": "3",
+   "CONTAINER_NAME": "indiehr-staging-keycloak-1",
+   "COM_DOCKER_COMPOSE_SERVICE": "keycloak",
+   "IMAGE_NAME": "img:1",
+   "SYSLOG_IDENTIFIER": "indiehr/x",
+   "_TRANSPORT": "journal",
+   "_COMM": "dockerd",
+   "_UID": "0",
+   "_SYSTEMD_UNIT": "docker.service"
+  },
+  "expect": {
+   "kc_error": "user_not_found",
+   "kc_user": null
+  },
+  "forbid": [
+   "Typed-user_not_found-Value"
+  ]
+ },
+ {
+  "name": "keycloak: an account id with error invalid_user still drops the typed name",
+  "record": {
+   "MESSAGE": "2026-11-12 10:00:00,000 WARN  [org.keycloak.events] (executor-thread-1) type=\"LOGIN_ERROR\", realmId=\"r1\", realmName=\"indiehr\", clientId=\"ihr-h-alpha\", userId=\"6f1c2d3e-0000-4000-8000-000000000001\", ipAddress=\"203.0.113.7\", error=\"invalid_user\", auth_method=\"openid-connect\", username=\"Typed-invalid_user-Value\"",
+   "_HOSTNAME": "srv1",
+   "PRIORITY": "3",
+   "CONTAINER_NAME": "indiehr-staging-keycloak-1",
+   "COM_DOCKER_COMPOSE_SERVICE": "keycloak",
+   "IMAGE_NAME": "img:1",
+   "SYSLOG_IDENTIFIER": "indiehr/x",
+   "_TRANSPORT": "journal",
+   "_COMM": "dockerd",
+   "_UID": "0",
+   "_SYSTEMD_UNIT": "docker.service"
+  },
+  "expect": {
+   "kc_error": "invalid_user",
+   "kc_user": null
+  },
+  "forbid": [
+   "Typed-invalid_user-Value"
+  ]
+ },
+ {
+  "name": "keycloak: an account id with error user_not_found_by_email still drops the typed name",
+  "record": {
+   "MESSAGE": "2026-11-12 10:00:00,000 WARN  [org.keycloak.events] (executor-thread-1) type=\"LOGIN_ERROR\", realmId=\"r1\", realmName=\"indiehr\", clientId=\"ihr-h-alpha\", userId=\"6f1c2d3e-0000-4000-8000-000000000001\", ipAddress=\"203.0.113.7\", error=\"user_not_found_by_email\", auth_method=\"openid-connect\", username=\"Typed-user_not_found_by_email-Value\"",
+   "_HOSTNAME": "srv1",
+   "PRIORITY": "3",
+   "CONTAINER_NAME": "indiehr-staging-keycloak-1",
+   "COM_DOCKER_COMPOSE_SERVICE": "keycloak",
+   "IMAGE_NAME": "img:1",
+   "SYSLOG_IDENTIFIER": "indiehr/x",
+   "_TRANSPORT": "journal",
+   "_COMM": "dockerd",
+   "_UID": "0",
+   "_SYSTEMD_UNIT": "docker.service"
+  },
+  "expect": {
+   "kc_error": "user_not_found_by_email",
+   "kc_user": null
+  },
+  "forbid": [
+   "Typed-user_not_found_by_email-Value"
+  ]
+ },
+ {
+  "name": "keycloak: no account id (null) drops the typed name even for other errors",
+  "record": {
+   "MESSAGE": "2026-11-12 10:00:00,000 WARN  [org.keycloak.events] (executor-thread-1) type=\"LOGIN_ERROR\", realmId=\"r1\", realmName=\"indiehr\", clientId=\"ihr-h-alpha\", userId=\"null\", ipAddress=\"203.0.113.7\", error=\"invalid_user_credentials\", auth_method=\"openid-connect\", username=\"Typed-NullUser-Value\"",
+   "_HOSTNAME": "srv1",
+   "PRIORITY": "3",
+   "CONTAINER_NAME": "indiehr-staging-keycloak-1",
+   "COM_DOCKER_COMPOSE_SERVICE": "keycloak",
+   "IMAGE_NAME": "img:1",
+   "SYSLOG_IDENTIFIER": "indiehr/x",
+   "_TRANSPORT": "journal",
+   "_COMM": "dockerd",
+   "_UID": "0",
+   "_SYSTEMD_UNIT": "docker.service"
+  },
+  "expect": {
+   "kc_error": "invalid_user_credentials",
+   "kc_user": null
+  },
+  "forbid": [
+   "Typed-NullUser-Value"
+  ]
+ },
+ {
+  "name": "keycloak: a real account keeps its id as kc_user (lock-outs count accounts)",
+  "record": {
+   "MESSAGE": "2026-11-12 10:00:00,000 WARN  [org.keycloak.events] (executor-thread-1) type=\"LOGIN_ERROR\", realmId=\"r1\", realmName=\"indiehr\", clientId=\"ihr-h-alpha\", userId=\"6f1c2d3e-0000-4000-8000-000000000001\", ipAddress=\"203.0.113.7\", error=\"invalid_user_credentials\", auth_method=\"openid-connect\", username=\"dr.meera@alpha-hospital.example.in\"",
+   "_HOSTNAME": "srv1",
+   "PRIORITY": "3",
+   "CONTAINER_NAME": "indiehr-staging-keycloak-1",
+   "COM_DOCKER_COMPOSE_SERVICE": "keycloak",
+   "IMAGE_NAME": "img:1",
+   "SYSLOG_IDENTIFIER": "indiehr/x",
+   "_TRANSPORT": "journal",
+   "_COMM": "dockerd",
+   "_UID": "0",
+   "_SYSTEMD_UNIT": "docker.service"
+  },
+  "expect": {
+   "kc_user": "6f1c2d3e-0000-4000-8000-000000000001"
+  }
+ },
+ {
+  "name": "keycloak: an address that is not an IP is not taken",
+  "record": {
+   "MESSAGE": "2026-11-12 10:00:00,000 WARN  [org.keycloak.events] (executor-thread-1) type=\"LOGIN_ERROR\", realmId=\"r1\", realmName=\"indiehr\", clientId=\"ihr-h-alpha\", userId=\"6f1c2d3e-0000-4000-8000-000000000001\", ipAddress=\"not-an-ip <b>\", error=\"invalid_user_credentials\", auth_method=\"openid-connect\", username=\"dr.meera@alpha-hospital.example.in\"",
+   "_HOSTNAME": "srv1",
+   "PRIORITY": "3",
+   "CONTAINER_NAME": "indiehr-staging-keycloak-1",
+   "COM_DOCKER_COMPOSE_SERVICE": "keycloak",
+   "IMAGE_NAME": "img:1",
+   "SYSLOG_IDENTIFIER": "indiehr/x",
+   "_TRANSPORT": "journal",
+   "_COMM": "dockerd",
+   "_UID": "0",
+   "_SYSTEMD_UNIT": "docker.service"
+  },
+  "expect": {
+   "client_ip": null,
+   "kc_event": "LOGIN_ERROR",
+   "kc_parse": null
+  }
+ },
+ {
+  "name": "keycloak: an unquoted value is an unknown shape",
+  "record": {
+   "MESSAGE": "2026-11-12 10:00:00,000 WARN  [org.keycloak.events] (executor-thread-1) type=\"LOGIN_ERROR\", realmId=\"r1\", realmName=\"indiehr\", clientId=\"c\", userId=null, ipAddress=\"203.0.113.7\", username=\"Typed-Unquoted\"",
+   "_HOSTNAME": "srv1",
+   "PRIORITY": "3",
+   "CONTAINER_NAME": "indiehr-staging-keycloak-1",
+   "COM_DOCKER_COMPOSE_SERVICE": "keycloak",
+   "IMAGE_NAME": "img:1",
+   "SYSLOG_IDENTIFIER": "indiehr/x",
+   "_TRANSPORT": "journal",
+   "_COMM": "dockerd",
+   "_UID": "0",
+   "_SYSTEMD_UNIT": "docker.service"
+  },
+  "expect": {
+   "kc_parse": "failed"
+  },
+  "forbid": [
+   "Typed-Unquoted"
+  ]
+ },
+ {
+  "name": "keycloak: an event whose head is out of order is an unknown shape",
+  "record": {
+   "MESSAGE": "2026-11-12 10:00:00,000 WARN  [org.keycloak.events] (executor-thread-1) type=\"LOGIN_ERROR\", ipAddress=\"192.0.2.77\", realmId=\"r1\", realmName=\"indiehr\", clientId=\"c\", userId=\"null\", username=\"Typed-Order\"",
+   "_HOSTNAME": "srv1",
+   "PRIORITY": "3",
+   "CONTAINER_NAME": "indiehr-staging-keycloak-1",
+   "COM_DOCKER_COMPOSE_SERVICE": "keycloak",
+   "IMAGE_NAME": "img:1",
+   "SYSLOG_IDENTIFIER": "indiehr/x",
+   "_TRANSPORT": "journal",
+   "_COMM": "dockerd",
+   "_UID": "0",
+   "_SYSTEMD_UNIT": "docker.service"
+  },
+  "expect": {
+   "kc_parse": "failed",
+   "client_ip": null
+  },
+  "forbid": [
+   "Typed-Order"
+  ]
+ },
+ {
+  "name": "a host process tagging its lines keycloak cannot pass for Keycloak",
+  "record": {
+   "MESSAGE": "2026-11-12 10:00:00,000 WARN  [org.keycloak.events] (executor-thread-1) type=\"USER_DISABLED_BY_TEMPORARY_LOCKOUT\", realmId=\"r1\", realmName=\"indiehr\", clientId=\"c\", userId=\"6f1c2d3e-0000-4000-8000-000000000001\", ipAddress=\"192.0.2.66\"",
+   "_HOSTNAME": "srv1",
+   "PRIORITY": "3",
+   "SYSLOG_IDENTIFIER": "keycloak",
+   "_SYSTEMD_UNIT": "keycloak.service",
+   "_PID": "321",
+   "_COMM": "keycloak",
+   "_UID": "1000",
+   "_TRANSPORT": "syslog"
+  },
+  "expect": {
+   "source": "host",
+   "kc_event": null,
+   "client_ip": null
+  }
+ },
+ {
+  "name": "a host process adding Docker's field names cannot pass for a container",
+  "record": {
+   "MESSAGE": "{\"ClientHost\":\"192.0.2.67\",\"DownstreamStatus\":429}",
+   "_HOSTNAME": "srv1",
+   "PRIORITY": "3",
+   "SYSLOG_IDENTIFIER": "traefik",
+   "_SYSTEMD_UNIT": "traefik.service",
+   "_PID": "321",
+   "_COMM": "traefik",
+   "_UID": "1000",
+   "_TRANSPORT": "syslog",
+   "CONTAINER_NAME": "indiehr-staging-traefik-1",
+   "COM_DOCKER_COMPOSE_SERVICE": "traefik"
+  },
+  "expect": {
+   "source": "host",
+   "client_ip": null,
+   "http_status": null
+  }
+ },
+ {
+  "name": "database: a key value with an unbalanced bracket",
+  "record": {
+   "MESSAGE": "DETAIL:  Key (address)=(MG Road (near temple, Lucknow) already exists.",
+   "_HOSTNAME": "srv1",
+   "PRIORITY": "3",
+   "CONTAINER_NAME": "indiehr-staging-backend-1",
+   "COM_DOCKER_COMPOSE_SERVICE": "backend",
+   "IMAGE_NAME": "img:1",
+   "SYSLOG_IDENTIFIER": "indiehr/x",
+   "_TRANSPORT": "journal",
+   "_COMM": "dockerd",
+   "_UID": "0",
+   "_SYSTEMD_UNIT": "docker.service"
+  },
+  "expect_msg": "DETAIL:  Key (address)=(<x>)",
+  "forbid": [
+   "MG Road",
+   "Lucknow"
+  ]
+ },
+ {
+  "name": "database: a failing row with an unbalanced bracket",
+  "record": {
+   "MESSAGE": "DETAIL:  Failing row contains (12, Asha Kumari, MG Road (near temple, Lucknow, null).",
+   "_HOSTNAME": "srv1",
+   "PRIORITY": "3",
+   "CONTAINER_NAME": "indiehr-staging-backend-1",
+   "COM_DOCKER_COMPOSE_SERVICE": "backend",
+   "IMAGE_NAME": "img:1",
+   "SYSLOG_IDENTIFIER": "indiehr/x",
+   "_TRANSPORT": "journal",
+   "_COMM": "dockerd",
+   "_UID": "0",
+   "_SYSTEMD_UNIT": "docker.service"
+  },
+  "expect_msg": "DETAIL:  Failing row contains (<x>)",
+  "forbid": [
+   "Asha Kumari",
+   "Lucknow"
+  ]
+ },
+ {
+  "name": "database: an input value with a quote inside",
+  "record": {
+   "MESSAGE": "ERROR:  invalid input syntax for type uuid: \"Asha \"Kumari\" of Lucknow\" at character 20",
+   "_HOSTNAME": "srv1",
+   "PRIORITY": "3",
+   "CONTAINER_NAME": "indiehr-staging-backend-1",
+   "COM_DOCKER_COMPOSE_SERVICE": "backend",
+   "IMAGE_NAME": "img:1",
+   "SYSLOG_IDENTIFIER": "indiehr/x",
+   "_TRANSPORT": "journal",
+   "_COMM": "dockerd",
+   "_UID": "0",
+   "_SYSTEMD_UNIT": "docker.service"
+  },
+  "expect_msg": "ERROR:  invalid input syntax for type uuid: \"<x>\"",
+  "forbid": [
+   "Kumari",
+   "Lucknow"
+  ]
+ },
+ {
+  "name": "database: an enum value",
+  "record": {
+   "MESSAGE": "ERROR:  invalid input value for enum gender: \"Asha Kumari\"",
+   "_HOSTNAME": "srv1",
+   "PRIORITY": "3",
+   "CONTAINER_NAME": "indiehr-staging-backend-1",
+   "COM_DOCKER_COMPOSE_SERVICE": "backend",
+   "IMAGE_NAME": "img:1",
+   "SYSLOG_IDENTIFIER": "indiehr/x",
+   "_TRANSPORT": "journal",
+   "_COMM": "dockerd",
+   "_UID": "0",
+   "_SYSTEMD_UNIT": "docker.service"
+  },
+  "expect_msg": "ERROR:  invalid input value for enum gender: \"<x>\"",
+  "forbid": [
+   "Asha Kumari"
+  ]
+ },
+ {
+  "name": "database: a date out of range",
+  "record": {
+   "MESSAGE": "ERROR:  date/time field value out of range: \"31-02-1990\"",
+   "_HOSTNAME": "srv1",
+   "PRIORITY": "3",
+   "CONTAINER_NAME": "indiehr-staging-backend-1",
+   "COM_DOCKER_COMPOSE_SERVICE": "backend",
+   "IMAGE_NAME": "img:1",
+   "SYSLOG_IDENTIFIER": "indiehr/x",
+   "_TRANSPORT": "journal",
+   "_COMM": "dockerd",
+   "_UID": "0",
+   "_SYSTEMD_UNIT": "docker.service"
+  },
+  "expect_msg": "ERROR:  date/time field value out of range: \"<x>\"",
+  "forbid": [
+   "31-02-1990"
+  ]
+ },
+ {
+  "name": "Redis: an unquoted password in its settings",
+  "record": {
+   "MESSAGE": ">>> 'requirepass Hunter2plain'",
+   "_HOSTNAME": "srv1",
+   "PRIORITY": "3",
+   "CONTAINER_NAME": "indiehr-staging-redis-1",
+   "COM_DOCKER_COMPOSE_SERVICE": "redis",
+   "IMAGE_NAME": "img:1",
+   "SYSLOG_IDENTIFIER": "indiehr/x",
+   "_TRANSPORT": "journal",
+   "_COMM": "dockerd",
+   "_UID": "0",
+   "_SYSTEMD_UNIT": "docker.service"
+  },
+  "expect_msg": ">>> 'requirepass <redacted>'",
+  "forbid": [
+   "Hunter2plain"
+  ]
+ },
+ {
+  "name": "a relative address with a query and a plus-addressed e-mail",
+  "record": {
+   "MESSAGE": "KeycloakError: GET users?email=asha.k%2Balpha%40example.in&exact=true: HTTP 500 for asha.k+alpha@gmail.com",
+   "_HOSTNAME": "srv1",
+   "PRIORITY": "3",
+   "CONTAINER_NAME": "indiehr-staging-backend-1",
+   "COM_DOCKER_COMPOSE_SERVICE": "backend",
+   "IMAGE_NAME": "img:1",
+   "SYSLOG_IDENTIFIER": "indiehr/x",
+   "_TRANSPORT": "journal",
+   "_COMM": "dockerd",
+   "_UID": "0",
+   "_SYSTEMD_UNIT": "docker.service"
+  },
+  "expect_msg": "KeycloakError: GET users?<q> HTTP 500 for <email>",
+  "forbid": [
+   "asha.k"
+  ]
+ },
+ {
+  "name": "secrets in Python reprs, unquoted colons and other Authorization schemes",
+  "record": {
+   "MESSAGE": "resp {'refresh_token': 'r3fr3sh', 'token_type': 'Bearer'} password: Hunter2colon Authorization: Token abc123def",
+   "_HOSTNAME": "srv1",
+   "PRIORITY": "3",
+   "CONTAINER_NAME": "indiehr-staging-backend-1",
+   "COM_DOCKER_COMPOSE_SERVICE": "backend",
+   "IMAGE_NAME": "img:1",
+   "SYSLOG_IDENTIFIER": "indiehr/x",
+   "_TRANSPORT": "journal",
+   "_COMM": "dockerd",
+   "_UID": "0",
+   "_SYSTEMD_UNIT": "docker.service"
+  },
+  "expect_msg": "resp {'refresh_token': '<redacted>', 'token_type': '<redacted>'} password: <redacted> Authorization: Token <redacted>",
+  "forbid": [
+   "r3fr3sh",
+   "Hunter2colon",
+   "abc123def"
+  ]
+ },
+ {
+  "name": "CARE's own user endpoints stay readable; a user name in a path does not",
+  "record": {
+   "MESSAGE": "\"GET /api/v1/users/getcurrentuser/ HTTP/1.1\" then \"GET /api/v1/users/dr.meera/check_availability/ HTTP/1.1\"",
+   "_HOSTNAME": "srv1",
+   "PRIORITY": "3",
+   "CONTAINER_NAME": "indiehr-staging-frontend-1",
+   "COM_DOCKER_COMPOSE_SERVICE": "frontend",
+   "IMAGE_NAME": "img:1",
+   "SYSLOG_IDENTIFIER": "indiehr/x",
+   "_TRANSPORT": "journal",
+   "_COMM": "dockerd",
+   "_UID": "0",
+   "_SYSTEMD_UNIT": "docker.service"
+  },
+  "expect_msg": "\"GET /api/v1/users/getcurrentuser/ HTTP/1.1\" then \"GET /api/v1/users/<user>/check_availability/ HTTP/1.1\""
+ }
+]

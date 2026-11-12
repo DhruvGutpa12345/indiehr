@@ -183,7 +183,7 @@ daemon_json() {
   cat <<'EOF'
 {
   "log-driver": "journald",
-  "log-opts": {"tag": "docker/{{.Name}}"},
+  "log-opts": {"tag": "docker/{{.Name}}", "labels": "com.docker.compose.service"},
   "live-restore": true,
   "userland-proxy": false,
   "no-new-privileges": true,

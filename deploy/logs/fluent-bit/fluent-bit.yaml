@@ -1,0 +1,56 @@
+# Log shipping (P1-T9b, ADR-013; deploy/staging/compose.logs.yaml): the whole server's journal
+# (every container through Docker's journald driver, and the host's own services: SSH, sudo,
+# the firewall, systemd) -> redaction (filters.yaml, redact.lua) -> VictoriaLogs.
+#
+# Nothing leaves the redaction unmasked: a Lua error drops that record. The journal stays the
+# buffer: the read position is kept in /state, and unsent records wait on disk there too.
+service:
+  flush: 1
+  # warn: at info it logs every flush (once a second), which would come back through the
+  # journal forever; its warnings and errors (failed sends, redaction drops) are what matter
+  log_level: warn
+  # Prometheus reads /api/v2/metrics/prometheus on the logs network (no other listener)
+  http_server: on
+  http_listen: 0.0.0.0
+  http_port: 2020
+  storage.path: /state/buffer
+  storage.sync: normal
+  storage.checksum: on
+  storage.max_chunks_up: 32
+  storage.metrics: on
+
+includes:
+  - filters.yaml
+
+pipeline:
+  inputs:
+    - name: systemd
+      tag: journal
+      path: /var/log/journal
+      # The read position (cursor): after a restart, reading resumes where it stopped
+      db: /state/journal.db
+      db.sync: normal
+      # First start: the whole journal on a server; only new lines in a proof on a desktop
+      read_from_tail: ${IHR_LOGS_FROM_TAIL}
+      max_entries: 2000
+      storage.type: filesystem
+
+  outputs:
+    - name: http
+      alias: victorialogs
+      match: '*'
+      host: victorialogs
+      port: 9428
+      # Stream: where a line comes from (few values); the message is "msg", the time the
+      # journal's own
+      uri: /insert/jsonline?_stream_fields=host,source,service&_msg_field=msg&_time_field=date
+      format: json_lines
+      json_date_key: date
+      json_date_format: iso8601
+      compress: gzip
+      http_user: ihr-logs
+      http_passwd: ${IHR_LOGS_HTTP_PASSWORD}
+      # Never give up while VictoriaLogs is away: the records wait on disk (at most 1 GB;
+      # beyond that the oldest go, and the journal still holds them)
+      retry_limit: no_limits
+      storage.total_limit_size: 1G

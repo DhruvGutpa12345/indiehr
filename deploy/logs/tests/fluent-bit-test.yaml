@@ -1,0 +1,28 @@
+# scripts/check-logs.py only: the server's redaction steps (filters.yaml) on the test cases,
+# printed instead of sent. Inputs: one JSON journal entry per line.
+service:
+  flush: 1
+  log_level: warn
+  # Settings shared with the server's file
+includes:
+  - /fluent-bit/etc/ihr/filters.yaml
+parsers:
+  - name: case_json
+    format: json
+pipeline:
+  inputs:
+    - name: tail
+      path: /cases/input.jsonl
+      parser: case_json
+      read_from_head: true
+      exit_on_eof: true
+      # long lines (tracebacks, Keycloak representations) are redacted like short ones
+      buffer_chunk_size: 64K
+      buffer_max_size: 1M
+      tag: journal
+  outputs:
+    - name: stdout
+      match: '*'
+      format: json_lines
+      json_date_key: date
+      json_date_format: iso8601

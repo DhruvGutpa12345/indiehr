@@ -21,6 +21,12 @@ from ihr_platform.settings import secure  # noqa: E402
 from ihr_platform.settings.tenancy import apply_tenancy  # noqa: E402
 
 SENTRY_DSN = _SENTRY_DSN_GIVEN  # only for the check: Sentry was never started
+
+# CARE's deployment logging switches off every logger that exists before Django configures
+# logging: gunicorn's (worker errors, the path-only access log of compose.yaml), django.request
+# (500s and their tracebacks), Celery's task results. With Sentry refused (secure.py) a server
+# error then left no trace at all (P1-T9b). They stay on; the log pipeline masks values.
+LOGGING["disable_existing_loggers"] = False  # noqa: F405
 # A label only. Every deployment runs CARE in production mode: outside it, CARE gives every
 # patient the same sign-in code (45612) and publishes its API schema to anyone.
 IHR_ENVIRONMENT = env("IHR_ENVIRONMENT", default="staging")

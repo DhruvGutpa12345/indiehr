@@ -1,0 +1,14 @@
+# The redaction steps (P1-T9b, ADR-013), shared by the server's settings (fluent-bit.yaml) and
+# the tests (scripts/check-logs.py), so the tests run exactly what the server runs.
+pipeline:
+  filters:
+    - name: lua
+      alias: shape
+      match: '*'
+      script: /fluent-bit/etc/ihr/redact.lua
+      call: shape
+    - name: lua
+      alias: redact
+      match: '*'
+      script: /fluent-bit/etc/ihr/redact.lua
+      call: redact

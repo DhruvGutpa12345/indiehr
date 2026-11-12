@@ -16,6 +16,7 @@ x-logging: &logging
   driver: ${IHR_LOG_DRIVER:-journald}
   options:
     tag: "indiehr/{{.Name}}"
+    labels: com.docker.compose.service
 
 services:
   db:

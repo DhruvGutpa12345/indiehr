@@ -1,0 +1,478 @@
+{
+ "_comment": "scripts/check-logs.py: these journal entries go through the real redaction steps into a throwaway VictoriaLogs, then vmalert runs deploy/logs/alerts/ on them. 'expect' lists, per alert, the client_ip values it must fire (or wait to fire) for, and no others.",
+ "fixtures": [
+  {
+   "count": 1,
+   "record": {
+    "MESSAGE": "2026-11-12 10:00:00,000 INFO  [org.keycloak.events] (executor-thread-1) type=\"USER_DISABLED_BY_TEMPORARY_LOCKOUT\", realmId=\"r1\", realmName=\"indiehr\", clientId=\"ihr-h-alpha\", userId=\"6f1c2d3e-0000-4000-8000-000000000001\", ipAddress=\"198.51.100.9\"",
+    "_HOSTNAME": "srv1",
+    "PRIORITY": "6",
+    "CONTAINER_NAME": "indiehr-staging-keycloak-1",
+    "COM_DOCKER_COMPOSE_SERVICE": "keycloak",
+    "_TRANSPORT": "journal",
+    "_COMM": "dockerd",
+    "_UID": "0",
+    "_SYSTEMD_UNIT": "docker.service"
+   }
+  },
+  {
+   "count": 1,
+   "record": {
+    "MESSAGE": "2026-11-12 10:00:00,000 INFO  [org.keycloak.events] (executor-thread-1) type=\"USER_DISABLED_BY_TEMPORARY_LOCKOUT\", realmId=\"r1\", realmName=\"indiehr\", clientId=\"ihr-h-alpha\", userId=\"6f1c2d3e-0000-4000-8000-000000000002\", ipAddress=\"198.51.100.9\"",
+    "_HOSTNAME": "srv1",
+    "PRIORITY": "6",
+    "CONTAINER_NAME": "indiehr-staging-keycloak-1",
+    "COM_DOCKER_COMPOSE_SERVICE": "keycloak",
+    "_TRANSPORT": "journal",
+    "_COMM": "dockerd",
+    "_UID": "0",
+    "_SYSTEMD_UNIT": "docker.service"
+   }
+  },
+  {
+   "count": 1,
+   "record": {
+    "MESSAGE": "2026-11-12 10:00:00,000 INFO  [org.keycloak.events] (executor-thread-1) type=\"USER_DISABLED_BY_TEMPORARY_LOCKOUT\", realmId=\"r1\", realmName=\"indiehr\", clientId=\"ihr-h-alpha\", userId=\"6f1c2d3e-0000-4000-8000-000000000003\", ipAddress=\"198.51.100.9\"",
+    "_HOSTNAME": "srv1",
+    "PRIORITY": "6",
+    "CONTAINER_NAME": "indiehr-staging-keycloak-1",
+    "COM_DOCKER_COMPOSE_SERVICE": "keycloak",
+    "_TRANSPORT": "journal",
+    "_COMM": "dockerd",
+    "_UID": "0",
+    "_SYSTEMD_UNIT": "docker.service"
+   }
+  },
+  {
+   "count": 1,
+   "record": {
+    "MESSAGE": "2026-11-12 10:00:00,000 INFO  [org.keycloak.events] (executor-thread-1) type=\"USER_DISABLED_BY_TEMPORARY_LOCKOUT\", realmId=\"r1\", realmName=\"indiehr\", clientId=\"ihr-h-alpha\", userId=\"6f1c2d3e-0000-4000-8000-000000000003\", ipAddress=\"198.51.100.9\"",
+    "_HOSTNAME": "srv1",
+    "PRIORITY": "6",
+    "CONTAINER_NAME": "indiehr-staging-keycloak-1",
+    "COM_DOCKER_COMPOSE_SERVICE": "keycloak",
+    "_TRANSPORT": "journal",
+    "_COMM": "dockerd",
+    "_UID": "0",
+    "_SYSTEMD_UNIT": "docker.service"
+   }
+  },
+  {
+   "count": 1,
+   "record": {
+    "MESSAGE": "2026-11-12 10:00:00,000 INFO  [org.keycloak.events] (executor-thread-1) type=\"USER_DISABLED_BY_TEMPORARY_LOCKOUT\", realmId=\"r1\", realmName=\"indiehr\", clientId=\"ihr-h-alpha\", userId=\"6f1c2d3e-0000-4000-8000-000000000004\", ipAddress=\"198.51.100.10\"",
+    "_HOSTNAME": "srv1",
+    "PRIORITY": "6",
+    "CONTAINER_NAME": "indiehr-staging-keycloak-1",
+    "COM_DOCKER_COMPOSE_SERVICE": "keycloak",
+    "_TRANSPORT": "journal",
+    "_COMM": "dockerd",
+    "_UID": "0",
+    "_SYSTEMD_UNIT": "docker.service"
+   }
+  },
+  {
+   "count": 1,
+   "record": {
+    "MESSAGE": "2026-11-12 10:00:00,000 INFO  [org.keycloak.events] (executor-thread-1) type=\"USER_DISABLED_BY_TEMPORARY_LOCKOUT\", realmId=\"r1\", realmName=\"indiehr\", clientId=\"ihr-h-alpha\", userId=\"6f1c2d3e-0000-4000-8000-000000000005\", ipAddress=\"198.51.100.10\"",
+    "_HOSTNAME": "srv1",
+    "PRIORITY": "6",
+    "CONTAINER_NAME": "indiehr-staging-keycloak-1",
+    "COM_DOCKER_COMPOSE_SERVICE": "keycloak",
+    "_TRANSPORT": "journal",
+    "_COMM": "dockerd",
+    "_UID": "0",
+    "_SYSTEMD_UNIT": "docker.service"
+   }
+  },
+  {
+   "count": 3,
+   "record": {
+    "MESSAGE": "2026-11-12 10:00:00,000 INFO  [org.keycloak.events] (executor-thread-1) type=\"USER_DISABLED_BY_TEMPORARY_LOCKOUT\", realmId=\"r1\", realmName=\"indiehr\", clientId=\"ihr-h-alpha\", userId=\"6f1c2d3e-0000-4000-8000-000000000001\", ipAddress=\"198.51.100.11\"",
+    "_HOSTNAME": "srv1",
+    "PRIORITY": "6",
+    "CONTAINER_NAME": "indiehr-staging-keycloak-1",
+    "COM_DOCKER_COMPOSE_SERVICE": "keycloak",
+    "_TRANSPORT": "journal",
+    "_COMM": "dockerd",
+    "_UID": "0",
+    "_SYSTEMD_UNIT": "docker.service"
+   }
+  },
+  {
+   "count": 1,
+   "record": {
+    "MESSAGE": "2026-11-12 10:00:00,000 INFO  [org.keycloak.events] (executor-thread-1) type=\"USER_DISABLED_BY_PERMANENT_LOCKOUT\", realmId=\"r1\", realmName=\"indiehr\", clientId=\"ihr-h-alpha\", userId=\"6f1c2d3e-0000-4000-8000-000000000006\", ipAddress=\"198.51.100.20\"",
+    "_HOSTNAME": "srv1",
+    "PRIORITY": "6",
+    "CONTAINER_NAME": "indiehr-staging-keycloak-1",
+    "COM_DOCKER_COMPOSE_SERVICE": "keycloak",
+    "_TRANSPORT": "journal",
+    "_COMM": "dockerd",
+    "_UID": "0",
+    "_SYSTEMD_UNIT": "docker.service"
+   }
+  },
+  {
+   "count": 1,
+   "record": {
+    "MESSAGE": "2026-11-12 10:00:00,000 INFO  [org.keycloak.events] (executor-thread-1) type=\"USER_DISABLED_BY_TEMPORARY_LOCKOUT\", realmId=\"r1\", realmName=\"indiehr\", clientId=\"ihr-h-alpha\", userId=\"6f1c2d3e-0000-4000-8000-000000000007\", ipAddress=\"198.51.100.21\"",
+    "_HOSTNAME": "srv1",
+    "PRIORITY": "6",
+    "CONTAINER_NAME": "indiehr-staging-keycloak-1",
+    "COM_DOCKER_COMPOSE_SERVICE": "keycloak",
+    "_TRANSPORT": "journal",
+    "_COMM": "dockerd",
+    "_UID": "0",
+    "_SYSTEMD_UNIT": "docker.service"
+   }
+  },
+  {
+   "count": 1,
+   "record": {
+    "MESSAGE": "2026-11-12 10:00:00,000 INFO  [org.keycloak.events] (executor-thread-1) type=\"USER_DISABLED_BY_TEMPORARY_LOCKOUT\", realmId=\"r1\", realmName=\"indiehr\", clientId=\"ihr-h-alpha\", userId=\"6f1c2d3e-0000-4000-8000-000000000008\", ipAddress=\"198.51.100.22\"",
+    "_HOSTNAME": "srv1",
+    "PRIORITY": "6",
+    "CONTAINER_NAME": "indiehr-staging-keycloak-1",
+    "COM_DOCKER_COMPOSE_SERVICE": "keycloak",
+    "_TRANSPORT": "journal",
+    "_COMM": "dockerd",
+    "_UID": "0",
+    "_SYSTEMD_UNIT": "docker.service"
+   }
+  },
+  {
+   "count": 1,
+   "record": {
+    "MESSAGE": "2026-11-12 10:00:00,000 INFO  [org.keycloak.events] (executor-thread-1) type=\"USER_DISABLED_BY_TEMPORARY_LOCKOUT\", realmId=\"r1\", realmName=\"indiehr\", clientId=\"ihr-h-alpha\", userId=\"6f1c2d3e-0000-4000-8000-000000000009\", ipAddress=\"198.51.100.23\"",
+    "_HOSTNAME": "srv1",
+    "PRIORITY": "6",
+    "CONTAINER_NAME": "indiehr-staging-keycloak-1",
+    "COM_DOCKER_COMPOSE_SERVICE": "keycloak",
+    "_TRANSPORT": "journal",
+    "_COMM": "dockerd",
+    "_UID": "0",
+    "_SYSTEMD_UNIT": "docker.service"
+   }
+  },
+  {
+   "count": 1,
+   "record": {
+    "MESSAGE": "2026-11-12 10:00:00,000 INFO  [org.keycloak.events] (executor-thread-1) type=\"USER_DISABLED_BY_TEMPORARY_LOCKOUT\", realmId=\"r1\", realmName=\"indiehr\", clientId=\"ihr-h-alpha\", userId=\"6f1c2d3e-0000-4000-8000-000000000010\", ipAddress=\"198.51.100.24\"",
+    "_HOSTNAME": "srv1",
+    "PRIORITY": "6",
+    "CONTAINER_NAME": "indiehr-staging-keycloak-1",
+    "COM_DOCKER_COMPOSE_SERVICE": "keycloak",
+    "_TRANSPORT": "journal",
+    "_COMM": "dockerd",
+    "_UID": "0",
+    "_SYSTEMD_UNIT": "docker.service"
+   }
+  },
+  {
+   "count": 31,
+   "record": {
+    "MESSAGE": "2026-11-12 10:00:00,000 WARN  [org.keycloak.events] (executor-thread-1) type=\"LOGIN_ERROR\", realmId=\"r1\", realmName=\"indiehr\", clientId=\"ihr-h-alpha\", userId=\"6f1c2d3e-0000-4000-8000-000000000001\", ipAddress=\"203.0.113.7\", error=\"invalid_user_credentials\"",
+    "_HOSTNAME": "srv1",
+    "PRIORITY": "6",
+    "CONTAINER_NAME": "indiehr-staging-keycloak-1",
+    "COM_DOCKER_COMPOSE_SERVICE": "keycloak",
+    "_TRANSPORT": "journal",
+    "_COMM": "dockerd",
+    "_UID": "0",
+    "_SYSTEMD_UNIT": "docker.service"
+   }
+  },
+  {
+   "count": 29,
+   "record": {
+    "MESSAGE": "2026-11-12 10:00:00,000 WARN  [org.keycloak.events] (executor-thread-1) type=\"LOGIN_ERROR\", realmId=\"r1\", realmName=\"indiehr\", clientId=\"ihr-h-alpha\", userId=\"null\", ipAddress=\"203.0.113.8\", error=\"user_not_found\"",
+    "_HOSTNAME": "srv1",
+    "PRIORITY": "6",
+    "CONTAINER_NAME": "indiehr-staging-keycloak-1",
+    "COM_DOCKER_COMPOSE_SERVICE": "keycloak",
+    "_TRANSPORT": "journal",
+    "_COMM": "dockerd",
+    "_UID": "0",
+    "_SYSTEMD_UNIT": "docker.service"
+   }
+  },
+  {
+   "count": 40,
+   "record": {
+    "MESSAGE": "2026-11-12 10:00:00,000 WARN  [org.keycloak.events] (executor-thread-1) type=\"LOGIN_ERROR\", realmId=\"r1\", realmName=\"indiehr\", clientId=\"ihr-h-alpha\", userId=\"null\", ipAddress=\"203.0.113.30\", error=\"cookie_not_found\"",
+    "_HOSTNAME": "srv1",
+    "PRIORITY": "6",
+    "CONTAINER_NAME": "indiehr-staging-keycloak-1",
+    "COM_DOCKER_COMPOSE_SERVICE": "keycloak",
+    "_TRANSPORT": "journal",
+    "_COMM": "dockerd",
+    "_UID": "0",
+    "_SYSTEMD_UNIT": "docker.service"
+   }
+  },
+  {
+   "count": 20,
+   "record": {
+    "MESSAGE": "2026-11-12 10:00:00,000 WARN  [org.keycloak.events] (executor-thread-1) type=\"LOGIN_ERROR\", realmId=\"r1\", realmName=\"indiehr\", clientId=\"ihr-h-alpha\", userId=\"6f1c2d3e-0000-4000-8000-000000000001\", ipAddress=\"203.0.113.31\", error=\"invalid_user_credentials\"",
+    "_HOSTNAME": "srv1",
+    "PRIORITY": "6",
+    "CONTAINER_NAME": "indiehr-staging-keycloak-1",
+    "COM_DOCKER_COMPOSE_SERVICE": "keycloak",
+    "_TRANSPORT": "journal",
+    "_COMM": "dockerd",
+    "_UID": "0",
+    "_SYSTEMD_UNIT": "docker.service"
+   }
+  },
+  {
+   "count": 12,
+   "record": {
+    "MESSAGE": "2026-11-12 10:00:00,000 WARN  [org.keycloak.events] (executor-thread-1) type=\"LOGIN_ERROR\", realmId=\"r1\", realmName=\"indiehr\", clientId=\"ihr-h-alpha\", userId=\"6f1c2d3e-0000-4000-8000-000000000001\", ipAddress=\"203.0.113.31\", error=\"user_temporarily_disabled\"",
+    "_HOSTNAME": "srv1",
+    "PRIORITY": "6",
+    "CONTAINER_NAME": "indiehr-staging-keycloak-1",
+    "COM_DOCKER_COMPOSE_SERVICE": "keycloak",
+    "_TRANSPORT": "journal",
+    "_COMM": "dockerd",
+    "_UID": "0",
+    "_SYSTEMD_UNIT": "docker.service"
+   }
+  },
+  {
+   "count": 40,
+   "record": {
+    "MESSAGE": "2026-11-12 10:00:00,000 INFO  [org.keycloak.events] (executor-thread-1) type=\"LOGIN\", realmId=\"r1\", realmName=\"indiehr\", clientId=\"ihr-h-alpha\", userId=\"6f1c2d3e-0000-4000-8000-000000000001\", ipAddress=\"203.0.113.9\"",
+    "_HOSTNAME": "srv1",
+    "PRIORITY": "6",
+    "CONTAINER_NAME": "indiehr-staging-keycloak-1",
+    "COM_DOCKER_COMPOSE_SERVICE": "keycloak",
+    "_TRANSPORT": "journal",
+    "_COMM": "dockerd",
+    "_UID": "0",
+    "_SYSTEMD_UNIT": "docker.service"
+   }
+  },
+  {
+   "count": 12,
+   "record": {
+    "MESSAGE": "2026-11-12 10:00:00,000 WARN  [org.keycloak.events] (executor-thread-1) type=\"LOGIN_ERROR\", realmId=\"r1\", realmName=\"indiehr\", clientId=\"ihr-h-alpha\", userId=\"null\", ipAddress=\"203.0.113.40\", error=\"user_not_found\", username=\"x\\\\\", type=USER_DISABLED_BY_TEMPORARY_LOCKOUT, ipAddress=192.0.2.55, zz=\\\"",
+    "_HOSTNAME": "srv1",
+    "PRIORITY": "6",
+    "CONTAINER_NAME": "indiehr-staging-keycloak-1",
+    "COM_DOCKER_COMPOSE_SERVICE": "keycloak",
+    "_TRANSPORT": "journal",
+    "_COMM": "dockerd",
+    "_UID": "0",
+    "_SYSTEMD_UNIT": "docker.service"
+   }
+  },
+  {
+   "count": 1,
+   "record": {
+    "MESSAGE": "2026-11-12 10:00:00,000 INFO  [org.keycloak.events] (executor-thread-1) type=\"USER_DISABLED_BY_TEMPORARY_LOCKOUT\", realmId=\"r1\", realmName=\"indiehr\", clientId=\"ihr-h-alpha\", userId=\"6f1c2d3e-0000-4000-8000-000000000050\", ipAddress=\"192.0.2.66\"",
+    "_HOSTNAME": "srv1",
+    "PRIORITY": "6",
+    "SYSLOG_IDENTIFIER": "keycloak",
+    "_COMM": "logger",
+    "_UID": "1000",
+    "_TRANSPORT": "syslog"
+   }
+  },
+  {
+   "count": 1,
+   "record": {
+    "MESSAGE": "2026-11-12 10:00:00,000 INFO  [org.keycloak.events] (executor-thread-1) type=\"USER_DISABLED_BY_TEMPORARY_LOCKOUT\", realmId=\"r1\", realmName=\"indiehr\", clientId=\"ihr-h-alpha\", userId=\"6f1c2d3e-0000-4000-8000-000000000051\", ipAddress=\"192.0.2.66\"",
+    "_HOSTNAME": "srv1",
+    "PRIORITY": "6",
+    "SYSLOG_IDENTIFIER": "keycloak",
+    "_COMM": "logger",
+    "_UID": "1000",
+    "_TRANSPORT": "syslog"
+   }
+  },
+  {
+   "count": 1,
+   "record": {
+    "MESSAGE": "2026-11-12 10:00:00,000 INFO  [org.keycloak.events] (executor-thread-1) type=\"USER_DISABLED_BY_TEMPORARY_LOCKOUT\", realmId=\"r1\", realmName=\"indiehr\", clientId=\"ihr-h-alpha\", userId=\"6f1c2d3e-0000-4000-8000-000000000052\", ipAddress=\"192.0.2.66\"",
+    "_HOSTNAME": "srv1",
+    "PRIORITY": "6",
+    "SYSLOG_IDENTIFIER": "keycloak",
+    "_COMM": "logger",
+    "_UID": "1000",
+    "_TRANSPORT": "syslog"
+   }
+  },
+  {
+   "count": 1,
+   "record": {
+    "MESSAGE": "2026-11-12 10:00:00,000 INFO  [org.keycloak.events] (executor-thread-1) type=\"USER_DISABLED_BY_TEMPORARY_LOCKOUT\", realmId=\"r1\", realmName=\"indiehr\", clientId=\"ihr-h-alpha\", userId=\"6f1c2d3e-0000-4000-8000-000000000053\", ipAddress=\"192.0.2.66\"",
+    "_HOSTNAME": "srv1",
+    "PRIORITY": "6",
+    "SYSLOG_IDENTIFIER": "keycloak",
+    "_COMM": "logger",
+    "_UID": "1000",
+    "_TRANSPORT": "syslog"
+   }
+  },
+  {
+   "count": 1,
+   "record": {
+    "MESSAGE": "2026-11-12 10:00:00,000 INFO  [org.keycloak.events] (executor-thread-1) type=\"USER_DISABLED_BY_TEMPORARY_LOCKOUT\", realmId=\"r1\", realmName=\"indiehr\", clientId=\"ihr-h-alpha\", userId=\"6f1c2d3e-0000-4000-8000-000000000054\", ipAddress=\"192.0.2.66\"",
+    "_HOSTNAME": "srv1",
+    "PRIORITY": "6",
+    "SYSLOG_IDENTIFIER": "keycloak",
+    "_COMM": "logger",
+    "_UID": "1000",
+    "_TRANSPORT": "syslog"
+   }
+  },
+  {
+   "count": 1,
+   "record": {
+    "MESSAGE": "2026-11-12 10:00:00,000 INFO  [org.keycloak.events] (executor-thread-1) type=\"USER_DISABLED_BY_TEMPORARY_LOCKOUT\", realmId=\"r1\", realmName=\"indiehr\", clientId=\"ihr-h-alpha\", userId=\"6f1c2d3e-0000-4000-8000-000000000055\", ipAddress=\"192.0.2.66\"",
+    "_HOSTNAME": "srv1",
+    "PRIORITY": "6",
+    "SYSLOG_IDENTIFIER": "keycloak",
+    "_COMM": "logger",
+    "_UID": "1000",
+    "_TRANSPORT": "syslog"
+   }
+  },
+  {
+   "count": 1,
+   "record": {
+    "MESSAGE": "2026-11-12 10:00:00,000 INFO  [org.keycloak.events] (executor-thread-1) type=\"USER_DISABLED_BY_TEMPORARY_LOCKOUT\", realmId=\"r1\", realmName=\"indiehr\", clientId=\"ihr-h-alpha\", userId=\"6f1c2d3e-0000-4000-8000-000000000056\", ipAddress=\"192.0.2.66\"",
+    "_HOSTNAME": "srv1",
+    "PRIORITY": "6",
+    "SYSLOG_IDENTIFIER": "keycloak",
+    "_COMM": "logger",
+    "_UID": "1000",
+    "_TRANSPORT": "syslog"
+   }
+  },
+  {
+   "count": 1,
+   "record": {
+    "MESSAGE": "2026-11-12 10:00:00,000 INFO  [org.keycloak.events] (executor-thread-1) type=\"USER_DISABLED_BY_TEMPORARY_LOCKOUT\", realmId=\"r1\", realmName=\"indiehr\", clientId=\"ihr-h-alpha\", userId=\"6f1c2d3e-0000-4000-8000-000000000057\", ipAddress=\"192.0.2.66\"",
+    "_HOSTNAME": "srv1",
+    "PRIORITY": "6",
+    "SYSLOG_IDENTIFIER": "keycloak",
+    "_COMM": "logger",
+    "_UID": "1000",
+    "_TRANSPORT": "syslog"
+   }
+  },
+  {
+   "count": 1,
+   "record": {
+    "MESSAGE": "2026-11-12 10:00:00,000 INFO  [org.keycloak.events] (executor-thread-1) type=\"USER_DISABLED_BY_TEMPORARY_LOCKOUT\", realmId=\"r1\", realmName=\"indiehr\", clientId=\"ihr-h-alpha\", userId=\"6f1c2d3e-0000-4000-8000-000000000058\", ipAddress=\"192.0.2.66\"",
+    "_HOSTNAME": "srv1",
+    "PRIORITY": "6",
+    "SYSLOG_IDENTIFIER": "keycloak",
+    "_COMM": "logger",
+    "_UID": "1000",
+    "_TRANSPORT": "syslog"
+   }
+  },
+  {
+   "count": 1,
+   "record": {
+    "MESSAGE": "2026-11-12 10:00:00,000 INFO  [org.keycloak.events] (executor-thread-1) type=\"USER_DISABLED_BY_TEMPORARY_LOCKOUT\", realmId=\"r1\", realmName=\"indiehr\", clientId=\"ihr-h-alpha\", userId=\"6f1c2d3e-0000-4000-8000-000000000059\", ipAddress=\"192.0.2.66\"",
+    "_HOSTNAME": "srv1",
+    "PRIORITY": "6",
+    "SYSLOG_IDENTIFIER": "keycloak",
+    "_COMM": "logger",
+    "_UID": "1000",
+    "_TRANSPORT": "syslog"
+   }
+  },
+  {
+   "count": 1,
+   "record": {
+    "MESSAGE": "2026-11-12 10:00:00,000 INFO  [org.keycloak.events] (executor-thread-1) type=\"USER_DISABLED_BY_TEMPORARY_LOCKOUT\", realmId=\"r1\", realmName=\"indiehr\", clientId=\"ihr-h-alpha\", userId=\"6f1c2d3e-0000-4000-8000-000000000060\", ipAddress=\"192.0.2.66\"",
+    "_HOSTNAME": "srv1",
+    "PRIORITY": "6",
+    "SYSLOG_IDENTIFIER": "keycloak",
+    "_COMM": "logger",
+    "_UID": "1000",
+    "_TRANSPORT": "syslog"
+   }
+  },
+  {
+   "count": 1,
+   "record": {
+    "MESSAGE": "2026-11-12 10:00:00,000 INFO  [org.keycloak.events] (executor-thread-1) type=\"USER_DISABLED_BY_TEMPORARY_LOCKOUT\", realmId=\"r1\", realmName=\"indiehr\", clientId=\"ihr-h-alpha\", userId=\"6f1c2d3e-0000-4000-8000-000000000061\", ipAddress=\"192.0.2.66\"",
+    "_HOSTNAME": "srv1",
+    "PRIORITY": "6",
+    "SYSLOG_IDENTIFIER": "keycloak",
+    "_COMM": "logger",
+    "_UID": "1000",
+    "_TRANSPORT": "syslog"
+   }
+  },
+  {
+   "count": 120,
+   "record": {
+    "MESSAGE": "{\"ClientHost\":\"203.0.113.50\",\"DownstreamStatus\":429,\"Duration\":1200000,\"RequestHost\":\"alpha.app.example.in\",\"RequestMethod\":\"POST\",\"RouterName\":\"auth-login@file\"}",
+    "CONTAINER_NAME": "indiehr-staging-traefik-1",
+    "COM_DOCKER_COMPOSE_SERVICE": "traefik",
+    "_HOSTNAME": "srv1",
+    "PRIORITY": "6",
+    "_TRANSPORT": "journal",
+    "_COMM": "dockerd",
+    "_UID": "0",
+    "_SYSTEMD_UNIT": "docker.service"
+   }
+  },
+  {
+   "count": 99,
+   "record": {
+    "MESSAGE": "{\"ClientHost\":\"203.0.113.51\",\"DownstreamStatus\":429,\"Duration\":1200000,\"RequestHost\":\"alpha.app.example.in\",\"RequestMethod\":\"POST\",\"RouterName\":\"auth-login@file\"}",
+    "CONTAINER_NAME": "indiehr-staging-traefik-1",
+    "COM_DOCKER_COMPOSE_SERVICE": "traefik",
+    "_HOSTNAME": "srv1",
+    "PRIORITY": "6",
+    "_TRANSPORT": "journal",
+    "_COMM": "dockerd",
+    "_UID": "0",
+    "_SYSTEMD_UNIT": "docker.service"
+   }
+  },
+  {
+   "count": 300,
+   "record": {
+    "MESSAGE": "{\"ClientHost\":\"203.0.113.52\",\"DownstreamStatus\":200,\"Duration\":1200000,\"RequestHost\":\"alpha.app.example.in\",\"RequestMethod\":\"POST\",\"RouterName\":\"auth-login@file\"}",
+    "CONTAINER_NAME": "indiehr-staging-traefik-1",
+    "COM_DOCKER_COMPOSE_SERVICE": "traefik",
+    "_HOSTNAME": "srv1",
+    "PRIORITY": "6",
+    "_TRANSPORT": "journal",
+    "_COMM": "dockerd",
+    "_UID": "0",
+    "_SYSTEMD_UNIT": "docker.service"
+   }
+  }
+ ],
+ "expect": {
+  "SignInLockoutsFromAddress": [
+   "198.51.100.9"
+  ],
+  "SignInLockoutStorm": [
+   null
+  ],
+  "FailedSignInsFromAddress": [
+   "203.0.113.31",
+   "203.0.113.7"
+  ],
+  "RateLimitedAddress": [
+   "203.0.113.50"
+  ]
+ },
+ "expect_state": {
+  "SignInLockoutsFromAddress": "firing",
+  "SignInLockoutStorm": "firing",
+  "FailedSignInsFromAddress": "firing",
+  "RateLimitedAddress": "pending"
+ }
+}

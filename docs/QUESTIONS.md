@@ -80,6 +80,11 @@
 | Q-O2 | **Log store: VictoriaLogs**, not Loki (owner, 2026-11-11): Apache-2.0, a hard disk cap, about a third of Loki's memory; it accepts Loki's push format | ADR-013 (T9b) |
 | Q-O3 | **The 180-day log record (CERT-In) is the log store plus a daily locked archive** in the Indian backup-region bucket (400 days, built from the redacted logs); the server's journal becomes a 14-day buffer (owner, 2026-11-11) | P1-T9c |
 | Q-O4 | **Outside uptime checks: free healthchecks.io (dead-man switch) + UptimeRobot (public status URL)** (owner, 2026-11-11): only pings and probes leave the server, no data; the owner creates both accounts; optionally a small second VM in India at go-live | P1-T9a |
+| Q-O5 | **Log collector: Fluent Bit** (owner, 2026-11-12): Apache-2.0, small, reads the server journal directly, redacts with Lua before anything is stored | ADR-013 (T9b) |
+| Q-O6 | **Whole server's logs go to the log store** (owner, 2026-11-12): our containers plus the host's own security logs (SSH, sudo, firewall, system services) | ADR-013 (T9b) |
+| Q-O7 | **Redaction: targeted + patterns** (owner, 2026-11-12): the typed username of Keycloak "user not found" events is dropped (real staff usernames kept for lock-out checks); everywhere, e-mail addresses, mobile numbers, 12-digit (Aadhaar-like) and ABHA numbers, tokens and query strings are masked before storage | ADR-013 (T9b) |
+| Q-O8 | **Log alerts name the address** (owner, 2026-11-12): lock-out bursts and sustained 429s per address are evaluated by vmalert on the log store and mailed through the existing Alertmanager with the IP address in the mail | ADR-013 (T9b) |
+| Q-O9 | **Sign-in abuse alerts are mailed at any hour** (owner, 2026-11-12): SignInLockoutsFromAddress, FailedSignInsFromAddress and RateLimitedAddress go out at once day or night (repeated at most daily); other warnings still wait for 08:00–22:00 IST | ADR-013 (T9b) |
 | Q-G4 | **`/goal` and `/advisor` = second-opinion reviews:** an independent Opus agent reviews each finished phase against the plan | Working agreement §5 |
 
 **Still open:** Q-B4 (final MVP module list: assumed as in PLAN.md Phase 2) and Q-B6/B7 (pricing, timeline). Q-F2 is moot while AI is deferred.

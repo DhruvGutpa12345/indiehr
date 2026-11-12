@@ -14,6 +14,7 @@ x-logging: &logging
   driver: ${IHR_LOG_DRIVER:-journald}
   options:
     tag: "indiehr/{{.Name}}"
+    labels: com.docker.compose.service
 
 services:
   # One container (deploy/s3/start.sh): storage on 127.0.0.1 only, and the S3 gateway. If either

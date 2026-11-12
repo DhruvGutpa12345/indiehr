@@ -136,7 +136,7 @@ groups:
       # timer writes 0 for it). Critical for the services hospitals use; the workers and the
       # monitoring itself are warnings.
       - alert: ContainerNotRunning
-        expr: ihr_container_running{service!~"provisioner|staff-worker|prometheus|alertmanager|node-exporter|blackbox-exporter|postgres-exporter|redis-exporter|heartbeat-stub|smtp-test"} == 0
+        expr: ihr_container_running{service!~"provisioner|staff-worker|prometheus|alertmanager|node-exporter|blackbox-exporter|postgres-exporter|redis-exporter|fluent-bit|victorialogs|vmalert|heartbeat-stub|smtp-test"} == 0
         for: 5m
         labels:
           severity: critical
@@ -144,7 +144,7 @@ groups:
           summary: "Container {{ $labels.service }} is not running"
 
       - alert: ContainerNotRunning
-        expr: ihr_container_running{service=~"provisioner|staff-worker|prometheus|alertmanager|node-exporter|blackbox-exporter|postgres-exporter|redis-exporter|heartbeat-stub|smtp-test"} == 0
+        expr: ihr_container_running{service=~"provisioner|staff-worker|prometheus|alertmanager|node-exporter|blackbox-exporter|postgres-exporter|redis-exporter|fluent-bit|victorialogs|vmalert|heartbeat-stub|smtp-test"} == 0
         for: 5m
         labels:
           severity: warning

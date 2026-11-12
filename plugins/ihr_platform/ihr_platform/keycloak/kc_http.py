@@ -133,8 +133,11 @@ class KeycloakAdmin:
             data = json.dumps(body)
         resp = request(method, url, headers=headers, body=data)
         if resp.status not in ok:
-            # The response body is Keycloak's error text, never our request.
-            msg = f"{method} {path}: HTTP {resp.status} {resp.text[:300]}"
+            # The response body is Keycloak's error text, never our request. The path loses its
+            # query: lookups carry e-mail addresses and user names (users?email=...), and this
+            # message reaches the logs through tracebacks (P1-T9b).
+            shown = path.split("?", 1)[0]
+            msg = f"{method} {shown}: HTTP {resp.status} {resp.text[:300]}"
             raise KeycloakError(msg)
         return resp
 

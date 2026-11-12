@@ -1,0 +1,130 @@
+# promtool unit tests for ../rules/logs.yml (scripts/check-monitoring.sh runs them with the
+# pinned Prometheus image).
+rule_files:
+  - ../rules/logs.yml
+evaluation_interval: 30s
+
+tests:
+  - name: redaction drops and shipping failures
+    interval: 1m
+    input_series:
+      - series: 'fluentbit_filter_drop_records_total{name="redact", job="fluent-bit"}'
+        values: '0x10 3x30'
+      - series: 'fluentbit_filter_drop_records_total{name="shape", job="fluent-bit"}'
+        values: '0x40'
+      - series: 'fluentbit_output_errors_total{name="victorialogs", job="fluent-bit"}'
+        values: '0x5 1+1x40'
+      - series: 'fluentbit_output_dropped_records_total{name="victorialogs", job="fluent-bit"}'
+        values: '0x20 5x20'
+      - series: 'fluentbit_output_retries_failed_total{name="victorialogs", job="fluent-bit"}'
+        values: '0x40'
+    alert_rule_test:
+      - eval_time: 9m
+        alertname: LogRedactionDrops
+        exp_alerts: []
+      - eval_time: 12m
+        alertname: LogRedactionDrops
+        exp_alerts:
+          - exp_labels: {severity: warning, service: fluent-bit}
+            exp_annotations:
+              summary: "The log redaction dropped 3 lines in 15 minutes (a script error; they are not in the log store)"
+      - eval_time: 35m
+        alertname: LogRedactionDrops
+        exp_alerts: []
+      # errors from minute 6: pending from about 7m, firing 15 minutes later
+      - eval_time: 18m
+        alertname: LogShippingFailing
+        exp_alerts: []
+      - eval_time: 25m
+        alertname: LogShippingFailing
+        exp_alerts:
+          - exp_labels: {severity: warning, service: fluent-bit}
+            exp_annotations:
+              summary: "Fluent Bit cannot hand lines to the log store for 15 minutes (they wait on disk)"
+      - eval_time: 19m
+        alertname: LogLinesLost
+        exp_alerts: []
+      - eval_time: 22m
+        alertname: LogLinesLost
+        exp_alerts:
+          - exp_labels: {severity: warning, service: fluent-bit}
+            exp_annotations:
+              summary: "Fluent Bit gave up on some lines (its disk buffer was full); they are only in the server's journal"
+
+  - name: the store
+    interval: 1m
+    input_series:
+      # lines arrive for 20 minutes, then stop
+      - series: 'vl_rows_ingested_total{type="jsonline", job="victorialogs"}'
+        values: '0+100x20 2000x60'
+      - series: 'up{job="victorialogs"}'
+        values: '1x80'
+      - series: 'vl_rows_dropped_total{reason="too_many_fields", job="victorialogs"}'
+        values: '0x10 2x70'
+      - series: 'vl_too_long_lines_skipped_total{job="victorialogs"}'
+        values: '0x80'
+      - series: 'vl_storage_is_read_only{path="/vlogs", job="victorialogs"}'
+        values: '0x50 1x30'
+      - series: 'vl_data_size_bytes{type="storage", job="victorialogs"}'
+        values: '800x10 900x70'
+      - series: 'vl_data_size_bytes{type="indexdb", job="victorialogs"}'
+        values: '0x80'
+      - series: 'ihr_logs_max_bytes{job="node"}'
+        values: '1000x80'
+    alert_rule_test:
+      - eval_time: 20m
+        alertname: LogIngestStalled
+        exp_alerts: []
+      # no new lines from minute 20: rate 0 from about 35m, firing 15 minutes later
+      - eval_time: 45m
+        alertname: LogIngestStalled
+        exp_alerts: []
+      - eval_time: 52m
+        alertname: LogIngestStalled
+        exp_alerts:
+          - exp_labels: {severity: warning, service: victorialogs}
+            exp_annotations:
+              summary: "The log store received no lines for 30 minutes"
+      - eval_time: 30m
+        alertname: LogLinesRejected
+        exp_alerts:
+          - exp_labels: {severity: warning, service: victorialogs}
+            exp_annotations:
+              summary: "The log store refused 2 lines in the last hour (too long, too many fields, or a wrong time)"
+      - eval_time: 54m
+        alertname: LogStoreReadOnly
+        exp_alerts: []
+      - eval_time: 57m
+        alertname: LogStoreReadOnly
+        exp_alerts:
+          - exp_labels: {severity: critical, service: victorialogs}
+            exp_annotations:
+              summary: "The log store has switched to read-only (disk full): no lines are being stored"
+      # 900 of 1000 from minute 10: above 85 % for an hour
+      - eval_time: 65m
+        alertname: LogStoreNearCap
+        exp_alerts: []
+      - eval_time: 75m
+        alertname: LogStoreNearCap
+        exp_alerts:
+          - exp_labels: {severity: warning, service: victorialogs}
+            exp_annotations:
+              summary: "The log store uses more than 85 % of its cap (IHR_LOGS_MAX_SIZE): its oldest days will be deleted early"
+
+  - name: log alerts failing
+    interval: 1m
+    input_series:
+      - series: 'vmalert_execution_errors_total{group="sign-in-abuse", job="vmalert"}'
+        values: '0x5 1+1x40'
+      - series: 'vmalert_alerts_send_errors_total{addr="x", job="vmalert"}'
+        values: '0x45'
+    alert_rule_test:
+      - eval_time: 15m
+        alertname: LogAlertsFailing
+        exp_alerts: []
+      - eval_time: 25m
+        alertname: LogAlertsFailing
+        exp_alerts:
+          - exp_labels: {severity: warning, service: vmalert}
+            exp_annotations:
+              summary: "Log alerts fail to run or to reach Alertmanager (sign-in abuse would go unnoticed)"

@@ -74,12 +74,19 @@ compose() {  # the file list is worked out on each call: init may have just made
   [[ -n "$(env_get IHR_BACKUP)" ]] && files+=(-f "$DIR/compose.backup.yaml")
   local mon; mon="$(env_get IHR_MONITORING)"
   if [[ -n "$mon" ]]; then
-    files+=(-f "$DIR/compose.monitoring.yaml")
+    # Logs come with the metrics: their alerts go through the same Alertmanager (P1-T9b)
+    files+=(-f "$DIR/compose.monitoring.yaml" -f "$DIR/compose.logs.yaml")
     [[ "$mon" == test ]] && files+=(-f "$DIR/compose.monitoring.test.yaml")
   fi
-  # Alertmanager runs as the user that owns secrets/ (it reads its token from there, mode 600)
-  export IHR_SECRETS_UID IHR_SECRETS_GID
+  # A proof on this machine that writes to its journal like a server (IHR_LOG_DRIVER=journald in
+  # .env): the stack's own services too, so Fluent Bit finds them there
+  [[ -f "$DIR/.local" && "$(env_get IHR_LOG_DRIVER)" == journald ]] && files+=(-f "$DIR/compose.local-journal.yaml")
+  # Alertmanager and VictoriaLogs run as the user that owns secrets/ (they read a token / key
+  # from there, mode 600)
+  export IHR_SECRETS_UID IHR_SECRETS_GID IHR_JOURNAL_GID
   IHR_SECRETS_UID="$(id -u)"; IHR_SECRETS_GID="$(id -g)"
+  # Fluent Bit reads the journal as nobody with this group (P1-T9b)
+  IHR_JOURNAL_GID="$(getent group systemd-journal | cut -d: -f3)"
   docker compose --project-directory "$DIR" ${IHR_PROJECT:+-p "$IHR_PROJECT"} "${files[@]}" "$@"
 }
 LOCAL_SUFFIX="app.ihr-proof.in"  # local proof only; resolved to 127.0.0.1 by curl --resolve
@@ -234,6 +241,8 @@ up() {  # up [--new-database]: the flag only where an empty database is really m
   [[ $# -eq 0 || $new_db == 1 ]] || die "usage: scripts/staging.sh up [--new-database]"
   [[ -f "$DIR/.env" ]] || { echo "run: scripts/staging.sh init <suffix>" >&2; exit 1; }
   [[ -z "$(env_get IHR_BACKUP)" ]] || backup_config
+  # Compose reads Fluent Bit's env file on every call: the log secrets first (P1-T9b)
+  [[ -z "$(env_get IHR_MONITORING)" ]] || logs_secrets
   db_guard "$new_db"
   compose up -d --wait db redis
   touch "$DIR/.db-created"
@@ -1306,7 +1315,7 @@ MON_TEST_DEADMAN="http://heartbeat-stub:8080/ping"
 DEADMAN_RE='^https://[a-z0-9.-]+(:[0-9]+)?(/[A-Za-z0-9._~-]+)+$'
 
 # Set-up services that run once and exit; never reported as "not running" (host-metrics.sh)
-MON_ONESHOTS='migrate|admin|keytool|s3-tool|traefik-data|alertmanager-data'
+MON_ONESHOTS='migrate|admin|keytool|s3-tool|traefik-data|alertmanager-data|logs-data'
 
 monitoring_init() {  # monitoring_init <alert-recipient> [--from A] [--host H] [--port P] [--user U] | --test
   local envf="$OUT/.env" sec="$OUT/secrets" to="" from="" host="smtp.zeptomail.in" port=587
@@ -1358,6 +1367,7 @@ monitoring_init() {  # monitoring_init <alert-recipient> [--from A] [--host H] [
   printf '%s' "$token" | write_secret alertmanager-smtp-password
   printf '%s' "$deadman" | write_secret alertmanager-watchdog-url
   printf '%s' "${deadman:+$deadman/fail}" | write_secret alertmanager-watchdog-fail-url
+  logs_secrets
   # The exporters' own database and Redis users (created by `up`; monitoring_db_role and
   # compose.yaml's redis command). Redis gets only the SHA-256 of its password.
   pg_pw="$(rand 32)"; redis_pw="$(rand 32)"
@@ -1377,8 +1387,12 @@ monitoring_init() {  # monitoring_init <alert-recipient> [--from A] [--host H] [
     echo "IHR_ALERT_SMTP_PORT=$port"
     echo "IHR_ALERT_SMTP_USER=$user"
     echo "IHR_ALERT_DEADMAN=$([[ -n $deadman ]] && echo on || echo off)"
-    # A proof on this machine: the host timer's files next to the stack, not in /var/lib
-    [[ -f "$OUT/.local" ]] && echo "IHR_TEXTFILE_DIR=$OUT/generated/monitoring/textfile"
+    # A proof on this machine: the host timer's files next to the stack, not in /var/lib; and
+    # Fluent Bit starts at the end of this desktop's journal, not at its beginning
+    if [[ -f "$OUT/.local" ]]; then
+      echo "IHR_TEXTFILE_DIR=$OUT/generated/monitoring/textfile"
+      echo "IHR_LOGS_FROM_TAIL=on"
+    fi
   } >> "$envf"
   echo "Monitoring settings added (alerts to $to from $from via $host:$port); secrets in $sec (mode 600)."
   [[ -n "$deadman" ]] || echo "No dead-man switch yet: once it exists, add its URL with scripts/staging.sh monitoring-deadman."
@@ -1394,6 +1408,20 @@ monitoring_deadman() {  # monitoring_deadman: (re)set the dead-man switch's ping
   printf '%s' "$url/fail" | write_secret alertmanager-watchdog-fail-url
   sed -i 's/^IHR_ALERT_DEADMAN=.*/IHR_ALERT_DEADMAN=on/' "$envf"
   echo "Dead-man switch set. Next: scripts/staging.sh up (Alertmanager starts pinging it)."
+}
+
+logs_secrets() {  # the log store's secrets (P1-T9b), each made once (mode 600, never printed):
+  # logs-admin-key   deleting or rewriting logs: VictoriaLogs checks it; only the operator holds it
+  # logs-http-password (+ logs-shipper.env for Fluent Bit): the store's password (user ihr-logs)
+  # logs-metrics-key its /metrics only (counters); Prometheus's target file carries it
+  local d="${SECRETS_TARGET:-$SECRETS}" pw
+  [[ -s "$d/logs-admin-key" ]] || rand 32 | tr -d '\n' | write_secret logs-admin-key
+  if [[ ! -s "$d/logs-http-password" || ! -s "$d/logs-shipper.env" ]]; then
+    pw="$(rand 32)"
+    printf '%s' "$pw" | write_secret logs-http-password
+    printf 'IHR_LOGS_HTTP_PASSWORD=%s\n' "$pw" | write_secret logs-shipper.env
+  fi
+  [[ -s "$d/logs-metrics-key" ]] || rand 24 | tr -d '\n' | write_secret logs-metrics-key
 }
 
 textfile_dir() { local v; v="$(env_get IHR_TEXTFILE_DIR)"; echo "${v:-/var/lib/indiehr/textfile}"; }
@@ -1430,6 +1458,11 @@ monitoring_config() {  # generated/monitoring/: Prometheus's targets and alertma
     "http://backend:9000/health/" "service=backend" "http://keycloak:9000/health/ready" "service=keycloak"
   if [[ -n "$(env_get IHR_ACME)" ]]; then json_targets "$d/targets/probe-dns.json" "acme-dns:53" "service=acme-dns"
   else json_targets "$d/targets/probe-dns.json"; fi
+  # VictoriaLogs's /metrics key as a URL parameter (it guards counters only)
+  local mkey=""
+  [[ ! -r "$SECRETS/logs-metrics-key" ]] || mkey="$(cat "$SECRETS/logs-metrics-key")"
+  [[ -z "$mkey" || "$mkey" =~ ^[A-Za-z0-9_-]+$ ]] || die "secrets/logs-metrics-key is not a plain key"
+  json_targets "$d/targets/victorialogs.json" "victorialogs:9428" "${mkey:+__param_authKey=$mkey}"
   if [[ "$(env_get IHR_S3)" == local ]]; then json_targets "$d/targets/s3.json" "s3:9327" "service=s3"
   else json_targets "$d/targets/s3.json"; fi
   hello="${suffix#*.}"
@@ -1477,6 +1510,11 @@ route:
     - receiver: email
       matchers: ['severity="critical"']
       repeat_interval: 4h
+    # Sign-in abuse naming an address (log alerts, notify="anytime"): mailed at once, day or
+    # night, at most daily per address (owner, Q-O9); still a warning for the inhibit rule
+    - receiver: email
+      matchers: ['notify="anytime"']
+      repeat_interval: 24h
     # Warnings wait for the day (08:00-22:00 IST) and repeat once a day
     - receiver: email
       matchers: ['severity="warning"']
@@ -1547,11 +1585,14 @@ SQL
 }
 
 MON_DIR="$DIR/../monitoring"   # what compose.monitoring.yaml mounts as ../monitoring
+LOGS_DIR="$DIR/../logs"        # what compose.logs.yaml mounts as ../logs
 monitoring_settings() {  # monitoring_settings <service>: the files a service reads its settings from
   case "$1" in
     prometheus) printf '%s\n' "$MON_DIR/prometheus/prometheus.yml" "$MON_DIR"/prometheus/rules/*.yml ;;
     alertmanager) printf '%s\n' "$GEN/monitoring/alertmanager.yml" ;;
     blackbox-exporter) printf '%s\n' "$MON_DIR/blackbox/blackbox.yml" ;;
+    fluent-bit) printf '%s\n' "$LOGS_DIR"/fluent-bit/* ;;
+    vmalert) printf '%s\n' "$LOGS_DIR"/alerts/*.yml ;;
   esac
 }
 monitoring_settings_sum() {  # one hash over a service's settings files (names and contents; no secret:
@@ -1561,9 +1602,14 @@ monitoring_settings_sum() {  # one hash over a service's settings files (names a
 }
 
 monitoring_up() {  # after the stack: settings, the database role, the host's files, then the services
-  local svc=(prometheus alertmanager node-exporter blackbox-exporter postgres-exporter redis-exporter) out s
-  local stale=() stamp
+  local svc=(prometheus alertmanager node-exporter blackbox-exporter postgres-exporter redis-exporter
+             victorialogs fluent-bit vmalert) out s
+  local stale=() stamp restamp=(prometheus alertmanager blackbox-exporter fluent-bit vmalert)
+  # Monitoring set up before P1-T9b has no log-store secrets yet (the targets need one)
+  logs_secrets
   monitoring_config
+  [[ -n "$IHR_JOURNAL_GID" ]] || IHR_JOURNAL_GID="$(getent group systemd-journal | cut -d: -f3)"
+  [[ -n "$IHR_JOURNAL_GID" && -d /var/log/journal ]] || die "no persistent journal here (/var/log/journal, group systemd-journal): run deploy/host/bootstrap.sh"
   out="$(textfile_dir)"
   # node_exporter mounts it: Docker would create a missing folder as root
   if [[ ! -d "$out" ]]; then
@@ -1577,7 +1623,7 @@ monitoring_up() {  # after the stack: settings, the database role, the host's fi
   # a running container keeps the old ones, and neither Prometheus nor Alertmanager rereads its
   # rules or routes by itself. A container whose settings changed since it started (or that
   # has no stamp yet) is recreated; Alertmanager's silences and notification log stay in amdata.
-  for s in prometheus alertmanager blackbox-exporter; do
+  for s in "${restamp[@]}"; do
     stamp="$GEN/monitoring/.settings-$s"
     if [[ -n "$(compose ps -aq "$s" 2>/dev/null)" && "$(cat "$stamp" 2>/dev/null)" != "$(monitoring_settings_sum "$s")" ]]; then
       stale+=("$s")
@@ -1588,7 +1634,7 @@ monitoring_up() {  # after the stack: settings, the database role, the host's fi
     echo "Settings changed: recreating ${stale[*]}"
     compose up -d --wait --no-deps --force-recreate "${stale[@]}"
   fi
-  for s in prometheus alertmanager blackbox-exporter; do
+  for s in "${restamp[@]}"; do
     monitoring_settings_sum "$s" > "$GEN/monitoring/.settings-$s"
   done
 }
@@ -1605,10 +1651,30 @@ monitoring_textfile() {  # monitoring_textfile [--keys]: the host timer's run (e
   spool="$(env_get IHR_BACKUP_SPOOL_MAX_MB)"
   "$ROOT/deploy/monitoring/host-metrics.sh" --out "$out" --project "${IHR_PROJECT:-indiehr-staging}" \
     --services "$services" --backup-spool-max-mb "${spool:-2048}"
+  logs_cap_metric "$out"
   # The key ages hourly (three one-off key-tool containers)
   if ((keys)) || [[ ! -f "$out/ihr_client_keys.prom" || -n "$(find "$out/ihr_client_keys.prom" -mmin +55)" ]]; then
     monitoring_key_metrics "$out"
   fi
+}
+
+logs_cap_bytes() {  # IHR_LOGS_MAX_SIZE (as VictoriaLogs reads it: 20GiB, 500MB, ...) in bytes
+  local v n u; v="$(env_get IHR_LOGS_MAX_SIZE)"; v="${v:-20GiB}"
+  [[ "$v" =~ ^([0-9]+)(|KB|MB|GB|TB|KiB|MiB|GiB|TiB)$ ]] || die "IHR_LOGS_MAX_SIZE in .env is not a size (e.g. 20GiB): $v"
+  n="${BASH_REMATCH[1]}"; u="${BASH_REMATCH[2]}"
+  case "$u" in
+    "") echo "$n" ;;
+    KB) echo $((n * 1000)) ;; MB) echo $((n * 1000 ** 2)) ;; GB) echo $((n * 1000 ** 3)) ;; TB) echo $((n * 1000 ** 4)) ;;
+    KiB) echo $((n * 1024)) ;; MiB) echo $((n * 1024 ** 2)) ;; GiB) echo $((n * 1024 ** 3)) ;; TiB) echo $((n * 1024 ** 4)) ;;
+  esac
+}
+
+logs_cap_metric() {  # <out>/ihr_logs.prom: the log store's disk cap (LogStoreNearCap compares)
+  local out="$1" tmp
+  tmp="$(mktemp "$out/.ihr_logs.XXXXXX")"
+  printf '# HELP ihr_logs_max_bytes The log store'"'"'s disk cap (IHR_LOGS_MAX_SIZE).\n# TYPE ihr_logs_max_bytes gauge\nihr_logs_max_bytes %s\n' "$(logs_cap_bytes)" > "$tmp"
+  chmod 644 "$tmp"
+  mv "$tmp" "$out/ihr_logs.prom"
 }
 
 monitoring_key_metrics() {  # <out>/ihr_client_keys.prom: each purpose's active key and its age
@@ -1643,6 +1709,17 @@ prom_get() {  # prom_get <url>: a GET from inside the Prometheus container (moni
   compose exec -T prometheus wget -q -T 10 -O - "$1"
 }
 
+vl_ip() {  # VictoriaLogs's fixed address on `logs` (the SSH tunnel and smoke use it)
+  local v; v="$(env_get IHR_VICTORIALOGS_IP)"; v="${v:-10.203.0.36}"
+  [[ "$v" =~ ^[0-9]{1,3}(\.[0-9]{1,3}){3}$ ]] || die "IHR_VICTORIALOGS_IP in .env is not an IPv4 address"
+  echo "$v"
+}
+vmalert_ip() {
+  local v; v="$(env_get IHR_VMALERT_IP)"; v="${v:-10.203.0.37}"
+  [[ "$v" =~ ^[0-9]{1,3}(\.[0-9]{1,3}){3}$ ]] || die "IHR_VMALERT_IP in .env is not an IPv4 address"
+  echo "$v"
+}
+
 am_ip() {  # Alertmanager's fixed address on `alerting`, the only one it listens on
   local v; v="$(env_get IHR_ALERTMANAGER_IP)"; v="${v:-10.203.0.20}"
   [[ "$v" =~ ^[0-9]{1,3}(\.[0-9]{1,3}){3}$ ]] || die "IHR_ALERTMANAGER_IP in .env is not an IPv4 address"
@@ -1664,7 +1741,7 @@ monitoring_smoke() {  # smoke's monitoring part: targets up, rules loaded, Alert
   # machine has no timer: run `scripts/staging.sh monitoring-textfile` to refresh them)
   monitoring_textfile
   check "monitoring: nothing published on the host (SSH tunnel only)" "" \
-    "$(for s in prometheus alertmanager node-exporter blackbox-exporter postgres-exporter redis-exporter; do docker port "$(compose ps -q "$s")" 2>/dev/null; done)"
+    "$(for s in prometheus alertmanager node-exporter blackbox-exporter postgres-exporter redis-exporter victorialogs fluent-bit vmalert; do docker port "$(compose ps -q "$s")" 2>/dev/null; done)"
   # Every target scraped and up (the first scrapes take up to 30 s after a start)
   for i in $(seq 1 12); do
     bad="$(prom_get 'http://127.0.0.1:9090/api/v1/targets?state=active' | python3 -c 'import json,sys
@@ -1722,6 +1799,73 @@ except urllib.error.HTTPError as e:
     print(e.code)' 2>/dev/null || echo unreachable)"
   check "host metrics written in the last 5 minutes" yes \
     "$([[ -n "$(find "$(textfile_dir)/ihr_host.prom" -mmin -5 2>/dev/null)" ]] && echo yes || echo no)"
+  logs_smoke
+}
+
+vl_get() {  # vl_get <path>: a GET to the log store with its password, from a one-off container
+  # on its network (the backend image's Python); the password goes in on stdin, never a command line
+  local net
+  net="$(docker inspect -f '{{range $k, $v := .NetworkSettings.Networks}}{{$k}} {{end}}' "$(compose ps -q victorialogs)" | tr ' ' '\n' | grep '_logs$' | head -1)"
+  [[ -n "$net" ]] || return 1
+  docker run --rm -i --network "$net" --log-driver none --entrypoint python3 "$(env_get IHR_BACKEND_IMAGE)" -I -c 'import base64, sys, urllib.error, urllib.request
+pw = sys.stdin.readline().strip()
+auth = base64.b64encode(("ihr-logs:" + pw).encode()).decode()
+req = urllib.request.Request(sys.argv[1], headers={"Authorization": "Basic " + auth})
+try:
+    sys.stdout.write(urllib.request.urlopen(req, timeout=15).read().decode())
+except urllib.error.HTTPError as e:
+    sys.exit("HTTP %d" % e.code)' "http://$(vl_ip):9428$1" < "$SECRETS/logs-http-password"
+}
+
+logs_smoke() {  # smoke's log part (P1-T9b): a test line through the journal, redacted in the store
+  local vl id line out i
+  vl="http://$(vl_ip):9428"
+  # A journal entry like any container's, with values the redaction must mask (synthetic: a
+  # documentation address and numbers that belong to nobody)
+  id="ihrcanary$(rand 9 | tr -dc 'a-z0-9')"
+  line="$id mail canary.$id@example.in mobile 98765 43210 aadhaar 2345 6789 0123 token=secret$id search /api/v1/patient/?name=$id-secret"
+  docker run --rm --network none --log-driver journald --log-opt "tag=indiehr/log-canary" \
+    --log-opt labels=com.docker.compose.service --label com.docker.compose.service=log-canary \
+    --entrypoint /bin/echo "$(sed -n 's/^ *image: \(prom\/alertmanager:[^ ]*\)$/\1/p' "$DIR/compose.logs.yaml" | head -1)" "$line" >/dev/null
+  for i in $(seq 1 12); do
+    out="$(vl_get "/select/logsql/query?query=$id&limit=5" 2>/dev/null || true)"
+    [[ -n "$out" ]] && break
+    sleep 5
+  done
+  check "logs: a test line reaches the log store through the journal" 1 "$(grep -c "$id" <<< "$out" || true)"
+  check "logs: its e-mail, mobile, Aadhaar-like number, token and query string are masked" \
+    "<email> <phone> <aadhaar> <redacted> ?<q>" \
+    "$(python3 -c 'import json,sys
+for l in sys.stdin:
+    m = json.loads(l)["_msg"]
+    print(" ".join(t for t in ("<email>", "<phone>", "<aadhaar>", "<redacted>", "?<q>") if t in m))' <<< "$out" 2>/dev/null)"
+  check "logs: none of the test values is stored" 0 "$(grep -cE "canary\.|98765|2345 6789|secret$id|$id-secret" <<< "$out" || true)"
+  check "logs: stored with its service and source" "log-canary container" \
+    "$(python3 -c 'import json,sys
+for l in sys.stdin:
+    r = json.loads(l); print(r.get("service"), r.get("source"))' <<< "$out" 2>/dev/null)"
+  # The server's own logs too (sshd, sudo, systemd): anything from the host in the last hour
+  check "logs: the host's own services are stored" yes \
+    "$(vl_get "/select/logsql/hits?query=source:host&start=1h&step=1h" 2>/dev/null | grep -q '"total":[1-9]' && echo yes || echo no)"
+  # vmalert has both groups of log alerts, and they run
+  check "logs: vmalert runs the log alerts without errors" "2 groups, no errors" \
+    "$(prom_get "http://$(vmalert_ip):8880/api/v1/rules" 2>/dev/null | python3 -c 'import json,sys
+g = json.load(sys.stdin)["data"]["groups"]
+e = [r["name"] for x in g for r in x["rules"] if r.get("lastError")]
+print("%d groups, %s" % (len(g), ("errors: " + " ".join(e)) if e else "no errors"))' 2>/dev/null || echo unreadable)"
+  # Deleting logs needs the operator's key; the web app cannot reach the log store at all
+  out="$(compose exec -T prometheus wget -q -T 10 -O /dev/null "$vl/select/logsql/query?query=$id" 2>&1 || true)"
+  check "logs: reading the store without its password is refused" 401 \
+    "$(grep -oE 'HTTP/[0-9.]+ [0-9]{3}' <<< "$out" | grep -oE '[0-9]{3}$' | head -1)"
+  out="$(compose exec -T prometheus wget -q -T 10 -O /dev/null --post-data '' "$vl/delete/run_task?filter=$id" 2>&1 || true)"
+  check "logs: deleting logs without the key is refused" 401 \
+    "$(grep -oE 'HTTP/[0-9.]+ [0-9]{3}' <<< "$out" | grep -oE '[0-9]{3}$' | head -1)"
+  check "logs: the web app cannot reach the log store" unreachable \
+    "$(compose exec -T backend python -c 'import sys, urllib.request
+try:
+    urllib.request.urlopen(sys.argv[1] + "/health", timeout=5); print("reachable")
+except Exception:
+    print("unreachable")' "$vl" 2>/dev/null || echo unreachable)"
 }
 
 alerts() {  # alerts: what Alertmanager holds now (firing, silenced, inhibited)
@@ -1755,8 +1899,8 @@ alert_test() {  # alert-test: one synthetic alert, mailed now; it resolves itsel
   fi
 }
 
-ops_tunnel() {  # ops-tunnel [user@server] [--port N]: Prometheus and Alertmanager on this machine
-  local dest="" port=22 prom am
+ops_tunnel() {  # ops-tunnel [user@server] [--port N]: Prometheus, Alertmanager and the logs on this machine
+  local dest="" port=22 prom am vl vma
   while (($#)); do
     case "$1" in
       --port) port="${2:?--port N}"; shift ;;
@@ -1766,13 +1910,16 @@ ops_tunnel() {  # ops-tunnel [user@server] [--port N]: Prometheus and Alertmanag
     shift
   done
   prom="$(env_get IHR_PROMETHEUS_IP)"; prom="${prom:-10.203.0.70}"
-  am="$(am_ip)"
+  am="$(am_ip)"; vl="$(vl_ip)"; vma="$(vmalert_ip)"
   [[ "$port" =~ ^[0-9]+$ ]] || die "--port must be a number"
   # Their fixed addresses on the server's monitoring and alerting networks (nothing is published); bootstrap.sh
   # allows local forwarding only. Bound to this machine's 127.0.0.1 alone.
-  local cmd=(ssh -N -p "$port" -L "127.0.0.1:9090:$prom:9090" -L "127.0.0.1:9093:$am:9093" "${dest:-ihr@<server>}")
+  local cmd=(ssh -N -p "$port" -L "127.0.0.1:9090:$prom:9090" -L "127.0.0.1:9093:$am:9093"
+             -L "127.0.0.1:9428:$vl:9428" -L "127.0.0.1:8880:$vma:8880" "${dest:-ihr@<server>}")
   echo "Prometheus:   http://127.0.0.1:9090   (alerts: /alerts, targets: /targets)"
   echo "Alertmanager: http://127.0.0.1:9093"
+  echo "Logs:         http://127.0.0.1:9428/select/vmui/   (user ihr-logs, password: secrets/logs-http-password on the server)"
+  echo "Log alerts:   http://127.0.0.1:8880"
   if [[ -z "$dest" ]]; then
     echo "Run on your own machine (Ctrl-C ends it):"
     printf '  %s\n' "${cmd[*]}"
