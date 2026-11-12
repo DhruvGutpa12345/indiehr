@@ -2,8 +2,8 @@
 backend.prefix=apps/backend
 backend.repo=https://github.com/ohcnetwork/care.git
 backend.branch=develop
-backend.sha=67a46185eb98ee4b79b38ecee84d8a69d173306e
-backend.date=2026-11-01
+backend.sha=782d511a38fcf164a5eca79c03eed73ad29828ee
+backend.date=2026-11-10
 frontend.prefix=apps/frontend
 frontend.repo=https://github.com/ohcnetwork/care_fe.git
 frontend.branch=develop
