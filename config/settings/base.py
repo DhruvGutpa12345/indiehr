@@ -115,7 +115,7 @@ DJANGO_APPS = [
     "django.contrib.sites",
     "django.contrib.messages",
     "django.contrib.staticfiles",
-    "django.contrib.admin",
+    "config.apps.CareAdminConfig",
     "django.forms",
 ]
 THIRD_PARTY_APPS = [
@@ -409,6 +409,7 @@ SIMPLE_JWT = {
     ),
     "ROTATE_REFRESH_TOKENS": True,
     "USER_ID_FIELD": "external_id",
+    "CHECK_REVOKE_TOKEN": True,
 }
 
 # Celery (background tasks)
@@ -693,6 +694,30 @@ FACILITY_S3_BUCKET_EXTERNAL_ENDPOINT = env(
     ),
 )
 FACILITY_CDN = env("FACILITY_CDN", default=None)
+
+# REPORT RENDERING
+# ------------------------------------------------------------------------------
+REPORT_MAX_RESOURCE_SIZE_BYTES = env.int(
+    "REPORT_MAX_RESOURCE_SIZE_BYTES", default=10 * 1024 * 1024
+)
+REPORT_ALLOWED_RESOURCE_ORIGINS = env.list(
+    "REPORT_ALLOWED_RESOURCE_ORIGINS",
+    default=env.list(
+        "REPORT_ALLOWED_IMAGE_ORIGINS", default=[FACILITY_CDN] if FACILITY_CDN else []
+    ),
+)
+REPORT_CONTENT_SECURITY_POLICY = env(
+    "REPORT_CONTENT_SECURITY_POLICY",
+    default=(
+        "default-src 'none'; img-src "
+        + " ".join(["data:", *REPORT_ALLOWED_RESOURCE_ORIGINS])
+        + "; font-src "
+        + " ".join(["data:", *REPORT_ALLOWED_RESOURCE_ORIGINS])
+        + "; style-src "
+        + " ".join(["'unsafe-inline'", *REPORT_ALLOWED_RESOURCE_ORIGINS])
+        + "; base-uri 'none'; form-action 'none'; frame-ancestors 'none'"
+    ),
+)
 
 # current hosted domain
 CURRENT_DOMAIN = env("CURRENT_DOMAIN", default="localhost:4000")
