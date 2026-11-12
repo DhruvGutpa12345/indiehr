@@ -16,6 +16,7 @@ import {
   accountBillingStatusFilter,
   accountStatusFilter,
   dateFilter,
+  encounterClassFilter,
   tagFilter,
 } from "@/components/ui/multi-filter/filterConfigs";
 import MultiFilter from "@/components/ui/multi-filter/MultiFilter";
@@ -112,6 +113,7 @@ export function AccountList({
     accountStatusFilter("status"),
     dateFilter("created_date", t("period"), longDateRangeOptions, false),
     accountBillingStatusFilter("billing_status"),
+    encounterClassFilter("encounter_class"),
     tagFilter("tags", TagResource.ACCOUNT, "multi", "tags"),
   ];
 
@@ -160,6 +162,9 @@ export function AccountList({
     billing_status: qParams.billing_status
       ? [qParams.billing_status]
       : undefined,
+    encounter_class: qParams.encounter_class
+      ? [qParams.encounter_class]
+      : undefined,
     tags: selectedTags,
   });
 
@@ -173,6 +178,7 @@ export function AccountList({
         offset: ((qParams.page || 1) - 1) * resultsPerPage,
         status: qParams.status,
         billing_status: qParams.billing_status,
+        encounter_class: qParams.encounter_class,
         created_date_after: qParams.created_date_after,
         created_date_before: qParams.created_date_before,
         tags: qParams.tags,
