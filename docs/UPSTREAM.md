@@ -4,8 +4,8 @@ How CARE is brought in and kept current: [ADR-006](adr/006-upstream-fork-via-sub
 
 | App | Folder | Upstream | Pinned commit | Commit date |
 |---|---|---|---|---|
-| Backend (Django API) | `apps/backend` | ohcnetwork/care `develop` | `67a46185eb98` | 2026-11-01 |
-| Frontend (React) | `apps/frontend` | ohcnetwork/care_fe `develop` | `57205b897804` | 2026-11-02 |
+| Backend (Django API) | `apps/backend` | ohcnetwork/care `develop` | `782d511a38fc` | 2026-11-10 |
+| Frontend (React) | `apps/frontend` | ohcnetwork/care_fe `develop` | `c9519b7f3f50` | 2026-11-12 |
 
 ## Check for upstream changes (changes nothing)
 
