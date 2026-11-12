@@ -102,6 +102,15 @@ class SecureRulesTests(SimpleTestCase):
             },
             "SENTRY_DSN must stay unset": {"SENTRY_DSN": "https://x@sentry.io/1"},
             "TIME_ZONE must be Asia/Kolkata": {"TIME_ZONE": "UTC"},
+            # The terminology loader relaxes its rules on throwaway databases (P1-T10a2)
+            "test_* or bench_* database": {
+                "DATABASES": {"default": {"NAME": "bench_terminology"}}
+            },
+            "nor marked throwaway": {"IHR_TERMINOLOGY_THROWAWAY_DB": True},
+            # CARE's switch opens every patient to every signed-in user (P1-T11a)
+            "PATIENT_GLOBAL_EDIT_ACCESS_ENABLED must stay off": {
+                "PATIENT_GLOBAL_EDIT_ACCESS_ENABLED": True
+            },
             "USE_TZ must be on": {"USE_TZ": False},
             "EMAIL_HOST is not set": {"EMAIL_HOST": "localhost"},
             "EMAIL_BACKEND must be": {

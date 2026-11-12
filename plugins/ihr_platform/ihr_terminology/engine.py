@@ -24,6 +24,7 @@ import contextvars
 import logging
 from dataclasses import dataclass, field
 
+from django.core.exceptions import EmptyResultSet
 from django.db import OperationalError, connection, transaction
 from django.db.models import Q
 from rest_framework.exceptions import APIException
@@ -48,7 +49,9 @@ MAX_INCLUDES = 20  # includes + excludes in one call
 MAX_CONCEPTS = 2000  # codes listed in one compose
 MAX_FILTER_CHARS = 100
 MAX_FILTER_WORDS = 12  # counted on the text as typed
-MAX_CANDIDATES = 5000  # designations ranked for one search
+MAX_CANDIDATES = (
+    1000  # concepts ranked in Python for one search (picked in SQL by the same keys)
+)
 MAX_SEARCHES_PER_REQUEST = 30
 MAX_WARNINGS_KEPT = 256
 STATEMENT_TIMEOUT_MS = 2000
@@ -395,6 +398,65 @@ def _fhir_designations(designations):
     return out
 
 
+def _lexemes(filter_norm):
+    """The search words as Postgres's 'simple' parser reads them: the same parser made the
+    designations' vectors, so a word it cannot read alone (a lone mark) is dropped on both sides."""
+    if not filter_norm:
+        return []
+    with connection.cursor() as cur:
+        cur.execute(
+            "SELECT array(SELECT lexeme FROM unnest(to_tsvector('simple', %s)) ORDER BY 1)",
+            [filter_norm],
+        )
+        return list(cur.fetchone()[0])
+
+
+def _candidates(base, words, filter_norm):
+    """At most MAX_CANDIDATES designations, one per concept, every word a prefix of a word of that
+    designation (GIN index), picked in SQL by the leading keys of _rank: the exact term, the text
+    starting with the words, a preferred term, a shorter text. Only the columns ranking needs are
+    read."""
+    # The value set may select no concept here (is-a an unknown code, ...): Django then refuses to
+    # write the SQL, and the answer is simply empty
+    try:
+        base_sql, base_params = base.values("id").query.sql_with_params()
+    except EmptyResultSet:
+        return Designation.objects.none()
+    tsquery = " & ".join("'" + w.replace("'", "''") + "':*" for w in words)
+    # normalise() leaves letters, digits, marks and spaces only: no LIKE wildcards inside
+    like = filter_norm + "%"
+    sql = f"""
+        SELECT id FROM (
+          SELECT DISTINCT ON (d.concept_id) d.id, d.search_text = %s AS exact, d.search_text LIKE %s AS starts,
+                 d.preferred, length(d.search_text) AS len
+            FROM ihr_terminology_designation d
+           WHERE d.concept_id IN ({base_sql}) AND d.search_vector @@ to_tsquery('simple', %s)
+           ORDER BY d.concept_id, d.search_text = %s DESC, d.search_text LIKE %s DESC, d.preferred DESC,
+                    length(d.search_text), d.id
+        ) x ORDER BY exact DESC, starts DESC, preferred DESC, len, id LIMIT %s
+    """  # noqa: S608 (the inner query is Django's own, with its parameters bound)
+    with connection.cursor() as cur:
+        cur.execute(
+            sql,
+            [
+                filter_norm,
+                like,
+                *base_params,
+                tsquery,
+                filter_norm,
+                like,
+                MAX_CANDIDATES,
+            ],
+        )
+        ids = [r[0] for r in cur.fetchall()]
+    return (
+        Designation.objects.filter(id__in=ids)
+        .select_related("concept")
+        .only("id", "concept_id", "value", "preferred", "concept__id", "concept__code", "concept__display",
+              "concept__active")
+    )  # fmt: skip
+
+
 def _rank(raw, filter_norm, concept, designation):
     """Lower is better: the code as typed; the exact term; the code in another case; a term
     starting with the words; a preferred term; a shorter term."""
@@ -423,9 +485,9 @@ def expand(  # noqa: PLR0912 (loaded and listed content, each with and without w
         raise RefusedError("too many search words")
     raw = search.strip()
     filter_norm = normalise(search)
-    words = filter_norm.split()
     results = []
     with _Timeout():
+        words = _lexemes(filter_norm)
         p = plan(includes, excludes)
         for system, (version, q_inc, q_exc) in p.loaded.items():
             base = _concepts(version, q_inc, q_exc)
@@ -443,13 +505,8 @@ def expand(  # noqa: PLR0912 (loaded and listed content, each with and without w
                 ]
                 ranked = [(c, None) for c in picked[:count]]
             else:
-                dq = Designation.objects.filter(concept__in=base)
-                for w in words:
-                    dq = dq.filter(
-                        Q(search_text__startswith=w) | Q(search_text__contains=" " + w)
-                    )
                 best = {}
-                for d in dq.select_related("concept").order_by("id")[:MAX_CANDIDATES]:
+                for d in _candidates(base, words, filter_norm):
                     key = _rank(raw, filter_norm, d.concept, d)
                     if d.concept_id not in best or key < best[d.concept_id][0]:
                         best[d.concept_id] = (key, d.concept)

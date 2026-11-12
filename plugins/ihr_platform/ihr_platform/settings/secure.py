@@ -121,6 +121,17 @@ def problems(settings, environ):  # noqa: PLR0912 (one flat list of rules)
             "SNOWSTORM_DEPLOYMENT_URL must be the black hole (http://127.0.0.1:9/fhir): "
             "terminology is answered by ihr_terminology."
         )
+    db_name = str((settings.get("DATABASES") or {}).get("default", {}).get("NAME", ""))
+    if db_name.startswith(("test_", "bench_")) or settings.get(
+        "IHR_TERMINOLOGY_THROWAWAY_DB"
+    ):
+        # Test and benchmark names relax the terminology loader's rules (P1-T10a2)
+        found.append(
+            "The database must not be a test_* or bench_* database, nor marked throwaway."
+        )
+    if settings.get("PATIENT_GLOBAL_EDIT_ACCESS_ENABLED"):
+        # CARE's switch lets anyone open and edit any patient without clinical-data rights
+        found.append("PATIENT_GLOBAL_EDIT_ACCESS_ENABLED must stay off (P1-T11a).")
     if settings.get("SENTRY_DSN"):
         found.append(
             "SENTRY_DSN must stay unset (no data leaves India; P1-T9 monitoring)."

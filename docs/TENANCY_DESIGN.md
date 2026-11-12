@@ -95,7 +95,7 @@ Two of the three independent designs converged on this.
 ## 5. Reference data (drug catalogue, value sets, roles, forms, price lists)
 
 - **Everything CARE reads lives in the tenant schema.** Shared reference data is shipped as **versioned "packs"** applied to each tenant: JSON in the repo, sha256 recorded in `PackRelease`. Examples: `core-in` for drugs, lab definitions, standard forms, print templates and identifier configs (UHID, ABHA); `pmjay-2026` for government package codes.
-- **Permissions and system roles** come from CARE's code. `sync_permissions_roles` runs per tenant after every upgrade, and our Indian roles (P1-T11) are a pack.
+- **Permissions and system roles** come from CARE's code. `sync_permissions_roles` runs per tenant after every upgrade, and our Indian roles (P1-T11) are a pack. *Amended 2026-11-12 (ADR-017, Proposed): our roles are code-defined system roles too (`ihr_roles`), synced like CARE's; names are permanent; the sync is guarded so it never deletes a role that anyone holds (images from P1-T11a on; never roll back past P1-T11a once our roles are held).*
 - **Pack updates:**
   - a row the hospital hasn't edited is updated;
   - an edited row is left alone and shown to the hospital admin as "update available";

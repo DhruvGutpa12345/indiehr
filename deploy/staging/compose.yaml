@@ -210,6 +210,7 @@ services:
         python manage.py migrate --noinput
         && python manage.py ihr_create_tenant --public --domain localhost
         --domain console.${IHR_TENANT_DOMAIN_SUFFIX} --domain backend
+        && python manage.py all_tenants_command --no-public sync_permissions_roles --check
         && python manage.py all_tenants_command --no-public sync_permissions_roles
         && python manage.py all_tenants_command --no-public sync_valueset
     depends_on:

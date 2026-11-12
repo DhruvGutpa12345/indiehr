@@ -237,7 +237,8 @@ def load_resource(res, *, source, sha256, operator, licence=""):
                     language="en",
                     value=r["display"],
                     preferred=True,
-                    search_text=normalise(f"{r['display']} {r['code']}"),
+                    # the term only: codes are matched by the search's exact-code path
+                    search_text=normalise(r["display"]),
                 )
             )
             for d in r["designations"]:
@@ -266,6 +267,10 @@ def load_resource(res, *, source, sha256, operator, licence=""):
         )
         v.status = "active"
         v.save(update_fields=["status"])
+        with (
+            connection.cursor() as cur
+        ):  # planner statistics now, not whenever autovacuum runs
+            cur.execute("ANALYZE ihr_terminology_concept, ihr_terminology_designation")
         _close_for_writing()
     return v
 
@@ -323,7 +328,8 @@ def load_bundled(*, operator):
 
 
 def prune(*, operator):
-    """Remove the concepts of retired versions; their version rows stay as the load history."""
+    """Remove the concepts of retired versions; their version rows stay as the load history.
+    Plain SQL: Django's delete collector would load a whole SNOMED version into memory."""
     if not operator:
         msg = "say who prunes (--operator)"
         raise LoadError(msg)
@@ -334,7 +340,22 @@ def prune(*, operator):
                 "id", flat=True
             )
         )
-        n, _ = Concept.objects.filter(system_id__in=retired).delete()
+        if not retired:
+            _close_for_writing()
+            return 0
+        with connection.cursor() as cur:
+            cur.execute(
+                "DELETE FROM ihr_terminology_designation d USING ihr_terminology_concept c"
+                " WHERE c.id = d.concept_id AND c.system_id = ANY(%s)",
+                [retired],
+            )
+            cur.execute(
+                "DELETE FROM ihr_terminology_concept WHERE system_id = ANY(%s)",
+                [retired],
+            )
+            n = cur.rowcount
         CodeSystemVersion.objects.filter(id__in=retired).update(concepts=0)
+        with connection.cursor() as cur:
+            cur.execute("ANALYZE ihr_terminology_concept, ihr_terminology_designation")
         _close_for_writing()
     return n

@@ -262,6 +262,74 @@ class Engine(TestCase):
         )
         self.assertEqual(len(r["expansion"]["contains"]), engine.MAX_COUNT)
 
+    def test_the_typed_code_is_found_by_index(self):
+        """expand() looks up the code as typed in any case before the word search; at SNOMED
+        scale that took 171 ms without this index (bench run 3)."""
+        with schema_context("public"), connection.cursor() as cur:
+            found = connection.introspection.get_constraints(
+                cur, Concept._meta.db_table
+            )
+        self.assertIn("ihr_term_code_upper", found)
+        self.assertTrue(found["ihr_term_code_upper"]["index"])
+        self.assertEqual(vs(whole(TEST)).search(search="n007")[0].code, "N007")
+
+    def test_candidates_chosen_in_sql_by_the_same_keys(self):
+        """With words, at most MAX_CANDIDATES concepts are read; the SQL must pick them by the
+        leading ranking keys, or a better match past the cap would be lost (review F6). The texts
+        differ from other tests' as typed: CARE caches identical searches for 10 s."""
+        with mock.patch.object(engine, "MAX_CANDIDATES", 1):
+            # "Gamma" (exact) and "Gamma ray burst": the exact term must be the one candidate
+            self.assertEqual(
+                [r.code for r in vs(whole(TEST)).search(search="GAMMA")], ["Z1"]
+            )
+            # "Combined beta only" is shorter than "Combined alpha beta": both match every word
+            self.assertEqual(
+                [r.code for r in vs(whole(TEST)).search(search="Comb Beta")], ["C2"]
+            )
+            # a term starting with the words beats a shorter one that only contains them
+            self.assertEqual(
+                [r.code for r in vs(whole(TEST)).search(search="ALPHA")], ["A"]
+            )
+        with mock.patch.object(engine, "MAX_CANDIDATES", 3):
+            got = [
+                r.code for r in vs(whole(TEST)).search(search="Numbered Item", count=10)
+            ]
+            self.assertEqual(
+                len(got), 3
+            )  # the cap holds, and the answer is not an error
+            self.assertTrue(all(c.startswith("N") for c in got))
+
+    def test_value_sets_that_select_nothing_answer_empty(self):
+        is_a_nope = {"include": [{"system": TEST, "filter": [{"property": "concept", "op": "is-a",
+                                                               "value": "NOPE"}]}]}  # fmt: skip
+        everything_excluded = {
+            "include": [{"system": TEST, "concept": [{"code": "A"}]}],
+            "exclude": [{"system": TEST, "concept": [{"code": "A"}]}],
+        }
+        for compose in (is_a_nope, everything_excluded):
+            for search in ("", "alpha", "a"):
+                self.assertEqual(
+                    list(vs(compose).search(search=search)), [], (compose, search)
+                )
+
+    def test_marks_the_parser_drops_never_break_a_search(self):
+        """Postgres's parser drops some characters (lone marks, punctuation) from both the
+        designations and the search: the words left still match, and only-marks searches answer
+        without error."""
+        for search in ("alpha -", "alpha ,", "- alpha", "alpha / left", "alpha 'left"):
+            self.assertIn(
+                "A1",
+                [r.code for r in vs(whole(TEST)).search(search=search, count=20)],
+                search,
+            )
+        for search in ("-", "/", "'", "' & |", "\\"):
+            vs(whole(TEST)).search(
+                search=search
+            )  # answers (codes A-Z), never a tsquery error
+        self.assertEqual(
+            [r.code for r in vs(whole(TEST)).search(search="µg dose")], ["M1"]
+        )
+
     def test_hierarchy_filters(self):
         def codes(*filters, system=TEST):
             return sorted(

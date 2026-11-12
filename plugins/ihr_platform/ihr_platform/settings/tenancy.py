@@ -11,6 +11,9 @@ from pathlib import Path
 from django.core.exceptions import ImproperlyConfigured
 
 SHARED_APPS = [
+    # First of all apps: its guarded sync_permissions_roles shadows CARE's (P1-T11a, ADR-017).
+    # No tables; installed once here, its command runs in every schema.
+    "ihr_roles",
     "django_tenants",
     "ihr_platform",
     "django.contrib.contenttypes",

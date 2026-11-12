@@ -40,3 +40,7 @@ IHR_KEYCLOAK_SMTP = {
 IHR_SESSION_IDLE_SECONDS = int(os.environ.get("IHR_SESSION_IDLE_SECONDS", "1800"))
 
 apply_tenancy(globals())
+
+# Only the terminology benchmark sets this (scripts/terminology-scale-bench.sh), against its own
+# bench_* database; the loader also checks the database name (P1-T10a2)
+IHR_TERMINOLOGY_THROWAWAY_DB = os.environ.get("IHR_TERMINOLOGY_THROWAWAY_DB") == "1"

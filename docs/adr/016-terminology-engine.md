@@ -87,3 +87,33 @@ Rejected:
 - FHIRsmith: too young (v1.0.1).
 
 Snowstorm Lite is the runner-up for SNOMED.
+
+## Amendment for P1-T10a2 (2026-11-12, Proposed, awaiting owner confirmation)
+
+Added by the unattended run that built the SNOMED-ready loader and the scale benchmark
+(docs/reviews/p1-t10a2/).
+
+- **RF2 releases** (`rf2.py`, `ihr_terminology_load --rf2`):
+  - several packages (an edition plus its extensions) load as **one version**;
+  - for each id, the row with the latest effectiveTime wins; two different rows with the same id
+    and time are refused, and so are relationships or descriptions that point at missing
+    concepts;
+  - outside throwaway databases a zip, its sha256 and a licence note are required (folders only
+    on `bench_*`/`test_*` databases with `IHR_TERMINOLOGY_THROWAWAY_DB` on, which
+    `settings/secure.py` refuses in deployment).
+- **Languages:** `--language-refset lang:refsetId` maps each language reference set to a
+  language (GB English by default). Display and preferred terms come from those sets; the FSN is
+  never a preferred term.
+- **Search** uses a generated `search_vector` column (`to_tsvector('simple', search_text)`)
+  with a GIN index. Each word typed is a prefix of a word of the term. The candidates (at most
+  `MAX_CANDIDATES`, one per concept) are chosen in SQL by the same leading keys as the final
+  ranking, so the cap never drops a better match. Postgres's 'simple' parser reads both the terms
+  and the search, so characters it drops (some marks and punctuation) are dropped on both sides.
+- **Statistics:** every load and prune ends with `ANALYZE`. Without it the planner had no
+  statistics and run 1 of the benchmark timed out (docs/reviews/p1-t10a2/bench-results.md).
+- **One transaction per load.** A SNOMED-sized load takes about 20 minutes, writes about 3 GB of
+  WAL and as much in temp files, and holds the version's tables. Hospitals keep answering from
+  the active version meanwhile; run it in an off-hours window and check disk first (runbook
+  `deploy/staging/README.md`).
+- **The benchmark result decides Q-F6** (our engine, or Snowstorm Lite for SNOMED): see
+  bench-results.md for the verdict and its preconditions, which the owner must accept.

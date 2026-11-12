@@ -47,3 +47,7 @@ TEST_RUNNER = "ihr_platform.test_runner.TenantTestRunner"
 # (index 15) so it never touches the running app's keys.
 _test_redis = urlsplit(REDIS_URL)._replace(path="/15", query="")  # noqa: F405
 CACHES["default"]["LOCATION"] = _test_redis.geturl()  # noqa: F405
+
+# The terminology loader's test and bench exemptions (folders, no sha256, the synthetic release)
+# apply only where a setting says so, and only to test_*/bench_* databases (P1-T10a2)
+IHR_TERMINOLOGY_THROWAWAY_DB = True

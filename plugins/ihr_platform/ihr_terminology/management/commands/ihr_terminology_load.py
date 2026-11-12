@@ -2,6 +2,9 @@
 
 manage.py ihr_terminology_load --bundled --operator <name>
 manage.py ihr_terminology_load --fhir <CodeSystem.json> [--sha256 <hex>] --operator <name>
+manage.py ihr_terminology_load --rf2 <edition.zip> --sha256 <hex> [--rf2 <extension.zip> --sha256 <hex> ...]
+                               --licence <reference> [--language-refset en:<id> ...] [--release-version <v>]
+                               --operator <name>                                  (P1-T10a2)
 manage.py ihr_terminology_load --status
 manage.py ihr_terminology_load --prune --operator <name>
 """
@@ -23,11 +26,30 @@ class Command(BaseCommand):
         what = parser.add_mutually_exclusive_group(required=True)
         what.add_argument("--bundled", action="store_true")
         what.add_argument("--fhir")
+        what.add_argument(
+            "--rf2",
+            action="append",
+            help="a SNOMED CT RF2 release zip; repeat for extensions",
+        )
         what.add_argument("--status", action="store_true")
         what.add_argument("--prune", action="store_true")
-        parser.add_argument("--sha256")
+        parser.add_argument(
+            "--sha256",
+            action="append",
+            default=[],
+            help="one per --rf2 (or for --fhir)",
+        )
         parser.add_argument("--operator", help="who runs the load (recorded with it)")
         parser.add_argument("--licence", default="")
+        parser.add_argument(
+            "--language-refset",
+            action="append",
+            default=[],
+            help="<language>:<refset id>, in priority order (default en:900000000000508004, GB English)",
+        )
+        parser.add_argument(
+            "--release-version", help="defaults to the date in the file names"
+        )
 
     def handle(self, *args, **o):
         try:
@@ -41,13 +63,31 @@ class Command(BaseCommand):
                 n = loader.prune(operator=o["operator"])
                 self.stdout.write(f"pruned {n} rows of retired versions")
                 return
-            if o["bundled"]:
+            if o["rf2"]:
+                from ihr_terminology import rf2
+
+                before = CodeSystemVersion.objects.count()
+                v, summary = rf2.load_release(
+                    o["rf2"],
+                    operator=o["operator"],
+                    sha256=o["sha256"],
+                    language_refsets=o["language_refset"],
+                    version=o["release_version"],
+                    licence=o["licence"],
+                )
+                versions = [(v, CodeSystemVersion.objects.count() > before)]
+                self.stdout.write(f"summary {summary}")
+                import resource
+
+                peak_mb = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss // 1024
+                self.stdout.write(f"loader peak memory {peak_mb} MB")
+            elif o["bundled"]:
                 versions = loader.load_bundled(operator=o["operator"])
             else:
                 before = CodeSystemVersion.objects.count()
                 v = loader.load_file(
                     o["fhir"],
-                    sha256=o["sha256"],
+                    sha256=(o["sha256"] or [None])[0],
                     operator=o["operator"],
                     licence=o["licence"],
                 )

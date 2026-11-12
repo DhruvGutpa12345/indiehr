@@ -8,7 +8,10 @@ hospital table points at them: CARE stores codes as JSON. They are read-only at 
 
 from django.contrib.postgres.fields import ArrayField
 from django.contrib.postgres.indexes import GinIndex
+from django.contrib.postgres.search import SearchVector, SearchVectorField
 from django.db import models
+from django.db.models import F
+from django.db.models.functions import Upper
 
 
 class CodeSystemVersion(models.Model):
@@ -71,7 +74,13 @@ class Concept(models.Model):
                 fields=["system", "code"], name="ihr_term_code_once_per_version"
             )
         ]
-        indexes = [GinIndex(fields=["ancestors"]), GinIndex(fields=["parents"])]
+        indexes = [
+            GinIndex(fields=["ancestors"]),
+            GinIndex(fields=["parents"]),
+            # The code as typed, in any case (code__iexact, the first ranking key of a search):
+            # without it every search scanned the value set (P1-T10a2, bench run 3)
+            models.Index(F("system"), Upper("code"), name="ihr_term_code_upper"),
+        ]
 
     def __str__(self):
         return f"{self.code} {self.display}"
@@ -85,14 +94,23 @@ class Designation(models.Model):
     use_system = models.CharField(max_length=255, default="")
     use_code = models.CharField(max_length=64, default="")
     value = models.TextField()
-    preferred = models.BooleanField(
-        default=False
-    )  # the preferred term for its language
-    # Lower case, words separated by single spaces (search.normalise); searched by word prefix
+    # The preferred term (synonym) for its language; a fully specified name never is (use_code)
+    preferred = models.BooleanField(default=False)
+    # Lower case, words separated by single spaces (text.normalise); searched by word prefix
     search_text = models.TextField()
+    # to_tsvector('simple', search_text), kept by Postgres itself: word-prefix search with an
+    # index (P1-T10a2). No writer can forget it, and filling it needs no write to the table.
+    search_vector = models.GeneratedField(
+        expression=SearchVector("search_text", config="simple"),
+        output_field=SearchVectorField(),
+        db_persist=True,
+    )
 
     class Meta:
-        indexes = [models.Index(fields=["concept", "language"])]
+        indexes = [
+            models.Index(fields=["concept", "language"]),
+            GinIndex(fields=["search_vector"]),
+        ]
 
     def __str__(self):
         return self.value

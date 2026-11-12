@@ -171,6 +171,74 @@ docs/reviews/p1-t10a/scorecard.md, ADR-016.
   readiness with a benchmark; then licensed content, behind your licences.
 - The design attack found that one T10a was 8 to 15 hours, against the 1 to 3 the plan allows.
 
+### Q-K21 — 🔴 What may front-office and back-office roles see? (P1-T11b; blocks it)
+
+*Not auto-accepted: it decides what patient data each job sees (DPDP purpose limitation, NABH
+access control), and the P1-T11 design attack showed CARE cannot do it without an authorization
+override.* The facts, with evidence in docs/reviews/p1-t11/:
+
+- CARE lets a user open or edit a patient only with **clinical-data** rights. A Receptionist
+  without them cannot open a patient they just registered.
+- "Read an encounter" is not demographic: it includes discharge summaries and discharge advice,
+  prescriptions and bed occupants.
+- So in CARE there is no non-clinical way to work with patients at all.
+
+Options:
+
+- **A ⭐. A narrow override in our plugin.** Non-clinical roles (Receptionist, Cashier, TPA Desk,
+  Owner) get a **demographics-and-billing view**: patient identity, contact and encounter status,
+  never notes, diagnoses, reports or advice. Clinical endpoints stay closed to them, with tests
+  per endpoint. MRD and Radiologist get clinical read, MRD only through an audited path.
+  - Owner: totals only (census counts, revenue) and no identified patient list, until MIS
+    (P2-T16).
+  - Cost: about 2 sittings (P1-T11b), and one more place to keep in step with upstream.
+- B. Give non-clinical roles clinical-data read, as CARE's own Staff role effectively needs.
+  Simple, but a cashier would then read discharge summaries: against least privilege.
+- C. Only CARE's roles for now, and come back in Phase 2 (P2-T2 registration, P2-T6 billing),
+  when their screens are rebuilt anyway.
+
+**Also yours:**
+- Does the Owner approve discounts, cancellations and locked invoices? (Proposed: no; those stay
+  with Facility Admin.)
+- Does the Owner see identified billing (who was billed for what)? (Proposed: totals only.)
+
+### Q-K22 — P1-T11 split into a, b and c (auto-accepted by Claude, 2026-11-12, awaiting owner confirmation)
+
+- **A ⭐ (taken).**
+  - **P1-T11a (built):** the safe groundwork.
+    - A guarded role sync: CARE's sync would hard-delete a role, with every membership holding
+      it, in every hospital, on a rollback or a rename. The guarded sync refuses instead.
+    - A role registry: names are permanent, grants never alias CARE's shared lists, and it fails
+      at start-up on an upstream rename.
+    - A refusal of CARE's switch that lets any user open any patient by id (and anyone with
+      patient-write rights edit any patient).
+  - **P1-T11b (after Q-K21):** the eight roles, their grants and the access override, with
+    tests per endpoint and a seeded user per role.
+  - **P1-T11c:** the web app's menus, shown by permission (an `apps/frontend` patch, CI only).
+- B. One task. The design attack showed it is 3 to 4 sittings and rests on Q-K21.
+
+### Q-K23 — The Phase 1 review's findings as tasks (auto-accepted by Claude, 2026-11-12, awaiting owner confirmation)
+
+The independent Phase 1 review (docs/reviews/phase-1-review.md) had 22 findings. Two agents
+challenged each one: 1 was refuted, 3 confirmed as written, and 18 confirmed with corrections.
+
+- **A ⭐ (taken).** Ten new TRACKER rows, P1-T15 to P1-T24, plus a docs sync, in two groups:
+  - **before Phase 2:** reference-data packs, isolation coverage, a trial upstream sync, docs;
+  - **before the first pilot with real data** (gates under ADR-007): release and rollback,
+    separate database roles, anonymous-route patches, audit watch, single-hospital restore,
+    Postgres rules and capacity, admin screens.
+  - Nothing was built from them in this run.
+  - Two items are yours, not tasks: marking the Phase 4 compliance duties as gates, and the
+    alert channel.
+- B. Keep them only in the review file until the owner sorts them.
+
+Why A: the run rules turn phase-review findings into tasks. Two findings also touch your own
+answers:
+- staging's public-read facility bucket goes against Q-T3;
+- the second alert channel revisits Q-E6/Q-O4.
+
+They are listed so you can decide, not changed. **To reverse:** delete or reorder the rows.
+
 **Still open:** Q-B4 (final MVP module list: assumed as in PLAN.md Phase 2) and Q-B6/B7 (pricing, timeline). Q-F2 is moot while AI is deferred.
 
 ---

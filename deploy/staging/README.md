@@ -303,7 +303,7 @@ superuser (pgBackRest's local mode; it also reads every data file). It is exactl
 the database itself, has no published port, and is the only other container on that socket.
 
 **Done in P1-T8b1:** the host (`deploy/host/bootstrap.sh`: firewall incl. Docker's published
-ports, key-only SSH, NTP to NIC/NPL, journald one year, pinned Docker) and deploy over SSH.
+ports, key-only SSH, NTP to NIC/NPL, journald as a 15-day buffer (ADR-014; the log store keeps 180 days), pinned Docker) and deploy over SSH.
 
 **Done in P1-T8b2:** the wildcard certificate through our own acme-dns (above).
 
@@ -729,3 +729,47 @@ were opened): Grafana 512 MB against 227 MB (270 MB idle on its own), logs-reade
 6 MB. The limits of all services add up to more than the server's 8 GB. They are ceilings that
 stop one runaway service, not reservations: the whole stack used 2.2 GB on the proof (Keycloak
 614 MB the largest).
+
+## Loading SNOMED-sized terminology (P1-T10a2, ADR-016)
+
+`up` loads only the small bundled content (HL7, UCUM). A licensed release (P1-T10b) is loaded by
+hand, once per release:
+
+1. **Check room first.** A SNOMED International edition plus an extension took about 21 minutes
+   in the benchmark. It wrote about 3 GB of WAL and about 3 GB of temp files, and the data
+   directory grew by about 1.7 GB at its peak. One loaded version takes about 1 GB. Have at least
+   8 GB free on the database volume, and make sure the backups (P1-T8c) are current.
+2. **Choose an off-hours window.** The load is one transaction. Hospitals keep answering from the
+   active version until it commits, but the database is busy for the whole load.
+3. **Run it** with the release's zip files, their sha256 sums and the licence note. The loader
+   command is `ihr_terminology_load --rf2 <edition.zip> --rf2 <extension.zip> --sha256 <sum>
+   --sha256 <sum> --licence "<licence and affiliate number>" --operator <name>`. It prints the
+   version, a summary and the loader's peak memory. The zips must be visible inside the
+   container: P1-T10b adds `scripts/staging.sh terminology-load`, which mounts them read-only
+   from outside the repo, limits memory and checks free disk first. Until then, there is no
+   supported way to load a licensed release on staging.
+4. **Check** with `--status`. The load ends with `ANALYZE`; searches are slow without it. If a
+   load was interrupted, run `ANALYZE ihr_terminology_concept, ihr_terminology_designation` by
+   hand.
+5. **Prune** the retired version later with `--prune`, also off-hours.
+
+## Roles and rollbacks (P1-T11a, ADR-017)
+
+At every start, the `migrate` one-shot syncs CARE's roles and permissions, and ours, into every
+hospital. It runs `sync_permissions_roles --check` for all hospitals first, then the sync itself.
+The sync is our guarded version (`ihr_roles`). It **refuses**, and the start stops, rather than
+delete:
+
+- a system role that someone still holds;
+- a permission that a hospital's own role still has.
+
+CARE's own sync would delete both silently, along with the memberships or grants that point at
+them.
+
+**If the start stops with "refusing to sync roles":** the image you started is missing a role or
+permission that hospitals use. Usually that means a rollback. Roll forward to the image that
+registered it. If the role is really to go, reassign its holders first. Role names are
+permanent: a retired role stays registered with no grants.
+
+**Never roll back past P1-T11a** once hospitals hold any of our roles. Older images run CARE's
+unguarded sync, which would delete those memberships in every hospital.
