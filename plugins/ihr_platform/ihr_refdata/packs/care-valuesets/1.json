@@ -1,0 +1,998 @@
+{
+ "care_commit": "67a46185eb98ee4b79b38ecee84d8a69d173306e",
+ "item_count": 31,
+ "items": [
+  {
+   "compose": {
+    "exclude": [],
+    "include": [
+     {
+      "filter": [
+       {
+        "op": "is-a",
+        "property": "concept",
+        "value": "71388002"
+       }
+      ],
+      "system": "http://snomed.info/sct"
+     }
+    ]
+   },
+   "is_system_defined": true,
+   "name": "Activity Definition Procedure Code",
+   "slug": "activity-definition-procedure-code",
+   "status": "active"
+  },
+  {
+   "compose": {
+    "exclude": [],
+    "include": [
+     {
+      "system": "http://terminology.hl7.org/CodeSystem/service-type",
+      "version": "2.0.0"
+     }
+    ]
+   },
+   "is_system_defined": true,
+   "name": "Healthcare Service Type Code",
+   "slug": "healthcare-service-type-code",
+   "status": "active"
+  },
+  {
+   "compose": {
+    "exclude": [],
+    "include": [
+     {
+      "concept": [
+       {
+        "code": "A",
+        "display": "Abnormal"
+       },
+       {
+        "code": "AA",
+        "display": "Critically abnormal"
+       },
+       {
+        "code": "H",
+        "display": "High"
+       },
+       {
+        "code": "HH",
+        "display": "Critically high"
+       },
+       {
+        "code": "L",
+        "display": "Low"
+       },
+       {
+        "code": "LL",
+        "display": "Critically low"
+       },
+       {
+        "code": "POS",
+        "display": "Positive"
+       },
+       {
+        "code": "DET",
+        "display": "Detected"
+       }
+      ],
+      "system": "http://terminology.hl7.org/CodeSystem/v3-ObservationInterpretation"
+     }
+    ]
+   },
+   "is_system_defined": true,
+   "name": "Abnormal Coded Value Set",
+   "slug": "system-abnormal-coded-valueset",
+   "status": "active"
+  },
+  {
+   "compose": {
+    "exclude": [],
+    "include": [
+     {
+      "filter": [
+       {
+        "op": "is-a",
+        "property": "concept",
+        "value": "419492006"
+       }
+      ],
+      "system": "http://snomed.info/sct"
+     }
+    ]
+   },
+   "is_system_defined": true,
+   "name": "Additional Instruction",
+   "slug": "system-additional-instruction",
+   "status": "active"
+  },
+  {
+   "compose": {
+    "exclude": [],
+    "include": [
+     {
+      "filter": [
+       {
+        "op": "is-a",
+        "property": "concept",
+        "value": "736665006"
+       }
+      ],
+      "system": "http://snomed.info/sct"
+     }
+    ]
+   },
+   "is_system_defined": true,
+   "name": "Administration Method",
+   "slug": "system-administration-method",
+   "status": "active"
+  },
+  {
+   "compose": {
+    "exclude": [],
+    "include": [
+     {
+      "filter": [
+       {
+        "op": "is-a",
+        "property": "concept",
+        "value": "105590001"
+       }
+      ],
+      "system": "http://snomed.info/sct"
+     },
+     {
+      "filter": [
+       {
+        "op": "is-a",
+        "property": "concept",
+        "value": "418038007"
+       }
+      ],
+      "system": "http://snomed.info/sct"
+     },
+     {
+      "filter": [
+       {
+        "op": "is-a",
+        "property": "concept",
+        "value": "267425008"
+       }
+      ],
+      "system": "http://snomed.info/sct"
+     },
+     {
+      "filter": [
+       {
+        "op": "is-a",
+        "property": "concept",
+        "value": "29736007"
+       }
+      ],
+      "system": "http://snomed.info/sct"
+     },
+     {
+      "filter": [
+       {
+        "op": "is-a",
+        "property": "concept",
+        "value": "340519003"
+       }
+      ],
+      "system": "http://snomed.info/sct"
+     },
+     {
+      "filter": [
+       {
+        "op": "is-a",
+        "property": "concept",
+        "value": "190753003"
+       }
+      ],
+      "system": "http://snomed.info/sct"
+     },
+     {
+      "filter": [
+       {
+        "op": "is-a",
+        "property": "concept",
+        "value": "413427002"
+       }
+      ],
+      "system": "http://snomed.info/sct"
+     },
+     {
+      "filter": [
+       {
+        "op": "is-a",
+        "property": "concept",
+        "value": "716186003"
+       }
+      ],
+      "system": "http://snomed.info/sct"
+     }
+    ]
+   },
+   "is_system_defined": true,
+   "name": "Allergy",
+   "slug": "system-allergy-code",
+   "status": "active"
+  },
+  {
+   "compose": {
+    "exclude": [],
+    "include": [
+     {
+      "filter": [
+       {
+        "op": "is-a",
+        "property": "concept",
+        "value": "404684003"
+       }
+      ],
+      "system": "http://snomed.info/sct"
+     }
+    ]
+   },
+   "is_system_defined": true,
+   "name": "As Needed",
+   "slug": "system-as-needed-reason",
+   "status": "active"
+  },
+  {
+   "compose": {
+    "exclude": [],
+    "include": [
+     {
+      "filter": [
+       {
+        "op": "is-a",
+        "property": "concept",
+        "value": "91723000"
+       }
+      ],
+      "system": "http://snomed.info/sct"
+     }
+    ]
+   },
+   "is_system_defined": true,
+   "name": "Body Site",
+   "slug": "system-body-site",
+   "status": "active"
+  },
+  {
+   "compose": {
+    "exclude": [],
+    "include": [
+     {
+      "concept": [
+       {
+        "code": "53075003",
+        "display": "Distal phalanx of hallux"
+       },
+       {
+        "code": "76986006",
+        "display": "Distal phalanx of second toe"
+       },
+       {
+        "code": "65258003",
+        "display": "Distal phalanx of third toe"
+       },
+       {
+        "code": "54333003",
+        "display": "Distal phalanx of fourth toe"
+       },
+       {
+        "code": "10770001",
+        "display": "Distal phalanx of fifth toe"
+       },
+       {
+        "code": "363670009",
+        "display": "Interphalangeal joint structure of great toe"
+       },
+       {
+        "code": "371216008",
+        "display": "Distal interphalangeal joint of second toe"
+       },
+       {
+        "code": "371219001",
+        "display": "Distal interphalangeal joint of third toe"
+       },
+       {
+        "code": "371205001",
+        "display": "Distal interphalangeal joint of fourth toe"
+       },
+       {
+        "code": "371203008",
+        "display": "Distal interphalangeal joint of fifth toe"
+       },
+       {
+        "code": "371292009",
+        "display": "Proximal interphalangeal joint of second toe"
+       },
+       {
+        "code": "371255009",
+        "display": "Proximal interphalangeal joint of third toe"
+       },
+       {
+        "code": "371288002",
+        "display": "Proximal interphalangeal joint of fourth toe"
+       },
+       {
+        "code": "371284000",
+        "display": "Proximal interphalangeal joint of fifth toe"
+       },
+       {
+        "code": "67169006",
+        "display": "Head of first metatarsal bone"
+       },
+       {
+        "code": "9677004",
+        "display": "Head of second metatarsal bone"
+       },
+       {
+        "code": "46971007",
+        "display": "Head of third metatarsal bone"
+       },
+       {
+        "code": "3134008",
+        "display": "Head of fourth metatarsal bone"
+       },
+       {
+        "code": "71822005",
+        "display": "Head of fifth metatarsal bone"
+       },
+       {
+        "code": "89221001",
+        "display": "Base of first metatarsal bone"
+       },
+       {
+        "code": "90894004",
+        "display": "Base of second metatarsal bone"
+       },
+       {
+        "code": "89995006",
+        "display": "Base of third metatarsal bone"
+       },
+       {
+        "code": "15368009",
+        "display": "Base of fourth metatarsal bone"
+       },
+       {
+        "code": "30980004",
+        "display": "Base of fifth metatarsal bone"
+       },
+       {
+        "code": "38607000",
+        "display": "Styloid process of fifth metatarsal bone"
+       },
+       {
+        "code": "2979003",
+        "display": "Medial cuneiform bone"
+       },
+       {
+        "code": "19193007",
+        "display": "Intermediate cuneiform bone"
+       },
+       {
+        "code": "67411009",
+        "display": "Lateral cuneiform bone"
+       },
+       {
+        "code": "81012005",
+        "display": "Bone structure of cuboid"
+       },
+       {
+        "code": "75772009",
+        "display": "Bone structure of navicular"
+       },
+       {
+        "code": "67453005",
+        "display": "Bone structure of talus"
+       },
+       {
+        "code": "80144004",
+        "display": "Bone structure of calcaneum"
+       },
+       {
+        "code": "6417001",
+        "display": "Medial malleolus"
+       },
+       {
+        "code": "113225006",
+        "display": "Lateral malleolus of fibula"
+       },
+       {
+        "code": "22457002",
+        "display": "Head of fibula"
+       },
+       {
+        "code": "45879002",
+        "display": "Tibial tuberosity"
+       },
+       {
+        "code": "122474001",
+        "display": "Medial condyle of femur"
+       },
+       {
+        "code": "122475000",
+        "display": "Lateral condyle of femur"
+       },
+       {
+        "code": "69030007",
+        "display": "Ischial tuberosity"
+       },
+       {
+        "code": "29850006",
+        "display": "Iliac crest"
+       }
+      ],
+      "system": "http://snomed.info/sct"
+     },
+     {
+      "filter": [
+       {
+        "op": "is-a",
+        "property": "concept",
+        "value": "442083009"
+       }
+      ],
+      "system": "http://snomed.info/sct"
+     }
+    ]
+   },
+   "is_system_defined": true,
+   "name": "Body Site",
+   "slug": "system-body-site-observation",
+   "status": "active"
+  },
+  {
+   "compose": {
+    "exclude": [],
+    "include": [
+     {
+      "filter": [
+       {
+        "op": "is-a",
+        "property": "concept",
+        "value": "272394005"
+       }
+      ],
+      "system": "http://snomed.info/sct"
+     },
+     {
+      "filter": [
+       {
+        "op": "is-a",
+        "property": "concept",
+        "value": "129264002"
+       }
+      ],
+      "system": "http://snomed.info/sct"
+     },
+     {
+      "filter": [
+       {
+        "op": "is-a",
+        "property": "concept",
+        "value": "386053000"
+       }
+      ],
+      "system": "http://snomed.info/sct"
+     }
+    ]
+   },
+   "is_system_defined": true,
+   "name": "Observation Method",
+   "slug": "system-collection-method",
+   "status": "active"
+  },
+  {
+   "compose": {
+    "exclude": [],
+    "include": [
+     {
+      "concept": [
+       {
+        "code": "129316008",
+        "display": "Aspiration - action"
+       },
+       {
+        "code": "129314006",
+        "display": "Biopsy - action"
+       },
+       {
+        "code": "129300006",
+        "display": "Puncture - action"
+       },
+       {
+        "code": "129304002",
+        "display": "Excision - action"
+       },
+       {
+        "code": "129323009",
+        "display": "Scraping - action"
+       },
+       {
+        "code": "73416001",
+        "display": "Urine specimen collection, clean catch"
+       },
+       {
+        "code": "225113003",
+        "display": "Timed urine collection"
+       },
+       {
+        "code": "70777001",
+        "display": "Urine specimen collection, catheterized"
+       },
+       {
+        "code": "386089008",
+        "display": "Collection of coughed sputum"
+       },
+       {
+        "code": "278450005",
+        "display": "Finger-prick sampling"
+       }
+      ],
+      "system": "http://snomed.info/sct"
+     }
+    ]
+   },
+   "is_system_defined": true,
+   "name": "Collection Method",
+   "slug": "system-collection-method-code",
+   "status": "active"
+  },
+  {
+   "compose": {
+    "exclude": [],
+    "include": [
+     {
+      "filter": [
+       {
+        "op": "is-a",
+        "property": "concept",
+        "value": "404684003"
+       }
+      ],
+      "system": "http://snomed.info/sct"
+     }
+    ]
+   },
+   "is_system_defined": true,
+   "name": "Condition",
+   "slug": "system-condition-code",
+   "status": "active"
+  },
+  {
+   "compose": {
+    "exclude": [],
+    "include": [
+     {
+      "system": "http://terminology.hl7.org/CodeSystem/container-cap"
+     }
+    ]
+   },
+   "is_system_defined": true,
+   "name": "Container Cap",
+   "slug": "system-container_cap-code",
+   "status": "active"
+  },
+  {
+   "compose": {
+    "exclude": [],
+    "include": [
+     {
+      "concept": [
+       {
+        "code": "C",
+        "display": "Critical"
+       },
+       {
+        "code": "CC",
+        "display": "Critical high"
+       },
+       {
+        "code": "CL",
+        "display": "Critical low"
+       },
+       {
+        "code": "CV",
+        "display": "Critical value"
+       }
+      ],
+      "system": "http://terminology.hl7.org/CodeSystem/v3-ObservationInterpretation"
+     }
+    ]
+   },
+   "is_system_defined": true,
+   "name": "Critical Coded Value Set",
+   "slug": "system-critical-coded-valueset",
+   "status": "active"
+  },
+  {
+   "compose": {
+    "exclude": [],
+    "include": [
+     {
+      "system": "http://terminology.hl7.org/CodeSystem/v2-0074"
+     }
+    ]
+   },
+   "is_system_defined": true,
+   "name": "Diagnostic Service Sections",
+   "slug": "system-diagnostic-service-sections-code",
+   "status": "active"
+  },
+  {
+   "compose": {
+    "exclude": [],
+    "include": [
+     {
+      "system": "http://terminology.hl7.org/CodeSystem/v2-0916",
+      "version": "2.0.0"
+     }
+    ]
+   },
+   "is_system_defined": true,
+   "name": "Fasting Status",
+   "slug": "system-fasting-status-code",
+   "status": "active"
+  },
+  {
+   "compose": {
+    "exclude": [],
+    "include": [
+     {
+      "filter": [
+       {
+        "op": "=",
+        "property": "constraint",
+        "value": "<< 763158003 |Medicinal product|"
+       }
+      ],
+      "system": "http://snomed.info/sct"
+     }
+    ]
+   },
+   "is_system_defined": true,
+   "name": "Medication",
+   "slug": "system-medication",
+   "status": "active"
+  },
+  {
+   "compose": {
+    "exclude": [],
+    "include": [
+     {
+      "filter": [
+       {
+        "op": "is-a",
+        "property": "concept",
+        "value": "736542009"
+       }
+      ],
+      "system": "http://snomed.info/sct"
+     }
+    ]
+   },
+   "is_system_defined": true,
+   "name": "Medication Form Codes",
+   "slug": "system-medication-form-codes",
+   "status": "active"
+  },
+  {
+   "compose": {
+    "exclude": [],
+    "include": [
+     {
+      "filter": [
+       {
+        "op": "is-a",
+        "property": "concept",
+        "value": "242990004"
+       }
+      ],
+      "system": "http://snomed.info/sct"
+     },
+     {
+      "filter": [
+       {
+        "op": "is-a",
+        "property": "concept",
+        "value": "182895007"
+       }
+      ],
+      "system": "http://snomed.info/sct"
+     }
+    ]
+   },
+   "is_system_defined": true,
+   "name": "Medication Not Given Reason",
+   "slug": "system-medication-not-given",
+   "status": "active"
+  },
+  {
+   "compose": {
+    "exclude": [],
+    "include": [
+     {
+      "concept": [
+       {
+        "code": "N",
+        "display": "Normal"
+       },
+       {
+        "code": "ND",
+        "display": "Not detected"
+       },
+       {
+        "code": "NEG",
+        "display": "Negative"
+       }
+      ],
+      "system": "http://terminology.hl7.org/CodeSystem/v3-ObservationInterpretation"
+     }
+    ]
+   },
+   "is_system_defined": true,
+   "name": "Normal Coded Value Set",
+   "slug": "system-normal-coded-valueset",
+   "status": "active"
+  },
+  {
+   "compose": {
+    "exclude": [],
+    "include": [
+     {
+      "filter": [
+       {
+        "op": "is-a",
+        "property": "concept",
+        "value": "226355009"
+       }
+      ],
+      "system": "http://snomed.info/sct"
+     }
+    ]
+   },
+   "is_system_defined": true,
+   "name": "Nutrients",
+   "slug": "system-nutrients",
+   "status": "active"
+  },
+  {
+   "compose": {
+    "exclude": [],
+    "include": [
+     {
+      "system": "http://loinc.org"
+     }
+    ]
+   },
+   "is_system_defined": true,
+   "name": "Observation",
+   "slug": "system-observation",
+   "status": "active"
+  },
+  {
+   "compose": {
+    "exclude": [],
+    "include": [
+     {
+      "filter": [
+       {
+        "op": "is-a",
+        "property": "concept",
+        "value": "223366009"
+       }
+      ],
+      "system": "http://snomed.info/sct"
+     },
+     {
+      "filter": [
+       {
+        "op": "is-a",
+        "property": "concept",
+        "value": "224930009"
+       }
+      ],
+      "system": "http://snomed.info/sct"
+     }
+    ]
+   },
+   "is_system_defined": true,
+   "name": "Practitioner Role",
+   "slug": "system-practitioner-role-code",
+   "status": "active"
+  },
+  {
+   "compose": {
+    "exclude": [],
+    "include": [
+     {
+      "filter": [
+       {
+        "op": "is-a",
+        "property": "concept",
+        "value": "703763000"
+       }
+      ],
+      "system": "http://snomed.info/sct"
+     }
+    ]
+   },
+   "is_system_defined": true,
+   "name": "Prepare Patient Prior Specimen Code",
+   "slug": "system-prepare_patient_prior_specimen_code",
+   "status": "active"
+  },
+  {
+   "compose": {
+    "exclude": [],
+    "include": [
+     {
+      "filter": [
+       {
+        "op": "is-a",
+        "property": "concept",
+        "value": "284009009"
+       }
+      ],
+      "system": "http://snomed.info/sct"
+     }
+    ]
+   },
+   "is_system_defined": true,
+   "name": "Route",
+   "slug": "system-route",
+   "status": "active"
+  },
+  {
+   "compose": {
+    "exclude": [],
+    "include": [
+     {
+      "system": "http://terminology.hl7.org/CodeSystem/v2-0493",
+      "version": "2.0.0"
+     }
+    ]
+   },
+   "is_system_defined": true,
+   "name": "Specimen Condition",
+   "slug": "system-specimen-condition-code",
+   "status": "active"
+  },
+  {
+   "compose": {
+    "exclude": [],
+    "include": [
+     {
+      "filter": [
+       {
+        "op": "=",
+        "property": "constraint",
+        "value": "< 9265001"
+       }
+      ],
+      "system": "http://snomed.info/sct"
+     }
+    ]
+   },
+   "is_system_defined": true,
+   "name": "Specimen Processing Method",
+   "slug": "system-specimen-processing-method-code",
+   "status": "active"
+  },
+  {
+   "compose": {
+    "exclude": [],
+    "include": [
+     {
+      "concept": [
+       {
+        "code": "129316008",
+        "display": "Aspiration - action"
+       },
+       {
+        "code": "129314006",
+        "display": "Biopsy - action"
+       },
+       {
+        "code": "129300006",
+        "display": "Puncture - action"
+       },
+       {
+        "code": "129304002",
+        "display": "Excision - action"
+       },
+       {
+        "code": "129323009",
+        "display": "Scraping - action"
+       },
+       {
+        "code": "73416001",
+        "display": "Urine specimen collection, clean catch"
+       },
+       {
+        "code": "225113003",
+        "display": "Timed urine collection"
+       },
+       {
+        "code": "70777001",
+        "display": "Urine specimen collection, catheterized"
+       },
+       {
+        "code": "386089008",
+        "display": "Collection of coughed sputum"
+       },
+       {
+        "code": "278450005",
+        "display": "Finger-prick sampling"
+       }
+      ],
+      "system": "http://snomed.info/sct"
+     }
+    ]
+   },
+   "is_system_defined": true,
+   "name": "Specimen Collection Code",
+   "slug": "system-specimen_collection_code",
+   "status": "active"
+  },
+  {
+   "compose": {
+    "exclude": [],
+    "include": [
+     {
+      "system": "http://terminology.hl7.org/CodeSystem/v2-0487",
+      "version": "2.0.0"
+     }
+    ]
+   },
+   "is_system_defined": true,
+   "name": "Specimen Type Code",
+   "slug": "system-specimen_type-code",
+   "status": "active"
+  },
+  {
+   "compose": {
+    "exclude": [],
+    "include": [
+     {
+      "filter": [
+       {
+        "op": "is-a",
+        "property": "concept",
+        "value": "105590001"
+       }
+      ],
+      "system": "http://snomed.info/sct"
+     }
+    ]
+   },
+   "is_system_defined": true,
+   "name": "Substance",
+   "slug": "system-substance",
+   "status": "active"
+  },
+  {
+   "compose": {
+    "exclude": [],
+    "include": [
+     {
+      "system": "http://unitsofmeasure.org"
+     }
+    ]
+   },
+   "is_system_defined": true,
+   "name": "UCUM Units",
+   "slug": "system-ucum-units",
+   "status": "active"
+  }
+ ],
+ "kind": "valueset",
+ "pack": "care-valuesets",
+ "version": 1
+}

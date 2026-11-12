@@ -42,6 +42,8 @@ def image(name):
 FB = image("fluent/fluent-bit")
 VL = image("victoriametrics/victoria-logs")
 VMA = image("victoriametrics/vmalert")
+# The label each alert names (the rest name client_ip): compared, not just counted
+KEY_LABEL = {"PackApplyFailed": "hospital"}
 
 
 def check(ok, what):
@@ -172,7 +174,9 @@ def main():
             data = json.loads(http(vma + "/api/v1/alerts"))["data"]["alerts"]
             got, states = {}, {}
             for a in data:
-                got.setdefault(a["name"], []).append(a["labels"].get("client_ip"))
+                # each alert's own key label: a wrong hospital or address fails the check
+                key = KEY_LABEL.get(a["name"], "client_ip")
+                got.setdefault(a["name"], []).append(a["labels"].get(key))
                 states.setdefault(a["name"], set()).add(a["state"])
             got = {k: sorted(v, key=str) for k, v in got.items()}
             if got == want and all(states.get(n) == {s} for n, s in want_state.items()):

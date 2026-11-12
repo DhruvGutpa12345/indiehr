@@ -502,6 +502,20 @@ They arrive about 2 minutes after the event: vmalert waits 30 s for late lines, 
 minute. Only container lines count. A hospital whose staff share one address and outgrow the per-address limit shows up as
 RateLimitedAddress: raise its limit (see "Per-IP limits" above).
 
+**Reference packs** (`deploy/logs/alerts/packs.yml`, P1-T15a). The start-up one-shot applies the
+packs (CARE's system value sets first) to every live hospital with `ihr_pack_apply --all
+--startup`. One hospital's failure never stops the start: it is recorded in that hospital
+(a `PackApply` row with the error) and logged as `ihr-packs: hospital=<slug> outcome=failed`.
+
+| Alert | When | Severity |
+|---|---|---|
+| PackApplyFailed | exactly that whole line, from the `migrate` one-shot (dev: `celery`), in the last 24 hours (the mail names the hospital; request paths in the web backend's log can never raise it) | warning |
+
+Fix the cause, then `scripts/staging.sh manage ihr_pack_apply --slug <slug> --operator <you>`
+(`<you>`: 1-64 letters, digits or `. _ @ -`; recorded as `packs:<you>`).
+A busy hospital (another job holds its lock) is tried again after 5, 15 and 30 seconds; still
+busy after that, it is recorded (`outcome=deferred`) and alerted on like a failure.
+
 **The pipeline itself** (Prometheus, `rules/logs.yml`):
 
 - LogRedactionDrops

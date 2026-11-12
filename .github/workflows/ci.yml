@@ -15,6 +15,8 @@ jobs:
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0 # the released pack check below reads the commit before the push
       - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
         with:
           python-version: "3.14"
@@ -22,6 +24,13 @@ jobs:
         run: pip install pre-commit==4.7.0
       - name: Run all hooks
         run: pre-commit run --all-files --show-diff-on-failure
+      # The pre-commit hook sees only staged changes (none here) and can be skipped: compare
+      # every released reference pack version with the commit before this push (or the pull
+      # request's base). No base (a new branch, a manual run): nothing to compare.
+      - name: Released reference pack versions are unchanged (P1-T15a)
+        # against every manifest in the history (full history is fetched above), so a version
+        # deleted in one push and rebuilt in the next is still refused
+        run: scripts/check-pack-versions.sh --history
 
   secrets:
     name: Secret scan (gitleaks, full history)

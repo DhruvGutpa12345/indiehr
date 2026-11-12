@@ -198,8 +198,10 @@ services:
       retries: 10
     mem_limit: 384m
 
-  # One-shot: schema changes, the platform's own addresses, roles and code lists in every
-  # hospital. The web app and workers start only after it has finished without error.
+  # One-shot: schema changes, the platform's own addresses, roles and the reference packs
+  # (code lists, P1-T15a) in every live hospital. The web app and workers start only after
+  # it has finished without error; one hospital's failed pack apply is recorded and alerted
+  # on (deploy/logs/alerts/packs.yml) but never stops the start.
   migrate:
     <<: *app
     restart: "no"
@@ -212,7 +214,7 @@ services:
         --domain console.${IHR_TENANT_DOMAIN_SUFFIX} --domain backend
         && python manage.py all_tenants_command --no-public sync_permissions_roles --check
         && python manage.py all_tenants_command --no-public sync_permissions_roles
-        && python manage.py all_tenants_command --no-public sync_valueset
+        && python manage.py ihr_pack_apply --all --startup
     depends_on:
       db:
         condition: service_healthy

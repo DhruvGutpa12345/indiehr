@@ -105,7 +105,7 @@ The overrides live in `deploy/dev/care-local.override.yaml`; CARE's files are un
 | Web app served by our non-root nginx image from a CI-built bundle | No local Node build (needs ~4 GB) |
 | Bundle built with `deploy/frontend.env` and checked by `scripts/check-bundle-egress.sh`; enforced CSP allows only the page's own origin (API) and `localhost:9100` (files) | No third-party calls (P0-T10). Facility map and address search are blocked on purpose |
 | Test-user passwords replaced, one per hospital | CARE's fixture passwords are public in its source |
-| Tenant mode: `DJANGO_SETTINGS_MODULE=ihr_platform.settings.local`, database `ihr_dev`; the worker runs `ihr_create_tenant --public --domain localhost` and syncs roles/value sets per hospital (`all_tenants_command --no-public`) | One schema per hospital, as in production (ADR-002) |
+| Tenant mode: `DJANGO_SETTINGS_MODULE=ihr_platform.settings.local`, database `ihr_dev`; the worker runs `ihr_create_tenant --public --domain localhost`, syncs roles per hospital (`all_tenants_command --no-public`) and applies the reference packs, CARE's system value sets first, to every live hospital (`ihr_pack_apply --all --startup`, P1-T15a) | One schema per hospital, as in production (ADR-002) |
 | nginx passes `/api/` to `backend:9000` (`API_UPSTREAM`) keeping the browser's host | The backend picks the hospital from the address; no cross-origin API calls |
 
 ## Ports

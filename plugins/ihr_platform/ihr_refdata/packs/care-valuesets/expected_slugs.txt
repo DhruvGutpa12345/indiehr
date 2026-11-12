@@ -1,0 +1,36 @@
+# CARE's system value sets shipped in the care-valuesets pack (P1-T15a), reviewed by hand.
+# ihr_pack_build refuses to build when CARE's registry differs from this list: a new or
+# missing slug is reviewed first (slugs are a permanent API), then this list is updated.
+# system-medication-not-given is registered by a module CARE never imports, so CARE's own
+# sync_valueset never wrote it; it is CARE's own system set, so the pack ships it (Q-K25).
+activity-definition-procedure-code
+healthcare-service-type-code
+system-abnormal-coded-valueset
+system-additional-instruction
+system-administration-method
+system-allergy-code
+system-as-needed-reason
+system-body-site
+system-body-site-observation
+system-collection-method
+system-collection-method-code
+system-condition-code
+system-container_cap-code
+system-critical-coded-valueset
+system-diagnostic-service-sections-code
+system-fasting-status-code
+system-medication
+system-medication-form-codes
+system-medication-not-given
+system-normal-coded-valueset
+system-nutrients
+system-observation
+system-practitioner-role-code
+system-prepare_patient_prior_specimen_code
+system-route
+system-specimen-condition-code
+system-specimen-processing-method-code
+system-specimen_collection_code
+system-specimen_type-code
+system-substance
+system-ucum-units

@@ -42,9 +42,11 @@ def start(form, requested_by):
 
 
 @contextmanager
-def _exclusive(slug):
+def exclusive(slug):
     """Hold a per-hospital lock for the whole run, on a connection of its own: the
-    migrations close Django's main connection, which would silently drop a lock held there."""
+    migrations close Django's main connection, which would silently drop a lock held there.
+    Also taken by every other job that changes a hospital as a whole (reference packs,
+    ihr_refdata); it never waits: a second holder gets ProvisioningError at once."""
     key = int.from_bytes(hashlib.sha256(slug.encode()).digest()[:8], "big", signed=True)
     holder = connections.create_connection("default")
     try:
@@ -60,10 +62,13 @@ def _exclusive(slug):
         holder.close()  # ends that session, which releases the lock
 
 
+_exclusive = exclusive  # the name the tests and older callers use
+
+
 def is_busy(slug):
     """True while some run holds this hospital's lock."""
     try:
-        with _exclusive(slug):
+        with exclusive(slug):
             return False
     except ProvisioningError:
         return True
@@ -81,7 +86,7 @@ def run(op, stop_after=None):
         raise ProvisioningError("Not a provisioning operation.")
     if op.status == TenantOperation.Status.SUCCEEDED:
         return op
-    with _exclusive(op.slug):
+    with exclusive(op.slug):
         op.refresh_from_db()
         if op.status not in OPEN:
             msg = f"This operation is {op.status}; start a new one instead."
@@ -135,7 +140,7 @@ def rollback(op, requested_by):
         raise ProvisioningError("Only a provisioning operation can be rolled back.")
     if op.status == TenantOperation.Status.ROLLED_BACK:
         return op
-    with _exclusive(op.slug):
+    with exclusive(op.slug):
         op.refresh_from_db()
         hospital = Hospital.objects.filter(pk=op.hospital_id).first()
         if hospital is not None:
@@ -204,7 +209,7 @@ def resend_setup(op):
         or op.status != TenantOperation.Status.SUCCEEDED
     ):
         raise ProvisioningError("Only a finished provisioning has a setup e-mail.")
-    with _exclusive(op.slug):
+    with exclusive(op.slug):
         op.refresh_from_db()
         try:
             sent = steps.resend_setup(op)

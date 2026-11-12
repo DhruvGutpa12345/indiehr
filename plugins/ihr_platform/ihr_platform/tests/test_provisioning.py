@@ -129,6 +129,14 @@ class ProvisioningTests(SimpleTestCase):
                 )
             ),
         ]
+        # The reference packs give every new hospital its value sets (P1-T15a): CARE's own
+        # sync_valueset must never run, so it fails here if any step still reaches it
+        patches.append(
+            mock.patch(
+                "care.emr.management.commands.sync_valueset.Command.handle",
+                side_effect=AssertionError("CARE's sync_valueset must not run"),
+            )
+        )
         for patch in patches:
             patch.start()
             self.addCleanup(patch.stop)
@@ -267,14 +275,29 @@ class ProvisioningTests(SimpleTestCase):
 
     def _contents(self, hospital, op):
         from care.emr.models.organization import Organization, OrganizationUser
+        from care.emr.models.valueset import ValueSet
         from care.emr.resources.facility.spec import FacilityReadSpec
         from care.facility.models import Facility, FacilityOrganizationUser
         from care.security.models import RoleModel
         from care.users.models import User
         from ihr_identity.models import StaffIdentity
+        from ihr_refdata import manifest
+        from ihr_refdata.models import PackApply, PackItem
         from ihr_tenant_settings.models import HospitalProfile
 
         with schema_context(hospital.schema_name):
+            # The value sets come from the reference packs, recorded, applied once (the
+            # activate step finds nothing more to do)
+            sets = manifest.latest()["care-valuesets"].item_count
+            self.assertEqual(
+                ValueSet.objects.filter(is_system_defined=True).count(), sets
+            )
+            self.assertEqual(
+                PackItem.objects.filter(pack="care-valuesets", state="current").count(),
+                sets,
+            )
+            applied = PackApply.objects.get(outcome="applied")
+            self.assertEqual(applied.actor, "provisioning:test")
             profile = HospitalProfile.current()
             self.assertEqual(
                 (profile.display_name, profile.state_code, profile.pin_code),
@@ -317,6 +340,8 @@ class ProvisioningTests(SimpleTestCase):
                 Facility.objects.count(),
                 User.objects.get_entire_queryset().count(),
                 RoleModel.objects.count(),
+                ValueSet.objects.count(),
+                PackApply.objects.count(),
             )
 
     # --- roll-back ----------------------------------------------------------------------

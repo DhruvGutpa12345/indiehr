@@ -250,6 +250,44 @@ answers:
 
 They are listed so you can decide, not changed. **To reverse:** delete or reorder the rows.
 
+### Q-K24 — P1-T15 split into a and b (auto-accepted by Claude, 2026-11-13, awaiting owner confirmation)
+
+- **A ⭐ (taken).**
+  - **P1-T15a (this run):** the pack engine, plus CARE's own system value sets as the first pack.
+    It replaces `sync_valueset` at every start and in provisioning, and adds drift and re-apply
+    tests that run on every upstream sync.
+  - **P1-T15b (after P1-T17, before the Phase 2 masters):**
+    - the hospital admin's "updates available" API (the screen with P1-T24);
+    - identifier configs (UHID, ABHA) and forms (a new version is a new form, plus a guard
+      against editing a form that has answers);
+    - per-facility kinds such as the lab catalogue.
+    - Their content is clinical or yours (Q-K12), so it comes with Phase 2.
+- B. One task: more than one sitting, and most of B's content cannot be written yet.
+
+### Q-K25 — How reference packs behave (P1-T15a; auto-accepted by Claude, 2026-11-13, awaiting owner confirmation)
+
+These are within your Q-T10 answer and TENANCY §5. Each is a rule in one module,
+`ihr_refdata/engine.py`, with a test.
+
+- **A ⭐ (taken).**
+  - **Who gets updates at start-up:** active hospitals only. A hospital that fails is recorded and
+    alerted, and the rest start.
+  - **Provisioning:** a new hospital gets the packs as it is created and again just before it
+    goes live.
+  - **Unknown origin:** a row that differs from the pack, with no record that this pack wrote it,
+    counts as edited. You decide.
+  - **Keep:** "keep my version" stands until the pack changes again.
+  - **Deleted CARE system value sets are restored automatically.** CARE's code needs them by name,
+    and without one every form bound to it fails. The restore is in the audit trail.
+  - **Versions only go forward.** An older image skips the pack with a warning, and a version
+    number is never reused.
+  - `system-medication-not-given`, a CARE system set that CARE's own sync never loaded (a module
+    nothing imported), is shipped.
+- B. Leave deleted system sets for the admin to decide (they would break clinical forms until
+  then).
+
+**To reverse:** change the rule in `engine.py` and its test.
+
 **Still open:** Q-B4 (final MVP module list: assumed as in PLAN.md Phase 2) and Q-B6/B7 (pricing, timeline). Q-F2 is moot while AI is deferred.
 
 ---

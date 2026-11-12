@@ -203,11 +203,16 @@ def roles(op, form):
 
 
 def value_sets(op, form):
-    # Only on a schema this operation created: on an existing one it would skip or, with
-    # --overwrite, wipe the hospital's own edits (TENANCY_DESIGN §7.2).
-    if op.result.get("schema_created_here"):
-        with schema_context(_hospital(op).schema_name):
-            call_command("sync_valueset", verbosity=0)
+    """The reference packs (P1-T15a), CARE's system value sets first. The engine never
+    overwrites a hospital's own edits and writes nothing when nothing changed, so it is safe
+    on any schema; this run already holds the hospital's lock."""
+    from ihr_refdata import engine
+
+    engine.apply_packs(_hospital(op), operator=_pack_operator(op))
+
+
+def _pack_operator(op):
+    return f"provisioning:{op.requested_by}"[:150]
 
 
 def profile(op, form):
@@ -342,6 +347,7 @@ def keycloak(op, form):
 
 def activate(op, form):
     """Live: the sign-in client turned on, then status ACTIVE and the go-live time (once)."""
+    from ihr_refdata import engine
     from ihr_tenant_settings import geography as geo
 
     from ihr_platform.keycloak.hospital import ensure_hospital
@@ -355,6 +361,9 @@ def activate(op, form):
     # geography step (a resumed run skips that step) is picked up here, before going live.
     with schema_context(hospital.schema_name):
         geo.load_all()
+    # Likewise ihr_pack_apply --all: a run resumed under a newer release must not go live
+    # with an older pack (P1-T15a)
+    engine.apply_packs(hospital, operator=_pack_operator(op))
     login = replace(hospital_login(hospital), enabled=True)
     ensure_hospital(
         keycloak_admin(purpose="onboarding"), login, str(hospital.keycloak_org_id)

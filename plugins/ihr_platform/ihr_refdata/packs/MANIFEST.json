@@ -1,0 +1,11 @@
+{
+ "about": "Reference packs (P1-T15a). Version files are built by scripts/pack-build.sh, never by hand, and never changed once committed. Applied by manage.py ihr_pack_apply.",
+ "releases": [
+  {
+   "file": "care-valuesets/1.json",
+   "pack": "care-valuesets",
+   "sha256": "8e867a939cd6d2f7c02f8d05931e5f7a66a36140f5862de427cbd439e4d3f86a",
+   "version": 1
+  }
+ ]
+}

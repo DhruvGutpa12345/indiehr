@@ -56,6 +56,23 @@ repos:
         language: system
         files: ^scripts/(merge-locale|test_merge_locale)\.py$
         pass_filenames: false
+  # Reference packs (P1-T15a): a released version file is never changed, only added
+  - repo: local
+    hooks:
+      - id: pack-versions-immutable
+        name: released reference pack versions are unchanged
+        entry: scripts/check-pack-versions.sh
+        language: system
+        # pre-commit never lists deleted files, so it runs on every commit (cheap: one git diff)
+        always_run: true
+        pass_filenames: false
+      # The check itself, in throwaway repositories (CI also runs it with --base, ci.yml)
+      - id: pack-versions-tests
+        name: pack version check tests
+        entry: python3 -m unittest scripts/test_check_pack_versions.py
+        language: system
+        files: ^(scripts/(check-pack-versions\.sh|test_check_pack_versions\.py)|\.github/workflows/ci\.yml)$
+        pass_filenames: false
   # India date style in the web app (P1-T7b): every date display pattern is mapped or allowed.
   - repo: local
     hooks:

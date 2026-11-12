@@ -31,6 +31,10 @@ PUBLIC_TABLE_ALLOW_LIST = {
     "ihr_terminology_codesystemversion",
     "ihr_terminology_concept",
     "ihr_terminology_designation",
+    # Reference packs (P1-T15a): which pack releases exist (pack, version, sha256, CARE
+    # commit), the same for every hospital; no hospital or patient data, and no hospital table
+    # points at it (each hospital's own pack state is in its schema)
+    "ihr_refdata_registry_packrelease",
 }
 SECOND_DOMAIN = "second.testserver"
 

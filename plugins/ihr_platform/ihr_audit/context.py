@@ -219,6 +219,23 @@ def job(ctx, actor):
         _apply(connection, previous)
 
 
+@contextmanager
+def extend(**fields):
+    """Add fields to whatever context is set now, keeping its actor (as ``begin_task`` does
+    for a task run inside a request): writes made inside name, say, the reference pack and
+    version, and still the provisioning run or command they were made for. Outside any
+    context the fields stand alone and the actor stays the process (``system:...``). The
+    previous values come back afterwards."""
+    previous = _current.get()
+    ctx = json.loads(previous[0]) if previous[0] else {}
+    _set({**ctx, **fields}, previous[1])
+    try:
+        yield
+    finally:
+        _current.set(previous)
+        _apply(connection, previous)
+
+
 def end_task():
     saved = _outer.get()
     if not saved:

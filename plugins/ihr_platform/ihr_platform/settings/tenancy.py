@@ -19,10 +19,18 @@ SHARED_APPS = [
     "django.contrib.contenttypes",
     # Terminology (P1-T10a1, ADR-016): one read-only copy for every hospital, in public
     "ihr_terminology",
+    # Reference packs (P1-T15a): the fleet's record of each pack release, in public
+    "ihr_refdata_registry",
 ]
 PLATFORM_ONLY_APPS = {"django_tenants", "ihr_platform"}
 # Our apps that live in every hospital's schema (TENANCY_DESIGN.md §3).
-IHR_TENANT_APPS = ["ihr_tenant_settings", "ihr_identity", "ihr_audit"]
+IHR_TENANT_APPS = [
+    "ihr_tenant_settings",
+    "ihr_identity",
+    "ihr_audit",
+    # Reference packs applied to this hospital (P1-T15a)
+    "ihr_refdata",
+]
 
 
 def process_name():

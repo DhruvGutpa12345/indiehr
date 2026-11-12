@@ -1,4 +1,5 @@
-"""Create a tenant: schema + every migration + CARE's roles and value sets (TENANCY_DESIGN.md §7.1).
+"""Create a tenant: schema + every migration + CARE's roles + the reference packs, CARE's
+system value sets first (TENANCY_DESIGN.md §7.1, P1-T15a).
 
 v1 provisioning never clones a template schema. Must run as the database owner role.
 """
@@ -8,6 +9,7 @@ from django.core.management import call_command
 from django.core.management.base import BaseCommand, CommandError
 from django.utils import timezone
 from django_tenants.utils import schema_context
+from ihr_refdata import engine
 from ihr_tenant_settings.models import HospitalProfile
 
 from ihr_platform.models import Domain, Hospital
@@ -57,7 +59,9 @@ class Command(BaseCommand):
 
         with schema_context(hospital.schema_name):
             call_command("sync_permissions_roles", verbosity=0)
-            call_command("sync_valueset", verbosity=0)
+        # Nobody else can reach this hospital yet (no lock needed); never CARE's sync_valueset
+        engine.apply_packs(hospital, operator="ihr_create_tenant")
+        with schema_context(hospital.schema_name):
             # the profile row itself comes from migration ihr_tenant_settings 0002
             if not HospitalProfile.objects.exists():
                 msg = f"{hospital.schema_name}: hospital profile was not created"
