@@ -184,8 +184,10 @@ class Up(unittest.TestCase):
         ]
         at = [up.index(s) for s in steps]
         self.assertEqual(at, sorted(at))
-        # backend, celery and the workers start without re-running migrate
-        self.assertEqual(up.count("--no-deps"), 4)
+        # backend, celery and the workers start without re-running migrate; so does the one-off
+        # terminology load (P1-T10a1)
+        self.assertEqual(up.count("--no-deps"), 5)
+        self.assertIn("run --rm --no-deps -T admin python manage.py ihr_terminology_load --bundled", up)
 
     def test_dev_order(self):
         kc_up = CARE_DEV.split("    up)\n", 1)[1].split(";;", 1)[0]

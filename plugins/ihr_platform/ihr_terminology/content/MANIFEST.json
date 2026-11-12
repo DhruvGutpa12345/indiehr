@@ -1,0 +1,31 @@
+{
+ "about": "Code systems bundled with IndieHR's terminology service (P1-T10a). Copied from from the FHIR packages below(only a final newline added); nothing is fetched at run time. Load: manage.py ihr_terminology_load --bundled.",
+ "sources": [
+  {
+   "folder": "hl7-terminology-7.5.0",
+   "package": "hl7.terminology.r4",
+   "version": "7.5.0",
+   "licence": "CC0-1.0",
+   "url": "https://packages.simplifier.net/hl7.terminology.r4/7.5.0",
+   "package_sha256": "1da3004587602c3f5120061abc2309fef1f96668a477a9964354fa9af6fa6e60"
+  },
+  {
+   "folder": "fhir-r4-core-4.0.1",
+   "package": "hl7.fhir.r4.core",
+   "version": "4.0.1",
+   "licence": "CC0-1.0 (the FHIR specification); the UCUM codes are (c) Regenstrief Institute, used under UCUM's royalty-free terms of use (https://ucum.org/?p=33)",
+   "url": "https://packages.simplifier.net/hl7.fhir.r4.core/4.0.1",
+   "package_sha256": "ebd7731df7d36b5b7d39d5fb6c9d77b44bb7fe5742f1a2e87f164738c3289d44"
+  }
+ ],
+ "files": {
+  "fhir-r4-core-4.0.1/ValueSet-ucum-common.json": "2150f7145ee9079b4490d5553473301e086428d40e2d50f4f2ab5c165040c127",
+  "hl7-terminology-7.5.0/CodeSystem-container-cap.json": "5f1a0a6f30b98e45900b505299f5bedcbbda59d6abfdc1212b30669c6a639475",
+  "hl7-terminology-7.5.0/CodeSystem-service-type.json": "c64a668bb4661d18b26fb9959dcc085063cae4296aa02f2e2439baffd6d988a4",
+  "hl7-terminology-7.5.0/CodeSystem-v2-0074.json": "bb9e6bd046ab13efa561ecbdb46c8d5bf5bf73100322f1502d431f41d475c487",
+  "hl7-terminology-7.5.0/CodeSystem-v2-0487.json": "09987381489f1d127f86c17ad0d5975a116330ef837288e1fe6bd45af6931996",
+  "hl7-terminology-7.5.0/CodeSystem-v2-0493.json": "fd080a2e6ced65042a8da20e677a523063226a5095f577da93de4464656e146c",
+  "hl7-terminology-7.5.0/CodeSystem-v2-0916.json": "de4538c7a9b1e2d994dcaf92268201ba21d5f77ba1983774afcb2d26e4ce997e",
+  "hl7-terminology-7.5.0/CodeSystem-v3-ObservationInterpretation.json": "dde040a86a963fca188f8de632bd3fb7afd90a737be638db6af21d2bc37ed58f"
+ }
+}

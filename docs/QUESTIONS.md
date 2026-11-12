@@ -128,6 +128,49 @@ unmodified and reached over the network only (CLAUDE.md). **To reverse:** drop
 **To reverse:** B is an added `[auth.generic_oauth]` block plus a Keycloak client, and the tunnel
 stays as a way in when Keycloak is down.
 
+### Q-F6 — Which terminology engine? (P1-T10a1)
+
+- **A ⭐ (taken). Our own engine** in the plugin `ihr_terminology`, answering CARE's four FHIR
+  terminology calls in-process from shared, read-only tables in `public`. It adds no process,
+  no network hop and no image. Score 405/500.
+- B. Snowstorm Lite (SNOMED International, Apache-2.0), 375/500, within 10 %. It is SNOMED-only,
+  so it would sit next to our engine for HL7, UCUM and LOINC, and it needs about 500 MB of RAM.
+- C. HAPI FHIR (370) and FHIRsmith (335): heavier, or too young.
+
+Why A: CARE needs only a small subset, and the 8 GB server is tight. **To reverse:** point
+`ResourceManger._fhir_client` at an HTTP client for Snowstorm Lite for SNOMED. P1-T10a2's
+synthetic SNOMED-scale benchmark is the trigger for that. Evidence:
+docs/reviews/p1-t10a/scorecard.md, ADR-016.
+
+### Q-F7 — What counts as a valid code? (P1-T10a1)
+
+- **A ⭐ (taken). Strict.**
+  - A coded write is accepted only when it carries the value set's system, an active code
+    that is in the value set, and, if it carries a display, one of that concept's terms.
+  - Value sets that use filters beyond CARE's own (anything but is-a, descendent-of, =, in,
+    not-in, and simple ECL) are refused, never widened.
+  - SNOMED, LOINC and ICD answer nothing until their licensed content is loaded, even codes
+    that CARE's own value sets list.
+  - Pinned HL7 versions answer from the loaded version.
+  - UCUM accepts any well-formed unit built from the common list, such as `{capsule}`.
+- B. Lenient: accept unknown codes until content arrives. Records would then hold codes no one
+  checked.
+
+**To reverse:** the rules are in one module, `ihr_terminology/engine.py`, with a test each.
+
+### Q-F8 — What content ships with the code? (P1-T10a1)
+
+- **A ⭐ (taken).** HL7 Terminology 7.5.0 (CC0): the 7 code systems CARE uses. UCUM common
+  units from FHIR R4 4.0.1 (CC0, UCUM's terms of use). Nothing licensed.
+- SNOMED CT India, LOINC, ICD-10/11 and a drug list wait for P1-T10b, which needs your licences
+  and accounts.
+
+### Q-F9 — Splitting P1-T10 (P1-T10a1, T10a2, T10b)
+
+- **A ⭐ (taken).** Split as in TRACKER: the engine and free content first; then SNOMED
+  readiness with a benchmark; then licensed content, behind your licences.
+- The design attack found that one T10a was 8 to 15 hours, against the 1 to 3 the plan allows.
+
 **Still open:** Q-B4 (final MVP module list: assumed as in PLAN.md Phase 2) and Q-B6/B7 (pricing, timeline). Q-F2 is moot while AI is deferred.
 
 ---

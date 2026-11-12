@@ -276,6 +276,12 @@ up() {  # up [--new-database]: the flag only where an empty database is really m
   # Schema changes to the end first: the sync reads the hospitals from the database. Run here,
   # once; the services below start without their dependency chain, so it does not run again.
   compose run --rm --no-deps -T migrate
+  # Terminology content that ships with the code (P1-T10a1, ADR-016): loaded once per version,
+  # a no-op when nothing changed
+  # (admin keeps no logs: what was newly loaded goes to the host's journal, hence the log store)
+  compose --profile admin run --rm --no-deps -T admin python manage.py ihr_terminology_load --bundled \
+    --operator "staging.sh up ($(id -un)@$(hostname -s))" | { grep '^loaded ' || true; } \
+    | while IFS= read -r line; do echo "terminology $line"; logger -t ihr-terminology "$line" 2>/dev/null || true; done
   # The new backend first: on a server from before P1-T8d2 its clients are still public and
   # ignore the assertion it now sends, so sign-ins go on while the old backend is replaced.
   # The old workers stop: after the sync below their secrets are dead.
@@ -401,6 +407,10 @@ smoke() {  # every public address through Traefik, as a browser would reach it
   check "status host: nothing else served" 418 "$(code "https://status.$suffix:$port/")"
   check "ops host closed (reserved, SSH tunnel only)" 418 "$(code "https://ops.$suffix:$port/")"
   [[ -z "$(env_get IHR_MONITORING)" ]] || monitoring_smoke
+  # Terminology answered here, from the content that ships with the code (P1-T10a1)
+  check "terminology: bundled code systems active" \
+    "$(compose exec -T backend python -c 'import importlib.util, json, pathlib; d = pathlib.Path(importlib.util.find_spec("ihr_terminology").origin).parent; print(len(json.loads((d / "content" / "MANIFEST.json").read_text())["files"]))' 2>/dev/null || echo unreadable)" \
+    "$(compose exec -T backend python manage.py ihr_terminology_load --status 2>/dev/null | grep -c '^active ' || true)"
   check "unknown hospital address: no branding" 404 "$(code "https://nope.$suffix:$port/api/ihr/bootstrap/")"
   check "bare suffix not served" 404 "$(code "https://$suffix:$port/")"
   check "HSTS on the console" "max-age=31536000" "$(header "https://console.$suffix:$port/ops/" strict-transport-security)"

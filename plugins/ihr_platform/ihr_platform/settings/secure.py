@@ -114,10 +114,12 @@ def problems(settings, environ):  # noqa: PLR0912 (one flat list of rules)
         found.append("USE_TZ must be on (times stored with their zone).")
 
     terminology = str(settings.get("SNOWSTORM_DEPLOYMENT_URL", ""))
-    if terminology and not re.match(r"^https://|^http://127\.0\.0\.1:9/", terminology):
-        # CARE's default points at a third party over plain HTTP (P1-T10).
+    if terminology and not re.match(r"^http://127\.0\.0\.1:9/", terminology):
+        # CARE's default points at a third party over plain HTTP. Terminology is answered in
+        # this process (ihr_terminology, ADR-016); CARE's remote client is never used.
         found.append(
-            "SNOWSTORM_DEPLOYMENT_URL must be our own https:// service or the black hole."
+            "SNOWSTORM_DEPLOYMENT_URL must be the black hole (http://127.0.0.1:9/fhir): "
+            "terminology is answered by ihr_terminology."
         )
     if settings.get("SENTRY_DSN"):
         found.append(

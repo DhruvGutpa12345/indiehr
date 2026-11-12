@@ -26,6 +26,11 @@ PUBLIC_TABLE_ALLOW_LIST = {
     # P1-T7a: India Post's public PIN directory, the same for every hospital (no patients)
     "ihr_platform_postoffice",
     "ihr_platform_pindirectoryload",
+    # Terminology (P1-T10a1, ADR-016): one read-only copy for every hospital; a trigger refuses
+    # writes except by the loader, and no hospital table points at it
+    "ihr_terminology_codesystemversion",
+    "ihr_terminology_concept",
+    "ihr_terminology_designation",
 }
 SECOND_DOMAIN = "second.testserver"
 

@@ -96,6 +96,10 @@ class SecureRulesTests(SimpleTestCase):
             "SNOWSTORM_DEPLOYMENT_URL": {
                 "SNOWSTORM_DEPLOYMENT_URL": "http://165.22.211.144/fhir"
             },
+            # Not even our own https:// server: terminology is in-process (P1-T10a1)
+            "SNOWSTORM_DEPLOYMENT_URL must be the black hole": {
+                "SNOWSTORM_DEPLOYMENT_URL": "https://terminology.example.in/fhir"
+            },
             "SENTRY_DSN must stay unset": {"SENTRY_DSN": "https://x@sentry.io/1"},
             "TIME_ZONE must be Asia/Kolkata": {"TIME_ZONE": "UTC"},
             "USE_TZ must be on": {"USE_TZ": False},

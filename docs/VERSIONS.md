@@ -249,3 +249,13 @@ used unmodified and reached over the SSH tunnel only.
 | vmauth (logs-reader) | v1.156.0 (09-11-2026; Apache-2.0, same release as vmalert) — `victoriametrics/vmauth:v1.156.0-scratch@sha256:2688caa0cfd0bdd7f3a09fc0bf233bad9748b3ba5b86c43d9a805fd346921539`. Grafana's read-only door to the log store (`/select/logsql/` only) | digest | 2026-11-12 |
 
 Memory limits: Grafana 512 MB (measured 227–270 MB), logs-reader 48 MB (measured 6 MB).
+
+### Terminology content (P1-T10a1, ADR-016)
+
+Bundled in `plugins/ihr_platform/ihr_terminology/content/` with a MANIFEST that records each file's
+sha256, and checked on load. Nothing is fetched at run time.
+
+| Item | Version | Pinned how | Checked |
+|---|---|---|---|
+| HL7 Terminology (THO), `hl7.terminology.r4` | 7.5.0 (CC0-1.0; latest on packages.fhir.org 2026-11-12). Package sha256 `1da3004587602c3f5120061abc2309fef1f96668a477a9964354fa9af6fa6e60`. Seven code systems copied: v2-0074, v2-0487, v2-0493, v2-0916, v3-ObservationInterpretation, service-type, container-cap | sha256 per file | 2026-11-12 |
+| FHIR R4 core, `hl7.fhir.r4.core` | 4.0.1 (CC0-1.0; the only R4 release). Package sha256 `ebd7731df7d36b5b7d39d5fb6c9d77b44bb7fe5742f1a2e87f164738c3289d44`. `ValueSet-ucum-common` copied (1,364 entries, 1,357 codes; UCUM © Regenstrief, royalty-free terms) | sha256 per file | 2026-11-12 |

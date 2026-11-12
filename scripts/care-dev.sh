@@ -255,6 +255,8 @@ case "${1:-}" in
     docker rm -f indiehr-care-minio-1 >/dev/null 2>&1 || true
     "${COMPOSE[@]}" up -d --wait
     s3_buckets
+    # Terminology content that ships with the code (P1-T10a1): a no-op when nothing changed
+    "${COMPOSE[@]}" exec -T backend python manage.py ihr_terminology_load --bundled --operator "care-dev.sh up" >/dev/null
     echo "API is up. Next: scripts/care-dev.sh seed (first time), then scripts/care-dev.sh frontend"
     ;;
   down) "${COMPOSE[@]}" --profile keycloak down; docker rm -f indiehr-frontend >/dev/null 2>&1 || true ;;

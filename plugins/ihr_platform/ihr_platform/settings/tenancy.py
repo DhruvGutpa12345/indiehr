@@ -14,6 +14,8 @@ SHARED_APPS = [
     "django_tenants",
     "ihr_platform",
     "django.contrib.contenttypes",
+    # Terminology (P1-T10a1, ADR-016): one read-only copy for every hospital, in public
+    "ihr_terminology",
 ]
 PLATFORM_ONLY_APPS = {"django_tenants", "ihr_platform"}
 # Our apps that live in every hospital's schema (TENANCY_DESIGN.md §3).
@@ -60,6 +62,8 @@ def apply_tenancy(settings):  # noqa: PLR0915 (one flat list of settings)
         "ihr_platform.console.middleware.PlatformHostMiddleware",
         # Who did what, outside CARE's per-request transaction (P1-T6a)
         "ihr_audit.middleware.AuditMiddleware",
+        # A budget of terminology calls per request (P1-T10a1)
+        "ihr_terminology.middleware.TerminologyBudgetMiddleware",
         *middleware,
     ]
 
