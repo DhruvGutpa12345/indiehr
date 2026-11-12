@@ -49,6 +49,16 @@ misconfigurations:
     paths:
       - "apps/frontend/Dockerfile"
     statement: Same unused upstream image as above.
+  # ---- deploy/docker/grafana.Dockerfile (P1-T9d) ----
+  - id: DS-0031
+    paths:
+      - "deploy/docker/grafana.Dockerfile"
+    statement: >-
+      Trivy flags any ENV name containing AUTH as a possible secret. The three it flags are
+      settings, not secrets: GF_AUTH_ANONYMOUS_ENABLED=false and the two session lifetimes
+      (12h, 1h). The image holds no secret: the admin password, secret key and log login come
+      from mounted files at run time (compose.dashboards.yaml), and
+      scripts/test_staging_dashboards.py fails on any PASSWORD/SECRET_KEY/ADMIN_USER in its ENV.
 vulnerabilities:
   # ---- deploy/docker/grafana.Dockerfile (P1-T9d) ----
   - id: CVE-2026-78661
