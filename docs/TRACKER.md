@@ -7,6 +7,7 @@
 - ⬜ not started
 - ⏸ deferred
 - ❌ dropped
+- ➡ moved to another task
 
 Detailed task definitions: [PLAN.md](PLAN.md) §6. Open questions: [QUESTIONS.md](QUESTIONS.md).
 
@@ -132,9 +133,9 @@ Detailed task definitions: [PLAN.md](PLAN.md) §6. Open questions: [QUESTIONS.md
 - 🟡 P1-T1b Isolation suite (+ mutation runs) — 22/22 green, 10/10 mutations killed; CI 2,027/2,027 (run 42174788127)
   - Follow-ups found by P1-T1b:
     - ✅ Staff password set-up/reset links use one global `CURRENT_DOMAIN`, and the reset token has no tenant claim → fixed in P1-T2a
-    - ⬜ Anonymous routes to harden: ~~`/health/*` reachable only from monitoring~~ (P1-T8a: not routed publicly); `govt/organization` limited to government geography; `schedulable_users` exposes staff username, last login and roles (trim, require patient OTP); PlugConfig `meta` must never hold secrets
-    - ⬜ Seed the 34 models CARE's fixtures leave empty, so their detail routes are crawled too (`crawl_skips.txt`)
-    - ⬜ Remaining design patches not yet built: presigned cover/avatar URLs, batch sub-request path allow-list, separate patient/report bucket credentials (TENANCY_DESIGN §10)
+    - ➡ (moved to P1-T20, 2026-11-12) Anonymous routes to harden: ~~`/health/*` reachable only from monitoring~~ (P1-T8a: not routed publicly); `govt/organization` limited to government geography; `schedulable_users` exposes staff username, last login and roles (trim, require patient OTP); PlugConfig `meta` must never hold secrets
+    - ➡ (moved to P1-T16, 2026-11-12) Seed the models behind the 34 skipped routes, so their detail routes are crawled too (`crawl_skips.txt`)
+    - ➡ (moved to P1-T20, 2026-11-12) Remaining design patches not yet built: presigned cover/avatar URLs, batch sub-request path allow-list, separate patient/report bucket credentials (TENANCY_DESIGN §10)
 - 🟡 P1-T1c Scale & ops numbers — measured; **cell cap 100 confirmed** (Q-T6, 2026-11-06)
   - Follow-ups: re-measure on staging hardware (P1-T8) and with real data volumes (P4-T7 / pilot); apply the §6.11 operating rules in P1-T8
 - ⬜ P1-T1d Playwright two-subdomain isolation (after P1-T4)
@@ -186,7 +187,7 @@ Detailed task definitions: [PLAN.md](PLAN.md) §6. Open questions: [QUESTIONS.md
   - 🟡 P1-T11a Guarded role sync (no role held by anyone is ever deleted), role registry (permanent names, no shared-list aliasing), refuse CARE's global patient-edit switch
   - ⛔ P1-T11b The eight Indian roles + a demographics-only access override + endpoint tests + seeded users (blocked on you: Q-K21)
   - ⬜ P1-T11c Web-app menus shown by permission (`apps/frontend` patch, CI only; after P1-T11b)
-- ⬜ P1-T14 Customer discovery: 5–10 hospital interviews, pilot LOI (before Phase 2)
+- ⬜ P1-T14 Customer discovery: 5–10 hospital interviews, pilot LOI (before Phase 2); also re-check whether the DHIS incentive still runs (PLAN §1.1 and P3-T12 assume it; Phase 1 review R1-21)
 - 🟡 P1-T12 Hardening before staging: fix 29 fixable HIGH dependency vulns (22 backend, 7 frontend) + non-root Docker images
 - **From the Phase 1 review** (docs/reviews/phase-1-review.md, 2026-11-12; added by Claude, awaiting owner confirmation, Q-K23). Each finding survived a two-agent challenge.
   - Before Phase 2:

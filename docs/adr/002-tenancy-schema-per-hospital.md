@@ -31,7 +31,7 @@ We considered three ways to isolate tenants:
 
   P1-T1 must test both against CARE's migrations, Celery tasks and caches before we pick one. *(Superseded by Amendment 1: django-tenants 4.0.1 chosen; the middleware option is dropped.)*
 - **Isolation tests:** an automated cross-tenant test suite runs in CI and must stay green. It checks every API endpoint, file/object path and cache key.
-- **Per-tenant backup/restore:** logical dump per schema. This is tested in P1-T1.
+- **Per-tenant backup/restore:** logical dump per schema. This is tested in P1-T1. *(2026-11-12, Phase 1 review R1-08: proven in the P1-T1c bench; the nightly per-hospital dumps, the single-hospital restore command and its drill are not built yet: P1-T22, a gate before the first pilot. Until then only whole-cluster point-in-time recovery exists, P1-T8c.)*
 - **Object storage:** files live under a per-tenant prefix. Downloads use signed URLs. *(Amendment 1: prefix is `t/<hospital uuid>/`; patient files and public assets use separate buckets.)*
 - **Cache keys:** every cache and Redis key is prefixed with the tenant ID. *(Amendment 1: except a short, reviewed allow-list of deliberately global keys, checked by a CI keyspace audit.)*
 

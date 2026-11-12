@@ -84,7 +84,7 @@
 | 23 | **MIS dashboards** | Document reports only; **no MIS** (collections, census, occupancy, length of stay, turnaround time) | 🔴 | MIS plugin: SQL views per tenant + dashboard + Excel export; owner daily summary | L |
 | 24 | **Accounting handoff** | Nothing | 🔴 | Accounting outbox → Tally XML and ERPNext connector (ADR-004) | L |
 | 25 | **Printing** | Many print views (Rx, invoice, MAR, dispense, lab, appointment slips, purchase orders); template builder | ✅ | Per-tenant letterheads; 80 mm thermal receipt layout | S |
-| 26 | **Patient portal** | OTP login, public appointment booking | ✅ | Branding; ABHA link (Phase 3) | S |
+| 26 | **Patient portal** | OTP login, public appointment booking | 🟡 | Branding; ABHA link (Phase 3). *Phase 1 review R1-22 (2026-11-12): in production the OTP login fails closed (no SMS backend: a 500, no code sent), and public booking and the PIN auto-fill on the patient token depend on it, until a DLT-registered SMS provider (P8-T1).* | S |
 | 27 | **Infra fit** | Python 3.13, Django 6.0, Celery 5.6, Postgres 17, Redis 8, S3-compatible storage; React 19 + Vite 8 + TS 6 + Tailwind 4; Playwright end-to-end tests | ✅ | Postgres 18 check; replace bundled MinIO-like storage with SeaweedFS/S3 (ADR-003) | S |
 | 28 | **Plugins** | **Backend:** pip-installed Django apps at `api/<plug>/`, plus JSON-schema extension fields on 9 resources. **Frontend:** Module Federation remotes, 20+ UI slots (registration form, encounter actions, invoice payment options, …), runtime plugin config | ✅ | Our `ihr_*` plugins use both. Upstream patches only where no slot exists | — |
 
