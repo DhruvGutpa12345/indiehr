@@ -7,6 +7,10 @@ care.emr.tests.test_totp
 care.emr.tests.test_reset_password_api
 care.emr.tests.test_otp_reset_password_api
 care.users.tests.test_change_password
+# Added in the P1-T17 sync (CARE 782d511a): sign-in locking and token revocation, through the same
+# switched-off routes (every test answered 404 in tenant mode); they run in the plain Backend job
+care.users.tests.test_auth_lock
+care.users.tests.test_token_revocation
 # Single CARE tests that create staff with a password set by an admin (P1-T5e1: staff always
 # choose their own from the invitation e-mail; ihr_identity/invitations.py refuses a password).
 # Creating staff, its validation and permissions are covered by ihr_identity's invitation tests.
