@@ -139,7 +139,21 @@ if ((BUILD)) && [[ -n "$ACMEDNS" ]]; then
   docker buildx build -q --load -f deploy/docker/acme-dns.Dockerfile \
     --label "$REV_LABEL=$SHA" --label "ihr.git-dirty=$DIRTY" -t "$ACMEDNS" deploy/docker >/dev/null
 fi
-((BUILD_ONLY)) && { log "Images built: $BACKEND, $FRONTEND, $POSTGRES, $KEYCLOAK${ACMEDNS:+, $ACMEDNS}"; exit 0; }
+# Grafana (P1-T9d), only with monitoring (staging.sh monitoring-init). Labelled with its
+# Dockerfile's hash, not the commit: the same build is not sent again on every deploy.
+GRAFANA=""
+# A VM proof turns monitoring on there (local-proof), so it always needs the image too.
+if ((LOCAL_PROOF)) || [[ -f "$ENV_DIR/.env" && -n "$(env_get IHR_MONITORING)" ]]; then
+  [[ -f "$ENV_DIR/.env" ]] && GRAFANA="$(env_get IHR_GRAFANA_IMAGE)"
+  GRAFANA="${GRAFANA:-indiehr-grafana:staging}"
+fi
+GRAFANA_DF_SUM="$(sha256sum deploy/docker/grafana.Dockerfile | cut -d' ' -f1)"
+if ((BUILD)) && [[ -n "$GRAFANA" ]]; then
+  log "Building $GRAFANA (deploy/docker/grafana.Dockerfile: Grafana OSS, the logs plugin by checksum)"
+  docker buildx build -q --load -f deploy/docker/grafana.Dockerfile \
+    --label "ihr.dockerfile.sha256=$GRAFANA_DF_SUM" -t "$GRAFANA" deploy/docker >/dev/null
+fi
+((BUILD_ONLY)) && { log "Images built: $BACKEND, $FRONTEND, $POSTGRES, $KEYCLOAK${ACMEDNS:+, $ACMEDNS}${GRAFANA:+, $GRAFANA}"; exit 0; }
 
 [[ -f "$ENV_DIR/.env" && -d "$ENV_DIR/secrets" ]] \
   || die "no $ENV_DIR/.env and secrets/: run scripts/staging.sh init <suffix> first"
@@ -152,6 +166,11 @@ for img in "$BACKEND" "$FRONTEND" "$POSTGRES" "$KEYCLOAK" ${ACMEDNS:+"$ACMEDNS"}
     die "image $img was built from ${rev:0:12}, HEAD is ${SHA:0:12}: rebuild (drop --no-build) or pass --allow-dirty"
   fi
 done
+if [[ -n "$GRAFANA" ]]; then
+  docker image inspect "$GRAFANA" >/dev/null 2>&1 || die "image $GRAFANA not found here (drop --no-build)"
+  [[ "$(label_of "$GRAFANA" ihr.dockerfile.sha256)" == "$GRAFANA_DF_SUM" ]] \
+    || die "image $GRAFANA was not built from this deploy/docker/grafana.Dockerfile: rebuild (drop --no-build)"
+fi
 
 # ---- SSH: one shared connection (ufw allows 6 new SSH connections per 30 s per address) ----
 CM_DIR="$(mktemp -d "${TMPDIR:-/tmp}/ihr-deploy.XXXXXX")"
@@ -197,11 +216,13 @@ ship_image "$FRONTEND"
 ship_image "$POSTGRES"
 ship_image "$KEYCLOAK"
 [[ -z "$ACMEDNS" ]] || ship_image "$ACMEDNS"
+[[ -z "$GRAFANA" ]] || ship_image "$GRAFANA"
 
 # ---- 3. Stack files (tracked files only: never a stray .env or secret) ----------------------
 log "Sending the stack files to $REMOTE_ROOT"
 git ls-files -z deploy/staging deploy/s3 deploy/monitoring deploy/logs deploy/keycloak/password-blocklist \
-    deploy/docker/frontend-nginx.conf.template scripts/staging.sh scripts/client-keys.sh \
+    deploy/grafana/provisioning deploy/grafana/dashboards deploy/grafana/logs-reader.yml deploy/grafana/allowed-empty.txt \
+    deploy/docker/frontend-nginx.conf.template scripts/staging.sh scripts/client-keys.sh scripts/check-dashboards.py \
   | tar --null -T - -czf - \
   | remote "tar -C $REMOTE_ROOT --no-same-owner -xzf -"
 
@@ -244,5 +265,6 @@ remote "docker image prune -f >/dev/null"
   echo "postgres_image=$POSTGRES $(docker image inspect -f '{{.Id}}' "$POSTGRES") pgbackrest=$(label_of "$POSTGRES" ihr.pgbackrest.version)"
   echo "keycloak_image=$KEYCLOAK $(docker image inspect -f '{{.Id}}' "$KEYCLOAK")"
   [[ -z "$ACMEDNS" ]] || echo "acmedns_image=$ACMEDNS $(docker image inspect -f '{{.Id}}' "$ACMEDNS") source=$(label_of "$ACMEDNS" ihr.acme-dns.commit)"
+  [[ -z "$GRAFANA" ]] || echo "grafana_image=$GRAFANA $(docker image inspect -f '{{.Id}}' "$GRAFANA") grafana=$(label_of "$GRAFANA" ihr.grafana.version)"
 } | remote "cat > $REMOTE_ROOT/DEPLOYED.tmp && mv $REMOTE_ROOT/DEPLOYED.tmp $REMOTE_ROOT/DEPLOYED && rm -f $REMOTE_ROOT/DEPLOYING"
 log "Deployed $(label_of "$BACKEND" "$REV_LABEL") (dirty: $(label_of "$BACKEND" ihr.git-dirty)) to $HOST; recorded in $REMOTE_ROOT/DEPLOYED"

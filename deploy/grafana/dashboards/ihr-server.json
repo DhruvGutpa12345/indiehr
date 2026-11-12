@@ -1,0 +1,904 @@
+{
+ "annotations": {
+  "list": []
+ },
+ "description": "The server, its containers and the alerting pipeline (P1-T9a).",
+ "editable": false,
+ "graphTooltip": 1,
+ "links": [],
+ "panels": [
+  {
+   "collapsed": false,
+   "gridPos": {
+    "h": 1,
+    "w": 24,
+    "x": 0,
+    "y": 0
+   },
+   "id": 1,
+   "panels": [],
+   "title": "Now",
+   "type": "row"
+  },
+  {
+   "datasource": {
+    "type": "prometheus",
+    "uid": "prometheus"
+   },
+   "fieldConfig": {
+    "defaults": {
+     "thresholds": {
+      "mode": "absolute",
+      "steps": [
+       {
+        "color": "green",
+        "value": null
+       },
+       {
+        "color": "orange",
+        "value": 1
+       }
+      ]
+     }
+    },
+    "overrides": []
+   },
+   "gridPos": {
+    "h": 4,
+    "w": 4,
+    "x": 0,
+    "y": 1
+   },
+   "id": 2,
+   "options": {
+    "colorMode": "background",
+    "graphMode": "none",
+    "reduceOptions": {
+     "calcs": [
+      "lastNotNull"
+     ]
+    },
+    "textMode": "value"
+   },
+   "targets": [
+    {
+     "datasource": {
+      "type": "prometheus",
+      "uid": "prometheus"
+     },
+     "expr": "(count(ALERTS{alertstate=\"firing\", alertname!=\"Watchdog\"}) or vector(0)) + (count(vmalert_alerts_firing{job=\"vmalert\"} > 0) or vector(0))",
+     "instant": true,
+     "legendFormat": "",
+     "range": false,
+     "refId": "A"
+    }
+   ],
+   "title": "Firing alerts (metrics and logs)",
+   "type": "stat"
+  },
+  {
+   "datasource": {
+    "type": "prometheus",
+    "uid": "prometheus"
+   },
+   "description": "4 rules in deploy/logs/alerts; fewer means vmalert is down or not scraped",
+   "fieldConfig": {
+    "defaults": {
+     "thresholds": {
+      "mode": "absolute",
+      "steps": [
+       {
+        "color": "red",
+        "value": null
+       },
+       {
+        "color": "green",
+        "value": 4
+       }
+      ]
+     }
+    },
+    "overrides": []
+   },
+   "gridPos": {
+    "h": 4,
+    "w": 4,
+    "x": 4,
+    "y": 1
+   },
+   "id": 3,
+   "options": {
+    "colorMode": "background",
+    "graphMode": "none",
+    "reduceOptions": {
+     "calcs": [
+      "lastNotNull"
+     ]
+    },
+    "textMode": "value"
+   },
+   "targets": [
+    {
+     "datasource": {
+      "type": "prometheus",
+      "uid": "prometheus"
+     },
+     "expr": "count(vmalert_alerts_firing{job=\"vmalert\"}) or vector(0)",
+     "instant": true,
+     "legendFormat": "",
+     "range": false,
+     "refId": "A"
+    }
+   ],
+   "title": "Log alert rules running",
+   "type": "stat"
+  },
+  {
+   "datasource": {
+    "type": "prometheus",
+    "uid": "prometheus"
+   },
+   "fieldConfig": {
+    "defaults": {
+     "thresholds": {
+      "mode": "absolute",
+      "steps": [
+       {
+        "color": "green",
+        "value": null
+       },
+       {
+        "color": "red",
+        "value": 1
+       }
+      ]
+     }
+    },
+    "overrides": []
+   },
+   "gridPos": {
+    "h": 4,
+    "w": 4,
+    "x": 8,
+    "y": 1
+   },
+   "id": 4,
+   "options": {
+    "colorMode": "background",
+    "graphMode": "none",
+    "reduceOptions": {
+     "calcs": [
+      "lastNotNull"
+     ]
+    },
+    "textMode": "value"
+   },
+   "targets": [
+    {
+     "datasource": {
+      "type": "prometheus",
+      "uid": "prometheus"
+     },
+     "expr": "count(up == 0) or vector(0)",
+     "instant": true,
+     "legendFormat": "",
+     "range": false,
+     "refId": "A"
+    }
+   ],
+   "title": "Targets down",
+   "type": "stat"
+  },
+  {
+   "datasource": {
+    "type": "prometheus",
+    "uid": "prometheus"
+   },
+   "fieldConfig": {
+    "defaults": {
+     "thresholds": {
+      "mode": "absolute",
+      "steps": [
+       {
+        "color": "green",
+        "value": null
+       },
+       {
+        "color": "red",
+        "value": 1
+       }
+      ]
+     }
+    },
+    "overrides": []
+   },
+   "gridPos": {
+    "h": 4,
+    "w": 4,
+    "x": 12,
+    "y": 1
+   },
+   "id": 5,
+   "options": {
+    "colorMode": "background",
+    "graphMode": "none",
+    "reduceOptions": {
+     "calcs": [
+      "lastNotNull"
+     ]
+    },
+    "textMode": "value"
+   },
+   "targets": [
+    {
+     "datasource": {
+      "type": "prometheus",
+      "uid": "prometheus"
+     },
+     "expr": "count(count by (service) ((ihr_container_running == 0) or (ihr_container_unhealthy == 1))) or vector(0)",
+     "instant": true,
+     "legendFormat": "",
+     "range": false,
+     "refId": "A"
+    }
+   ],
+   "title": "Containers down or unhealthy",
+   "type": "stat"
+  },
+  {
+   "datasource": {
+    "type": "prometheus",
+    "uid": "prometheus"
+   },
+   "fieldConfig": {
+    "defaults": {
+     "thresholds": {
+      "mode": "absolute",
+      "steps": [
+       {
+        "color": "red",
+        "value": null
+       },
+       {
+        "color": "orange",
+        "value": 0.1
+       },
+       {
+        "color": "green",
+        "value": 0.2
+       }
+      ]
+     },
+     "unit": "percentunit"
+    },
+    "overrides": []
+   },
+   "gridPos": {
+    "h": 4,
+    "w": 4,
+    "x": 16,
+    "y": 1
+   },
+   "id": 6,
+   "options": {
+    "colorMode": "background",
+    "graphMode": "none",
+    "reduceOptions": {
+     "calcs": [
+      "lastNotNull"
+     ]
+    },
+    "textMode": "value"
+   },
+   "targets": [
+    {
+     "datasource": {
+      "type": "prometheus",
+      "uid": "prometheus"
+     },
+     "expr": "node_memory_MemAvailable_bytes / node_memory_MemTotal_bytes",
+     "instant": true,
+     "legendFormat": "",
+     "range": false,
+     "refId": "A"
+    }
+   ],
+   "title": "Free memory",
+   "type": "stat"
+  },
+  {
+   "datasource": {
+    "type": "prometheus",
+    "uid": "prometheus"
+   },
+   "fieldConfig": {
+    "defaults": {
+     "thresholds": {
+      "mode": "absolute",
+      "steps": [
+       {
+        "color": "red",
+        "value": null
+       },
+       {
+        "color": "orange",
+        "value": 12000000000.0
+       },
+       {
+        "color": "green",
+        "value": 20000000000.0
+       }
+      ]
+     },
+     "unit": "bytes"
+    },
+    "overrides": []
+   },
+   "gridPos": {
+    "h": 4,
+    "w": 4,
+    "x": 20,
+    "y": 1
+   },
+   "id": 7,
+   "options": {
+    "colorMode": "background",
+    "graphMode": "none",
+    "reduceOptions": {
+     "calcs": [
+      "lastNotNull"
+     ]
+    },
+    "textMode": "value"
+   },
+   "targets": [
+    {
+     "datasource": {
+      "type": "prometheus",
+      "uid": "prometheus"
+     },
+     "expr": "node_filesystem_avail_bytes{mountpoint=\"/\"}",
+     "instant": true,
+     "legendFormat": "",
+     "range": false,
+     "refId": "A"
+    }
+   ],
+   "title": "Free disk (/)",
+   "type": "stat"
+  },
+  {
+   "datasource": {
+    "type": "prometheus",
+    "uid": "prometheus"
+   },
+   "fieldConfig": {
+    "defaults": {},
+    "overrides": []
+   },
+   "gridPos": {
+    "h": 6,
+    "w": 12,
+    "x": 0,
+    "y": 5
+   },
+   "id": 8,
+   "options": {
+    "showHeader": true
+   },
+   "targets": [
+    {
+     "datasource": {
+      "type": "prometheus",
+      "uid": "prometheus"
+     },
+     "expr": "ALERTS{alertstate=\"firing\", alertname!=\"Watchdog\"}",
+     "instant": true,
+     "legendFormat": "",
+     "range": false,
+     "refId": "A"
+    }
+   ],
+   "title": "Firing alerts (metrics)",
+   "transformations": [
+    {
+     "id": "labelsToFields",
+     "options": {}
+    },
+    {
+     "id": "organize",
+     "options": {
+      "excludeByName": {
+       "Time": true,
+       "Value": true,
+       "__name__": true,
+       "alertstate": true
+      }
+     }
+    }
+   ],
+   "type": "table"
+  },
+  {
+   "datasource": {
+    "type": "prometheus",
+    "uid": "prometheus"
+   },
+   "description": "vmalert's log rules (deploy/logs/alerts); the value is how many are firing per rule",
+   "fieldConfig": {
+    "defaults": {},
+    "overrides": []
+   },
+   "gridPos": {
+    "h": 6,
+    "w": 12,
+    "x": 12,
+    "y": 5
+   },
+   "id": 9,
+   "options": {
+    "showHeader": true
+   },
+   "targets": [
+    {
+     "datasource": {
+      "type": "prometheus",
+      "uid": "prometheus"
+     },
+     "expr": "vmalert_alerts_firing{job=\"vmalert\"} > 0",
+     "instant": true,
+     "legendFormat": "",
+     "range": false,
+     "refId": "A"
+    }
+   ],
+   "title": "Firing alerts (logs)",
+   "transformations": [
+    {
+     "id": "labelsToFields",
+     "options": {}
+    },
+    {
+     "id": "organize",
+     "options": {
+      "excludeByName": {
+       "Time": true,
+       "__name__": true,
+       "instance": true,
+       "job": true
+      },
+      "renameByName": {
+       "Value": "firing"
+      }
+     }
+    }
+   ],
+   "type": "table"
+  },
+  {
+   "collapsed": false,
+   "gridPos": {
+    "h": 1,
+    "w": 24,
+    "x": 0,
+    "y": 11
+   },
+   "id": 10,
+   "panels": [],
+   "title": "Host",
+   "type": "row"
+  },
+  {
+   "datasource": {
+    "type": "prometheus",
+    "uid": "prometheus"
+   },
+   "fieldConfig": {
+    "defaults": {
+     "unit": "percentunit"
+    },
+    "overrides": []
+   },
+   "gridPos": {
+    "h": 8,
+    "w": 8,
+    "x": 0,
+    "y": 12
+   },
+   "id": 11,
+   "options": {
+    "legend": {
+     "displayMode": "list",
+     "placement": "bottom"
+    },
+    "tooltip": {
+     "mode": "multi"
+    }
+   },
+   "targets": [
+    {
+     "datasource": {
+      "type": "prometheus",
+      "uid": "prometheus"
+     },
+     "expr": "1 - avg(rate(node_cpu_seconds_total{mode=\"idle\"}[5m]))",
+     "legendFormat": "busy",
+     "refId": "A"
+    }
+   ],
+   "title": "CPU busy",
+   "type": "timeseries"
+  },
+  {
+   "datasource": {
+    "type": "prometheus",
+    "uid": "prometheus"
+   },
+   "fieldConfig": {
+    "defaults": {
+     "unit": "bytes"
+    },
+    "overrides": []
+   },
+   "gridPos": {
+    "h": 8,
+    "w": 8,
+    "x": 8,
+    "y": 12
+   },
+   "id": 12,
+   "options": {
+    "legend": {
+     "displayMode": "list",
+     "placement": "bottom"
+    },
+    "tooltip": {
+     "mode": "multi"
+    }
+   },
+   "targets": [
+    {
+     "datasource": {
+      "type": "prometheus",
+      "uid": "prometheus"
+     },
+     "expr": "node_memory_MemTotal_bytes - node_memory_MemAvailable_bytes",
+     "legendFormat": "used",
+     "refId": "A"
+    },
+    {
+     "datasource": {
+      "type": "prometheus",
+      "uid": "prometheus"
+     },
+     "expr": "node_memory_SwapTotal_bytes - node_memory_SwapFree_bytes",
+     "legendFormat": "swap used",
+     "refId": "B"
+    }
+   ],
+   "title": "Memory",
+   "type": "timeseries"
+  },
+  {
+   "datasource": {
+    "type": "prometheus",
+    "uid": "prometheus"
+   },
+   "fieldConfig": {
+    "defaults": {
+     "unit": "bytes"
+    },
+    "overrides": []
+   },
+   "gridPos": {
+    "h": 8,
+    "w": 8,
+    "x": 16,
+    "y": 12
+   },
+   "id": 13,
+   "options": {
+    "legend": {
+     "displayMode": "list",
+     "placement": "bottom"
+    },
+    "tooltip": {
+     "mode": "multi"
+    }
+   },
+   "targets": [
+    {
+     "datasource": {
+      "type": "prometheus",
+      "uid": "prometheus"
+     },
+     "expr": "node_filesystem_avail_bytes{fstype!~\"tmpfs|overlay|squashfs\", mountpoint!~\"/boot.*\"}",
+     "legendFormat": "{{mountpoint}}",
+     "refId": "A"
+    }
+   ],
+   "title": "Disk free",
+   "type": "timeseries"
+  },
+  {
+   "datasource": {
+    "type": "prometheus",
+    "uid": "prometheus"
+   },
+   "fieldConfig": {
+    "defaults": {},
+    "overrides": []
+   },
+   "gridPos": {
+    "h": 8,
+    "w": 8,
+    "x": 0,
+    "y": 20
+   },
+   "id": 14,
+   "options": {
+    "legend": {
+     "displayMode": "list",
+     "placement": "bottom"
+    },
+    "tooltip": {
+     "mode": "multi"
+    }
+   },
+   "targets": [
+    {
+     "datasource": {
+      "type": "prometheus",
+      "uid": "prometheus"
+     },
+     "expr": "node_load5",
+     "legendFormat": "load",
+     "refId": "A"
+    }
+   ],
+   "title": "Load (5 min)",
+   "type": "timeseries"
+  },
+  {
+   "datasource": {
+    "type": "prometheus",
+    "uid": "prometheus"
+   },
+   "description": "CERT-In: NIC/NPL time; alerts at 100 ms and 1 s",
+   "fieldConfig": {
+    "defaults": {
+     "unit": "s"
+    },
+    "overrides": []
+   },
+   "gridPos": {
+    "h": 8,
+    "w": 8,
+    "x": 8,
+    "y": 20
+   },
+   "id": 15,
+   "options": {
+    "legend": {
+     "displayMode": "list",
+     "placement": "bottom"
+    },
+    "tooltip": {
+     "mode": "multi"
+    }
+   },
+   "targets": [
+    {
+     "datasource": {
+      "type": "prometheus",
+      "uid": "prometheus"
+     },
+     "expr": "ihr_ntp_offset_seconds",
+     "legendFormat": "offset",
+     "refId": "A"
+    }
+   ],
+   "title": "Clock offset (chrony)",
+   "type": "timeseries"
+  },
+  {
+   "datasource": {
+    "type": "prometheus",
+    "uid": "prometheus"
+   },
+   "fieldConfig": {
+    "defaults": {},
+    "overrides": []
+   },
+   "gridPos": {
+    "h": 8,
+    "w": 8,
+    "x": 16,
+    "y": 20
+   },
+   "id": 16,
+   "options": {
+    "legend": {
+     "displayMode": "list",
+     "placement": "bottom"
+    },
+    "tooltip": {
+     "mode": "multi"
+    }
+   },
+   "targets": [
+    {
+     "datasource": {
+      "type": "prometheus",
+      "uid": "prometheus"
+     },
+     "expr": "increase(node_vmstat_oom_kill[1h])",
+     "legendFormat": "per hour",
+     "refId": "A"
+    }
+   ],
+   "title": "Out-of-memory kills",
+   "type": "timeseries"
+  },
+  {
+   "collapsed": false,
+   "gridPos": {
+    "h": 1,
+    "w": 24,
+    "x": 0,
+    "y": 28
+   },
+   "id": 17,
+   "panels": [],
+   "title": "Containers",
+   "type": "row"
+  },
+  {
+   "datasource": {
+    "type": "prometheus",
+    "uid": "prometheus"
+   },
+   "fieldConfig": {
+    "defaults": {
+     "unit": "percentunit"
+    },
+    "overrides": []
+   },
+   "gridPos": {
+    "h": 10,
+    "w": 12,
+    "x": 0,
+    "y": 29
+   },
+   "id": 18,
+   "options": {
+    "legend": {
+     "displayMode": "list",
+     "placement": "bottom"
+    },
+    "tooltip": {
+     "mode": "multi"
+    }
+   },
+   "targets": [
+    {
+     "datasource": {
+      "type": "prometheus",
+      "uid": "prometheus"
+     },
+     "expr": "ihr_container_memory_working_set_bytes / (ihr_container_memory_limit_bytes > 0)",
+     "legendFormat": "{{service}}",
+     "refId": "A"
+    }
+   ],
+   "title": "Memory against limit",
+   "type": "timeseries"
+  },
+  {
+   "datasource": {
+    "type": "prometheus",
+    "uid": "prometheus"
+   },
+   "fieldConfig": {
+    "defaults": {},
+    "overrides": []
+   },
+   "gridPos": {
+    "h": 10,
+    "w": 12,
+    "x": 12,
+    "y": 29
+   },
+   "id": 19,
+   "options": {
+    "legend": {
+     "displayMode": "list",
+     "placement": "bottom"
+    },
+    "tooltip": {
+     "mode": "multi"
+    }
+   },
+   "targets": [
+    {
+     "datasource": {
+      "type": "prometheus",
+      "uid": "prometheus"
+     },
+     "expr": "increase(ihr_container_restarts_total[1h])",
+     "legendFormat": "{{service}}",
+     "refId": "A"
+    }
+   ],
+   "title": "Restarts (1 h)",
+   "type": "timeseries"
+  },
+  {
+   "datasource": {
+    "type": "prometheus",
+    "uid": "prometheus"
+   },
+   "fieldConfig": {
+    "defaults": {},
+    "overrides": []
+   },
+   "gridPos": {
+    "h": 8,
+    "w": 24,
+    "x": 0,
+    "y": 39
+   },
+   "id": 20,
+   "options": {},
+   "targets": [
+    {
+     "datasource": {
+      "type": "prometheus",
+      "uid": "prometheus"
+     },
+     "expr": "up",
+     "instant": true,
+     "legendFormat": "",
+     "range": false,
+     "refId": "A"
+    }
+   ],
+   "title": "Targets",
+   "transformations": [
+    {
+     "id": "labelsToFields",
+     "options": {}
+    },
+    {
+     "id": "organize",
+     "options": {
+      "excludeByName": {
+       "Time": true,
+       "__name__": true
+      },
+      "renameByName": {
+       "Value": "up"
+      }
+     }
+    }
+   ],
+   "type": "table"
+  }
+ ],
+ "refresh": "1m",
+ "schemaVersion": 41,
+ "tags": [
+  "indiehr"
+ ],
+ "templating": {
+  "list": []
+ },
+ "time": {
+  "from": "now-6h",
+  "to": "now"
+ },
+ "timezone": "Asia/Kolkata",
+ "title": "Server and stack",
+ "uid": "ihr-server",
+ "version": 1
+}

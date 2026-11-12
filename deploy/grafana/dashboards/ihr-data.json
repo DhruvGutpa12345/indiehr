@@ -1,0 +1,1039 @@
+{
+ "annotations": {
+  "list": []
+ },
+ "description": "Database, cache, backups, the log store and archive, the journal, keys and certificates (P1-T8c, P1-T9).",
+ "editable": false,
+ "graphTooltip": 1,
+ "links": [],
+ "panels": [
+  {
+   "collapsed": false,
+   "gridPos": {
+    "h": 1,
+    "w": 24,
+    "x": 0,
+    "y": 0
+   },
+   "id": 1,
+   "panels": [],
+   "title": "Now",
+   "type": "row"
+  },
+  {
+   "datasource": {
+    "type": "prometheus",
+    "uid": "prometheus"
+   },
+   "fieldConfig": {
+    "defaults": {
+     "thresholds": {
+      "mode": "absolute",
+      "steps": [
+       {
+        "color": "red",
+        "value": null
+       },
+       {
+        "color": "green",
+        "value": 1
+       }
+      ]
+     }
+    },
+    "overrides": []
+   },
+   "gridPos": {
+    "h": 4,
+    "w": 4,
+    "x": 0,
+    "y": 1
+   },
+   "id": 2,
+   "options": {
+    "colorMode": "background",
+    "graphMode": "none",
+    "reduceOptions": {
+     "calcs": [
+      "lastNotNull"
+     ]
+    },
+    "textMode": "value"
+   },
+   "targets": [
+    {
+     "datasource": {
+      "type": "prometheus",
+      "uid": "prometheus"
+     },
+     "expr": "min(pg_up)",
+     "instant": true,
+     "legendFormat": "",
+     "range": false,
+     "refId": "A"
+    }
+   ],
+   "title": "Postgres",
+   "type": "stat"
+  },
+  {
+   "datasource": {
+    "type": "prometheus",
+    "uid": "prometheus"
+   },
+   "fieldConfig": {
+    "defaults": {
+     "thresholds": {
+      "mode": "absolute",
+      "steps": [
+       {
+        "color": "red",
+        "value": null
+       },
+       {
+        "color": "green",
+        "value": 1
+       }
+      ]
+     }
+    },
+    "overrides": []
+   },
+   "gridPos": {
+    "h": 4,
+    "w": 4,
+    "x": 4,
+    "y": 1
+   },
+   "id": 3,
+   "options": {
+    "colorMode": "background",
+    "graphMode": "none",
+    "reduceOptions": {
+     "calcs": [
+      "lastNotNull"
+     ]
+    },
+    "textMode": "value"
+   },
+   "targets": [
+    {
+     "datasource": {
+      "type": "prometheus",
+      "uid": "prometheus"
+     },
+     "expr": "min(redis_up)",
+     "instant": true,
+     "legendFormat": "",
+     "range": false,
+     "refId": "A"
+    }
+   ],
+   "title": "Redis",
+   "type": "stat"
+  },
+  {
+   "datasource": {
+    "type": "prometheus",
+    "uid": "prometheus"
+   },
+   "fieldConfig": {
+    "defaults": {
+     "thresholds": {
+      "mode": "absolute",
+      "steps": [
+       {
+        "color": "green",
+        "value": null
+       },
+       {
+        "color": "red",
+        "value": 93600
+       }
+      ]
+     },
+     "unit": "s"
+    },
+    "overrides": []
+   },
+   "gridPos": {
+    "h": 4,
+    "w": 4,
+    "x": 8,
+    "y": 1
+   },
+   "id": 4,
+   "options": {
+    "colorMode": "background",
+    "graphMode": "none",
+    "reduceOptions": {
+     "calcs": [
+      "lastNotNull"
+     ]
+    },
+    "textMode": "value"
+   },
+   "targets": [
+    {
+     "datasource": {
+      "type": "prometheus",
+      "uid": "prometheus"
+     },
+     "expr": "time() - max(ihr_backup_last_success_timestamp_seconds)",
+     "instant": true,
+     "legendFormat": "",
+     "range": false,
+     "refId": "A"
+    }
+   ],
+   "title": "Last good backup",
+   "type": "stat"
+  },
+  {
+   "datasource": {
+    "type": "prometheus",
+    "uid": "prometheus"
+   },
+   "fieldConfig": {
+    "defaults": {
+     "thresholds": {
+      "mode": "absolute",
+      "steps": [
+       {
+        "color": "green",
+        "value": null
+       },
+       {
+        "color": "orange",
+        "value": 108000
+       },
+       {
+        "color": "red",
+        "value": 345600
+       }
+      ]
+     },
+     "unit": "s"
+    },
+    "overrides": []
+   },
+   "gridPos": {
+    "h": 4,
+    "w": 4,
+    "x": 12,
+    "y": 1
+   },
+   "id": 5,
+   "options": {
+    "colorMode": "background",
+    "graphMode": "none",
+    "reduceOptions": {
+     "calcs": [
+      "lastNotNull"
+     ]
+    },
+    "textMode": "value"
+   },
+   "targets": [
+    {
+     "datasource": {
+      "type": "prometheus",
+      "uid": "prometheus"
+     },
+     "expr": "time() - max(ihr_logs_archive_last_day_end_timestamp_seconds)",
+     "instant": true,
+     "legendFormat": "",
+     "range": false,
+     "refId": "A"
+    }
+   ],
+   "title": "Archive: newest day ended",
+   "type": "stat"
+  },
+  {
+   "datasource": {
+    "type": "prometheus",
+    "uid": "prometheus"
+   },
+   "fieldConfig": {
+    "defaults": {
+     "thresholds": {
+      "mode": "absolute",
+      "steps": [
+       {
+        "color": "red",
+        "value": null
+       },
+       {
+        "color": "green",
+        "value": 1
+       }
+      ]
+     }
+    },
+    "overrides": []
+   },
+   "gridPos": {
+    "h": 4,
+    "w": 4,
+    "x": 16,
+    "y": 1
+   },
+   "id": 6,
+   "options": {
+    "colorMode": "background",
+    "graphMode": "none",
+    "reduceOptions": {
+     "calcs": [
+      "lastNotNull"
+     ]
+    },
+    "textMode": "value"
+   },
+   "targets": [
+    {
+     "datasource": {
+      "type": "prometheus",
+      "uid": "prometheus"
+     },
+     "expr": "max(ihr_logs_archive_bucket_locked)",
+     "instant": true,
+     "legendFormat": "",
+     "range": false,
+     "refId": "A"
+    }
+   ],
+   "title": "Archive bucket locked",
+   "type": "stat"
+  },
+  {
+   "datasource": {
+    "type": "prometheus",
+    "uid": "prometheus"
+   },
+   "fieldConfig": {
+    "defaults": {
+     "thresholds": {
+      "mode": "absolute",
+      "steps": [
+       {
+        "color": "green",
+        "value": null
+       },
+       {
+        "color": "red",
+        "value": 1
+       }
+      ]
+     }
+    },
+    "overrides": []
+   },
+   "gridPos": {
+    "h": 4,
+    "w": 4,
+    "x": 20,
+    "y": 1
+   },
+   "id": 7,
+   "options": {
+    "colorMode": "background",
+    "graphMode": "none",
+    "reduceOptions": {
+     "calcs": [
+      "lastNotNull"
+     ]
+    },
+    "textMode": "value"
+   },
+   "targets": [
+    {
+     "datasource": {
+      "type": "prometheus",
+      "uid": "prometheus"
+     },
+     "expr": "max(ihr_logs_archive_bad_manifests) + max(ihr_logs_archive_check_problems or vector(0))",
+     "instant": true,
+     "legendFormat": "",
+     "range": false,
+     "refId": "A"
+    }
+   ],
+   "title": "Not authentic in the archive",
+   "type": "stat"
+  },
+  {
+   "collapsed": false,
+   "gridPos": {
+    "h": 1,
+    "w": 24,
+    "x": 0,
+    "y": 5
+   },
+   "id": 8,
+   "panels": [],
+   "title": "Postgres and Redis",
+   "type": "row"
+  },
+  {
+   "datasource": {
+    "type": "prometheus",
+    "uid": "prometheus"
+   },
+   "fieldConfig": {
+    "defaults": {},
+    "overrides": []
+   },
+   "gridPos": {
+    "h": 8,
+    "w": 8,
+    "x": 0,
+    "y": 6
+   },
+   "id": 9,
+   "options": {
+    "legend": {
+     "displayMode": "list",
+     "placement": "bottom"
+    },
+    "tooltip": {
+     "mode": "multi"
+    }
+   },
+   "targets": [
+    {
+     "datasource": {
+      "type": "prometheus",
+      "uid": "prometheus"
+     },
+     "expr": "sum by (datname) (pg_stat_activity_count)",
+     "legendFormat": "{{datname}}",
+     "refId": "A"
+    }
+   ],
+   "title": "Connections per database",
+   "type": "timeseries"
+  },
+  {
+   "datasource": {
+    "type": "prometheus",
+    "uid": "prometheus"
+   },
+   "fieldConfig": {
+    "defaults": {
+     "unit": "s"
+    },
+    "overrides": []
+   },
+   "gridPos": {
+    "h": 8,
+    "w": 8,
+    "x": 8,
+    "y": 6
+   },
+   "id": 10,
+   "options": {
+    "legend": {
+     "displayMode": "list",
+     "placement": "bottom"
+    },
+    "tooltip": {
+     "mode": "multi"
+    }
+   },
+   "targets": [
+    {
+     "datasource": {
+      "type": "prometheus",
+      "uid": "prometheus"
+     },
+     "expr": "max by (datname) (pg_stat_activity_max_tx_duration)",
+     "legendFormat": "{{datname}}",
+     "refId": "A"
+    }
+   ],
+   "title": "Longest transaction",
+   "type": "timeseries"
+  },
+  {
+   "datasource": {
+    "type": "prometheus",
+    "uid": "prometheus"
+   },
+   "fieldConfig": {
+    "defaults": {},
+    "overrides": []
+   },
+   "gridPos": {
+    "h": 8,
+    "w": 8,
+    "x": 16,
+    "y": 6
+   },
+   "id": 11,
+   "options": {
+    "legend": {
+     "displayMode": "list",
+     "placement": "bottom"
+    },
+    "tooltip": {
+     "mode": "multi"
+    }
+   },
+   "targets": [
+    {
+     "datasource": {
+      "type": "prometheus",
+      "uid": "prometheus"
+     },
+     "expr": "increase(pg_stat_archiver_failed_count[1h])",
+     "legendFormat": "per hour",
+     "refId": "A"
+    }
+   ],
+   "title": "WAL archiving failures",
+   "type": "timeseries"
+  },
+  {
+   "datasource": {
+    "type": "prometheus",
+    "uid": "prometheus"
+   },
+   "fieldConfig": {
+    "defaults": {
+     "unit": "bytes"
+    },
+    "overrides": []
+   },
+   "gridPos": {
+    "h": 8,
+    "w": 8,
+    "x": 0,
+    "y": 14
+   },
+   "id": 12,
+   "options": {
+    "legend": {
+     "displayMode": "list",
+     "placement": "bottom"
+    },
+    "tooltip": {
+     "mode": "multi"
+    }
+   },
+   "targets": [
+    {
+     "datasource": {
+      "type": "prometheus",
+      "uid": "prometheus"
+     },
+     "expr": "redis_memory_used_bytes",
+     "legendFormat": "used",
+     "refId": "A"
+    },
+    {
+     "datasource": {
+      "type": "prometheus",
+      "uid": "prometheus"
+     },
+     "expr": "redis_memory_max_bytes",
+     "legendFormat": "max",
+     "refId": "B"
+    }
+   ],
+   "title": "Redis memory",
+   "type": "timeseries"
+  },
+  {
+   "datasource": {
+    "type": "prometheus",
+    "uid": "prometheus"
+   },
+   "fieldConfig": {
+    "defaults": {},
+    "overrides": []
+   },
+   "gridPos": {
+    "h": 8,
+    "w": 8,
+    "x": 8,
+    "y": 14
+   },
+   "id": 13,
+   "options": {
+    "legend": {
+     "displayMode": "list",
+     "placement": "bottom"
+    },
+    "tooltip": {
+     "mode": "multi"
+    }
+   },
+   "targets": [
+    {
+     "datasource": {
+      "type": "prometheus",
+      "uid": "prometheus"
+     },
+     "expr": "redis_key_size{key=\"celery\"}",
+     "legendFormat": "waiting tasks",
+     "refId": "A"
+    }
+   ],
+   "title": "Celery queue",
+   "type": "timeseries"
+  },
+  {
+   "datasource": {
+    "type": "prometheus",
+    "uid": "prometheus"
+   },
+   "fieldConfig": {
+    "defaults": {
+     "unit": "bytes"
+    },
+    "overrides": []
+   },
+   "gridPos": {
+    "h": 8,
+    "w": 8,
+    "x": 16,
+    "y": 14
+   },
+   "id": 14,
+   "options": {
+    "legend": {
+     "displayMode": "list",
+     "placement": "bottom"
+    },
+    "tooltip": {
+     "mode": "multi"
+    }
+   },
+   "targets": [
+    {
+     "datasource": {
+      "type": "prometheus",
+      "uid": "prometheus"
+     },
+     "expr": "ihr_backup_spool_bytes",
+     "legendFormat": "spool",
+     "refId": "A"
+    },
+    {
+     "datasource": {
+      "type": "prometheus",
+      "uid": "prometheus"
+     },
+     "expr": "ihr_backup_spool_max_bytes",
+     "legendFormat": "cap",
+     "refId": "B"
+    }
+   ],
+   "title": "Backup WAL spool",
+   "type": "timeseries"
+  },
+  {
+   "collapsed": false,
+   "gridPos": {
+    "h": 1,
+    "w": 24,
+    "x": 0,
+    "y": 22
+   },
+   "id": 15,
+   "panels": [],
+   "title": "Logs, archive and journal",
+   "type": "row"
+  },
+  {
+   "datasource": {
+    "type": "prometheus",
+    "uid": "prometheus"
+   },
+   "fieldConfig": {
+    "defaults": {},
+    "overrides": []
+   },
+   "gridPos": {
+    "h": 8,
+    "w": 8,
+    "x": 0,
+    "y": 23
+   },
+   "id": 16,
+   "options": {
+    "legend": {
+     "displayMode": "list",
+     "placement": "bottom"
+    },
+    "tooltip": {
+     "mode": "multi"
+    }
+   },
+   "targets": [
+    {
+     "datasource": {
+      "type": "prometheus",
+      "uid": "prometheus"
+     },
+     "expr": "sum(rate(vl_rows_ingested_total[5m])) * 60",
+     "legendFormat": "lines/min",
+     "refId": "A"
+    }
+   ],
+   "title": "Lines into the log store",
+   "type": "timeseries"
+  },
+  {
+   "datasource": {
+    "type": "prometheus",
+    "uid": "prometheus"
+   },
+   "fieldConfig": {
+    "defaults": {
+     "unit": "bytes"
+    },
+    "overrides": []
+   },
+   "gridPos": {
+    "h": 8,
+    "w": 8,
+    "x": 8,
+    "y": 23
+   },
+   "id": 17,
+   "options": {
+    "legend": {
+     "displayMode": "list",
+     "placement": "bottom"
+    },
+    "tooltip": {
+     "mode": "multi"
+    }
+   },
+   "targets": [
+    {
+     "datasource": {
+      "type": "prometheus",
+      "uid": "prometheus"
+     },
+     "expr": "sum(vl_data_size_bytes)",
+     "legendFormat": "used",
+     "refId": "A"
+    },
+    {
+     "datasource": {
+      "type": "prometheus",
+      "uid": "prometheus"
+     },
+     "expr": "max(ihr_logs_max_bytes)",
+     "legendFormat": "cap",
+     "refId": "B"
+    }
+   ],
+   "title": "Log store disk against its cap",
+   "type": "timeseries"
+  },
+  {
+   "datasource": {
+    "type": "prometheus",
+    "uid": "prometheus"
+   },
+   "fieldConfig": {
+    "defaults": {},
+    "overrides": []
+   },
+   "gridPos": {
+    "h": 8,
+    "w": 8,
+    "x": 16,
+    "y": 23
+   },
+   "id": 18,
+   "options": {
+    "legend": {
+     "displayMode": "list",
+     "placement": "bottom"
+    },
+    "tooltip": {
+     "mode": "multi"
+    }
+   },
+   "targets": [
+    {
+     "datasource": {
+      "type": "prometheus",
+      "uid": "prometheus"
+     },
+     "expr": "sum(increase(fluentbit_filter_drop_records_total{name=~\"shape|redact\"}[1h]))",
+     "legendFormat": "dropped by redaction",
+     "refId": "A"
+    },
+    {
+     "datasource": {
+      "type": "prometheus",
+      "uid": "prometheus"
+     },
+     "expr": "sum(increase(fluentbit_output_dropped_records_total{name=\"victorialogs\"}[1h]))",
+     "legendFormat": "lost",
+     "refId": "B"
+    }
+   ],
+   "title": "Redaction drops and lost lines",
+   "type": "timeseries"
+  },
+  {
+   "datasource": {
+    "type": "prometheus",
+    "uid": "prometheus"
+   },
+   "fieldConfig": {
+    "defaults": {
+     "unit": "bytes"
+    },
+    "overrides": []
+   },
+   "gridPos": {
+    "h": 8,
+    "w": 8,
+    "x": 0,
+    "y": 31
+   },
+   "id": 19,
+   "options": {
+    "legend": {
+     "displayMode": "list",
+     "placement": "bottom"
+    },
+    "tooltip": {
+     "mode": "multi"
+    }
+   },
+   "targets": [
+    {
+     "datasource": {
+      "type": "prometheus",
+      "uid": "prometheus"
+     },
+     "expr": "ihr_journal_disk_usage_bytes",
+     "legendFormat": "used",
+     "refId": "A"
+    },
+    {
+     "datasource": {
+      "type": "prometheus",
+      "uid": "prometheus"
+     },
+     "expr": "ihr_journal_max_use_bytes",
+     "legendFormat": "cap",
+     "refId": "B"
+    }
+   ],
+   "title": "Journal against its cap",
+   "type": "timeseries"
+  },
+  {
+   "datasource": {
+    "type": "prometheus",
+    "uid": "prometheus"
+   },
+   "description": "A 14-day buffer (ADR-014)",
+   "fieldConfig": {
+    "defaults": {
+     "unit": "s"
+    },
+    "overrides": []
+   },
+   "gridPos": {
+    "h": 8,
+    "w": 8,
+    "x": 8,
+    "y": 31
+   },
+   "id": 20,
+   "options": {
+    "legend": {
+     "displayMode": "list",
+     "placement": "bottom"
+    },
+    "tooltip": {
+     "mode": "multi"
+    }
+   },
+   "targets": [
+    {
+     "datasource": {
+      "type": "prometheus",
+      "uid": "prometheus"
+     },
+     "expr": "time() - ihr_journal_oldest_entry_timestamp_seconds",
+     "legendFormat": "age of oldest entry",
+     "refId": "A"
+    }
+   ],
+   "title": "Journal reaches back",
+   "type": "timeseries"
+  },
+  {
+   "datasource": {
+    "type": "prometheus",
+    "uid": "prometheus"
+   },
+   "fieldConfig": {
+    "defaults": {},
+    "overrides": []
+   },
+   "gridPos": {
+    "h": 8,
+    "w": 8,
+    "x": 16,
+    "y": 31
+   },
+   "id": 21,
+   "options": {
+    "legend": {
+     "displayMode": "list",
+     "placement": "bottom"
+    },
+    "tooltip": {
+     "mode": "multi"
+    }
+   },
+   "targets": [
+    {
+     "datasource": {
+      "type": "prometheus",
+      "uid": "prometheus"
+     },
+     "expr": "ihr_logs_archive_last_run_ok",
+     "legendFormat": "last pass ok",
+     "refId": "A"
+    },
+    {
+     "datasource": {
+      "type": "prometheus",
+      "uid": "prometheus"
+     },
+     "expr": "ihr_logs_archive_days",
+     "legendFormat": "days archived",
+     "refId": "B"
+    }
+   ],
+   "title": "Archive passes",
+   "type": "timeseries"
+  },
+  {
+   "collapsed": false,
+   "gridPos": {
+    "h": 1,
+    "w": 24,
+    "x": 0,
+    "y": 39
+   },
+   "id": 22,
+   "panels": [],
+   "title": "Keys and certificates",
+   "type": "row"
+  },
+  {
+   "datasource": {
+    "type": "prometheus",
+    "uid": "prometheus"
+   },
+   "description": "Rotate every 180 days (Q-K18): scripts/staging.sh keys rotate",
+   "fieldConfig": {
+    "defaults": {
+     "unit": "d"
+    },
+    "overrides": []
+   },
+   "gridPos": {
+    "h": 8,
+    "w": 12,
+    "x": 0,
+    "y": 40
+   },
+   "id": 23,
+   "options": {
+    "legend": {
+     "displayMode": "list",
+     "placement": "bottom"
+    },
+    "tooltip": {
+     "mode": "multi"
+    }
+   },
+   "targets": [
+    {
+     "datasource": {
+      "type": "prometheus",
+      "uid": "prometheus"
+     },
+     "expr": "ihr_client_key_active_age_days",
+     "legendFormat": "{{purpose}}",
+     "refId": "A"
+    }
+   ],
+   "title": "Client key age",
+   "type": "timeseries"
+  },
+  {
+   "datasource": {
+    "type": "prometheus",
+    "uid": "prometheus"
+   },
+   "fieldConfig": {
+    "defaults": {
+     "unit": "d"
+    },
+    "overrides": []
+   },
+   "gridPos": {
+    "h": 8,
+    "w": 12,
+    "x": 12,
+    "y": 40
+   },
+   "id": 24,
+   "options": {
+    "legend": {
+     "displayMode": "list",
+     "placement": "bottom"
+    },
+    "tooltip": {
+     "mode": "multi"
+    }
+   },
+   "targets": [
+    {
+     "datasource": {
+      "type": "prometheus",
+      "uid": "prometheus"
+     },
+     "expr": "(probe_ssl_earliest_cert_expiry - time()) / 86400",
+     "legendFormat": "{{endpoint}}",
+     "refId": "A"
+    }
+   ],
+   "title": "Certificate expiry",
+   "type": "timeseries"
+  }
+ ],
+ "refresh": "1m",
+ "schemaVersion": 41,
+ "tags": [
+  "indiehr"
+ ],
+ "templating": {
+  "list": []
+ },
+ "time": {
+  "from": "now-6h",
+  "to": "now"
+ },
+ "timezone": "Asia/Kolkata",
+ "title": "Data and records",
+ "uid": "ihr-data",
+ "version": 1
+}

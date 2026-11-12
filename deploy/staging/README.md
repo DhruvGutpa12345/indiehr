@@ -663,3 +663,69 @@ So:
   LogArchiveFailing, not as a sick container.
 - **In a proof,** erasing a day the store still holds makes the archiver archive it again. On a
   server, erased days (400 days) are long gone from the store (180).
+
+## Dashboards (P1-T9d, ADR-015)
+
+Grafana shows the server, the data and backups, traffic and sign-ins, and the redacted logs, on
+four read-only dashboards in the folder "IndieHR". It is a viewer: alerts still come only from
+Prometheus, vmalert and Alertmanager. It starts with monitoring (`compose.dashboards.yaml`).
+
+**Open it:**
+
+1. Run `scripts/staging.sh ops-tunnel ihr@<server>` on your own machine.
+2. Open http://grafana.localhost:3000 (any browser on Linux, macOS or Windows sends
+   `*.localhost` to this machine).
+3. Sign in. The name is `GF_SECURITY_ADMIN_USER` in `secrets/grafana-admin.env` on the server,
+   and the password is in `secrets/grafana-admin-password`. Both are generated at the first
+   `up` and belong in the owner's password manager.
+
+**What it can reach:**
+
+- It is on the internal `dashboards` network (10.203.0.48/28), with Prometheus and
+  `logs-reader` only. It listens on its fixed address (10.203.0.50) and on no other.
+- Nothing that takes traffic from the internet can reach it.
+- It reads the logs through `logs-reader` (vmauth) with its own read-only login (`grafana-ro`).
+  It never holds the log store's password, and it can neither insert nor delete lines.
+  `logs-reader` has its own key for its own pages (`secrets/logs-reader-key`); the store's
+  admin key stays with VictoriaLogs.
+
+**Changes:**
+
+- **Dashboards.** Edit `deploy/grafana/build_dashboards.py`, run it, and commit the script and
+  the JSON. UI edits are not saved. A running Grafana picks up new JSON within a minute.
+- **Datasources and the log door.** Changes to `deploy/grafana/provisioning/` or
+  `logs-reader.yml` recreate the container on the next `up`.
+
+**Locked out or lost password:**
+
+- Five wrong passwords lock the name for 5 minutes, and then it unlocks by itself.
+- `scripts/staging.sh grafana-reset-admin` sets a new password in Grafana and in the file
+  together.
+- Do not edit or delete the secret files by hand. Grafana stores the account at its first start,
+  and `up` refuses to make new files while Grafana's data volume exists.
+
+**Checks:** `smoke` runs `scripts/check-dashboards.py`. It covers:
+
+- **Sign-in:** health; another host name redirected; the admin login works, a wrong password or
+  the name `admin` is refused; basic auth off.
+- **Browser and settings:** the CSP; `/metrics` closed; a write from another origin refused;
+  every setting that could call out is off.
+- **Content:** exactly two datasource plugins; both datasources healthy; the dashboards as in
+  git; every metric a panel names exists; every panel's query runs and returns data. A panel may
+  be empty only if `deploy/grafana/allowed-empty.txt` lists it, with a reason, for a case that
+  applies here. `smoke` works the cases out: a proof, no archive or backups, an archive with no
+  whole day yet.
+- **Reach** (checked by `smoke` itself):
+  - the web app cannot reach Grafana;
+  - Grafana reaches Prometheus but not the log store or Alertmanager;
+  - its log login reads but cannot write, and without a login nothing answers;
+  - the store's admin key is not in the log door.
+
+**Log levels:** host lines are coloured by journald's priority, container lines by the level in
+their message. Docker marks all of stderr as an error, and most services log to stderr.
+
+**Memory budget** (limits against measured use on the local proof, 2026-11-12, after the dashboards
+were opened): Grafana 512 MB against 227 MB (270 MB idle on its own), logs-reader 48 MB against
+6 MB. The limits of all services add up to more than the server's 8 GB. They are ceilings that
+stop one runaway service, not reservations: the whole stack used 2.2 GB on the proof (Keycloak
+614 MB the largest).

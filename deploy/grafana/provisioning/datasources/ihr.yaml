@@ -1,0 +1,31 @@
+# Grafana's datasources (P1-T9d, ADR-015), provisioned: not editable in the UI. Both on the
+# `dashboards` network: Prometheus, and the redacted log store through logs-reader (vmauth), with
+# Grafana's own read-only login (grafana-ro), its password read from the mounted secret at start.
+apiVersion: 1
+deleteDatasources: []
+prune: true
+datasources:
+  - name: Prometheus
+    uid: prometheus
+    type: prometheus
+    access: proxy
+    url: http://prometheus:9090
+    isDefault: true
+    editable: false
+    jsonData:
+      httpMethod: POST
+      timeInterval: 30s
+      prometheusType: Prometheus
+      prometheusVersion: 3.16.0
+  - name: Logs (redacted)
+    uid: victorialogs
+    type: victoriametrics-logs-datasource
+    access: proxy
+    url: http://logs-reader:8427
+    editable: false
+    basicAuth: true
+    basicAuthUser: grafana-ro
+    secureJsonData:
+      basicAuthPassword: $__file{/run/ihr-grafana/logs-password}
+    jsonData:
+      maxLines: 1000

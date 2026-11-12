@@ -236,3 +236,16 @@ registry and pulled; each is the project's latest stable release on GitHub, chec
 | vmalert | v1.156.0 (09-11-2026; Apache-2.0) — `victoriametrics/vmalert:v1.156.0-scratch@sha256:e1ee6661c4c2f5fe811090a03069a9b8b75f55c137d7892acd2197dba34ec47b` (no shell); runs as nobody. `vmalert-tool` cannot test LogsQL rules yet (upstream #11049): `scripts/check-logs.py` runs vmalert itself on fixtures | digest | 2026-11-12 |
 
 Memory limits: VictoriaLogs 256 MB, Fluent Bit 128 MB, vmalert 64 MB.
+
+### Dashboards (P1-T9d, ADR-015)
+
+Each is the project's latest stable release on GitHub, checked 2026-11-12. Grafana is AGPL-3.0,
+used unmodified and reached over the SSH tunnel only.
+
+| Item | Version | Pinned how | Checked |
+|---|---|---|---|
+| Grafana OSS | 13.3.1 (10-11-2026; AGPL-3.0) — `grafana/grafana:13.3.1@sha256:0615ec4fbd4072004b7d86b46ded63013a74b7d6eb1119273dd89e8fa25c13cf`, built into `indiehr-grafana` by `deploy/docker/grafana.Dockerfile`. Of the bundled plugins, only the Prometheus datasource and the canvas panel are kept; the others are removed and disabled. Trivy: one HIGH finding in bundled Prometheus (x/net, unreachable), path-scoped in `.trivyignore.yaml` until 31-12-2026 | digest | 2026-11-12 |
+| VictoriaLogs datasource plugin | v0.34.0 (06-11-2026; Apache-2.0, signed by VictoriaMetrics) — release zip `victoriametrics-logs-datasource-v0.34.0.zip`, `ADD --checksum=sha256:6fc61446097a525e826f2ddb6746723f85447845c95a7b1a99624e84d4b2e237`. All platform binaries stay, because the signed manifest lists them. Trivy: x/net and Go x509 findings, unreachable, path-scoped until 31-12-2026 | checksum | 2026-11-12 |
+| vmauth (logs-reader) | v1.156.0 (09-11-2026; Apache-2.0, same release as vmalert) — `victoriametrics/vmauth:v1.156.0-scratch@sha256:2688caa0cfd0bdd7f3a09fc0bf233bad9748b3ba5b86c43d9a805fd346921539`. Grafana's read-only door to the log store (`/select/logsql/` only) | digest | 2026-11-12 |
+
+Memory limits: Grafana 512 MB (measured 227–270 MB), logs-reader 48 MB (measured 6 MB).

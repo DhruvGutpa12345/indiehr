@@ -105,7 +105,9 @@ class Isolation(unittest.TestCase):
         self.assertTrue(net["internal"])
         self.assertEqual(net["ipam"]["config"][0]["subnet"], "${IHR_LOGS_NET:-10.203.0.32/28}")
         self.assertEqual(members("logs"), {("compose.logs.yaml", n) for n in ("victorialogs", "fluent-bit", "vmalert", "prometheus")}
-                         | {("compose.logs-archive.yaml", "logs-archive"), ("compose.logs-archive.local.yaml", "logs-archive")})
+                         | {("compose.logs-archive.yaml", "logs-archive"), ("compose.logs-archive.local.yaml", "logs-archive"),
+                            # Grafana's read-only door (P1-T9d): reads /select/logsql/ only
+                            ("compose.dashboards.yaml", "logs-reader")})
 
     def test_victorialogs_on_logs_alone(self):
         self.assertEqual(list(SVC["victorialogs"]["networks"]), ["logs"])

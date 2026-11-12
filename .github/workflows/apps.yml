@@ -617,6 +617,69 @@ jobs:
           exit-code: "1"
           format: table
 
+  grafana-image:
+    name: Grafana image (build, offline smoke, settings, Trivy)
+    needs: changes
+    if: needs.changes.outputs.infra == 'true' || github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+
+      - name: Build (deploy/docker/grafana.Dockerfile; the logs plugin checked by its SHA-256)
+        run: docker buildx build --load -f deploy/docker/grafana.Dockerfile -t indiehr-grafana:ci deploy/docker
+
+      - name: Smoke on a network with no way out (P1-T9d)
+        run: |
+          set -euo pipefail
+          test "$(docker image inspect indiehr-grafana:ci --format '{{.Config.User}}')" = 472
+          # Throwaway login for this run only (never stored)
+          mkdir -m 755 ci-secrets
+          name="ops-$(openssl rand -hex 6)"
+          printf 'GF_SECURITY_ADMIN_USER=%s\nGF_SECURITY_ADMIN_EMAIL=%s@admin.invalid\n' "$name" "$name" > ci-secrets/admin.env
+          openssl rand -hex 24 | tr -d '\n' > ci-secrets/admin-password
+          chmod 644 ci-secrets/*
+          docker network create --internal --subnet 10.250.0.0/24 gnet
+          docker run -d --name gf --network gnet --ip 10.250.0.10 --read-only --tmpfs /tmp \
+            --tmpfs /var/lib/grafana:uid=472,gid=0 --cap-drop ALL --security-opt no-new-privileges:true \
+            -e GF_SERVER_HTTP_ADDR=10.250.0.10 -e GF_SERVER_DOMAIN=grafana.localhost \
+            -e GF_SERVER_ROOT_URL=http://grafana.localhost:3000/ -e GF_SERVER_ENFORCE_DOMAIN=true \
+            -e GF_AUTH_BASIC_ENABLED=false -e GF_SECURITY_ADMIN_PASSWORD__FILE=/run/s/admin-password \
+            -e GF_LOG_LEVEL=debug \
+            --env-file ci-secrets/admin.env -v "$PWD/ci-secrets:/run/s:ro" indiehr-grafana:ci
+          up=0
+          for _ in $(seq 1 40); do
+            if curl -fsS -H 'Host: grafana.localhost:3000' http://10.250.0.10:3000/api/health >/dev/null 2>&1; then up=1; break; fi
+            sleep 3
+          done
+          test "$up" = 1 || { docker logs gf 2>&1 | tail -40; exit 1; }
+          # A minute past start-up, at debug level: no logged lookup or dial may have failed (an
+          # update check, plugin catalog, news or usage report would show here). The network has
+          # no way out anyway; the settings read-back below is the main check.
+          sleep 60
+          # grafana.com points at 127.0.0.1:9 in the image: an attempt to reach it is a refused dial
+          # (a line merely naming an address, such as the settings or a docs link, is fine)
+          if docker logs gf 2>&1 | grep -iE 'dial tcp|connection refused|lookup .* on|network is unreachable|no such host|raintank|stats\.grafana\.org'; then
+            echo "Grafana tried to reach something outside"; exit 1
+          fi
+          python3 scripts/check-dashboards.py --url http://10.250.0.10:3000 --domain grafana.localhost \
+            --admin-env ci-secrets/admin.env --password-file ci-secrets/admin-password --image-only
+          docker rm -f gf
+
+      - name: Trivy image scan (fail on fixable HIGH/CRITICAL)
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          scan-type: image
+          image-ref: indiehr-grafana:ci
+          scanners: vuln,secret
+          severity: CRITICAL,HIGH
+          ignore-unfixed: true
+          trivyignores: .trivyignore.yaml
+          exit-code: "1"
+          format: table
+
   infra-tofu:
     name: Infra modules (OpenTofu fmt, validate, mock tests)
     needs: changes

@@ -1,0 +1,167 @@
+{
+ "annotations": {
+  "list": []
+ },
+ "description": "The redacted log store (ADR-013): pick a service, type words to search. Personal data and secrets were masked before storage.",
+ "editable": false,
+ "graphTooltip": 1,
+ "links": [],
+ "panels": [
+  {
+   "datasource": {
+    "type": "victoriametrics-logs-datasource",
+    "uid": "victorialogs"
+   },
+   "fieldConfig": {
+    "defaults": {},
+    "overrides": []
+   },
+   "gridPos": {
+    "h": 14,
+    "w": 24,
+    "x": 0,
+    "y": 0
+   },
+   "id": 1,
+   "options": {
+    "enableLogDetails": true,
+    "showTime": true,
+    "sortOrder": "Descending",
+    "wrapLogMessage": true
+   },
+   "targets": [
+    {
+     "datasource": {
+      "type": "victoriametrics-logs-datasource",
+      "uid": "victorialogs"
+     },
+     "expr": "${service:raw} ${search:raw} | format if (source:=host priority:<=3) \"error\" as level | format if (source:=host priority:=4) \"warning\" as level | format if (source:=host priority:>=5) \"info\" as level | format if (source:=container) \"info\" as level | format if (source:=container _msg:~`level=warn|\"level\":\"warn|\\bWARN(ING)?\\b`) \"warning\" as level | format if (source:=container _msg:~`level=(error|fatal|panic|crit)|\"level\":\"(error|fatal|panic|critical)\"|\\b(ERROR|FATAL|CRITICAL|PANIC)\\b|Traceback \\(most recent call last\\)`) \"error\" as level",
+     "queryType": "instant",
+     "refId": "A"
+    }
+   ],
+   "title": "Lines",
+   "type": "logs"
+  },
+  {
+   "datasource": {
+    "type": "victoriametrics-logs-datasource",
+    "uid": "victorialogs"
+   },
+   "fieldConfig": {
+    "defaults": {},
+    "overrides": []
+   },
+   "gridPos": {
+    "h": 8,
+    "w": 12,
+    "x": 0,
+    "y": 14
+   },
+   "id": 2,
+   "options": {
+    "legend": {
+     "displayMode": "list",
+     "placement": "bottom"
+    },
+    "tooltip": {
+     "mode": "multi"
+    }
+   },
+   "targets": [
+    {
+     "datasource": {
+      "type": "victoriametrics-logs-datasource",
+      "uid": "victorialogs"
+     },
+     "expr": "* | stats by (service) count() n",
+     "legendFormat": "{{service}}",
+     "queryType": "statsRange",
+     "refId": "A"
+    }
+   ],
+   "title": "Lines per service",
+   "type": "timeseries"
+  },
+  {
+   "datasource": {
+    "type": "victoriametrics-logs-datasource",
+    "uid": "victorialogs"
+   },
+   "description": "Host: journald priority 0\u20133. Containers: an error level in the message (level=error, ERROR, a Python traceback), since Docker marks all of stderr as priority 3",
+   "fieldConfig": {
+    "defaults": {},
+    "overrides": []
+   },
+   "gridPos": {
+    "h": 8,
+    "w": 12,
+    "x": 12,
+    "y": 14
+   },
+   "id": 3,
+   "options": {
+    "legend": {
+     "displayMode": "list",
+     "placement": "bottom"
+    },
+    "tooltip": {
+     "mode": "multi"
+    }
+   },
+   "targets": [
+    {
+     "datasource": {
+      "type": "victoriametrics-logs-datasource",
+      "uid": "victorialogs"
+     },
+     "expr": "(source:=host priority:<=3) or (source:=container _msg:~`level=(error|fatal|panic|crit)|\"level\":\"(error|fatal|panic|critical)\"|\\b(ERROR|FATAL|CRITICAL|PANIC)\\b|Traceback \\(most recent call last\\)`) | stats by (service) count() n",
+     "legendFormat": "{{service}}",
+     "queryType": "statsRange",
+     "refId": "A"
+    }
+   ],
+   "title": "Error-level lines per service",
+   "type": "timeseries"
+  }
+ ],
+ "refresh": "1m",
+ "schemaVersion": 41,
+ "tags": [
+  "indiehr"
+ ],
+ "templating": {
+  "list": [
+   {
+    "current": {
+     "text": "all",
+     "value": "*"
+    },
+    "includeAll": false,
+    "label": "Service",
+    "multi": false,
+    "name": "service",
+    "query": "all : *, traefik : service:=traefik, backend : service:=backend, keycloak : service:=keycloak, frontend : service:=frontend, celery-worker : service:=celery-worker, celery-beat : service:=celery-beat, provisioner : service:=provisioner, staff-worker : service:=staff-worker, db : service:=db, redis : service:=redis, s3 : service:=s3, backup : service:=backup, fluent-bit : service:=fluent-bit, victorialogs : service:=victorialogs, vmalert : service:=vmalert, logs-archive : service:=logs-archive, sshd : service:=sshd, sudo : service:=sudo, kernel : service:=kernel, systemd : service:=systemd",
+    "type": "custom"
+   },
+   {
+    "current": {
+     "text": "",
+     "value": ""
+    },
+    "label": "Words",
+    "name": "search",
+    "query": "",
+    "type": "textbox"
+   }
+  ]
+ },
+ "time": {
+  "from": "now-6h",
+  "to": "now"
+ },
+ "timezone": "Asia/Kolkata",
+ "title": "Logs",
+ "uid": "ihr-logs",
+ "version": 1
+}

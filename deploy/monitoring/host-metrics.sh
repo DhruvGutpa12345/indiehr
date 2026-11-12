@@ -40,7 +40,7 @@ done
 NAME_RE='^[a-z0-9][a-z0-9-]*$'
 # Set-up services that run once and exit (restart: "no"); scripts/staging.sh leaves them out of
 # --services too. Never reported, even when --services is empty (compose could not be read).
-ONESHOT_RE='^(migrate|admin|keytool|s3-tool|traefik-data|alertmanager-data|logs-data)$'
+ONESHOT_RE='^(migrate|admin|keytool|s3-tool|traefik-data|alertmanager-data|logs-data|grafana-data)$'
 
 LINES=()
 metric() { LINES+=("$1"); }  # metric '<name>{labels} <value>'

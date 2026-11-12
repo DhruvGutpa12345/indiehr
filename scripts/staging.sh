@@ -38,7 +38,8 @@
 #                                                ZeptoMail token and dead-man ping URL on stdin
 #   scripts/staging.sh monitoring-deadman        set the dead-man switch's ping URL later (stdin)
 #   scripts/staging.sh alerts | alert-test       alerts held now | one test alert, mailed now
-#   scripts/staging.sh ops-tunnel [ihr@<server>] Prometheus and Alertmanager on 127.0.0.1 (SSH)
+#   scripts/staging.sh ops-tunnel [ihr@<server>] Grafana, Prometheus and Alertmanager on 127.0.0.1 (SSH)
+#   scripts/staging.sh grafana-reset-admin       a new Grafana admin password (P1-T9d), file and database together
 #   scripts/staging.sh monitoring-textfile [--keys]   the host timer's run (deploy/host/bootstrap.sh)
 #   scripts/staging.sh logs-volume               lines and MB a day in the log store; sizes for
 #                                                180 days, the archive and the journal (P1-T9c)
@@ -86,6 +87,8 @@ compose() {  # the file list is worked out on each call: init may have just made
   if [[ -n "$mon" ]]; then
     # Logs come with the metrics: their alerts go through the same Alertmanager (P1-T9b)
     files+=(-f "$DIR/compose.monitoring.yaml" -f "$DIR/compose.logs.yaml")
+    # ...and the operator's dashboards on both (P1-T9d)
+    files+=(-f "$DIR/compose.dashboards.yaml")
     [[ "$mon" == test ]] && files+=(-f "$DIR/compose.monitoring.test.yaml")
     # The daily locked log archive (P1-T9c), and in a proof its way to the local stand-in
     case "$(env_get IHR_LOGS_ARCHIVE)" in
@@ -256,8 +259,8 @@ up() {  # up [--new-database]: the flag only where an empty database is really m
   [[ $# -eq 0 || $new_db == 1 ]] || die "usage: scripts/staging.sh up [--new-database]"
   [[ -f "$DIR/.env" ]] || { echo "run: scripts/staging.sh init <suffix>" >&2; exit 1; }
   [[ -z "$(env_get IHR_BACKUP)" ]] || backup_config
-  # Compose reads Fluent Bit's env file on every call: the log secrets first (P1-T9b)
-  [[ -z "$(env_get IHR_MONITORING)" ]] || logs_secrets
+  # Compose reads Fluent Bit's (and Grafana's) env files on every call: those secrets first
+  if [[ -n "$(env_get IHR_MONITORING)" ]]; then logs_secrets; dashboards_secrets; fi
   db_guard "$new_db"
   compose up -d --wait db redis
   touch "$DIR/.db-created"
@@ -1344,7 +1347,7 @@ MON_TEST_DEADMAN="http://heartbeat-stub:8080/ping"
 DEADMAN_RE='^https://[a-z0-9.-]+(:[0-9]+)?(/[A-Za-z0-9._~-]+)+$'
 
 # Set-up services that run once and exit; never reported as "not running" (host-metrics.sh)
-MON_ONESHOTS='migrate|admin|keytool|s3-tool|traefik-data|alertmanager-data|logs-data'
+MON_ONESHOTS='migrate|admin|keytool|s3-tool|traefik-data|alertmanager-data|logs-data|grafana-data'
 
 monitoring_init() {  # monitoring_init <alert-recipient> [--from A] [--host H] [--port P] [--user U] | --test
   local envf="$OUT/.env" sec="$OUT/secrets" to="" from="" host="smtp.zeptomail.in" port=587
@@ -1418,9 +1421,12 @@ monitoring_init() {  # monitoring_init <alert-recipient> [--from A] [--host H] [
     echo "IHR_ALERT_DEADMAN=$([[ -n $deadman ]] && echo on || echo off)"
     # A proof on this machine: the host timer's files next to the stack, not in /var/lib; and
     # Fluent Bit starts at the end of this desktop's journal, not at its beginning
+    echo "IHR_GRAFANA_IMAGE=${IHR_GRAFANA_IMAGE:-indiehr-grafana:staging}"
     if [[ -f "$OUT/.local" ]]; then
       echo "IHR_TEXTFILE_DIR=$OUT/generated/monitoring/textfile"
       echo "IHR_LOGS_FROM_TAIL=on"
+      # No SSH server on this machine: the browser goes to Grafana's address itself
+      echo "IHR_GRAFANA_DOMAIN=10.203.0.50"
     fi
   } >> "$envf"
   echo "Monitoring settings added (alerts to $to from $from via $host:$port); secrets in $sec (mode 600)."
@@ -1451,6 +1457,77 @@ logs_secrets() {  # the log store's secrets (P1-T9b), each made once (mode 600, 
     printf 'IHR_LOGS_HTTP_PASSWORD=%s\n' "$pw" | write_secret logs-shipper.env
   fi
   [[ -s "$d/logs-metrics-key" ]] || rand 24 | tr -d '\n' | write_secret logs-metrics-key
+}
+
+dashboards_secrets() {  # Grafana's secrets (P1-T9d), each made once (mode 600, never printed):
+  # grafana-admin.env      the admin's generated name and e-mail: a lock-out counts failed
+  #                        sign-ins per name, so a guessable name could keep the operator out
+  # grafana-admin-password the admin's password (Grafana stores it on its first start;
+  #                        change it with grafana-reset-admin, never by editing the file)
+  # grafana-secret-key     encrypts the datasource passwords in Grafana's database
+  # logs-reader-password (+ logs-reader.env for vmauth): Grafana's read-only login to the logs
+  # logs-reader-key        vmauth's own pages (metrics, flags, reload); not the store's admin key
+  local d="${SECRETS_TARGET:-$SECRETS}" name up
+  if [[ ! -s "$d/grafana-admin.env" || ! -s "$d/grafana-admin-password" || ! -s "$d/grafana-secret-key" ]]; then
+    # Grafana holds these in its database from the first start: files made anew would not match it
+    if [[ -z "${SECRETS_TARGET:-}" ]] && docker volume inspect "${IHR_PROJECT:-indiehr-staging}_grafanadata" >/dev/null 2>&1; then
+      die "Grafana's data volume exists but secrets/grafana-admin.env, grafana-admin-password or grafana-secret-key is missing: restore them (owner's password manager), or remove the volume ${IHR_PROJECT:-indiehr-staging}_grafanadata (only preferences are lost: dashboards and datasources come from git) and run up again"
+    fi
+    name="ops-$(python3 -c 'import secrets;print(secrets.token_hex(6))')"
+    printf 'GF_SECURITY_ADMIN_USER=%s\nGF_SECURITY_ADMIN_EMAIL=%s@admin.invalid\n' "$name" "$name" | write_secret grafana-admin.env
+    rand 32 | tr -d '\n' | write_secret grafana-admin-password
+    rand 32 | tr -d '\n' | write_secret grafana-secret-key
+  fi
+  if [[ ! -s "$d/logs-reader-password" || ! -s "$d/logs-reader.env" ]]; then
+    [[ -s "$d/logs-http-password" ]] || die "no logs-http-password (logs_secrets first)"
+    rand 32 | tr -d '\n' | write_secret logs-reader-password
+    up="$(printf 'ihr-logs:%s' "$(cat "$d/logs-http-password")" | base64 -w0)"
+    printf 'IHR_LOGS_READER_PASSWORD=%s\nIHR_LOGS_UPSTREAM_BASIC=%s\n' "$(cat "$d/logs-reader-password")" "$up" \
+      | write_secret logs-reader.env
+  fi
+  [[ -s "$d/logs-reader-key" ]] || rand 32 | tr -d '\n' | write_secret logs-reader-key
+}
+grafana_ip() {  # Grafana's fixed address on `dashboards`, the only one it listens on
+  local v; v="$(env_get IHR_GRAFANA_IP)"; v="${v:-10.203.0.50}"
+  [[ "$v" =~ ^[0-9]{1,3}(\.[0-9]{1,3}){3}$ ]] || die "IHR_GRAFANA_IP in .env is not an IPv4 address"
+  echo "$v"
+}
+grafana_domain() {  # the one host name Grafana answers to: grafana.localhost through the tunnel;
+  # a proof on this machine, with no SSH server, uses the fixed address itself (monitoring_init)
+  local v; v="$(env_get IHR_GRAFANA_DOMAIN)"; v="${v:-grafana.localhost}"
+  [[ "$v" == grafana.localhost || ( -f "$DIR/.local" && "$v" == "$(grafana_ip)" ) ]] \
+    || die "IHR_GRAFANA_DOMAIN must be grafana.localhost (a proof on this machine: Grafana's address)"
+  echo "$v"
+}
+grafana_image() {  # built by scripts/deploy.sh (a server) or here (a proof on this machine); a
+  # proof rebuilds when the Dockerfile changed (its hash is the image's label, as deploy.sh sets)
+  local img df sum have
+  img="$(env_get IHR_GRAFANA_IMAGE)"; img="${img:-indiehr-grafana:staging}"
+  df="$ROOT/deploy/docker/grafana.Dockerfile"
+  have="$(docker image inspect -f '{{index .Config.Labels "ihr.dockerfile.sha256"}}' "$img" 2>/dev/null || true)"
+  if [[ -f "$DIR/.local" && -f "$df" ]]; then
+    sum="$(sha256sum "$df" | cut -d' ' -f1)"
+    if [[ "$have" != "$sum" ]]; then
+      echo "Building $img (deploy/docker/grafana.Dockerfile)"
+      docker buildx build -q --load --label "ihr.dockerfile.sha256=$sum" -f "$df" -t "$img" "$ROOT/deploy/docker" >/dev/null
+    fi
+  elif [[ -z "$have" ]]; then
+    die "image $img is not here (scripts/deploy.sh builds and sends it)"
+  fi
+}
+grafana_reset_admin() {  # grafana-reset-admin: a new admin password, in Grafana and the file together
+  [[ -n "$(compose ps -q grafana 2>/dev/null)" ]] || die "Grafana is not running (scripts/staging.sh up)"
+  rand 32 | tr -d '\n' | write_secret grafana-admin-password.new
+  # On stdin, never as an argument (ps would show it)
+  if compose exec -T grafana grafana cli --homepath /usr/share/grafana admin reset-admin-password --password-from-stdin \
+       < "$SECRETS/grafana-admin-password.new" >/dev/null; then
+    mv "$SECRETS/grafana-admin-password.new" "$SECRETS/grafana-admin-password"
+    echo "New Grafana admin password in $SECRETS/grafana-admin-password (name: $(sed -n 's/^GF_SECURITY_ADMIN_USER=//p' "$SECRETS/grafana-admin.env"))."
+    echo "A locked-out name unlocks by itself 5 minutes after the last failed try."
+  else
+    rm -f "$SECRETS/grafana-admin-password.new"
+    die "Grafana refused the reset; the old password stays"
+  fi
 }
 
 textfile_dir() { local v; v="$(env_get IHR_TEXTFILE_DIR)"; echo "${v:-/var/lib/indiehr/textfile}"; }
@@ -1625,6 +1702,9 @@ monitoring_settings() {  # monitoring_settings <service>: the files a service re
     blackbox-exporter) printf '%s\n' "$MON_DIR/blackbox/blackbox.yml" ;;
     fluent-bit) printf '%s\n' "$LOGS_DIR"/fluent-bit/* ;;
     vmalert) printf '%s\n' "$LOGS_DIR"/alerts/*.yml ;;
+    # Read at start only (the dashboards themselves are rescanned every minute)
+    grafana) printf '%s\n' "$DIR"/../grafana/provisioning/*/*.yaml ;;
+    logs-reader) printf '%s\n' "$DIR/../grafana/logs-reader.yml" ;;
     logs-archive) printf '%s\n' "$LOGS_DIR"/archive/*.py ;;
   esac
 }
@@ -1636,10 +1716,14 @@ monitoring_settings_sum() {  # one hash over a service's settings files (names a
 
 monitoring_up() {  # after the stack: settings, the database role, the host's files, then the services
   local svc=(prometheus alertmanager node-exporter blackbox-exporter postgres-exporter redis-exporter
-             victorialogs fluent-bit vmalert) out s
-  local stale=() stamp restamp=(prometheus alertmanager blackbox-exporter fluent-bit vmalert)
-  # Monitoring set up before P1-T9b has no log-store secrets yet (the targets need one)
+             victorialogs fluent-bit vmalert logs-reader grafana) out s
+  local stale=() stamp restamp=(prometheus alertmanager blackbox-exporter fluent-bit vmalert logs-reader grafana)
+  # Monitoring set up before P1-T9b has no log-store secrets yet (the targets need one), and
+  # before P1-T9d none of Grafana's
   logs_secrets
+  dashboards_secrets
+  grafana_image
+  grafana_domain >/dev/null
   monitoring_config
   [[ -n "$IHR_JOURNAL_GID" ]] || IHR_JOURNAL_GID="$(getent group systemd-journal | cut -d: -f3)"
   [[ -n "$IHR_JOURNAL_GID" && -d /var/log/journal ]] || die "no persistent journal here (/var/log/journal, group systemd-journal): run deploy/host/bootstrap.sh"
@@ -1775,7 +1859,7 @@ monitoring_smoke() {  # smoke's monitoring part: targets up, rules loaded, Alert
   # machine has no timer: run `scripts/staging.sh monitoring-textfile` to refresh them)
   monitoring_textfile
   check "monitoring: nothing published on the host (SSH tunnel only)" "" \
-    "$(for s in prometheus alertmanager node-exporter blackbox-exporter postgres-exporter redis-exporter victorialogs fluent-bit vmalert; do docker port "$(compose ps -q "$s")" 2>/dev/null; done)"
+    "$(for s in prometheus alertmanager node-exporter blackbox-exporter postgres-exporter redis-exporter victorialogs fluent-bit vmalert logs-reader grafana; do docker port "$(compose ps -q "$s")" 2>/dev/null; done)"
   # Every target scraped and up (the first scrapes take up to 30 s after a start)
   for i in $(seq 1 12); do
     bad="$(prom_get 'http://127.0.0.1:9090/api/v1/targets?state=active' | python3 -c 'import json,sys
@@ -1834,6 +1918,64 @@ except urllib.error.HTTPError as e:
   check "host metrics written in the last 5 minutes" yes \
     "$([[ -n "$(find "$(textfile_dir)/ihr_host.prom" -mmin -5 2>/dev/null)" ]] && echo yes || echo no)"
   logs_smoke
+  dashboards_smoke
+}
+
+dashboards_smoke() {  # smoke's dashboards part (P1-T9d): Grafana itself, then where it can reach
+  local cases=() out days net
+  # Panels allowed to be empty here (deploy/grafana/allowed-empty.txt): what this site has on
+  [[ -f "$DIR/.local" ]] && cases+=(--case proof)
+  [[ -n "$(env_get IHR_BACKUP)" ]] || cases+=(--case backup-off)
+  if [[ -z "$(env_get IHR_LOGS_ARCHIVE)" ]]; then
+    cases+=(--case archive-off)
+  else
+    days="$(prom_get 'http://127.0.0.1:9090/api/v1/query?query=max(ihr_logs_archive_days)' 2>/dev/null | python3 -c 'import json,sys
+r = json.load(sys.stdin)["data"]["result"]
+print(int(float(r[0]["value"][1])) if r else 0)' 2>/dev/null || echo 0)"
+    [[ "$days" != 0 ]] || cases+=(--case archive-new)
+  fi
+  # From this host to Grafana's fixed address, as the SSH tunnel does (and its host name)
+  if python3 "$ROOT/scripts/check-dashboards.py" --url "http://$(grafana_ip):3000" --domain "$(grafana_domain)" \
+      --admin-env "$SECRETS/grafana-admin.env" --password-file "$SECRETS/grafana-admin-password" \
+      --dashboards "$DIR/../grafana/dashboards" --allowed-empty "$DIR/../grafana/allowed-empty.txt" "${cases[@]}"; then
+    out=ok
+  else
+    out=failed
+  fi
+  check "grafana: every live check above" ok "$out"
+  # The containers that take traffic from the internet cannot reach Grafana at all
+  check "grafana: the web app cannot reach it" unreachable \
+    "$(compose exec -T backend python -c 'import socket, sys
+try:
+    socket.create_connection((sys.argv[1], 3000), timeout=5); print("reachable")
+except OSError:
+    print("unreachable")' "$(grafana_ip)" 2>/dev/null || echo error)"
+  # ...and Grafana reaches Prometheus (the control), but not the log store itself nor Alertmanager
+  check "grafana: reaches Prometheus, not the log store or Alertmanager" "reachable unreachable unreachable" \
+    "$(for t in "http://prometheus:9090/-/healthy" "http://$(vl_ip):9428/health" "http://$(am_ip):9093/-/healthy"; do
+         compose exec -T grafana wget -q -T 5 -O /dev/null "$t" >/dev/null 2>&1 && echo -n "reachable " || echo -n "unreachable "
+       done | sed 's/ $//')"
+  # The log door, from a one-off container on `dashboards` (the backend image's Python; the
+  # password on stdin, never a command line): grafana-ro reads and does nothing else ("missing
+  # route", 400), and without a login nothing at all (401)
+  net="$(stack_net logs-reader dashboards)"
+  check "grafana: its log login reads only; no login, no access" "200 400 400 401 401" \
+    "$( [[ -n "$net" ]] && docker run --rm -i --network "$net" --log-driver none --entrypoint python3 "$(env_get IHR_BACKEND_IMAGE)" -I -c 'import base64, sys, urllib.error, urllib.request
+pw = sys.stdin.readline().strip()
+auth = {"Authorization": "Basic " + base64.b64encode(("grafana-ro:" + pw).encode()).decode()}
+out = []
+for path, h in (("select/logsql/query?query=*&limit=1", auth), ("insert/jsonline", auth), ("internal/force_flush", auth),
+                ("select/logsql/query?query=*&limit=1", {}), ("insert/jsonline", {})):
+    req = urllib.request.Request("http://logs-reader:8427/" + path, data=b"{}", headers=h, method="POST")
+    try:
+        out.append(str(urllib.request.urlopen(req, timeout=15).status))
+    except urllib.error.HTTPError as e:
+        out.append(str(e.code))
+    except OSError:
+        out.append("unreachable")
+print(" ".join(out))' < "$SECRETS/logs-reader-password" 2>/dev/null || echo error)"
+  check "grafana: the log store's admin key is not in the log door" absent \
+    "$(docker inspect -f '{{range .Mounts}}{{.Source}} {{end}}' "$(compose ps -q logs-reader)" | grep -q 'logs-admin-key' && echo present || echo absent)"
 }
 
 vl_get() {  # vl_get <path>: a GET to the log store with its password, from a one-off container
@@ -1951,8 +2093,8 @@ alert_test() {  # alert-test: one synthetic alert, mailed now; it resolves itsel
   fi
 }
 
-ops_tunnel() {  # ops-tunnel [user@server] [--port N]: Prometheus, Alertmanager and the logs on this machine
-  local dest="" port=22 prom am vl vma
+ops_tunnel() {  # ops-tunnel [user@server] [--port N]: Grafana, Prometheus, Alertmanager and the logs on this machine
+  local dest="" port=22 prom am vl vma gf
   while (($#)); do
     case "$1" in
       --port) port="${2:?--port N}"; shift ;;
@@ -1962,12 +2104,14 @@ ops_tunnel() {  # ops-tunnel [user@server] [--port N]: Prometheus, Alertmanager 
     shift
   done
   prom="$(env_get IHR_PROMETHEUS_IP)"; prom="${prom:-10.203.0.70}"
-  am="$(am_ip)"; vl="$(vl_ip)"; vma="$(vmalert_ip)"
+  am="$(am_ip)"; vl="$(vl_ip)"; vma="$(vmalert_ip)"; gf="$(grafana_ip)"
   [[ "$port" =~ ^[0-9]+$ ]] || die "--port must be a number"
   # Their fixed addresses on the server's monitoring and alerting networks (nothing is published); bootstrap.sh
   # allows local forwarding only. Bound to this machine's 127.0.0.1 alone.
   local cmd=(ssh -N -p "$port" -L "127.0.0.1:9090:$prom:9090" -L "127.0.0.1:9093:$am:9093"
-             -L "127.0.0.1:9428:$vl:9428" -L "127.0.0.1:8880:$vma:8880" "${dest:-ihr@<server>}")
+             -L "127.0.0.1:9428:$vl:9428" -L "127.0.0.1:8880:$vma:8880" -L "127.0.0.1:3000:$gf:3000"
+             "${dest:-ihr@<server>}")
+  echo "Dashboards:   http://grafana.localhost:3000   (Grafana: name in secrets/grafana-admin.env, password in secrets/grafana-admin-password, on the server)"
   echo "Prometheus:   http://127.0.0.1:9090   (alerts: /alerts, targets: /targets)"
   echo "Alertmanager: http://127.0.0.1:9093"
   echo "Logs:         http://127.0.0.1:9428/select/vmui/   (user ihr-logs, password: secrets/logs-http-password on the server)"
@@ -2202,6 +2346,7 @@ case "${1:-}" in
   alerts) alerts ;;
   alert-test) alert_test ;;
   ops-tunnel) ops_tunnel "${@:2}" ;;
+  grafana-reset-admin) grafana_reset_admin ;;
   logs-volume) logs_volume "${@:2}" ;;
   logs-archive-init) logs_archive_init "${@:2}" ;;
   logs-archive-now) archive_exec once ;;

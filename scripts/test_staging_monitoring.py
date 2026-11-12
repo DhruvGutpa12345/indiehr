@@ -492,7 +492,7 @@ class StagingCommands(unittest.TestCase):
         """Settings are single files mounted read-only and rewritten as new files: a running
         container keeps the old ones until it is recreated."""
         up = func("monitoring_up")
-        self.assertIn("restamp=(prometheus alertmanager blackbox-exporter fluent-bit vmalert)", up)
+        self.assertIn("restamp=(prometheus alertmanager blackbox-exporter fluent-bit vmalert logs-reader grafana)", up)
         self.assertEqual(up.count('for s in "${restamp[@]}"; do'), 2)
         self.assertIn('compose up -d --wait --no-deps --force-recreate "${stale[@]}"', up)
         self.assertIn('monitoring_settings_sum "$s" > "$GEN/monitoring/.settings-$s"', up)

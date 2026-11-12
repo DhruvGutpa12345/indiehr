@@ -1,0 +1,158 @@
+# The operator's dashboards (P1-T9d, ADR-015; owner decisions pending Q-O13, Q-O14). Added by
+# scripts/staging.sh with compose.monitoring.yaml and compose.logs.yaml; never run directly.
+# Runbook: deploy/staging/README.md, "Dashboards".
+#
+# - Grafana (deploy/docker/grafana.Dockerfile: OSS, unmodified, nothing called out) shows the
+#   metrics and the redacted logs. It is a viewer: alerting stays with Prometheus, vmalert and
+#   Alertmanager. Dashboards and datasources are provisioned from git, read-only in the UI.
+# - It is on `dashboards` alone, with Prometheus and logs-reader: no container that takes
+#   traffic from the internet (Traefik, the web app, Keycloak, SeaweedFS) can reach it, and it
+#   can reach nothing else (not the log store itself, not Alertmanager, no way out). It listens
+#   on its fixed address only; the operator reaches it through the SSH tunnel
+#   (scripts/staging.sh ops-tunnel) at http://grafana.localhost:3000, the one host name it
+#   answers to (a page on another name, DNS rebinding included, gets a redirect).
+# - Sign-in: one admin account with a generated name and password (secrets/grafana-admin.env,
+#   secrets/grafana-admin-password), set on the first start; no anonymous access, no sign-up, no
+#   basic auth on the API.
+# - logs-reader (vmauth) holds the log store's password; Grafana holds only its own read-only
+#   login (user grafana-ro, secrets/logs-reader.env), which reaches /select/logsql/ and nothing
+#   else: it can neither write to nor delete from the 180-day record.
+#
+# Images: pinned by digest; docs/VERSIONS.md. Every service: read-only root, no capabilities,
+# no-new-privileges, a memory limit, not root.
+x-logging: &logging
+  driver: ${IHR_LOG_DRIVER:-journald}
+  options:
+    tag: "indiehr/{{.Name}}"
+    labels: com.docker.compose.service
+
+x-dash: &dash
+  security_opt: ["no-new-privileges:true"]
+  cap_drop: ["ALL"]
+  read_only: true
+  restart: unless-stopped
+  logging: *logging
+
+services:
+  # Grafana's data volume belongs to the user it runs as (a new named volume is root's). A
+  # one-off with only the two capabilities it needs, no network; a no-op once done.
+  grafana-data:
+    image: prom/alertmanager:v0.35.0@sha256:e638797febd034838eca8b98cdbd46f951e9bf7f178777aa8669167406a9946c
+    user: "0:0"
+    security_opt: ["no-new-privileges:true"]
+    cap_drop: ["ALL"]
+    cap_add: ["CHOWN", "FOWNER"]
+    network_mode: none
+    entrypoint: ["/bin/sh", "-c", "[ \"$$(stat -c %u:%a /grafana)\" = \"${IHR_SECRETS_UID:?}:700\" ] || { chown ${IHR_SECRETS_UID:?}:${IHR_SECRETS_GID:?} /grafana && chmod 700 /grafana; }"]
+    volumes:
+      - grafanadata:/grafana
+    logging: *logging
+    restart: "no"
+
+  grafana:
+    <<: *dash
+    image: ${IHR_GRAFANA_IMAGE:-indiehr-grafana:staging}
+    # The user that owns secrets/ (it reads its secrets from there, mode 600)
+    user: "${IHR_SECRETS_UID:?}:${IHR_SECRETS_GID:?}"
+    environment:
+      GF_SERVER_HTTP_ADDR: ${IHR_GRAFANA_IP:-10.203.0.50}
+      GF_SERVER_HTTP_PORT: "3000"
+      GF_SERVER_DOMAIN: ${IHR_GRAFANA_DOMAIN:-grafana.localhost}
+      GF_SERVER_ROOT_URL: http://${IHR_GRAFANA_DOMAIN:-grafana.localhost}:3000/
+      GF_SERVER_ENFORCE_DOMAIN: "true"
+      GF_SECURITY_ADMIN_PASSWORD__FILE: /run/ihr-grafana/admin-password
+      GF_SECURITY_SECRET_KEY__FILE: /run/ihr-grafana/secret-key
+      GF_AUTH_BASIC_ENABLED: "false"
+      GF_PATHS_DATA: /var/lib/grafana
+      GF_PATHS_PROVISIONING: /etc/grafana/provisioning
+    # GF_SECURITY_ADMIN_USER and GF_SECURITY_ADMIN_EMAIL: generated, not guessable (a lock-out
+    # counts failed sign-ins per name, so a known name could keep the operator out)
+    env_file:
+      - secrets/grafana-admin.env
+    volumes:
+      - type: volume
+        source: grafanadata
+        target: /var/lib/grafana
+      # Folders, not single files: new dashboards appear without a restart. A missing source is
+      # an error, never a root-owned folder made by Docker.
+      - type: bind
+        source: ../grafana/provisioning
+        target: /etc/grafana/provisioning
+        read_only: true
+        bind: {create_host_path: false}
+      - type: bind
+        source: ../grafana/dashboards
+        target: /etc/grafana/ihr-dashboards
+        read_only: true
+        bind: {create_host_path: false}
+      - ./secrets/grafana-admin-password:/run/ihr-grafana/admin-password:ro
+      - ./secrets/grafana-secret-key:/run/ihr-grafana/secret-key:ro
+      - ./secrets/logs-reader-password:/run/ihr-grafana/logs-password:ro
+    tmpfs:
+      - /tmp:size=64m,mode=1777
+    networks:
+      dashboards:
+        ipv4_address: ${IHR_GRAFANA_IP:-10.203.0.50}
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q -O /dev/null --header \"Host: $${GF_SERVER_DOMAIN}:3000\" http://$${GF_SERVER_HTTP_ADDR}:3000/api/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+      start_period: 60s
+    depends_on:
+      grafana-data:
+        condition: service_completed_successfully
+      logs-reader:
+        condition: service_started
+    mem_limit: ${IHR_GRAFANA_MEMORY:-512m}
+
+  # Read-only door to the log store: user grafana-ro may read /select/logsql/ and nothing else
+  # (no inserts, no deletes, not VictoriaLogs's own page); vmauth adds the store's password.
+  logs-reader:
+    <<: *dash
+    image: victoriametrics/vmauth:v1.156.0-scratch@sha256:2688caa0cfd0bdd7f3a09fc0bf233bad9748b3ba5b86c43d9a805fd346921539
+    user: "${IHR_SECRETS_UID:?}:${IHR_SECRETS_GID:?}"
+    command:
+      - -auth.config=/etc/vmauth/logs-reader.yml
+      - -httpListenAddr=:8427
+      # Its own pages need a key of its own (secrets/logs-reader-key), never Grafana's login.
+      # Not the log store's admin key: that one deletes logs and stays with VictoriaLogs alone.
+      - -metricsAuthKey=file:///run/ihr-logs-reader/key
+      - -flagsAuthKey=file:///run/ihr-logs-reader/key
+      - -pprofAuthKey=file:///run/ihr-logs-reader/key
+      - -reloadAuthKey=file:///run/ihr-logs-reader/key
+    # IHR_LOGS_READER_PASSWORD (grafana-ro) and IHR_LOGS_UPSTREAM_BASIC (ihr-logs, base64)
+    env_file:
+      - secrets/logs-reader.env
+    volumes:
+      - type: bind
+        source: ../grafana/logs-reader.yml
+        target: /etc/vmauth/logs-reader.yml
+        read_only: true
+        bind: {create_host_path: false}
+      - ./secrets/logs-reader-key:/run/ihr-logs-reader/key:ro
+    networks: [logs, dashboards]
+    depends_on:
+      victorialogs:
+        condition: service_started
+    mem_limit: 48m
+
+  # Grafana's metrics come from here; Prometheus takes no traffic from the internet
+  prometheus:
+    networks:
+      dashboards: {}
+
+networks:
+  # Grafana, Prometheus and logs-reader only; no way out. A fixed range after `logs` (.32/28) and
+  # before `monitoring` (.64/26): Grafana's address (.50) is the SSH tunnel's target; Docker
+  # hands out .56-.63. Change IHR_DASHBOARDS_NET, its range and IHR_GRAFANA_IP together if the
+  # server already uses it.
+  dashboards:
+    internal: true
+    ipam:
+      config:
+        - subnet: ${IHR_DASHBOARDS_NET:-10.203.0.48/28}
+          ip_range: ${IHR_DASHBOARDS_DYNAMIC:-10.203.0.56/29}
+
+volumes:
+  grafanadata:

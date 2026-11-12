@@ -1,0 +1,24 @@
+# Panels that may return no data, each with the cases it is allowed in and a reason (P1-T9d;
+# read by scripts/check-dashboards.py, checked by scripts/test_staging_dashboards.py). Every
+# query must still run without an error, and every metric it names must exist in Prometheus.
+#   always       empty is the healthy state (nothing failing, nothing firing)
+#   proof        a proof on this machine (a server has the data)
+#   archive-off  no log archive here (IHR_LOGS_ARCHIVE unset)
+#   archive-new  the archive is on but has no whole India day yet (its first ~25 h)
+#   backup-off   no database backups here (IHR_BACKUP unset)
+# <case[,case...]> <dashboard uid>/<panel title>  # reason
+proof,archive-off,archive-new ihr-data/Archive: newest day ended  # no whole India day archived yet
+archive-off ihr-data/Archive bucket locked  # written by the archiver
+archive-off ihr-data/Not authentic in the archive  # written by the archiver
+archive-off ihr-data/Archive passes  # written by the archiver
+backup-off ihr-data/Last good backup  # written from the backup service's markers
+backup-off ihr-data/Backup WAL spool  # written from the backup service's markers
+proof ihr-data/Journal against its cap  # this desktop's journald has no SystemMaxUse (deploy/host/bootstrap.sh sets it)
+proof ihr-server/Clock offset (chrony)  # chronyd answers root only; a proof has no root timer to read it (bootstrap.sh)
+always ihr-server/Firing alerts (metrics)  # no Prometheus alert firing besides Watchdog
+always ihr-server/Firing alerts (logs)  # no log alert firing
+always ihr-logs/Error-level lines per service  # no error line in the hour
+always ihr-traffic/Answers by status class  # no 4xx or 5xx answer through a router in the hour
+always ihr-traffic/Too many requests (429)  # no address hit a rate limit
+always ihr-traffic/Sign-in failures and lock-outs  # no failed sign-in or lock-out in the hour
+always ihr-traffic/Addresses with the most sign-in failures (selected time range)  # no failed sign-in in the hour

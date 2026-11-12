@@ -90,6 +90,44 @@
 | Q-O12 | **Erasure after 400 days (DPDP Rules 8(3)) runs monthly from the owner's machine** with the bucket's admin key (owner, 2026-11-12); the server never holds a key that can delete; an alert when it is overdue | ADR-014 (T9c) |
 | Q-G4 | **`/goal` and `/advisor` = second-opinion reviews:** an independent Opus agent reviews each finished phase against the plan | Working agreement §5 |
 
+## 🟡 Auto-accepted by Claude, awaiting owner confirmation (run 2026-11-12, `/run-until auto`)
+
+Taken during an unattended run (docs/runs/2026-11-12-run-to-P1-T10a.md). Each is built to be easy
+to reverse; say "Q-xx: confirm" or give another answer.
+
+### Q-O13 — Which dashboard tool, and what may it do? (P1-T9d)
+
+- **A ⭐ (taken). Grafana OSS 13.3.1, unmodified, as a viewer only.** The VictoriaLogs plugin
+  v0.34.0 is baked into our image, checked by its SHA-256. Dashboards and datasources come from
+  git and are read-only in the UI. Grafana's own alerting is off: Prometheus, vmalert and
+  Alertmanager stay the only alerting. Scorecard: Grafana 91.5 %, Perses 72.5 %
+  (docs/reviews/p1-t9d/scorecard.md).
+- B. Perses (Apache-2.0, CNCF sandbox): permissive licence, but its logs support is young and
+  it has no VictoriaLogs plugin; we would switch if Grafana's licence or telemetry changed.
+- C. No dashboard tool: Prometheus's, Alertmanager's and VictoriaLogs's own pages through the
+  tunnel. These show no overview and do not meet the task.
+
+Why A: it was already planned (PLAN, ADR-013), it reads both stores, and being AGPL it is used
+unmodified and reached over the network only (CLAUDE.md). **To reverse:** drop
+`compose.dashboards.yaml` from `scripts/staging.sh compose()`. Nothing else depends on it.
+
+### Q-O14 — How does the operator reach Grafana and sign in? (P1-T9d)
+
+- **A ⭐ (taken). The existing SSH tunnel only, with Grafana's own admin login.**
+  - `scripts/staging.sh ops-tunnel` adds `http://grafana.localhost:3000`.
+  - Grafana answers to that one host name, sits on an internal network with Prometheus and a
+    read-only log door only, and publishes nothing.
+  - The admin name and password are generated and kept in `secrets/`. There is no anonymous
+    access, no sign-up and no API basic auth.
+- B. Single sign-on through Keycloak's operator realm (MFA). This is better for a team, but it
+  adds a client, a realm role and a dependency on Keycloak being up to see why it is down. It is
+  worth doing when a second operator joins.
+- C. Publish Grafana through Traefik on `ops.<suffix>`. Not recommended: it would put a new
+  login page on the internet.
+
+**To reverse:** B is an added `[auth.generic_oauth]` block plus a Keycloak client, and the tunnel
+stays as a way in when Keycloak is down.
+
 **Still open:** Q-B4 (final MVP module list: assumed as in PLAN.md Phase 2) and Q-B6/B7 (pricing, timeline). Q-F2 is moot while AI is deferred.
 
 ---

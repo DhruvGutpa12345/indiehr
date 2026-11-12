@@ -1,0 +1,12 @@
+# vmauth in front of the log store for Grafana (P1-T9d, ADR-015; compose.dashboards.yaml). One
+# user, grafana-ro, that may only read: LogsQL queries and the tenant list the datasource asks for.
+# Any other path (inserts, deletes, flushes, VictoriaLogs's own page) gets "missing route" (400).
+# The passwords come from the environment (secrets/logs-reader.env, mode 600), never this file.
+users:
+  - username: grafana-ro
+    password: "%{IHR_LOGS_READER_PASSWORD}"
+    url_map:
+      - src_paths: ["/select/logsql/.+", "/select/tenant_ids"]
+        url_prefix: "http://victorialogs:9428"
+        headers:
+          - "Authorization: Basic %{IHR_LOGS_UPSTREAM_BASIC}"

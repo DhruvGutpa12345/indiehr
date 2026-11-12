@@ -1,0 +1,14 @@
+# The operator's dashboards (P1-T9d), from deploy/grafana/dashboards/ (made by
+# build_dashboards.py). Read-only in the UI: a change goes through git.
+apiVersion: 1
+providers:
+  - name: indiehr
+    orgId: 1
+    folder: IndieHR
+    type: file
+    disableDeletion: true
+    allowUiUpdates: false
+    updateIntervalSeconds: 60
+    options:
+      path: /etc/grafana/ihr-dashboards
+      foldersFromFilesStructure: false

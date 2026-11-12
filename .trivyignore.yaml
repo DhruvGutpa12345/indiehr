@@ -50,6 +50,41 @@ misconfigurations:
       - "apps/frontend/Dockerfile"
     statement: Same unused upstream image as above.
 vulnerabilities:
+  # ---- deploy/docker/grafana.Dockerfile (P1-T9d) ----
+  - id: CVE-2026-78661
+    paths:
+      - "opt/ihr-grafana-plugins/victoriametrics-logs-datasource/victoriametrics_logs_backend_plugin_darwin_amd64"
+      - "opt/ihr-grafana-plugins/victoriametrics-logs-datasource/victoriametrics_logs_backend_plugin_darwin_arm64"
+      - "opt/ihr-grafana-plugins/victoriametrics-logs-datasource/victoriametrics_logs_backend_plugin_freebsd_amd64"
+      - "opt/ihr-grafana-plugins/victoriametrics-logs-datasource/victoriametrics_logs_backend_plugin_linux_amd64"
+      - "opt/ihr-grafana-plugins/victoriametrics-logs-datasource/victoriametrics_logs_backend_plugin_linux_arm"
+      - "opt/ihr-grafana-plugins/victoriametrics-logs-datasource/victoriametrics_logs_backend_plugin_linux_arm64"
+      - "opt/ihr-grafana-plugins/victoriametrics-logs-datasource/victoriametrics_logs_backend_plugin_linux_s390x"
+      - "opt/ihr-grafana-plugins/victoriametrics-logs-datasource/victoriametrics_logs_backend_plugin_windows_amd64.exe"
+      - "usr/share/grafana/data/plugins-bundled/prometheus/gpx_grafana-prometheus-datasource_linux_amd64"
+    statement: >-
+      golang.org/x/net/html: quadratic time on crafted HTML (fixed in x/net 0.62.0). Inside the
+      VictoriaLogs datasource v0.34.0 (the newest release, 2026-11-06) and Grafana 13.3.1's own
+      Prometheus datasource (the newest Grafana, 2026-11-10). Neither parses HTML from anyone but
+      our own Prometheus and VictoriaLogs on the internal `dashboards` network, which only the
+      operator reaches through the SSH tunnel. The other platforms' binaries are never run, but
+      the vendor's signed manifest needs them. Remove when releases with x/net 0.62+ are pinned.
+    expired_at: 2026-12-31
+  - id: CVE-2026-111943
+    paths:
+      - "opt/ihr-grafana-plugins/victoriametrics-logs-datasource/victoriametrics_logs_backend_plugin_darwin_amd64"
+      - "opt/ihr-grafana-plugins/victoriametrics-logs-datasource/victoriametrics_logs_backend_plugin_darwin_arm64"
+      - "opt/ihr-grafana-plugins/victoriametrics-logs-datasource/victoriametrics_logs_backend_plugin_freebsd_amd64"
+      - "opt/ihr-grafana-plugins/victoriametrics-logs-datasource/victoriametrics_logs_backend_plugin_linux_amd64"
+      - "opt/ihr-grafana-plugins/victoriametrics-logs-datasource/victoriametrics_logs_backend_plugin_linux_arm"
+      - "opt/ihr-grafana-plugins/victoriametrics-logs-datasource/victoriametrics_logs_backend_plugin_linux_arm64"
+      - "opt/ihr-grafana-plugins/victoriametrics-logs-datasource/victoriametrics_logs_backend_plugin_linux_s390x"
+      - "opt/ihr-grafana-plugins/victoriametrics-logs-datasource/victoriametrics_logs_backend_plugin_windows_amd64.exe"
+    statement: >-
+      Go crypto/x509 denylist of distrusted intermediate CAs (Go 1.27.3). The VictoriaLogs
+      datasource talks plain HTTP to vmauth on an internal network and verifies no certificate.
+      Remove when a plugin release built with Go 1.27.3+ is pinned.
+    expired_at: 2026-12-31
   # ---- deploy/docker/keycloak.Dockerfile (P1-T8d1) ----
   - id: CVE-2026-102554
     paths:
