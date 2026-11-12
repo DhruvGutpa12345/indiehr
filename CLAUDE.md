@@ -87,6 +87,12 @@ Further reading:
   - Implement it, run its tests, and report the real results.
   - Update TRACKER.md, then stop and wait for the user's "proceed".
   - Never start the next task unasked.
+  - **Exception: unattended runs.** `/run-until <STOP_TASK | auto>` (`.claude/commands/run-until.md`) works through the tracker up to and including STOP_TASK without stopping between tasks. While it runs, its rules override these, and only these:
+    - decisions are auto-accepted and logged in QUESTIONS.md as "awaiting owner confirmation";
+    - owner gates and money, account, sudo or settings decisions are never taken;
+    - a run file in `docs/runs/` is kept as its memory.
+
+    Outside such a run, the rules above apply unchanged.
 - **Planning tasks:** research and plan only. No code changes unless the task is an implementation task.
 - **Testing for the user:** whenever the user must test something, give them all three of:
   - a one-click URL;
