@@ -326,7 +326,7 @@ class PrometheusSettings(unittest.TestCase):
         jobs = {j["job_name"]: j for j in PROMETHEUS["scrape_configs"]}
         self.assertEqual(set(jobs), {"prometheus", "alertmanager", "node", "blackbox", "postgres", "redis",
                                      "traefik", "keycloak", "s3", "probe-public", "probe-internal", "probe-dns",
-                                     "fluent-bit", "victorialogs", "vmalert"})
+                                     "fluent-bit", "victorialogs", "vmalert", "logs-archive"})
         self.assertEqual(jobs["traefik"]["static_configs"][0]["targets"], ["traefik:8083"])
         self.assertEqual(jobs["keycloak"]["static_configs"][0]["targets"], ["keycloak:9000"])
         for j in jobs.values():

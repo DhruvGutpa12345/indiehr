@@ -85,6 +85,9 @@
 | Q-O7 | **Redaction: targeted + patterns** (owner, 2026-11-12): the typed username of Keycloak "user not found" events is dropped (real staff usernames kept for lock-out checks); everywhere, e-mail addresses, mobile numbers, 12-digit (Aadhaar-like) and ABHA numbers, tokens and query strings are masked before storage | ADR-013 (T9b) |
 | Q-O8 | **Log alerts name the address** (owner, 2026-11-12): lock-out bursts and sustained 429s per address are evaluated by vmalert on the log store and mailed through the existing Alertmanager with the IP address in the mail | ADR-013 (T9b) |
 | Q-O9 | **Sign-in abuse alerts are mailed at any hour** (owner, 2026-11-12): SignInLockoutsFromAddress, FailedSignInsFromAddress and RateLimitedAddress go out at once day or night (repeated at most daily); other warnings still wait for 08:00–22:00 IST | ADR-013 (T9b) |
+| Q-O10 | **Log archive at go-live: a new E2E Chennai bucket** next to the database backups (owner, 2026-11-12): Governance lock (E2E's only mode; the account admin could remove it, as accepted for the audit fingerprints, Q-E7); AWS Hyderabad (COMPLIANCE) stays an option for later; proven locally on SeaweedFS | ADR-014 (T9c) |
+| Q-O11 | **Log archives encrypted on the server before upload** with our own key (owner, 2026-11-12), like the database backups; the key goes into the owner's password manager | ADR-014 (T9c) |
+| Q-O12 | **Erasure after 400 days (DPDP Rules 8(3)) runs monthly from the owner's machine** with the bucket's admin key (owner, 2026-11-12); the server never holds a key that can delete; an alert when it is overdue | ADR-014 (T9c) |
 | Q-G4 | **`/goal` and `/advisor` = second-opinion reviews:** an independent Opus agent reviews each finished phase against the plan | Working agreement §5 |
 
 **Still open:** Q-B4 (final MVP module list: assumed as in PLAN.md Phase 2) and Q-B6/B7 (pricing, timeline). Q-F2 is moot while AI is deferred.

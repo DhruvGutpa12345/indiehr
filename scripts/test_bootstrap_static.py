@@ -116,12 +116,18 @@ class TimeTests(unittest.TestCase):
 
 
 class LogTests(unittest.TestCase):
-    def test_journald_persistent_and_kept_at_least_180_days(self):
+    def test_journald_persistent_and_a_14_day_buffer(self):
+        """The journal is a buffer (P1-T9c, owner Q-O3): at least 14 full days with one file a
+        day, never much more (the log store and the archive are the 180/400-day record)."""
         conf = settings(heredoc("journald_conf"), "=")
         self.assertEqual(conf["Storage"], "persistent")
         retention = conf["MaxRetentionSec"].replace("$JOURNAL_MAX_RETENTION",
                                                     assignment("JOURNAL_MAX_RETENTION"))
-        self.assertGreaterEqual(timespan(retention), 180 * 86400)
+        self.assertGreaterEqual(timespan(retention), 15 * 86400)
+        self.assertLessEqual(timespan(retention), 31 * 86400)
+        per_file = conf["MaxFileSec"].replace("$JOURNAL_MAX_FILE", assignment("JOURNAL_MAX_FILE"))
+        self.assertLessEqual(timespan(per_file), 86400)
+        self.assertIn("journalctl --rotate", BOOTSTRAP)
         self.assertIn("SystemMaxUse", conf)
         self.assertIn("SystemKeepFree", conf)
 
@@ -350,10 +356,10 @@ class KernelTests(unittest.TestCase):
 
 
 class RetentionTests(unittest.TestCase):
-    def test_check_fails_when_logs_younger_than_180_days_are_gone(self):
+    def test_check_fails_when_logs_younger_than_14_days_are_gone(self):
         self.assertIn("check_log_retention", function("run_check"))
         body = function("check_log_retention")
-        self.assertIn("log_days < 180", body)
+        self.assertIn("log_days < 14", body)
         self.assertIn("$INSTALLED_FILE", body)
         self.assertIn('write_file "$INSTALLED_FILE"', BOOTSTRAP)
 

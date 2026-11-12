@@ -177,6 +177,37 @@ tests:
             exp_annotations:
               summary: "journald suppressed log lines in the last 15 minutes (rate limit)"
 
+  - name: journal buffer too short on an older host
+    interval: 1m
+    input_series:
+      # set up 20 days before time 0; the journal reaches back only 10 days
+      - series: 'ihr_host_installed_timestamp_seconds{instance="n"}'
+        values: '-1728000x120'
+      - series: 'ihr_journal_oldest_entry_timestamp_seconds{instance="n"}'
+        values: '-864000x120'
+    alert_rule_test:
+      - eval_time: 30m
+        alertname: JournalBufferShort
+        exp_alerts: []
+      - eval_time: 61m
+        alertname: JournalBufferShort
+        exp_alerts:
+          - exp_labels: {severity: warning, instance: n}
+            exp_annotations:
+              summary: "The journal holds less than 14 days: raise SystemMaxUse (deploy/host/bootstrap.sh; scripts/staging.sh logs-volume measures the need)"
+
+  - name: a young host's short journal is no alarm
+    interval: 1m
+    input_series:
+      - series: 'ihr_host_installed_timestamp_seconds{instance="n"}'
+        values: '-432000x120'
+      - series: 'ihr_journal_oldest_entry_timestamp_seconds{instance="n"}'
+        values: '-432000x120'
+    alert_rule_test:
+      - eval_time: 90m
+        alertname: JournalBufferShort
+        exp_alerts: []
+
   - name: postgres
     interval: 1m
     input_series:

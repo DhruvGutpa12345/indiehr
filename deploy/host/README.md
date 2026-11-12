@@ -67,7 +67,7 @@ a server is created, before this script exists (`infra/README.md`); there, re-ru
 | Packages | `apt-get upgrade`; base packages | Start from a patched system |
 | Security updates | `unattended-upgrades`, Ubuntu's security origins only, **no automatic reboot**; `--check` reports a pending reboot | Patches arrive daily; a hospital system restarts only when planned |
 | Docker | Docker's own apt repository, key checked by fingerprint `9DC8 5822 … 0EBF CD88`, **exact versions pinned and held** (docs/VERSIONS.md) | No surprise engine upgrades; one known version everywhere |
-| Docker daemon | `log-driver journald`, `live-restore`, `userland-proxy false`, `no-new-privileges`, iptables on | Container logs reach the 180-day journal; restarts of the daemon keep containers up; no proxy processes |
+| Docker daemon | `log-driver journald`, `live-restore`, `userland-proxy false`, `no-new-privileges`, iptables on | Container logs reach the journal (a 14-day buffer, shipped redacted to the 180-day log store and the 400-day archive); restarts of the daemon keep containers up; no proxy processes |
 | Firewall | ufw (`IPV6=yes`, so every rule covers IPv6 too): deny incoming, allow outgoing, **`limit 22/tcp`** (every port sshd listens on), allow 80 and 443, allow 53 (udp+tcp, acme-dns: the wildcard certificate's DNS check, P1-T8b2), allow out 123/udp. A plain `allow` for the SSH port (`ufw allow OpenSSH`, `allow 22/tcp`) is removed, because it would match first and skip the rate limit; `--check` lists any other rule it does not manage | Only SSH (rate-limited: 6 new connections per 30 s per address), the web and the certificate's DNS reach the host |
 | Docker ports | `DOCKER-USER` chain (in ufw's `after.rules`/`after6.rules`): from outside, only connections whose original port was 80 or 443 (Traefik) or 53 udp/tcp (acme-dns) reach a container; everything else is dropped and logged (`[IHR DOCKER-USER BLOCK]`) | Ports Docker publishes are DNAT-ed and forwarded, so ufw's own rules never see them. ufw loads this chain at boot, before Docker, so there is no open window |
 | SSH | `/etc/ssh/sshd_config.d/10-indiehr.conf`: keys only, no root, `MaxAuthTries 3`, `LoginGraceTime 30`, no X11/agent forwarding, local forwarding only, `AllowGroups ihr-ssh` | Q-E9: key-only, rate-limited, open to the internet |
@@ -75,7 +75,7 @@ a server is created, before this script exists (`infra/README.md`); there, re-ru
 | Users | `ihr`: deploys (groups `docker`, `ihr-ssh`; no sudo, no password). Admin: chosen on the first run and saved in `/etc/indiehr/admin-user` (above); groups `sudo`, `ihr-ssh`, passwordless sudo via `/etc/sudoers.d/90-indiehr-admin-<name>` | Deploys never need sudo; the admin is the way back in (below) |
 | Time | chrony with **only** `samay1.nic.in`, `samay2.nic.in` (NIC) and `time.nplindia.org` (NPL), `iburst`; systemd-timesyncd removed; Ubuntu's NTS pool removed; time zone `Asia/Kolkata` | CERT-In Directions (28-04-2022) (i): sync to NIC or NPL. None of them offers NTS (checked 09-11-2026), so these sources are unauthenticated; that is the accepted trade-off |
 | Host DNS (P1-T8b2) | systemd-resolved keeps running but without its local stub (`DNSStubListener=no`); `/etc/resolv.conf` points at `/run/systemd/resolve/resolv.conf` (the provider's resolvers) | The stub held port 53 on 127.0.0.53/54, so acme-dns could not publish it. `--check`: no other listener on 53, names still resolve |
-| Logs | journald `Storage=persistent`, `MaxRetentionSec=1year`, `SystemMaxUse=20G`, `SystemKeepFree=15G`, compressed | CERT-In (iv): 180 days rolling, in India; DPDP Rules 2025: one year of processing logs |
+| Logs | journald `Storage=persistent`, a **14-day buffer** (P1-T9c, owner Q-O3): `MaxRetentionSec=15day`, `MaxFileSec=1day`, `SystemMaxUse=8G`, `SystemKeepFree=15G`, compressed; `journalctl --rotate` applies a change at once | Every line goes, redacted, to the log store (180 days, CERT-In (iv)) and the daily locked archive (400 days, DPDP Rules 2025 rule 8(3)): `deploy/staging/README.md`, "Logs" and "Log archive" |
 | Swap | 2 GB `/swapfile` if the server has no swap | Headroom on an 8 GB server |
 | Kernel | `/etc/sysctl.d/60-indiehr.conf` (keys this kernel lacks, e.g. IPv6 ones under `ipv6.disable=1`, are skipped): no ICMP redirects or source routing, SYN cookies, `kptr_restrict`, `dmesg_restrict`, no unprivileged BPF, `swappiness 10` | Common hardening that leaves Docker's forwarding alone |
 | Directories | `/srv/indiehr` owned by `ihr`, mode 750 | Where `scripts/deploy.sh` puts the stack |
@@ -85,18 +85,20 @@ a server is created, before this script exists (`infra/README.md`); there, re-ru
 systemd drop-in starts chronyd with `-f /etc/chrony/indiehr.conf`. Ubuntu's own `chrony.conf`
 (its pools, DHCP-supplied servers) is not read, and package updates never ask about it.
 
-**Disk space decides how long logs last, not the time limit.** journald deletes the oldest files
-once the journal reaches its cap, even if they are younger than a year. The cap is the smaller of
-`SystemMaxUse` (20 GB) and *used + free space − `SystemKeepFree` (15 GB)*: the journal shares the
-disk with Docker (database, images), so as the disk fills the cap shrinks and logs go early.
-20 GB compressed covers 180 days while the journal grows by about 110 MB a day as stored.
-`scripts/deploy.sh` removes the images each deploy replaces (`docker image prune`). `--check`
-**fails** when entries younger than 180 days are already gone (the oldest entry is younger than
-both 180 days and the host's first run, saved in `/etc/indiehr/installed-at`), and warns when
-free space already holds the cap below 20 GB. The warning sign is the cap being reached while
-the oldest entry is younger than 180 days: then free disk space or grow the disk. A copy only on
-the server disappears with the server: a daily export to an Indian bucket comes with the backups
-(P1-T8c).
+**The journal is a buffer; the record is elsewhere.** Fluent Bit ships every line, redacted, to
+the log store on this server (180 days) and, once a day, to the locked archive in the backup
+region (400 days). The journal only has to hold lines until they are shipped: 14 full days
+(15 days by time, one file a day, so whole days go). Its size cap must not cut that short:
+journald deletes the oldest files once the journal reaches the smaller of `SystemMaxUse` (8 GB)
+and *used + free space − `SystemKeepFree` (15 GB)*. 8 GB is about three times 14 days at the
+volume measured on the proof stack (`scripts/staging.sh logs-volume` measures it on the server;
+raise the cap if it says so). `--check` **fails** when entries younger than 14 days are already
+gone (the oldest entry is younger than both 14 days and the host's first run, saved in
+`/etc/indiehr/installed-at`), and warns when free space already holds the cap below 8 GB.
+
+**Shortening an old journal:** Fluent Bit reads the whole journal on its first start. On a server
+whose journal already holds months of lines, deploy the log stack (and let it catch up) before
+running this script with the 14-day setting, or those older lines are deleted unshipped.
 
 **Not covered here:** IPv6 to containers (the stack's networks are IPv4 only, and without the
 userland proxy IPv6 does not reach them); journald sealing (`Seal=yes` needs a key kept

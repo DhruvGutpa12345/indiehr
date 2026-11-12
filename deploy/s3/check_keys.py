@@ -87,6 +87,7 @@ def main():
     p.add_argument("--public-endpoint", help="the address browsers use (presigned URLs)")
     p.add_argument("--origin", help="a web app origin that CORS must allow")
     p.add_argument("--insecure", action="store_true", help="skip TLS checks on the public address")
+    p.add_argument("--log-archive", help="the log archive bucket (P1-T9c): its key adds and reads, never deletes")
     p.add_argument("--size-limit", action="store_true",
                    help="through Traefik: a 50 MB upload works, a 120 MB one is refused (413)")
     a = p.parse_args()
@@ -124,6 +125,31 @@ def main():
     check("delete with the governance bypass", "denied", outcome(lambda: writer.delete_object(Bucket=a.anchor, Key=akey, VersionId=vid, BypassGovernanceRetention=True)))
     check("add with its own short retention", "denied", outcome(lambda: writer.put_object(Bucket=a.anchor, Key=f"{akey}.2", Body=b"x", ObjectLockMode="GOVERNANCE", ObjectLockRetainUntilDate=soon)))
     check("change the bucket's lock", "denied", outcome(lambda: writer.put_object_lock_configuration(Bucket=a.anchor, ObjectLockConfiguration={"ObjectLockEnabled": "Enabled", "Rule": {"DefaultRetention": {"Mode": "GOVERNANCE", "Days": 1}}})))
+
+    if a.log_archive and os.environ.get("S3_LOGS_ARCHIVE_KEY"):
+        print("== Log archive key (P1-T9c): add and read under logs/, never delete or unlock")
+        arch = client(a.endpoint, "LOGS_ARCHIVE")
+        lkey = f"logs/ihr-key-check/{run}.manifest.json"
+        lbody = b'{"check": true}'
+        lmd5 = base64.b64encode(hashlib.md5(lbody).digest()).decode()  # noqa: S324
+        check("add (If-None-Match, Content-MD5)", "ok", outcome(lambda: arch.put_object(Bucket=a.log_archive, Key=lkey, Body=lbody, ContentMD5=lmd5, IfNoneMatch="*")))
+        check("read it back", "ok", outcome(lambda: arch.get_object(Bucket=a.log_archive, Key=lkey)))
+        check("list the bucket", "ok", outcome(lambda: arch.list_objects_v2(Bucket=a.log_archive, Prefix="logs/ihr-key-check/")))
+        check("write the same name twice", "denied", outcome(lambda: arch.put_object(Bucket=a.log_archive, Key=lkey, Body=b"y", IfNoneMatch="*")))
+        check("add outside logs/", "denied", outcome(lambda: arch.put_object(Bucket=a.log_archive, Key=f"erasure/{run}.json", Body=b"x")))
+        lversions = admin.list_object_versions(Bucket=a.log_archive, Prefix=lkey).get("Versions", [])
+        lvid = lversions[0]["VersionId"] if lversions else "none"
+        lsoon = datetime.now(UTC) + timedelta(seconds=5)
+        check("delete the version", "denied", outcome(lambda: arch.delete_object(Bucket=a.log_archive, Key=lkey, VersionId=lvid)))
+        check("hide it with a delete marker", "denied", outcome(lambda: arch.delete_object(Bucket=a.log_archive, Key=lkey)))
+        check("delete with the governance bypass", "denied", outcome(lambda: arch.delete_object(Bucket=a.log_archive, Key=lkey, VersionId=lvid, BypassGovernanceRetention=True)))
+        check("shorten its retention", "denied", outcome(lambda: arch.put_object_retention(Bucket=a.log_archive, Key=lkey, VersionId=lvid, Retention={"Mode": "GOVERNANCE", "RetainUntilDate": lsoon})))
+        check("change the bucket's lock", "denied", outcome(lambda: arch.put_object_lock_configuration(Bucket=a.log_archive, ObjectLockConfiguration={"ObjectLockEnabled": "Enabled", "Rule": {"DefaultRetention": {"Mode": "GOVERNANCE", "Days": 1}}})))
+        check("read the fingerprint bucket", "denied", outcome(lambda: arch.list_objects_v2(Bucket=a.anchor)))
+        lmode = admin.get_object_retention(Bucket=a.log_archive, Key=lkey, VersionId=lvid)["Retention"]["Mode"]
+        print(f"      archive retention: {lmode} (Governance, like E2E's: erasure with the admin key lifts it)")
+        check("admin without the bypass cannot delete it", "denied", outcome(lambda: admin.delete_object(Bucket=a.log_archive, Key=lkey, VersionId=lvid)))
+        check("admin with the bypass erases it (expire.py)", "ok", outcome(lambda: admin.delete_object(Bucket=a.log_archive, Key=lkey, VersionId=lvid, BypassGovernanceRetention=True)))
 
     print("== Fingerprint reader: read and list only")
     check("read a version", "ok", outcome(lambda: reader.get_object(Bucket=a.anchor, Key=akey, VersionId=vid)))

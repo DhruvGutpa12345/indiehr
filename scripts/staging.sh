@@ -40,6 +40,16 @@
 #   scripts/staging.sh alerts | alert-test       alerts held now | one test alert, mailed now
 #   scripts/staging.sh ops-tunnel [ihr@<server>] Prometheus and Alertmanager on 127.0.0.1 (SSH)
 #   scripts/staging.sh monitoring-textfile [--keys]   the host timer's run (deploy/host/bootstrap.sh)
+#   scripts/staging.sh logs-volume               lines and MB a day in the log store; sizes for
+#                                                180 days, the archive and the journal (P1-T9c)
+#   scripts/staging.sh logs-archive-init <https://endpoint> <bucket> <region> [--uri-style path|host]
+#                     [--existing-key] | --local the daily locked log archive (P1-T9c); bucket key
+#                                                (and, rebuilding, the archive key) on stdin
+#   scripts/staging.sh logs-archive-now | logs-archive-check [--deep] [--recent N] | logs-archive-get <day> [rev]
+#   scripts/staging.sh logs-archive-probe       the bucket's lock and what the archive key may do (go-live)
+#   scripts/staging.sh logs-archive-expire [--dry-run] [--older-than-days N]
+#                                                erasure after 400 days, from the owner's machine
+#                                                with the bucket's admin key (stdin)
 #
 # <suffix> is where hospitals live: <slug>.<suffix>, e.g. app.example.in (Q-T11).
 # --vm: a proof on a throwaway local VM (scripts/local-vm.sh): small memory, all addresses,
@@ -77,6 +87,11 @@ compose() {  # the file list is worked out on each call: init may have just made
     # Logs come with the metrics: their alerts go through the same Alertmanager (P1-T9b)
     files+=(-f "$DIR/compose.monitoring.yaml" -f "$DIR/compose.logs.yaml")
     [[ "$mon" == test ]] && files+=(-f "$DIR/compose.monitoring.test.yaml")
+    # The daily locked log archive (P1-T9c), and in a proof its way to the local stand-in
+    case "$(env_get IHR_LOGS_ARCHIVE)" in
+      s3) files+=(-f "$DIR/compose.logs-archive.yaml") ;;
+      local) files+=(-f "$DIR/compose.logs-archive.yaml" -f "$DIR/compose.logs-archive.local.yaml") ;;
+    esac
   fi
   # A proof on this machine that writes to its journal like a server (IHR_LOG_DRIVER=journald in
   # .env): the stack's own services too, so Fluent Bit finds them there
@@ -228,7 +243,7 @@ key_publish_sync() { admin_manage ihr_keycloak_sync --realm --all; }
 key_check_sync() { admin_manage ihr_keycloak_sync --all --check; }
 key_probe_in() { compose exec -T "$1" python manage.py ihr_client_keys probe "${@:2}"; }
 key_revoke_sessions() { admin_manage ihr_client_keys revoke-sessions; }
-key_log() {  # kid and time only; journald keeps 180 days (CERT-In). A local proof keeps this
+key_log() {  # kid and time only; kept in the log store 180 days and the archive 400 (CERT-In). A local proof keeps this
   # machine's journal clean (compose.local.yaml)
   echo "$*"
   [[ -f "$DIR/.local" ]] && return 0
@@ -796,11 +811,11 @@ s3_init() {  # SeaweedFS keys into secrets/, CARE's and the fingerprint keys int
     || die "FILE_UPLOAD_BUCKET / FACILITY_S3_BUCKET in secrets/app.env are not two bucket names"
   hex() { python3 -c "import secrets;print(secrets.token_hex($1))"; }
   declare -A key
-  for k in ADMIN CARE ANCHOR_WRITE ANCHOR_READ BACKUP; do key[${k}_KEY]="ihr$(hex 10)"; key[${k}_SECRET]="$(hex 20)"; done
+  for k in ADMIN CARE ANCHOR_WRITE ANCHOR_READ BACKUP LOGS_ARCHIVE; do key[${k}_KEY]="ihr$(hex 10)"; key[${k}_SECRET]="$(hex 20)"; done
   local SECRETS_TARGET="$sec"
   {
     echo "# SeaweedFS identities (P1-T8b3), written by scripts/staging.sh s3-init; the s3 container only."
-    for k in ADMIN CARE ANCHOR_WRITE ANCHOR_READ BACKUP; do
+    for k in ADMIN CARE ANCHOR_WRITE ANCHOR_READ BACKUP LOGS_ARCHIVE; do
       echo "IHR_S3_${k}_KEY=${key[${k}_KEY]}"
       echo "IHR_S3_${k}_SECRET=${key[${k}_SECRET]}"
     done
@@ -825,6 +840,7 @@ s3_init() {  # SeaweedFS keys into secrets/, CARE's and the fingerprint keys int
     echo "IHR_S3_FACILITY_BUCKET=$facility"
     echo "IHR_S3_ANCHOR_BUCKET=$S3_ANCHOR_BUCKET_DEFAULT"
     echo "IHR_S3_BACKUP_BUCKET=ihr-backups"
+    echo "IHR_S3_LOGS_ARCHIVE_BUCKET=ihr-log-archive"
     echo "# Audit fingerprints: kept 10 years, removable by nobody through S3 (ADR-010 §9)"
     echo "IHR_S3_LOCK_MODE=COMPLIANCE"
     echo "IHR_S3_LOCK_DAYS=3650"
@@ -836,7 +852,7 @@ s3_init() {  # SeaweedFS keys into secrets/, CARE's and the fingerprint keys int
 s3_tool() {  # s3_tool <script> <args>: a deploy/s3 script with the S3_* keys through the environment
   local script="$1" k v envs=()
   shift
-  for k in ADMIN CARE ANCHOR_WRITE ANCHOR_READ; do
+  for k in ADMIN CARE ANCHOR_WRITE ANCHOR_READ LOGS_ARCHIVE; do
     for v in KEY SECRET; do
       export "S3_${k}_${v}=$(sed -n "s/^IHR_S3_${k}_${v}=//p" "$SECRETS/s3-gateway.env")"
       envs+=(-e "S3_${k}_${v}")
@@ -847,18 +863,31 @@ s3_tool() {  # s3_tool <script> <args>: a deploy/s3 script with the S3_* keys th
     --facility "$(env_get IHR_S3_FACILITY_BUCKET)" --anchor "$(env_get IHR_S3_ANCHOR_BUCKET)" "$@"
 }
 
+s3_archive_key() {  # the log archive's SeaweedFS key, for a stand-in set up before P1-T9c
+  local f="$SECRETS/s3-gateway.env"
+  grep -q '^IHR_S3_LOGS_ARCHIVE_KEY=' "$f" && return 0
+  { cat "$f"
+    printf 'IHR_S3_LOGS_ARCHIVE_KEY=ihr%s\nIHR_S3_LOGS_ARCHIVE_SECRET=%s\n' \
+      "$(python3 -c 'import secrets;print(secrets.token_hex(10))')" "$(python3 -c 'import secrets;print(secrets.token_hex(20))')"
+  } | write_secret s3-gateway.env.new
+  mv "$SECRETS/s3-gateway.env.new" "$f"
+}
+
 s3_up() {  # SeaweedFS, then its buckets (idempotent)
+  s3_archive_key
   compose up -d --wait s3
   s3_tool setup_buckets.py --lock-mode "$(env_get IHR_S3_LOCK_MODE)" --lock-days "$(env_get IHR_S3_LOCK_DAYS)" \
     --cors-origin "https://*.$(env_get IHR_TENANT_DOMAIN_SUFFIX)" \
-    --backups "$(env_get IHR_S3_BACKUP_BUCKET || true)"
+    --backups "$(env_get IHR_S3_BACKUP_BUCKET || true)" \
+    --log-archive "$(v="$(env_get IHR_S3_LOGS_ARCHIVE_BUCKET)"; echo "${v:-ihr-log-archive}")"
 }
 
 s3_check() {  # every key and lock, and the public paths through Traefik (files.<suffix>)
   local suffix; suffix="$(env_get IHR_TENANT_DOMAIN_SUFFIX)"
   # files.<suffix> is Traefik on the files network (port 8443 inside); its certificate is
   # checked by `cert` and smoke, so these requests skip TLS verification
-  s3_tool check_keys.py --public-endpoint "https://files.$suffix:8443" --origin "https://alpha.$suffix" --insecure --size-limit
+  s3_tool check_keys.py --public-endpoint "https://files.$suffix:8443" --origin "https://alpha.$suffix" --insecure --size-limit \
+    --log-archive "$(v="$(env_get IHR_S3_LOGS_ARCHIVE_BUCKET)"; echo "${v:-ihr-log-archive}")"
 }
 
 # ---- Wildcard certificate (P1-T8b2, compose.acme.yaml) ---------------------------------------
@@ -1463,6 +1492,9 @@ monitoring_config() {  # generated/monitoring/: Prometheus's targets and alertma
   [[ ! -r "$SECRETS/logs-metrics-key" ]] || mkey="$(cat "$SECRETS/logs-metrics-key")"
   [[ -z "$mkey" || "$mkey" =~ ^[A-Za-z0-9_-]+$ ]] || die "secrets/logs-metrics-key is not a plain key"
   json_targets "$d/targets/victorialogs.json" "victorialogs:9428" "${mkey:+__param_authKey=$mkey}"
+  # The log archive's own metrics (P1-T9c), when it runs here
+  if [[ -n "$(env_get IHR_LOGS_ARCHIVE)" ]]; then json_targets "$d/targets/logs-archive.json" "logs-archive:9100" ""
+  else json_targets "$d/targets/logs-archive.json"; fi
   if [[ "$(env_get IHR_S3)" == local ]]; then json_targets "$d/targets/s3.json" "s3:9327" "service=s3"
   else json_targets "$d/targets/s3.json"; fi
   hello="${suffix#*.}"
@@ -1593,6 +1625,7 @@ monitoring_settings() {  # monitoring_settings <service>: the files a service re
     blackbox-exporter) printf '%s\n' "$MON_DIR/blackbox/blackbox.yml" ;;
     fluent-bit) printf '%s\n' "$LOGS_DIR"/fluent-bit/* ;;
     vmalert) printf '%s\n' "$LOGS_DIR"/alerts/*.yml ;;
+    logs-archive) printf '%s\n' "$LOGS_DIR"/archive/*.py ;;
   esac
 }
 monitoring_settings_sum() {  # one hash over a service's settings files (names and contents; no secret:
@@ -1619,6 +1652,7 @@ monitoring_up() {  # after the stack: settings, the database role, the host's fi
   monitoring_db_role
   monitoring_textfile --keys
   [[ "$(env_get IHR_MONITORING)" != test ]] || svc+=(heartbeat-stub)
+  if [[ -n "$(env_get IHR_LOGS_ARCHIVE)" ]]; then svc+=(logs-archive); restamp+=(logs-archive); fi
   # Settings are single files mounted read-only, rewritten as new files (deploys, .env changes):
   # a running container keeps the old ones, and neither Prometheus nor Alertmanager rereads its
   # rules or routes by itself. A container whose settings changed since it started (or that
@@ -1860,6 +1894,24 @@ print("%d groups, %s" % (len(g), ("errors: " + " ".join(e)) if e else "no errors
   out="$(compose exec -T prometheus wget -q -T 10 -O /dev/null --post-data '' "$vl/delete/run_task?filter=$id" 2>&1 || true)"
   check "logs: deleting logs without the key is refused" 401 \
     "$(grep -oE 'HTTP/[0-9.]+ [0-9]{3}' <<< "$out" | grep -oE '[0-9]{3}$' | head -1)"
+  if [[ -n "$(env_get IHR_LOGS_ARCHIVE)" ]]; then
+    check "logs: the archiver's last pass succeeded" 1 \
+      "$(prom_get 'http://127.0.0.1:9090/api/v1/query?query=ihr_logs_archive_last_run_ok' 2>/dev/null | python3 -c 'import json,sys
+r = json.load(sys.stdin)["data"]["result"]
+print(r[0]["value"][1] if r else "absent")' 2>/dev/null || echo unreadable)"
+    # Every manifest and record checked; the last two days' files fetched, the others' sizes
+    # (the archiver checks every file in full once a week)
+    check "logs: every archived day authentic, chained and intact" "0 problem(s)" \
+      "$(archive_exec check --recent 2 2>/dev/null | tail -1 | grep -oE '[0-9]+ problem\(s\)' || echo unreadable)"
+    out="$(prom_get 'http://127.0.0.1:9090/api/v1/query?query=ihr_logs_archive_bucket_locked' 2>/dev/null | python3 -c 'import json,sys
+r = json.load(sys.stdin)["data"]["result"]
+print(r[0]["value"][1] if r else "absent")' 2>/dev/null || echo unreadable)"
+    if [[ "$out" == -1 ]]; then
+      echo "WARN  logs: the archive key cannot read the bucket's lock settings: check them in the provider's console (logs-archive-probe)"
+    else
+      check "logs: the archive bucket is locked for 400 days, with versioning" 1 "$out"
+    fi
+  fi
   check "logs: the web app cannot reach the log store" unreachable \
     "$(compose exec -T backend python -c 'import sys, urllib.request
 try:
@@ -1930,6 +1982,192 @@ ops_tunnel() {  # ops-tunnel [user@server] [--port N]: Prometheus, Alertmanager 
   fi
 }
 
+# ---- The daily locked log archive (P1-T9c, ADR-014; compose.logs-archive.yaml) ----------------
+logs_archive_init() {  # <https://endpoint> <bucket> <region> [--uri-style path|host] [--existing-key] | --local
+  local envf="$OUT/.env" sec="$OUT/secrets" endpoint="" bucket="" region="" style="host" local_arc=0
+  local existing=0 key="" secret="" enc args=()
+  [[ -f "$envf" && -d "$sec" ]] || die "no $envf / secrets: run scripts/staging.sh init <suffix> first"
+  grep -q '^IHR_LOGS_ARCHIVE=' "$envf" && die "$envf already has log archive settings (IHR_LOGS_ARCHIVE=...)"
+  grep -q '^IHR_MONITORING=' "$envf" || die "the log archive needs the logs: run monitoring-init first"
+  while (($#)); do
+    case "$1" in
+      --local) local_arc=1 ;;
+      # A rebuilt server writing into an existing archive: its encryption key (from the
+      # password manager), typed or as the last line on stdin, instead of a new one
+      --existing-key) existing=1 ;;
+      --uri-style) style="${2:?--uri-style path|host}"; shift ;;
+      -*) die "unknown option: $1" ;;
+      *) args+=("$1") ;;
+    esac
+    shift
+  done
+  if ((local_arc)); then
+    # Proof only: this stack's own SeaweedFS (same disk, so not a real archive)
+    grep -q '^IHR_S3=local' "$envf" || die "logs-archive-init --local needs SeaweedFS on this stack (s3-init)"
+    SECRETS="$sec" s3_archive_key
+    endpoint="http://s3:8333" region="ap-south-1" style="path"
+    bucket="$(sed -n 's/^IHR_S3_LOGS_ARCHIVE_BUCKET=//p' "$envf" | tail -1)"; bucket="${bucket:-ihr-log-archive}"
+    key="$(sed -n 's/^IHR_S3_LOGS_ARCHIVE_KEY=//p' "$sec/s3-gateway.env")"
+    secret="$(sed -n 's/^IHR_S3_LOGS_ARCHIVE_SECRET=//p' "$sec/s3-gateway.env")"
+  else
+    ((${#args[@]} == 3)) || die "usage: scripts/staging.sh logs-archive-init <https://endpoint> <bucket> <region> [--uri-style path|host]"
+    endpoint="${args[0]}" bucket="${args[1]}" region="${args[2]}"
+    [[ "$endpoint" =~ ^https://[a-z0-9.-]+(:[0-9]+)?$ ]] || die "the endpoint must be https://host (e.g. https://in-south1-objectstore.e2enetworks.net)"
+    # The bucket's writer key, from the keyboard or stdin (two lines), never arguments
+    if [[ -t 0 ]]; then
+      read -rp "Log archive bucket access key (its Writer key): " key; read -rsp "Secret key: " secret; echo
+    else
+      IFS= read -r key || true; IFS= read -r secret || true
+    fi
+  fi
+  if ((existing)); then
+    if [[ -t 0 ]]; then read -rsp "The archive's encryption key (IHR_LOGS_ARCHIVE_ENCRYPTION_KEY): " enc; echo
+    else IFS= read -r enc || true; fi
+  else
+    enc="$(python3 -c 'import base64,os;print(base64.urlsafe_b64encode(os.urandom(32)).decode())')"
+  fi
+  [[ "$enc" =~ ^[A-Za-z0-9_-]{43}=$ ]] || die "that is not an archive key (44 characters, ending in =)"
+  [[ "$bucket" =~ $BUCKET_RE ]] || die "not a bucket name: $bucket"
+  [[ "$region" =~ ^[A-Za-z0-9-]+$ ]] || die "not a region: $region"
+  [[ "$style" =~ ^(path|host)$ ]] || die "--uri-style is path or host"
+  for v in "$key" "$secret"; do
+    [[ ${#v} -ge 8 ]] || die "the bucket key and secret are required"
+    case "$v" in *[[:space:]\"\'\\\$\`]*) die "the key has characters an env file cannot hold" ;; esac
+  done
+  local SECRETS_TARGET="$sec"
+  {
+    echo "# The daily locked log archive (P1-T9c, scripts/staging.sh logs-archive-init): the"
+    echo "# archiver only. IHR_LOGS_ARCHIVE_ENCRYPTION_KEY encrypts every day: without it nothing in"
+    echo "# the archive can be read. Keep a copy in the owner's password manager."
+    echo "IHR_LOGS_ARCHIVE_ENDPOINT=$endpoint"
+    echo "IHR_LOGS_ARCHIVE_REGION=$region"
+    echo "IHR_LOGS_ARCHIVE_BUCKET=$bucket"
+    echo "IHR_LOGS_ARCHIVE_URI_STYLE=$style"
+    echo "IHR_LOGS_ARCHIVE_KEY=$key"
+    echo "IHR_LOGS_ARCHIVE_SECRET=$secret"
+    echo "IHR_LOGS_ARCHIVE_ENCRYPTION_KEY=$enc"
+  } | write_secret logs-archive.env
+  {
+    echo "# The daily locked log archive (P1-T9c; scripts/staging.sh logs-archive-init): 400 days"
+    echo "IHR_LOGS_ARCHIVE=$( ((local_arc)) && echo local || echo s3)"
+  } >> "$envf"
+  echo "Log archive settings added ($endpoint, bucket $bucket). Copy IHR_LOGS_ARCHIVE_ENCRYPTION_KEY"
+  echo "from $sec/logs-archive.env into your password manager now: without it the archive cannot be read."
+}
+
+stack_net() {  # stack_net <service> <network>: the full name of one of the stack's networks, as
+  # the service sees it (nothing when the service is not running)
+  local id; id="$(compose ps -q "$1" 2>/dev/null)"
+  [[ -n "$id" ]] || return 0
+  # shellcheck disable=SC2016  # a Go template for docker, not a shell expansion
+  docker inspect -f '{{range $k, $v := .NetworkSettings.Networks}}{{$k}} {{end}}' "$id" | tr ' ' '\n' | grep "_$2\$" | head -1
+}
+
+archive_exec() {  # archive_exec <archive.py args>: in the running archiver (its key, its network);
+  # without one (a lost server, or the owner's machine) `check`, `get` and `probe` run in a
+  # one-off container from secrets/logs-archive.env
+  local arc net=()
+  arc="$(env_get IHR_LOGS_ARCHIVE)"
+  [[ -n "$arc" ]] || die "no log archive here (logs-archive-init)"
+  if [[ -n "$(compose ps -q logs-archive 2>/dev/null)" ]]; then
+    compose exec -T logs-archive python3 -I /opt/ihr-archive/archive.py "$@"
+    return
+  fi
+  case "$1" in check|get|probe) ;; *) die "the archiver is not running here (scripts/staging.sh up)" ;; esac
+  if [[ "$arc" == local ]]; then
+    net=(--network "$(stack_net s3 internal)")
+    [[ "${net[1]}" ]] || die "the proof's object storage is not running (scripts/staging.sh up)"
+  fi
+  docker run --rm -i "${net[@]}" --log-driver none --read-only --tmpfs /tmp -e HOME=/tmp -e TMPDIR=/tmp \
+    --env-file "$SECRETS/logs-archive.env" -v "$ROOT/deploy/logs/archive:/opt/ihr-archive:ro" \
+    --entrypoint python3 "$(env_get IHR_BACKEND_IMAGE)" -I /opt/ihr-archive/archive.py "$@"
+}
+
+logs_archive_expire() {  # [--dry-run] [--older-than-days N]: erasure, with the bucket's admin key
+  local arc net=() admin=() mac extra=()
+  arc="$(env_get IHR_LOGS_ARCHIVE)"
+  [[ -n "$arc" ]] || die "no log archive here (logs-archive-init)"
+  local f="$SECRETS/logs-archive.env" envs=() k v
+  # The bucket's address only: never the writer's key or the encryption key
+  while IFS='=' read -r k v; do
+    case "$k" in IHR_LOGS_ARCHIVE_ENDPOINT|IHR_LOGS_ARCHIVE_REGION|IHR_LOGS_ARCHIVE_BUCKET|IHR_LOGS_ARCHIVE_URI_STYLE)
+      envs+=(-e "$k=$v") ;; esac
+  done < "$f"
+  # The erasure records' key, derived from the archive key here: expire.py never sees the
+  # archive key itself (it could not read the archive with what it gets)
+  mac="$(sed -n 's/^IHR_LOGS_ARCHIVE_ENCRYPTION_KEY=//p' "$f" | python3 -c 'import base64,hashlib,hmac,sys
+k = base64.urlsafe_b64decode(sys.stdin.read().strip())
+print(hmac.new(k, b"ihr-log-archive erasure", hashlib.sha256).hexdigest())')"
+  if [[ "$arc" == local ]]; then
+    # A proof: the stand-in's admin key, and its network; shorter periods allowed
+    extra=(--allow-short)
+    net=(--network "$(stack_net s3 internal)")
+    admin=("$(sed -n 's/^IHR_S3_ADMIN_KEY=//p' "$SECRETS/s3-gateway.env")" "$(sed -n 's/^IHR_S3_ADMIN_SECRET=//p' "$SECRETS/s3-gateway.env")")
+  elif [[ -t 0 ]]; then
+    read -rp "The archive bucket's admin access key: " k; read -rsp "Secret key: " v; echo
+    admin=("$k" "$v")
+  else
+    IFS= read -r k || true; IFS= read -r v || true
+    admin=("$k" "$v")
+  fi
+  printf '%s\n%s\n%s\n' "${admin[@]}" "$mac" | docker run --rm -i "${net[@]}" --log-driver none --read-only \
+    --tmpfs /tmp -e HOME=/tmp "${envs[@]}" -v "$ROOT/deploy/logs/archive:/opt/ihr-archive:ro" \
+    --entrypoint python3 "$(env_get IHR_BACKEND_IMAGE)" -I /opt/ihr-archive/expire.py "$@" "${extra[@]}"
+}
+
+logs_volume() {  # [hours]: lines and MB a day in the log store (rate over the last hours, default
+  # 24); sizes for 180 days, the archive and the journal
+  [[ -n "$(env_get IHR_MONITORING)" ]] || die "no logs here (monitoring-init)"
+  local days w="${1:-24}" q="http://127.0.0.1:9090/api/v1/query?query="
+  [[ "$w" =~ ^[0-9]+$ && "$w" -ge 1 ]] || die "usage: scripts/staging.sh logs-volume [hours]"
+  days="$(vl_get "/select/logsql/hits?query=*&start=15d&step=1d&offset=5h30m" 2>/dev/null || true)"
+  python3 - "$days" \
+    "$(prom_get "${q}sum(rate(vl_bytes_ingested_total%5B${w}h%5D))*86400" 2>/dev/null || true)" \
+    "$(prom_get "${q}sum(rate(vl_rows_ingested_total%5B${w}h%5D))*86400" 2>/dev/null || true)" \
+    "$(prom_get "${q}sum(vl_uncompressed_data_size_bytes)/sum(vl_compressed_data_size_bytes)" 2>/dev/null || true)" \
+    "$(prom_get "${q}sum(ihr_journal_disk_usage_bytes)/clamp_min((time()-min(ihr_journal_oldest_entry_timestamp_seconds))/86400,1)" 2>/dev/null || true)" "$w" <<'PY'
+import json, sys
+
+def val(raw):
+    try:
+        r = json.loads(raw)["data"]["result"]
+        return float(r[0]["value"][1]) if r else None
+    except (ValueError, KeyError, IndexError):
+        return None
+
+try:
+    hits = json.loads(sys.argv[1]).get("hits") or []
+except ValueError:
+    hits = []
+import datetime as dt
+IST = dt.timezone(dt.timedelta(hours=5, minutes=30))
+per_day = {}
+for h in hits:
+    for t, n in zip(h.get("timestamps", []), h.get("values", [])):
+        # a bucket starts at India midnight (18:30 UTC the day before)
+        day = dt.datetime.fromisoformat(t.replace("Z", "+00:00")).astimezone(IST).date().isoformat()
+        per_day[day] = per_day.get(day, 0) + int(n)
+raw_day, rows_day, ratio, journal_day = (val(a) for a in sys.argv[2:6])
+print("Lines per India day in the store (last 15 days):")
+for d in sorted(per_day):
+    print(f"  {d}  {per_day[d]:>10,}")
+if raw_day is None or not ratio:
+    sys.exit("not enough data yet (Prometheus needs a few hours of the store's metrics)")
+disk_day = raw_day / ratio
+mb = 1e6
+print(f"Rate over the last {sys.argv[6]} hours: {rows_day:,.0f} lines/day, {raw_day / mb:,.1f} MB/day as sent, "
+      f"{disk_day / mb:,.1f} MB/day on disk (compression {ratio:.1f}x)")
+print(f"180 days in the store: {180 * disk_day / 1e9:,.2f} GB -> IHR_LOGS_MAX_SIZE at least "
+      f"{max(1, round(180 * disk_day * 1.3 / 2**30 + 0.5))}GiB (with 30 % room)")
+print(f"400 days in the archive (encrypted gzip, about 1.2x the store): {400 * disk_day * 1.2 / 1e9:,.2f} GB")
+if journal_day is not None and journal_day > 0:
+    print(f"Journal: {journal_day / mb:,.1f} MB per day it holds -> 14 days need about "
+          f"{16 * journal_day * 1.5 / 2**30:,.2f} GiB with room (SystemMaxUse; deploy/host/bootstrap.sh)")
+else:
+    print("Journal: not measurable here (the host timer reports no journal size or oldest entry)")
+PY
+}
+
 case "${1:-}" in
   init) init "${@:2}" ;;
   up) up "${@:2}" ;;
@@ -1964,6 +2202,13 @@ case "${1:-}" in
   alerts) alerts ;;
   alert-test) alert_test ;;
   ops-tunnel) ops_tunnel "${@:2}" ;;
+  logs-volume) logs_volume "${@:2}" ;;
+  logs-archive-init) logs_archive_init "${@:2}" ;;
+  logs-archive-now) archive_exec once ;;
+  logs-archive-check) archive_exec check "${@:2}" ;;
+  logs-archive-get) [[ -n "${2:-}" ]] || die "usage: scripts/staging.sh logs-archive-get <YYYY-MM-DD> [revision]"; archive_exec get "${@:2}" ;;
+  logs-archive-expire) logs_archive_expire "${@:2}" ;;
+  logs-archive-probe) archive_exec probe ;;
   local-proof)
     [[ -f "$DIR/.env" ]] || IHR_FRONTEND_IMAGE="${IHR_FRONTEND_IMAGE:-indiehr-frontend:local}" \
       init "$LOCAL_SUFFIX" --local
@@ -1975,6 +2220,8 @@ case "${1:-}" in
     grep -q '^IHR_BACKUP=' "$DIR/.env" || backup_init --local
     # ...and metrics with alerts to the mail stand-in (P1-T9a)
     grep -q '^IHR_MONITORING=' "$DIR/.env" || monitoring_init --test
+    # ...and the daily locked log archive into that SeaweedFS (P1-T9c)
+    grep -q '^IHR_LOGS_ARCHIVE=' "$DIR/.env" || logs_archive_init --local
     up
     # A synthetic hospital for the address checks, then its Keycloak organisation and client
     # (smoke checks every hospital's client holds the web app's current key)
@@ -1984,5 +2231,5 @@ case "${1:-}" in
     admin_manage ihr_keycloak_sync --all >/dev/null
     smoke
     ;;
-  *) sed -n '5,46p' "$0"; exit 1 ;;
+  *) sed -n '5,53p' "$0"; exit 1 ;;
 esac

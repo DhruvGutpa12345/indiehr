@@ -206,7 +206,7 @@ hospital was provisioned; the password in no container's log.
 | Client addresses | Traefik reaches Keycloak over a network of their own (`kcproxy`, `IHR_PROXY_NET`, default 10.203.0.0/28; change it in `.env` if the server already uses that range), and Keycloak takes `X-Forwarded-For` only from that range. Traefik drops whatever a client sends in those headers and in look-alike names (`X.Forwarded.For`). So login events and lock-outs carry the real address; anything else that reaches Keycloak is logged with its own address |
 | Per-IP limits (Traefik) | Sign-in submissions (password, code, token): 5 a second, 10 at once in a burst, at most 10 in progress. "Forgot password" (sends an e-mail): 6 a minute. Sign-in pages: 30 a second (their CSS, scripts and fonts: no limit). Each hospital's sign-in start (`/api/ihr/auth/login/`): 5 a second; sign-out, the return from Keycloak and the session heartbeat are never limited, so a sign-out cannot be refused. Over the limit: HTTP 429 with `Retry-After`. Sized for about 200 staff behind one hospital address at a shift change; one account's password is protected by Keycloak's lock-out (5 failures) |
 | Overload | Beyond 500 waiting requests Keycloak answers 503 at once instead of piling up |
-| Events in the journal | Every sign-in, failure (WARN), lock-out (`USER_DISABLED_BY_TEMPORARY_LOCKOUT`) and admin change is a log line in the journal, kept 180 days, with the client address; they are also in Keycloak's database for 180 days. A password is never logged as such, but a failed sign-in records what was typed as the username: someone who types their password into the username box leaves it in the log (Keycloak's database keeps it too). P1-T9 removes the username of "user not found" events before shipping logs; alerts on bursts: P1-T9 |
+| Events in the logs | Every sign-in, failure (WARN), lock-out (`USER_DISABLED_BY_TEMPORARY_LOCKOUT`) and admin change is a log line with the client address: in the journal for 14 days (a buffer), redacted in the log store for 180 days and in the archive for 400 (P1-T9b, P1-T9c); they are also in Keycloak's database for 180 days. A password is never logged as such, but a failed sign-in records what was typed as the username: the log store and archive drop it when no account matched (P1-T9b); the 14-day journal and Keycloak's database keep it. Alerts on bursts: "Logs" below |
 | Admin console | Only through an SSH tunnel to `127.0.0.1:8081` (never on the public address); unchanged |
 
 **Size of the event log (estimate):** 0.35–0.55 KB per event (measured); a staff member makes about a dozen
@@ -543,3 +543,123 @@ whole existing journal once.
 loggers, so a server error on staging left no trace at all. They are on again
 (`disable_existing_loggers: False` in our deployment settings), and their lines are redacted like
 all others.
+
+## Log archive and the 180-day record (P1-T9c, ADR-014)
+
+**What makes up the record** (owner, 11/12-11-2026: Q-O3, Q-O10 to Q-O12):
+
+| Part | Where | How long | What |
+|---|---|---|---|
+| Journal | this server | **14 days** (a buffer) | raw lines, until Fluent Bit has shipped them (`deploy/host/bootstrap.sh`, `deploy/host/README.md`) |
+| Log store | this server (VictoriaLogs) | **180 days** (CERT-In) | redacted lines, searchable (section "Logs" above) |
+| Archive | backup region (E2E Chennai at go-live) | **400 days** (DPDP Rules 8(3): a year, plus margin), then erased | redacted lines, one encrypted, locked file per India day |
+
+**The archiver** (`compose.logs-archive.yaml`, on when `.env` has `IHR_LOGS_ARCHIVE`;
+`deploy/logs/archive/archive.py`, run from the backend image):
+
+- **When:** each India day (00:00–24:00 IST) is archived once it has been over for an hour.
+- **Export:** hour by hour from the store, each hour's count checked before and after (the store
+  ends a slow query early without an error, so an hour that does not match is tried again, then
+  refused).
+- **Format:** gzip, then encrypted with our key (`IHR_LOGS_ARCHIVE_ENCRYPTION_KEY`, Fernet).
+- **Upload and check:** written once (If-None-Match), with Content-MD5, into a bucket with
+  Object Lock (400 days), then read back and decrypted to check its lines.
+- **Manifests:** a small signed manifest goes beside each day, holding lines per hour, size,
+  SHA-256 and the previous manifest's SHA-256. The chain is followed by its links: one start, no
+  forks, no gaps. A missing, replaced or forged day shows.
+- **Late lines:** every day still in the store is recounted on every pass (every 10 minutes). A
+  day that gained lines, because Fluent Bit delivered a backlog late, is archived again as the
+  next revision, and the earlier one stays.
+- **Revisions only grow:** a later revision is a re-export of the same day, so it must hold every
+  line of the one before. `check` compares the hourly counts; `check --deep` compares the lines
+  themselves. Someone holding the server's keys therefore cannot slip in a cleaned copy of a day.
+- **An interrupted upload** (a file stored, its manifest not) leaves a locked name behind. The
+  next pass simply uses the next revision; nothing waits for you.
+- **Full check:** once a week the archiver decrypts every file and checks every revision against
+  the one before. Its result feeds LogArchiveNotAuthentic.
+- **Footprint:** about 46 MB of memory in use (256 MB limit).
+- **Networks:** `logs` and an egress bridge of its own. In a proof it also joins `internal`,
+  where the stand-in is.
+
+**Keys:**
+
+- **Writer key (server):** it can add and read under `logs/`, never delete, hide or unlock
+  anything. On the stand-in its policy is proven by `s3-check`. On E2E the bucket's Writer role
+  is the closest match; check its rights at go-live (below).
+- **Encryption key (server and your password manager):** without it the archive cannot be read.
+- **Admin key (your machine only, typed when needed):** needed only for erasure.
+
+| Command | What it does |
+|---|---|
+| `scripts/staging.sh logs-archive-init https://in-south1-objectstore.e2enetworks.net <bucket> Chennai [--uri-style path\|host]` | Once: asks for the bucket's Writer key (typed or two lines on stdin), makes the encryption key, writes `secrets/logs-archive.env` (mode 600) and `IHR_LOGS_ARCHIVE=s3`. **Copy `IHR_LOGS_ARCHIVE_ENCRYPTION_KEY` into your password manager.** `--existing-key`: a rebuilt server continuing an archive (the key typed, or the last line on stdin). `--local`: a proof into this stack's SeaweedFS (automatic in `local-proof`) |
+| `scripts/staging.sh logs-archive-check [--deep] [--recent N]` | Every manifest and erasure record authentic, the chain whole, every file present with its size, and the bucket's lock. `--recent N`: only the last N days' files fetched and their SHA-256 checked (`smoke` uses 2; the default fetches all). `--deep`: every file also decrypted, its lines counted, and each revision checked to hold every line of the one before |
+| `scripts/staging.sh logs-archive-get <YYYY-MM-DD> [revision] > day.jsonl` | One day back as JSON lines (the latest revision unless one is named), checked and decrypted; a day's revisions are listed on the terminal. For an incident report to CERT-In older than the store's 180 days |
+| `scripts/staging.sh logs-archive-probe` | What the server's archive key may do (add, read; never delete, hide, unlock or write outside `logs/`) and whether the bucket is locked for 400 days. Run it at go-live: E2E documents neither. It leaves a small probe file under `logs/ihr-key-check/`, erased with the rest after 400 days |
+| `scripts/staging.sh logs-archive-now` | A pass now (the service does one every 10 minutes) |
+| `scripts/staging.sh logs-archive-expire [--dry-run] [--older-than-days 400]` | **Monthly, from your machine** (the deploy folder with `.env` and `secrets/`): asks for the bucket's admin key and deletes every version of each day older than 400 days, lifting the Governance lock. Run `--dry-run` first. Safety: it refuses fewer than 400 days, refuses when your machine's clock is more than an hour off the bucket's, and never touches a file whose own lock still runs. **Before the first deletion** it writes a signed erasure record (`erasure/<time>.json`: the days, the files, each erased manifest's hash and its predecessor), so `logs-archive-check` follows the chain through the erased days; a second record says how it ended. The record's key is derived from the archive key on your machine; the erasure tool never sees the archive key itself |
+| `scripts/staging.sh logs-volume [hours]` | Lines and MB a day in the store over the last hours (default 24), and what 180 days, the archive and 14 days of journal need (the journal: its size over the days it holds) |
+
+**Alerts** (`rules/logs.yml`, "log-archive"):
+
+- **LogArchiveBehind:** more than a day behind (warning), more than four days (critical).
+- **LogArchiveFailing:** passes fail for 2 h.
+- **LogArchiveNotAuthentic** (critical): a manifest or erasure record we did not write or that
+  was changed, a broken chain, or (the weekly full check) a revision that drops lines.
+- **LogArchiveNotLocked** (critical): the bucket is no longer locked for 400 days with
+  versioning.
+- **LogArchiveShrunk:** a recent day has fewer lines in the store than in its archive.
+- **LogArchiveErasureOverdue:** a day older than 435 days is still there. Run the monthly
+  erasure.
+- **JournalBufferShort** (`rules/capacity.yml`): the journal no longer reaches back 14 days on a
+  host older than 15 days. Raise `SystemMaxUse`.
+
+**Sizes (measured on the proof stack, 12-11-2026):**
+
+| What | Cost |
+|---|---|
+| One web request | 3 log lines (Traefik, nginx, the backend), about 1.8 KB sent to the store, about 130 bytes on its disk (compression about 14x) |
+| Same request in the journal | about 2 KB |
+| An idle server | some thousands of lines an hour (probes, timers, kernel firewall lines) |
+
+| Per 100,000 requests a day | Size |
+|---|---|
+| Store, 180 days | about 2.3 GB |
+| Archive, 400 days | about 6 GB |
+| Journal, 14 days | about 2.8 GB |
+
+So:
+
+- the defaults (store 20 GiB, journal 8 GB) hold about 850,000 and 250,000 requests a day;
+- on a server, `logs-volume` measures the real figures; raise `IHR_LOGS_MAX_SIZE` or the
+  journal cap when it says so (LogStoreNearCap and JournalBufferShort warn first);
+- E2E's object storage charges ₹625 a month for the first 250 GB (+ GST).
+
+**At go-live (owner):**
+
+1. In E2E's console, in **Chennai**, create a bucket **with Object Lock**: Governance, default
+   retention 400 days. Lock can only be chosen at creation; it also turns versioning on for
+   good.
+2. Create an access key with the **Writer** role on that bucket only. Separately, keep the
+   bucket's **admin** key in your password manager; it is used only for erasure.
+3. On your machine: `scripts/staging.sh logs-archive-init https://in-south1-objectstore.e2enetworks.net <bucket> Chennai --uri-style path`
+   (if E2E refuses path-style, use `--uri-style host`). Put the Writer key in when asked, then
+   copy the encryption key into your password manager. Deploy.
+4. On the server: `scripts/staging.sh logs-archive-probe`. Every line must say PASS. E2E does
+   not document whether its Writer role can delete. If a delete line fails, ask E2E for a role
+   without delete, or plan the move to AWS (COMPLIANCE, put-only key). Then run
+   `logs-archive-now` and `logs-archive-check`, and on your machine
+   `logs-archive-expire --dry-run` (it lists, deletes nothing).
+5. If E2E does not support `If-None-Match` on upload, set `IHR_LOGS_ARCHIVE_IF_NONE_MATCH=off`
+   in `secrets/logs-archive.env`. The lock still keeps every version.
+
+**Known and accepted:**
+
+- **E2E's Governance lock** stops the server's key, but not E2E's account admin (Q-E7, Q-O10).
+  The chain still shows a removed or changed day to `logs-archive-check`.
+- **Losing the server** loses at most the current day, plus the hour before it is archived.
+  `logs-archive-check` and `logs-archive-get` also run from your machine without the server (a
+  one-off container with `secrets/logs-archive.env`), for an incident report.
+- **The archiver's health check only asks whether it answers.** A failing pass shows as
+  LogArchiveFailing, not as a sick container.
+- **In a proof,** erasing a day the store still holds makes the archiver archive it again. On a
+  server, erased days (400 days) are long gone from the store (180).

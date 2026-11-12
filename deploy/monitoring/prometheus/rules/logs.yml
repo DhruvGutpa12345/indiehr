@@ -79,3 +79,72 @@ groups:
           service: vmalert
         annotations:
           summary: "Log alerts fail to run or to reach Alertmanager (sign-in abuse would go unnoticed)"
+
+  # The daily locked archive (P1-T9c, ADR-014): the 180-day CERT-In record and the 400-day
+  # DPDP one once the store's own days are gone. Nothing here fires without an archive.
+  - name: log-archive
+    rules:
+      # A day is archived an hour after it ends (01:00 IST): by 06:00 the next morning at the
+      # latest, unless something is wrong
+      - alert: LogArchiveBehind
+        expr: time() - ihr_logs_archive_last_day_end_timestamp_seconds > 30 * 3600
+        labels:
+          severity: warning
+          service: logs-archive
+        annotations:
+          summary: "The log archive is more than a day behind (scripts/staging.sh logs-archive-check; the archiver's own log says why)"
+
+      - alert: LogArchiveBehind
+        expr: time() - ihr_logs_archive_last_day_end_timestamp_seconds > 4 * 86400
+        labels:
+          severity: critical
+          service: logs-archive
+        annotations:
+          summary: "The log archive is more than 4 days behind: days that leave the store unarchived are lost to the 400-day record"
+
+      - alert: LogArchiveFailing
+        expr: ihr_logs_archive_last_run_ok == 0
+        for: 2h
+        labels:
+          severity: warning
+          service: logs-archive
+        annotations:
+          summary: "The log archiver's passes fail for 2 hours (bucket, key or the store; its own log says why)"
+
+      - alert: LogArchiveNotAuthentic
+        expr: ihr_logs_archive_bad_manifests > 0 or ihr_logs_archive_check_problems > 0
+        labels:
+          severity: critical
+          service: logs-archive
+        annotations:
+          summary: "The log archive holds something not ours, a changed file, a broken chain or a revision that drops lines (scripts/staging.sh logs-archive-check --deep)"
+
+      # The bucket must keep every day 400 days (Object Lock, versioning); -1: this key cannot
+      # read the settings (E2E may not allow it: logs-archive-probe and the console then)
+      - alert: LogArchiveNotLocked
+        expr: ihr_logs_archive_bucket_locked == 0
+        for: 30m
+        labels:
+          severity: critical
+          service: logs-archive
+        annotations:
+          summary: "The log archive bucket is not locked for 400 days with versioning: archived days could be deleted"
+
+      - alert: LogArchiveShrunk
+        expr: ihr_logs_archive_shrunk_days > 0
+        for: 1h
+        labels:
+          severity: warning
+          service: logs-archive
+        annotations:
+          summary: "The log store now holds fewer lines of a recent day than its archive (lines deleted from the store?)"
+
+      # DPDP Rules 8(3): erase after the period (400 days, owner Q-O3); the owner runs
+      # logs-archive-expire monthly, so a day may wait up to a month and a bit
+      - alert: LogArchiveErasureOverdue
+        expr: time() - ihr_logs_archive_oldest_day_timestamp_seconds > 435 * 86400
+        labels:
+          severity: warning
+          service: logs-archive
+        annotations:
+          summary: "Archived log days older than 400 days wait for erasure: run scripts/staging.sh logs-archive-expire from your machine"

@@ -133,6 +133,19 @@ if [[ $EUID -eq 0 || " $(id -Gn) " == *" systemd-journal "* || " $(id -Gn) " == 
   n="$(journalctl -q --no-pager --since -15min -t systemd-journald -o cat 2>/dev/null | grep -c '^Suppressed ' || true)"
   describe ihr_journal_suppressed_lines "journald's \"Suppressed N messages\" lines in the last 15 minutes"
   metric "ihr_journal_suppressed_lines ${n:-0}"
+  # The journal is a 14-day buffer (P1-T9c): its oldest entry, and when this host was set up
+  # (deploy/host/bootstrap.sh), so an alert can tell a short buffer from a young host
+  # (the first line only: journalctl stops reading when head closes the pipe)
+  oldest="$(journalctl -q --no-pager -o short-unix 2>/dev/null | head -n1 | cut -d. -f1 || true)"
+  if [[ "$oldest" =~ ^[0-9]+$ ]]; then
+    describe ihr_journal_oldest_entry_timestamp_seconds "Time of the oldest entry in the journal"
+    metric "ihr_journal_oldest_entry_timestamp_seconds $oldest"
+  fi
+fi
+installed="$(head -n1 "${IHR_INSTALLED_FILE:-/etc/indiehr/installed-at}" 2>/dev/null || true)"
+if [[ "$installed" =~ ^[0-9]+$ ]]; then
+  describe ihr_host_installed_timestamp_seconds "When deploy/host/bootstrap.sh first set this host up"
+  metric "ihr_host_installed_timestamp_seconds $installed"
 fi
 
 # ---- Time source (CERT-In: NIC/NPL only; deploy/host/bootstrap.sh) ---------------------------

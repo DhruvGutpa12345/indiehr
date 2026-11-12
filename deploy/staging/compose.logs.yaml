@@ -50,7 +50,8 @@ services:
       - -c
       - >-
         [ "$$(stat -c %u:%a /vlogs)" = "${IHR_SECRETS_UID:?}:700" ] || { chown ${IHR_SECRETS_UID:?}:${IHR_SECRETS_GID:?} /vlogs && chmod 700 /vlogs; };
-        [ "$$(stat -c %u:%a /fbstate)" = "65534:700" ] || { chown 65534:65534 /fbstate && chmod 700 /fbstate; }
+        [ "$$(stat -c %u:%a /fbstate)" = "65534:700" ] || { chown 65534:65534 /fbstate && chmod 700 /fbstate; };
+        [ ! -d /archive ] || [ "$$(stat -c %u:%a /archive)" = "${IHR_SECRETS_UID:?}:700" ] || { chown ${IHR_SECRETS_UID:?}:${IHR_SECRETS_GID:?} /archive && chmod 700 /archive; }
     volumes:
       - vldata:/vlogs
       - fbstate:/fbstate
@@ -64,8 +65,8 @@ services:
     user: "${IHR_SECRETS_UID:?}:${IHR_SECRETS_GID:?}"
     command:
       - -storageDataPath=/vlogs
-      # CERT-In: 180 days (the daily locked archive of P1-T9c is the long-term record)
-      - -retentionPeriod=${IHR_LOGS_RETENTION:-180d}
+      # CERT-In: 180 days; the daily locked archive (P1-T9c, compose.logs-archive.yaml) keeps 400
+      - -retentionPeriod=${IHR_LOGS_RETENTION_DAYS:-180}d
       # Never more than this of the disk the database shares: the oldest days go first
       # (sized from measured volume in P1-T9c; LogStoreNearCap warns before)
       - -retention.maxDiskSpaceUsageBytes=${IHR_LOGS_MAX_SIZE:-20GiB}

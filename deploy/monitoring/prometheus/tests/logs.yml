@@ -128,3 +128,105 @@ tests:
           - exp_labels: {severity: warning, service: vmalert}
             exp_annotations:
               summary: "Log alerts fail to run or to reach Alertmanager (sign-in abuse would go unnoticed)"
+
+  - name: log archive
+    interval: 1m
+    input_series:
+      # the newest archived day ended at time 0; nothing newer for 100 hours
+      - series: 'ihr_logs_archive_last_day_end_timestamp_seconds'
+        values: '0x6000'
+      # passes fail from 4 h to 14 h
+      - series: 'ihr_logs_archive_last_run_ok'
+        values: '1x240 0x600 1x5200'
+      - series: 'ihr_logs_archive_bad_manifests'
+        values: '0x1260 1x4800'
+      # from 10 h a recent day has fewer lines in the store than in its archive
+      # the weekly full check finds a problem from 30 h; the lock is gone from 40 h
+      - series: 'ihr_logs_archive_check_problems'
+        values: '0x1800 1x4200'
+      - series: 'ihr_logs_archive_bucket_locked'
+        values: '1x2400 0x3600'
+      - series: 'ihr_logs_archive_shrunk_days'
+        values: '0x600 1x5400'
+      # the oldest day began 434 days before time 0: overdue (435 days) after a day
+      - series: 'ihr_logs_archive_oldest_day_timestamp_seconds'
+        values: '-37497600x6000'
+    alert_rule_test:
+      - eval_time: 29h
+        alertname: LogArchiveBehind
+        exp_alerts: []
+      - eval_time: 31h
+        alertname: LogArchiveBehind
+        exp_alerts:
+          - exp_labels: {severity: warning, service: logs-archive}
+            exp_annotations:
+              summary: "The log archive is more than a day behind (scripts/staging.sh logs-archive-check; the archiver's own log says why)"
+      - eval_time: 97h
+        alertname: LogArchiveBehind
+        exp_alerts:
+          - exp_labels: {severity: warning, service: logs-archive}
+            exp_annotations:
+              summary: "The log archive is more than a day behind (scripts/staging.sh logs-archive-check; the archiver's own log says why)"
+          - exp_labels: {severity: critical, service: logs-archive}
+            exp_annotations:
+              summary: "The log archive is more than 4 days behind: days that leave the store unarchived are lost to the 400-day record"
+      - eval_time: 4h
+        alertname: LogArchiveFailing
+        exp_alerts: []
+      - eval_time: 7h
+        alertname: LogArchiveFailing
+        exp_alerts:
+          - exp_labels: {severity: warning, service: logs-archive}
+            exp_annotations:
+              summary: "The log archiver's passes fail for 2 hours (bucket, key or the store; its own log says why)"
+      - eval_time: 20h
+        alertname: LogArchiveNotAuthentic
+        exp_alerts: []
+      - eval_time: 22h
+        alertname: LogArchiveNotAuthentic
+        exp_alerts:
+          - exp_labels: {severity: critical, service: logs-archive}
+            exp_annotations:
+              summary: "The log archive holds something not ours, a changed file, a broken chain or a revision that drops lines (scripts/staging.sh logs-archive-check --deep)"
+      - eval_time: 10h
+        alertname: LogArchiveErasureOverdue
+        exp_alerts: []
+      - eval_time: 26h
+        alertname: LogArchiveErasureOverdue
+        exp_alerts:
+          - exp_labels: {severity: warning, service: logs-archive}
+            exp_annotations:
+              summary: "Archived log days older than 400 days wait for erasure: run scripts/staging.sh logs-archive-expire from your machine"
+      - eval_time: 10h30m
+        alertname: LogArchiveShrunk
+        exp_alerts: []
+      - eval_time: 12h
+        alertname: LogArchiveShrunk
+        exp_alerts:
+          - exp_labels: {severity: warning, service: logs-archive}
+            exp_annotations:
+              summary: "The log store now holds fewer lines of a recent day than its archive (lines deleted from the store?)"
+      - eval_time: 41h
+        alertname: LogArchiveNotAuthentic
+        exp_alerts:
+          - exp_labels: {severity: critical, service: logs-archive}
+            exp_annotations:
+              summary: "The log archive holds something not ours, a changed file, a broken chain or a revision that drops lines (scripts/staging.sh logs-archive-check --deep)"
+
+  - name: log archive not locked
+    interval: 1m
+    input_series:
+      - series: 'ihr_logs_archive_bucket_locked'
+        values: '1x20 0x60'
+      - series: 'ihr_logs_archive_bad_manifests'
+        values: '0x80'
+    alert_rule_test:
+      - eval_time: 40m
+        alertname: LogArchiveNotLocked
+        exp_alerts: []
+      - eval_time: 55m
+        alertname: LogArchiveNotLocked
+        exp_alerts:
+          - exp_labels: {severity: critical, service: logs-archive}
+            exp_annotations:
+              summary: "The log archive bucket is not locked for 400 days with versioning: archived days could be deleted"

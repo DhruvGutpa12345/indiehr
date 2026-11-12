@@ -104,7 +104,8 @@ class Isolation(unittest.TestCase):
         net = OVERLAY["networks"]["logs"]
         self.assertTrue(net["internal"])
         self.assertEqual(net["ipam"]["config"][0]["subnet"], "${IHR_LOGS_NET:-10.203.0.32/28}")
-        self.assertEqual(members("logs"), {("compose.logs.yaml", n) for n in ("victorialogs", "fluent-bit", "vmalert", "prometheus")})
+        self.assertEqual(members("logs"), {("compose.logs.yaml", n) for n in ("victorialogs", "fluent-bit", "vmalert", "prometheus")}
+                         | {("compose.logs-archive.yaml", "logs-archive"), ("compose.logs-archive.local.yaml", "logs-archive")})
 
     def test_victorialogs_on_logs_alone(self):
         self.assertEqual(list(SVC["victorialogs"]["networks"]), ["logs"])
@@ -147,7 +148,7 @@ class Isolation(unittest.TestCase):
 
     def test_retention(self):
         cmd = SVC["victorialogs"]["command"]
-        self.assertIn("-retentionPeriod=${IHR_LOGS_RETENTION:-180d}", cmd)
+        self.assertIn("-retentionPeriod=${IHR_LOGS_RETENTION_DAYS:-180}d", cmd)
         self.assertIn("-retention.maxDiskSpaceUsageBytes=${IHR_LOGS_MAX_SIZE:-20GiB}", cmd)
 
     def test_ops_tunnel_binds_this_machine_only(self):
@@ -303,6 +304,78 @@ class Wiring(unittest.TestCase):
     def test_backend_loggers_stay_on(self):
         text = (ROOT / "plugins" / "ihr_platform" / "ihr_platform" / "settings" / "deployment.py").read_text()
         self.assertIn('LOGGING["disable_existing_loggers"] = False', text)
+
+
+class Archive(unittest.TestCase):
+    """The daily locked archive (P1-T9c, ADR-014)."""
+
+    ARC = load(STAGING / "compose.logs-archive.yaml")["services"]["logs-archive"]
+
+    def test_archiver_hardened_and_isolated(self):
+        a = self.ARC
+        self.assertTrue(a["read_only"])
+        self.assertEqual(a["cap_drop"], ["ALL"])
+        self.assertIn("no-new-privileges:true", a["security_opt"])
+        self.assertEqual(a["user"], "${IHR_SECRETS_UID:?}:${IHR_SECRETS_GID:?}")
+        self.assertNotIn("ports", a)
+        # the store and its own way out; the local stand-in only in a proof
+        self.assertEqual(a["networks"], ["logs", "archiveout"])
+        local = load(STAGING / "compose.logs-archive.local.yaml")["services"]["logs-archive"]
+        self.assertEqual(local["networks"], ["logs", "archiveout", "internal"])
+        self.assertEqual(members("archiveout"), {("compose.logs-archive.yaml", "logs-archive"),
+                                                 ("compose.logs-archive.local.yaml", "logs-archive")})
+        self.assertEqual(a["env_file"], ["secrets/logs-archive.env"])
+        self.assertIn("./secrets/logs-http-password:/run/ihr-logs/http-password:ro", a["volumes"])
+        self.assertIn("../logs/archive:/opt/ihr-archive:ro", a["volumes"])
+
+    def test_writer_key_can_never_delete(self):
+        """The archive's key on the stand-in: add and read under logs/, nothing else (the owner's
+        machine erases, Q-O12)."""
+        import json as _json
+
+        tpl = _json.loads((ROOT / "deploy" / "s3" / "s3.template.json").read_text())
+        (ident,) = [i for i in tpl["identities"] if i["name"] == "ihr-log-archive"]
+        self.assertNotIn("actions", ident)
+        (pol,) = [p for p in tpl["policies"] if p["name"] == "ihr-log-archive"]
+        actions = {a for st in _json.loads(pol["content"])["Statement"] for a in st["Action"]}
+        self.assertFalse({a for a in actions if "Delete" in a or "Retention" in a or "Lock" in a and a.startswith("s3:Put")})
+        self.assertLessEqual(actions, {"s3:PutObject", "s3:GetObject", "s3:GetObjectVersion", "s3:ListBucket",
+                                       "s3:GetBucketObjectLockConfiguration", "s3:GetBucketVersioning"})
+        # the server never runs the erasure: it is a one-off with the admin key from stdin
+        self.assertIn("expire.py", func("logs_archive_expire"))
+        self.assertNotIn("expire", " ".join(self.ARC["entrypoint"]))
+        self.assertNotIn("ADMIN", (STAGING / "compose.logs-archive.yaml").read_text())
+
+    def test_archive_bucket_locked_like_e2e(self):
+        up = func("s3_up")
+        self.assertIn("--log-archive", up)
+        text = (ROOT / "deploy" / "s3" / "setup_buckets.py").read_text()
+        self.assertIn('p.add_argument("--log-archive-mode", choices=sorted(STRENGTH), default="GOVERNANCE")', text)
+        self.assertIn('p.add_argument("--log-archive-days", type=int, default=400)', text)
+
+    def test_archive_key_and_encryption_key_handling(self):
+        init = func("logs_archive_init")
+        self.assertIn("write_secret logs-archive.env", init)
+        self.assertIn('read -rsp "Secret key: " secret', init)
+        self.assertIn("IFS= read -r key", init)
+        self.assertIn("password manager", init)
+        self.assertRegex(init, r"\^\[A-Za-z0-9_-\]\{43\}=\$")
+        # erasure gets the bucket's address only, never the writer's or the encryption key
+        exp = func("logs_archive_expire")
+        self.assertIn("IHR_LOGS_ARCHIVE_ENDPOINT|IHR_LOGS_ARCHIVE_REGION|IHR_LOGS_ARCHIVE_BUCKET|IHR_LOGS_ARCHIVE_URI_STYLE", exp)
+
+    def test_wiring(self):
+        c = func("compose")
+        self.assertIn('s3) files+=(-f "$DIR/compose.logs-archive.yaml") ;;', c)
+        self.assertIn("logs-archive", func("monitoring_up"))
+        self.assertIn("archive_exec check", func("logs_smoke"))
+        self.assertIn("logs_archive_init --local", STAGING_SH)
+        prom = load(ROOT / "deploy" / "monitoring" / "prometheus" / "prometheus.yml")
+        jobs = {j["job_name"]: j for j in prom["scrape_configs"]}
+        self.assertEqual(jobs["logs-archive"]["file_sd_configs"][0]["files"], ["/etc/prometheus/targets/logs-archive.json"])
+        rules = (ROOT / "deploy" / "monitoring" / "prometheus" / "rules" / "logs.yml").read_text()
+        for name in ("LogArchiveBehind", "LogArchiveFailing", "LogArchiveNotAuthentic", "LogArchiveErasureOverdue"):
+            self.assertIn("alert: " + name, rules)
 
 
 if __name__ == "__main__":

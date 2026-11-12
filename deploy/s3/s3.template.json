@@ -70,6 +70,18 @@
         "Write:@BACKUP_BUCKET@",
         "List:@BACKUP_BUCKET@"
       ]
+    },
+    {
+      "name": "ihr-log-archive",
+      "credentials": [
+        {
+          "accessKey": "@LOGS_ARCHIVE_KEY@",
+          "secretKey": "@LOGS_ARCHIVE_SECRET@"
+        }
+      ],
+      "policyNames": [
+        "ihr-log-archive"
+      ]
     }
   ],
   "policies": [
@@ -80,6 +92,10 @@
     {
       "name": "ihr-anchor-read",
       "content": "{\"Version\":\"2012-10-17\",\"Statement\":[{\"Effect\":\"Allow\",\"Action\":[\"s3:GetObject\",\"s3:GetObjectVersion\"],\"Resource\":[\"arn:aws:s3:::@ANCHOR_BUCKET@/anchors/*\"]},{\"Effect\":\"Allow\",\"Action\":[\"s3:ListBucket\",\"s3:ListBucketVersions\",\"s3:GetBucketObjectLockConfiguration\",\"s3:GetBucketVersioning\"],\"Resource\":[\"arn:aws:s3:::@ANCHOR_BUCKET@\"]}]}"
+    },
+    {
+      "name": "ihr-log-archive",
+      "content": "{\"Version\":\"2012-10-17\",\"Statement\":[{\"Effect\":\"Allow\",\"Action\":[\"s3:PutObject\",\"s3:GetObject\",\"s3:GetObjectVersion\"],\"Resource\":[\"arn:aws:s3:::@LOGS_ARCHIVE_BUCKET@/logs/*\"]},{\"Effect\":\"Allow\",\"Action\":[\"s3:GetObject\"],\"Resource\":[\"arn:aws:s3:::@LOGS_ARCHIVE_BUCKET@/erasure/*\"]},{\"Effect\":\"Allow\",\"Action\":[\"s3:ListBucket\",\"s3:GetBucketObjectLockConfiguration\",\"s3:GetBucketVersioning\"],\"Resource\":[\"arn:aws:s3:::@LOGS_ARCHIVE_BUCKET@\"]}]}"
     }
   ]
 }

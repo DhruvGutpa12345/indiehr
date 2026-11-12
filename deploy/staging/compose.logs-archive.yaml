@@ -1,0 +1,73 @@
+# The daily locked log archive (P1-T9c, ADR-014; owner decisions Q-O3, Q-O10...Q-O12). Added by
+# scripts/staging.sh when .env has IHR_LOGS_ARCHIVE (scripts/staging.sh logs-archive-init); never
+# run directly. Runbook: deploy/staging/README.md, "Log archive".
+#
+# One process (deploy/logs/archive/archive.py, from the backend image: Python, boto3,
+# cryptography): every India day, once over, exported hour by hour from VictoriaLogs, encrypted
+# with our key, uploaded with its chained manifest into the archive bucket (Object Lock, 400
+# days), read back and checked. Its key can add and read, never delete (erasure: the owner's
+# machine, expire.py). Metrics for Prometheus on :9100, on `logs` only.
+x-logging: &logging
+  driver: ${IHR_LOG_DRIVER:-journald}
+  options:
+    tag: "indiehr/{{.Name}}"
+    labels: com.docker.compose.service
+
+services:
+  logs-archive:
+    image: ${IHR_BACKEND_IMAGE:?set IHR_BACKEND_IMAGE}
+    # The user that owns secrets/ (it reads the store's password from there, mode 600)
+    user: "${IHR_SECRETS_UID:?}:${IHR_SECRETS_GID:?}"
+    entrypoint: ["python3", "-I", "/opt/ihr-archive/archive.py", "run"]
+    security_opt: ["no-new-privileges:true"]
+    cap_drop: ["ALL"]
+    read_only: true
+    restart: unless-stopped
+    logging: *logging
+    # The bucket's address and key, and the archive's encryption key (secrets/logs-archive.env)
+    env_file:
+      - secrets/logs-archive.env
+    environment:
+      IHR_LOGS_URL: http://victorialogs:9428
+      IHR_LOGS_PASSWORD_FILE: /run/ihr-logs/http-password
+      IHR_LOGS_ARCHIVE_WORKDIR: /state
+      IHR_LOGS_RETENTION_DAYS: ${IHR_LOGS_RETENTION_DAYS:-180}
+      IHR_LOGS_ARCHIVE_INTERVAL: ${IHR_LOGS_ARCHIVE_INTERVAL:-600}
+      IHR_LOGS_ARCHIVE_GRACE_SECONDS: ${IHR_LOGS_ARCHIVE_GRACE_SECONDS:-3600}
+      IHR_LOGS_ARCHIVE_RECHECK_DAYS: ${IHR_LOGS_ARCHIVE_RECHECK_DAYS:-14}
+      TMPDIR: /state
+      HOME: /state
+    volumes:
+      - ../logs/archive:/opt/ihr-archive:ro
+      - ./secrets/logs-http-password:/run/ihr-logs/http-password:ro
+      # Work files of the day being archived (compressed and encrypted copies)
+      - logsarchive:/state
+    # logs: VictoriaLogs and Prometheus; archiveout: its own way out to the archive bucket,
+    # shared with no other container (a proof adds `internal` for the local stand-in)
+    networks: [logs, archiveout]
+    depends_on:
+      logs-data:
+        condition: service_completed_successfully
+      victorialogs:
+        condition: service_started
+    # Its own check (the backend image's would ask for a web server that is not running here):
+    # alive only, the metrics answer. A failing or slow pass (the weekly full check can take
+    # long) is not a sick container: LogArchiveFailing, Behind and NotAuthentic say that.
+    healthcheck:
+      test: ["CMD", "python3", "-I", "-c", "import urllib.request as u; u.urlopen('http://127.0.0.1:9100/metrics', timeout=5).read()"]
+      interval: 60s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+    mem_limit: 256m
+
+  # The work volume belongs to the user the archiver runs as
+  logs-data:
+    volumes:
+      - logsarchive:/archive
+
+networks:
+  archiveout:
+
+volumes:
+  logsarchive:

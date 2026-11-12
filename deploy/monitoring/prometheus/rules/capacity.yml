@@ -94,6 +94,17 @@ groups:
           summary: "Load average over twice the number of CPUs for 15 minutes"
 
       # The journal holds the logs until P1-T9b/c: near its cap it deletes the oldest days
+      # The journal is the log shipper's 14-day buffer (P1-T9c): on a host set up more than 15
+      # days ago it must reach back 14 days, or the cap (SystemMaxUse) is too small for the
+      # traffic and unshipped lines could be lost while Fluent Bit or the store is down
+      - alert: JournalBufferShort
+        expr: (time() - ihr_journal_oldest_entry_timestamp_seconds) < 14 * 86400 and on() (time() - ihr_host_installed_timestamp_seconds) > 15 * 86400
+        for: 1h
+        labels:
+          severity: warning
+        annotations:
+          summary: "The journal holds less than 14 days: raise SystemMaxUse (deploy/host/bootstrap.sh; scripts/staging.sh logs-volume measures the need)"
+
       - alert: JournalNearCap
         expr: ihr_journal_disk_usage_bytes / ihr_journal_max_use_bytes > 0.9 and ihr_journal_max_use_bytes > 0
         for: 30m

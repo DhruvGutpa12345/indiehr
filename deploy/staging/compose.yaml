@@ -13,7 +13,8 @@
 name: indiehr-staging
 
 x-logging: &logging
-  # The host's journald keeps 180 days (CERT-In; set up with the VM in P1-T8b).
+  # The host's journald is a 14-day buffer; Fluent Bit ships every line, redacted, to the log
+  # store (180 days, CERT-In) and the daily locked archive (400 days): P1-T9b, P1-T9c.
   driver: ${IHR_LOG_DRIVER:-journald}
   options:
     tag: "indiehr/{{.Name}}"
@@ -79,7 +80,7 @@ services:
       - --providers.file.filename=/etc/traefik/routes.yml
       - --api.dashboard=false
       # Access log without paths or query strings: setup links and searches carry secrets
-      # and patient details, and these logs are kept 180 days.
+      # and patient details, and these logs are kept 180 days (log store) and 400 (archive).
       - --accesslog=true
       - --accesslog.format=json
       - --accesslog.fields.defaultmode=keep
@@ -220,7 +221,7 @@ services:
       disable: true
 
   # One-off commands (scripts/staging.sh manage, and the Keycloak set-up). Never logged: the
-  # Keycloak set-up holds the bootstrap credential, and the journal is kept 180 days.
+  # Keycloak set-up holds the bootstrap credential, and logs are kept 180/400 days (P1-T9c).
   admin:
     <<: *app
     profiles: ["admin"]
@@ -381,8 +382,9 @@ services:
       KC_PROXY_TRUSTED_ADDRESSES: ${IHR_PROXY_NET:-10.203.0.0/28}
       # Beyond this many waiting requests Keycloak answers 503 at once instead of piling up
       KC_HTTP_MAX_QUEUED_REQUESTS: "500"
-      # Login events in the journal (180 days): failures at WARN, and at INFO the sign-ins,
-      # lock-outs (USER_DISABLED_BY_TEMPORARY_LOCKOUT) and admin changes. Alerts: P1-T9.
+      # Login events in the logs (journal 14 days, log store 180, archive 400): failures at
+      # WARN, and at INFO the sign-ins, lock-outs (USER_DISABLED_BY_TEMPORARY_LOCKOUT) and admin
+      # changes. Alerts: deploy/logs/alerts/sign-in.yml (P1-T9b).
       KC_SPI_EVENTS_LISTENER__JBOSS_LOGGING__SUCCESS_LEVEL: info
       KC_SPI_EVENTS_LISTENER__JBOSS_LOGGING__ERROR_LEVEL: warn
       KC_SPI_PASSWORD_POLICY__PASSWORD_BLACKLIST__BLACKLISTS_PATH: /opt/keycloak/data/password-blacklists

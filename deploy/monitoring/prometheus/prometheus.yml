@@ -71,6 +71,11 @@ scrape_configs:
     static_configs:
       - targets: ["vmalert:8880"]
 
+  # The daily locked log archive (P1-T9c), when it runs here: an empty target list otherwise
+  - job_name: logs-archive
+    file_sd_configs:
+      - files: ["/etc/prometheus/targets/logs-archive.json"]
+
   # SeaweedFS's gateway, when files are kept on this server (IHR_S3=local); empty otherwise
   - job_name: s3
     file_sd_configs:

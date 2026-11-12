@@ -227,7 +227,7 @@ else
 fi
 
 # Images replaced by this deploy are now untagged ("dangling"): remove them, or they fill the
-# disk that the 180-day journal shares (journald keeps SystemKeepFree free by deleting logs).
+# disk that the journal (a 14-day buffer) and the log store share (journald keeps SystemKeepFree free by deleting logs).
 log "Removing images no longer tagged on the server"
 remote "docker image prune -f >/dev/null"
 

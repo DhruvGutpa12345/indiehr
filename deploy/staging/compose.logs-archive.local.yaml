@@ -1,0 +1,5 @@
+# A proof's archive goes to this stack's own SeaweedFS (scripts/staging.sh logs-archive-init
+# --local; same disk, so not a real archive): the archiver also joins `internal`, where `s3` is.
+services:
+  logs-archive:
+    networks: [logs, archiveout, internal]

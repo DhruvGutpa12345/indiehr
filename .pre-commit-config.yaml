@@ -153,7 +153,7 @@ repos:
         entry: python -m unittest scripts/test_staging_logs.py
         language: python
         additional_dependencies: ["pyyaml==6.0.3"]
-        files: ^(deploy/logs/|deploy/staging/|deploy/host/bootstrap\.sh$|scripts/(staging|deploy)\.sh$|scripts/test_staging_logs\.py$|plugins/ihr_platform/ihr_platform/settings/deployment\.py$|\.pre-commit-config\.yaml$)
+        files: ^(deploy/logs/|deploy/s3/|deploy/staging/|deploy/host/bootstrap\.sh$|scripts/(staging|deploy)\.sh$|scripts/test_staging_logs\.py$|plugins/ihr_platform/ihr_platform/settings/deployment\.py$|\.pre-commit-config\.yaml$)
         pass_filenames: false
       # The redaction cases through the pinned Fluent Bit, the store and the log alerts through
       # the pinned VictoriaLogs and vmalert: needs Docker, nothing leaves this machine (~30 s)
@@ -162,4 +162,13 @@ repos:
         entry: scripts/check-logs.py
         language: system
         files: ^(deploy/logs/|deploy/staging/compose\.logs\.yaml$|scripts/check-logs\.py$)
+        pass_filenames: false
+      # The daily locked log archive (P1-T9c): the archiver and erasure against a fake store and
+      # bucket (the backend image's cryptography version)
+      - id: logs-archive-tests
+        name: log archive (export, encryption, chain, revisions)
+        entry: python -m unittest scripts/test_logs_archive.py
+        language: python
+        additional_dependencies: ["cryptography==50.0.2"]
+        files: ^(deploy/logs/archive/|scripts/test_logs_archive\.py$)
         pass_filenames: false

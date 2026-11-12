@@ -31,10 +31,13 @@ DOCKER_KEY_FINGERPRINT="9DC858229FC7DD38854AE2D88D81803C0EBFCD88"
 # CERT-In Directions 28-04-2022 (i) + FAQ Q43: NIC and NPL time servers only.
 NTP_SERVERS=("samay1.nic.in" "samay2.nic.in" "time.nplindia.org")
 TIMEZONE="Asia/Kolkata"
-# CERT-In: 180 days rolling; DPDP Rules 2025: one year of processing logs. The size cap
-# (not the time) decides how long logs really last: see deploy/host/README.md.
-JOURNAL_MAX_RETENTION="1year"
-JOURNAL_SYSTEM_MAX_USE="20G"
+# The journal is a 14-day buffer (owner, Q-O3; P1-T9c): Fluent Bit ships every line, redacted, to
+# the log store (180 days, CERT-In) and the daily locked archive (400 days, DPDP Rules 2025 8(3)).
+# 15 days by time with one file a day, so at least 14 full days stay; the size cap is room for
+# about three times the measured volume (scripts/staging.sh logs-volume): see deploy/host/README.md.
+JOURNAL_MAX_RETENTION="15day"
+JOURNAL_MAX_FILE="1day"
+JOURNAL_SYSTEM_MAX_USE="8G"
 JOURNAL_SYSTEM_KEEP_FREE="15G"
 DEPLOY_USER="ihr"
 SSH_GROUP="ihr-ssh"
@@ -134,14 +137,15 @@ CHRONY_DROPIN=$'# Managed by deploy/host/bootstrap.sh: start chronyd with /etc/c
 
 journald_conf() {
   cat <<EOF
-# Managed by deploy/host/bootstrap.sh. CERT-In: logs kept 180 days rolling, in India;
-# DPDP Rules 2025: processing logs one year. Container logs arrive here via Docker's
-# journald log driver. The size cap decides real retention: watch journalctl --disk-usage.
+# Managed by deploy/host/bootstrap.sh. A 14-day buffer: every line is shipped, redacted, to the
+# log store (180 days, CERT-In) and the daily locked archive (400 days); deploy/staging/README.md.
+# Container logs arrive here via Docker's journald log driver. The size cap must not cut the 14
+# days short: watch journalctl --disk-usage and scripts/staging.sh logs-volume.
 [Journal]
 Storage=persistent
 Compress=yes
 MaxRetentionSec=$JOURNAL_MAX_RETENTION
-MaxFileSec=1month
+MaxFileSec=$JOURNAL_MAX_FILE
 SystemMaxUse=$JOURNAL_SYSTEM_MAX_USE
 SystemKeepFree=$JOURNAL_SYSTEM_KEEP_FREE
 SystemMaxFileSize=256M
@@ -533,7 +537,7 @@ run_check() {
 
   # logs
   out="$(systemd-analyze cat-config systemd/journald.conf 2>/dev/null || true)"
-  for kv in "Storage=persistent" "MaxRetentionSec=$JOURNAL_MAX_RETENTION" \
+  for kv in "Storage=persistent" "MaxRetentionSec=$JOURNAL_MAX_RETENTION" "MaxFileSec=$JOURNAL_MAX_FILE" \
             "SystemMaxUse=$JOURNAL_SYSTEM_MAX_USE" "SystemKeepFree=$JOURNAL_SYSTEM_KEEP_FREE"; do
     v="$(grep -E "^${kv%%=*}=" <<< "$out" | tail -1)"
     expect "journald $kv (effective: ${v:-default})" [ "$v" == "$kv" ]
@@ -594,17 +598,18 @@ run_check() {
 check_log_retention() {
   # journald's real cap is min(SystemMaxUse, used + free - SystemKeepFree): the journal shares
   # the disk with Docker, so it deletes old logs early as the disk fills. FAIL when entries
-  # younger than 180 days are already gone (the oldest entry is younger than both 180 days and
-  # this host's first run); a WARNING when free space already shrinks the cap.
+  # younger than 14 days are already gone (the oldest entry is younger than both 14 days and
+  # this host's first run): the buffer the log shipper relies on is too short. A WARNING when
+  # free space already shrinks the cap.
   local now first oldest host_days log_days free_g used_g keep_g max_g
   now="$(date +%s)"
   first="$(head -n1 "$INSTALLED_FILE" 2>/dev/null || true)"
   oldest="$(journalctl -q -o short-unix --no-pager 2>/dev/null | head -n1 | cut -d. -f1)"
   if [[ "$first" =~ ^[0-9]+$ && "$oldest" =~ ^[0-9]+$ ]]; then
     host_days=$(((now - first) / 86400)); log_days=$(((now - oldest) / 86400))
-    if ((log_days < 180 && host_days > log_days + 1)); then
-      fail "journal keeps 180 days: oldest entry is $log_days days old, host set up $host_days days ago (logs were deleted early: free disk space or raise the cap)"
-    else pass "journal keeps 180 days (oldest entry $log_days days old, host set up $host_days days ago)"; fi
+    if ((log_days < 14 && host_days > log_days + 1)); then
+      fail "journal keeps 14 days: oldest entry is $log_days days old, host set up $host_days days ago (logs were deleted early: free disk space or raise the cap)"
+    else pass "journal keeps 14 days (oldest entry $log_days days old, host set up $host_days days ago)"; fi
   else fail "journal age can be checked ($INSTALLED_FILE or the oldest entry missing)"; fi
   keep_g="${JOURNAL_SYSTEM_KEEP_FREE%G}"; max_g="${JOURNAL_SYSTEM_MAX_USE%G}"
   free_g="$(df --output=avail -BG /var/log/journal 2>/dev/null | tail -n1 | tr -dc 0-9)"
@@ -735,7 +740,7 @@ if [[ "$(timedatectl show -p Timezone --value)" != "$TIMEZONE" ]]; then
 fi
 
 # ---- 3. Logs: persistent journal ---------------------------------------------------------
-log "Logs (journald persistent, MaxRetentionSec=$JOURNAL_MAX_RETENTION, cap $JOURNAL_SYSTEM_MAX_USE)"
+log "Logs (journald persistent, a 14-day buffer: MaxRetentionSec=$JOURNAL_MAX_RETENTION, cap $JOURNAL_SYSTEM_MAX_USE)"
 if [[ ! -d /var/log/journal ]]; then
   act "created /var/log/journal" install -d -m 2755 -g systemd-journal /var/log/journal
 fi
@@ -748,6 +753,10 @@ if ((WROTE)) && ! ((DRY_RUN)); then
   systemd-tmpfiles --create --prefix /var/log/journal >/dev/null 2>&1 || true
   systemctl restart systemd-journald
   journalctl --flush >/dev/null 2>&1 || true
+  # journald applies a shorter MaxRetentionSec only when it rotates: now, not within a month.
+  # Lines older than 15 days are expected to be in the log store already (Fluent Bit reads the
+  # whole journal on its first start): deploy the log stack before shortening an old journal.
+  journalctl --rotate >/dev/null 2>&1 || true
 fi
 
 # ---- 4. Automatic security updates ---------------------------------------------------------
