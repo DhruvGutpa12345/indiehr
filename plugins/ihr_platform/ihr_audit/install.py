@@ -58,6 +58,11 @@ OMIT = {
         "users_cache",
     ),
     "users_user": ("cached_role_orgs",),
+    # The parent chain CARE copies into each organisation on read (get_parent_json, every 15
+    # days); the parents' own rows are audited. Without this an anonymous GET of the address
+    # picker or the facility finder wrote an entry (P1-T20a, review A6).
+    "emr_organization": ("cached_parent_json",),
+    "emr_facilityorganization": ("cached_parent_json",),
 }
 # Columns whose names look secret but hold none (reviewed). Anything else that matches
 # SUSPICIOUS must be in SECRET, LAST4 or OMIT.
@@ -341,6 +346,29 @@ def functions_intact(functions, version):
 
 def _version():
     return hashlib.sha256(_function_sql().encode()).hexdigest()
+
+
+def config_fingerprint():
+    """Everything the triggers and the sealing of a hospital schema are built from, apart from
+    its tables: the function SQL (with OMIT_EVERYWHERE and UNCHANGED_IN_UPDATES), the column
+    lists and the sealing version.
+
+    Only post_migrate brings a hospital's triggers up to date, and the fleet migrates a hospital
+    only when a migration is new to it (fleet.needs_migrate). So a change here must ship with a
+    new ihr_audit migration that states this fingerprint (``AUDIT_TRIGGERS_SHA256``); the tests
+    fail until it does, and without it existing hospitals keep their old triggers (P1-T20a,
+    review C2)."""
+    from ihr_audit.seal import SEALING_VERSION
+
+    parts = (
+        _version(),
+        SEALING_VERSION,
+        repr(sorted(EXEMPT)),
+        repr(sorted(SECRET.items())),
+        repr(sorted(LAST4.items())),
+        repr(sorted(OMIT.items())),
+    )
+    return hashlib.sha256("\n".join(parts).encode()).hexdigest()
 
 
 def _encoded(args):

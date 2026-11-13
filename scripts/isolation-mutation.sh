@@ -68,6 +68,19 @@ db-roles-column-grants-kept|plugins/ihr_platform/ihr_platform/db_roles.py|      
 db-roles-masking-helper|plugins/ihr_platform/ihr_platform/db_roles.py|    "ihr_audit_last4": {APP},\n||ihr_platform.tests.test_db_roles.GrantsTests.test_a_new_hospitals_masking_helper_is_the_apps||IHR_DB_ROLES=test
 db-roles-controls-refuse-or-gate|plugins/ihr_platform/ihr_platform/db_roles.py|        elif item.kind == "problem" and item.control:|        elif False:|ihr_platform.tests.test_db_roles.GrantsTests.test_a_broken_control_refuses_or_gates||IHR_DB_ROLES=test
 db-roles-fleet-converges-every-schema|plugins/ihr_platform/ihr_platform/fleet.py|        self._converge_rest()\n||ihr_platform.tests.test_release.FleetTests.test_a_fleet_wide_migrate_repairs_every_hospital_schema||IHR_DB_ROLES=test
+public-doctor-fields|plugins/ihr_platform/ihr_platform/public_routes.py|    pydantic_read_model = PublicPractitionerSpec\n    pydantic_retrieve_model = PublicPractitionerSpec|    from care.emr.resources.user.spec import PublicUserReadSpec as pydantic_read_model|test_public_doctor_list_shows_only_name_title_and_photo|
+public-doctor-public-schedule|plugins/ihr_platform/ihr_platform/public_routes.py|        schedule__is_public=True,\n||test_public_doctor_list_shows_only_name_title_and_photo|
+public-otp-booking-trim|plugins/ihr_platform/ihr_platform/public_routes.py|        _pick(data.get("resource"), RESOURCE_KEYS.get(data.get("resource_type"), ()))|        data.get("resource")|ihr_platform.tests.test_public_routes.PublicBookingTests.test_each_resource_type_keeps_its_allow_list|
+public-otp-booking-from-model|plugins/ihr_platform/ihr_platform/public_routes.py|    return public_booking(PublicTokenBookingSpec.serialize(booking).to_json())|    from care.emr.resources.scheduling.slot.spec import TokenBookingOTPReadSpec\n\n    return public_booking(TokenBookingOTPReadSpec.serialize(booking).to_json())|test_patient_otp_bookings_of_a_location_or_service_show_its_name_only|
+public-doctor-last-day|plugins/ihr_platform/ihr_platform/public_routes.py|        schedule__valid_to__date__gte=timezone.localdate(),|        schedule__valid_to__gte=timezone.now(),|test_public_doctor_list_shows_only_name_title_and_photo|
+public-govt-only|plugins/ihr_platform/ihr_platform/public_routes.py|        return super().get_queryset().filter(org_type="govt")|        return super().get_queryset()|test_public_organisations_are_government_only|
+public-facility-raw-key-field|plugins/ihr_platform/ihr_platform/public_routes.py|        data.pop("cover_image_url", None)|        pass|test_public_facility_finder_drops_raw_key_field|
+public-route-swap|plugins/ihr_platform/ihr_platform/apps.py|        route_swaps.install()|        pass|test_care_routes_reach_our_classes,ihr_platform.tests.test_public_routes.RouteSwapTests.test_care_router_serves_our_classes|CARE.s own views would be served
+route-swap-system-check|plugins/ihr_platform/ihr_platform/apps.py|        checks.register(route_swaps.system_check)|        pass|ihr_platform.tests.test_public_routes.RouteSwapRefusalTests.test_django_runs_the_system_check|
+route-swap-required|plugins/ihr_platform/ihr_platform/urls_tenant.py|route_swaps.require()|route_swaps.check()|ihr_platform.tests.test_public_routes.RouteSwapRefusalTests.test_the_url_conf_refuses_to_load|
+batch-allow-list|plugins/ihr_platform/ihr_platform/batch.py|        elif not listed(wsgi.method, wsgi.path_info, match):|        elif False:|test_batch_refuses_unreviewed_sub_requests_and_runs_nothing|
+audit-omit-organisation-cache|plugins/ihr_platform/ihr_audit/install.py|    "emr_organization": ("cached_parent_json",),\n||test_anonymous_gets_write_no_audit_entry|
+audit-triggers-ship-with-migration|plugins/ihr_platform/ihr_audit/install.py|        repr(sorted(OMIT.items())),\n||ihr_audit.tests.test_audit_trail.TriggerChangesShipWithAMigration.test_the_latest_migration_states_this_builds_trigger_configuration|
 TABLE
 )
 

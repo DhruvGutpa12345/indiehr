@@ -9,7 +9,10 @@ PARAM_RE = re.compile(r"\(\?P<(\w+)>[^)]*\)")
 # path() converters such as <int:pk> or <username>. The look-behind keeps it off the <name> of a
 # regex group "(?P<name>...)"; fill() also runs it only after the regex groups are filled.
 CONVERTER_RE = re.compile(r"(?<!\?P)<(?:(?P<conv>\w+):)?(?P<name>\w+)>")
-# DRF's format-suffix variants, in regex and in converter form: the same views as their routes.
+# DRF's format-suffix variants, in regex and in converter form: the same views as their routes,
+# because a router builds both from one registry, where our replacements of CARE's views are
+# swapped in (ihr_platform/route_swaps.py, P1-T20a). A route shadowed by its string in
+# urls_tenant.py would not cover its variant: blocked.py blocks those explicitly.
 FORMAT_RE = re.compile(r"\(\?P<format>|<(?:\w+:)?format>")
 # Regex metacharacters that must not survive fill() (see the end of fill()).
 LEFTOVER_RE = re.compile(r"[()?<>\[\]\\*+{}|]")

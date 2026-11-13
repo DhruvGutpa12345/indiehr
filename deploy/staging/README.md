@@ -540,6 +540,14 @@ Fix the cause, then `scripts/staging.sh manage ihr_pack_apply --slug <slug> --op
 A busy hospital (another job holds its lock) is tried again after 5, 15 and 30 seconds; still
 busy after that, it is recorded (`outcome=deferred`) and alerted on like a failure.
 
+**Batch requests** (P1-T20a, `deploy/logs/alerts/batch.yml`): the web backend runs a sub-request
+of `/api/v1/batch_requests/` only if its method and route are on the list the web app's own batch
+call sites generate (`batch_allowlist.txt`); anything else refuses the whole batch, nothing runs.
+
+| Alert | When | Severity |
+|---|---|---|
+| BatchRequestRefused | `ihr-batch: refused hospital=<slug> reason=<code> method=<METHOD> route=<URL name>` from the web backend, in the last hour: the web app batched a route the list lacks (regenerate it with `scripts/batch-allowlist.py`, review, release) or someone sent a batch by hand (the access log of that minute names the address) | warning |
+
 **Database roles** (P1-T19a, `deploy/logs/alerts/db-roles.yml`; `IHR_DB_ROLES=required` on
 every app container since P1-T19b, see "Moving to split roles"):
 

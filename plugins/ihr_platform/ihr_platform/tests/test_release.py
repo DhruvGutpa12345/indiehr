@@ -1595,19 +1595,25 @@ class ForkedPoolTests(SimpleTestCase):
 
 class MigrationNameTests(TestCase):
     """C5: the migration a failure names comes from Django itself, not a message that is
-    never sent without a terminal. A real migration fails here: the newest ihr_audit one,
-    applied again over its own changes (rolled back with the test)."""
+    never sent without a terminal. A real migration fails here: ihr_audit's 0004, applied
+    again over its own changes (its CREATE FUNCTION finds the function there), with every
+    later ihr_audit step unrecorded too so the history stays consistent (rolled back with the
+    test). Not simply the newest one: a step may have no operations (0005, P1-T20a), and
+    running that again succeeds."""
+
+    FAILS_AGAIN = "0004_owner_writes_the_chain"
 
     def setUp(self):
         self.addCleanup(connection.set_schema, TEST_SCHEMA)
 
     def test_a_real_failing_migration_is_named(self):
         owner_for_test(self)  # migrations run as the owner
-        leaf = max(n for a, n in _rows(TEST_SCHEMA) if a == "ihr_audit")
+        leaf = self.FAILS_AGAIN
+        self.assertIn(("ihr_audit", leaf), _rows(TEST_SCHEMA))
         with connection.cursor() as cursor:
             cursor.execute(
                 f'DELETE FROM "{TEST_SCHEMA}".django_migrations '
-                "WHERE app = 'ihr_audit' AND name = %s",
+                "WHERE app = 'ihr_audit' AND name >= %s",
                 [leaf],
             )
         connection.set_schema_to_public()

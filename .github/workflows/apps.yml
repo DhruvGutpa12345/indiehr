@@ -60,6 +60,7 @@ jobs:
               - 'scripts/merge-locale.py'
               - 'scripts/check-bundle-egress.sh'
               - 'scripts/*check-storage-keys.py'
+              - 'scripts/*batch-allowlist.py'
               - '.github/workflows/apps.yml'
             # Mutation runs cost one full-stack job per row (35 today: scripts/isolation-mutation.sh
             # list), so they run only when an isolation control or its tests change
@@ -420,6 +421,11 @@ jobs:
         run: |
           python3 -m unittest scripts/test_check_storage_keys.py
           python3 scripts/check-storage-keys.py
+      - name: Batch allow-list matches the web app's batch call sites (P1-T20a)
+        working-directory: .
+        run: |
+          python3 -m unittest scripts/test_batch_allowlist.py
+          python3 -I scripts/batch-allowlist.py --check
 
       - name: Lint
         run: npm run lint -- --quiet

@@ -67,6 +67,26 @@ After each sync, before pushing:
    - new browser storage keys (localStorage, sessionStorage, `atomWithStorage`) → classify them
      in `apps/frontend/tests-ihr/storage-keys.json` or clear them in `clearStaffStorage`
      (`scripts/check-storage-keys.py` fails until you do, P1-T1d).
+   - new or changed batch call sites in the web app (`useBatchRequest`, `batchQuery`) → run
+     `scripts/batch-allowlist.py`, review the diff of
+     `plugins/ihr_platform/ihr_platform/batch_allowlist.txt` (every new line is a route a staff
+     batch may run) and commit it (`--check` fails in pre-commit and Apps CI until you do,
+     P1-T20a). A call site whose `api:` is a variable fails until it is reviewed into the
+     script's `DYNAMIC` table, and a reviewed one fails again whenever its file changes: re-read
+     which routes the variable can name, then set the `sha256` the check prints;
+   - changes to CARE's batch code (`care/emr/api/viewsets/batch_request.py`,
+     `care/emr/utils/batch_requests.py`) → carry them into `ihr_platform/batch.py` and update the
+     fingerprints in `ihr_platform/tests/test_public_routes.py` (the test fails until you do);
+   - changes to CARE's patient-OTP booking actions (`care/emr/api/otp_viewsets/slot.py`:
+     `create_appointment`, `cancel_appointment`, `get_appointments`) → carry them into
+     `PublicOTPSlotViewSet` (`ihr_platform/public_routes.py`, which repeats their bodies with its
+     own booking serialiser) and update `CARE_OTP_ACTIONS_SHA256` in the same test file;
+   - changes to the viewsets we swap in CARE's router (`ihr_platform/route_swaps.py`: the doctor
+     list, the patient-OTP slots, government organisations, the facility finder, users, batch) or
+     to the user, booking and facility read specs → check that `public_routes.py` still shows only
+     what it should (the isolation suite's key-set tests fail on a new field). A swapped class
+     that moved or was renamed stops every process at its URL configuration and fails
+     `manage.py check` (`ihr_platform.E020`): add its new dotted path to `SWAPS`.
 4. **Translations.** Diff the English *values* in `apps/frontend/public/locale/en.json`, not just
    the keys. A reworded English string leaves our Hindi out of date, and
    `merge-locale.py --check` does not notice.

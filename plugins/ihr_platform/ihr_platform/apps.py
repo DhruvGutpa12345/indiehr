@@ -1,4 +1,5 @@
 from django.apps import AppConfig
+from django.core import checks
 from django.db.models.signals import post_migrate
 
 
@@ -8,8 +9,17 @@ class IhrPlatformConfig(AppConfig):
     verbose_name = "IndieHR platform"
 
     def ready(self):
-        from ihr_platform import celery_gate, db_roles, signals  # noqa: F401
+        from ihr_platform import (  # noqa: F401
+            celery_gate,
+            db_roles,
+            route_swaps,
+            signals,
+        )
 
+        # Our public routes and batch view in CARE's router, before any URL configuration is
+        # imported (P1-T20a): every variant of each route reaches them
+        route_swaps.install()
+        checks.register(route_swaps.system_check)
         # Queued Celery tasks never run in a hospital that is not served (P1-T18a, S1)
         celery_gate.install()
         # Every process checks its database role on its first connection (P1-T19; only

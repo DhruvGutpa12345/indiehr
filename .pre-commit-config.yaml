@@ -113,6 +113,23 @@ repos:
         language: system
         files: ^scripts/(check-storage-keys|test_check_storage_keys)\.py$
         pass_filenames: false
+  # Batch allow-list (P1-T20a): the routes the backend lets a batch run are exactly the ones the
+  # web app's batch call sites use (plugins/ihr_platform/ihr_platform/batch_allowlist.txt,
+  # generated). Always runs, like the storage keys: apps/ is excluded above (<1 s).
+  - repo: local
+    hooks:
+      - id: batch-allowlist
+        name: batch allow-list matches the web app's batch call sites
+        entry: python3 -I scripts/batch-allowlist.py --check
+        language: system
+        always_run: true
+        pass_filenames: false
+      - id: batch-allowlist-tests
+        name: batch-allowlist tests
+        entry: python3 -m unittest scripts/test_batch_allowlist.py
+        language: system
+        files: ^scripts/(batch-allowlist|test_batch_allowlist)\.py$
+        pass_filenames: false
       - id: ci-mask-dev-secrets-tests
         name: CI dev-secret mask tests
         entry: python3 -m unittest scripts/test_ci_mask_dev_secrets.py

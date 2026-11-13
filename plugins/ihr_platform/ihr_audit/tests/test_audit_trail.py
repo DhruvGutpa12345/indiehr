@@ -4,6 +4,7 @@ The trail is append-only, so these tests never clean it up: each one looks only 
 made (newer than a mark it takes first).
 """
 
+import importlib
 import json
 import threading
 import time
@@ -14,6 +15,7 @@ from care.emr.models.patient import PatientIdentifier
 from care.facility.models import Facility
 from care.users.models import User
 from django.db import DatabaseError, connection, connections, transaction
+from django.db.migrations.loader import MigrationLoader
 from django.test import SimpleTestCase
 from django_tenants.utils import schema_context
 from ihr_platform.test_runner import TEST_SCHEMA
@@ -22,7 +24,7 @@ from model_bakery import baker
 from rest_framework.test import APIClient
 
 from ihr_audit import context, reads, seal
-from ihr_audit.install import EXEMPT, coverage, ensure_triggers
+from ihr_audit.install import EXEMPT, config_fingerprint, coverage, ensure_triggers
 from ihr_audit.middleware import purpose_of
 from ihr_audit.seal import seal_once, verify
 
@@ -735,3 +737,22 @@ class SecondReviewRegressionTests(AuditCase):
         self.assertEqual(first["actor"], "worker:for user:abc")
         self.assertEqual(first["context"]["request"], "r-9")
         self.assertTrue(second["actor"].startswith("system:"))
+
+
+class TriggerChangesShipWithAMigration(SimpleTestCase):
+    """Existing hospitals get new triggers only from post_migrate, which the fleet runs only
+    for a hospital with a migration new to it (P1-T20a, review C2): a change to the trigger or
+    sealing configuration must come with an ihr_audit migration that states it."""
+
+    def test_the_latest_migration_states_this_builds_trigger_configuration(self):
+        leaves = MigrationLoader(None, ignore_no_migrations=True).graph.leaf_nodes(
+            "ihr_audit"
+        )
+        self.assertEqual(len(leaves), 1, leaves)
+        latest = importlib.import_module(f"ihr_audit.migrations.{leaves[0][1]}")
+        self.assertEqual(
+            getattr(latest, "AUDIT_TRIGGERS_SHA256", None),
+            config_fingerprint(),
+            "the audit's trigger or sealing configuration changed: add an ihr_audit "
+            "migration (no operations) with AUDIT_TRIGGERS_SHA256 = the new fingerprint",
+        )

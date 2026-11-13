@@ -30,7 +30,7 @@ kind).
 """
 
 from contextlib import contextmanager
-from datetime import date, time
+from datetime import date, datetime, time
 
 from django.utils import timezone
 from django_tenants.utils import schema_context
@@ -112,6 +112,7 @@ class _Seeder:
         self.clinical()
         self.files()
         self.operations()
+        self.public_doctor()
 
     # --- clinical ------------------------------------------------------------------------
 
@@ -600,3 +601,25 @@ class _Seeder:
         with _seeding(PlugConfig):
             PlugConfig.objects.create(slug=PLUG_SLUG, meta={"note": canary})
         self.route(f"/api/v1/plug_config/{PLUG_SLUG}/", canary="meta")
+
+    def public_doctor(self):
+        """fill() puts the first user by pk into the public doctor detail
+        (/api/v1/facility/<id>/schedulable_users/<id>/), which shows only practitioners with a
+        public schedule still valid (P1-T20a). A public schedule at the first facility, valid
+        until 2030, opens that route anonymously in every run (anonymous_allowlist.txt)."""
+        from care.emr.models.scheduling import SchedulableResource, Schedule
+        from care.users.models import User
+
+        user = _first(User)
+        with _seeding(SchedulableResource):
+            resource, _ = SchedulableResource.objects.get_or_create(
+                facility=self.facility, resource_type="practitioner", user=user
+            )
+        self.make(
+            Schedule,
+            resource=resource,
+            name=f"{self.canary} public probe",
+            valid_from=self.now,
+            valid_to=timezone.make_aware(datetime(2030, 12, 31)),
+            is_public=True,
+        )

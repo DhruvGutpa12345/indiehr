@@ -7,7 +7,9 @@ response is a leak. Most tests also check a positive control (the same call work
 so they cannot pass just because nothing answered.
 """
 
+import re
 from collections import Counter
+from datetime import datetime, time, timedelta
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
@@ -17,7 +19,9 @@ from django.core.exceptions import ImproperlyConfigured
 from django.core.files.uploadedfile import SimpleUploadedFile
 from django.db import connection
 from django.test import SimpleTestCase, override_settings
+from django.utils import timezone
 from django_tenants.utils import schema_context
+from freezegun import freeze_time
 from ihr_identity import testing
 from ihr_identity.authentication import StaffSessionAuthentication
 from ihr_identity.blocked import Blocked
@@ -61,8 +65,53 @@ SEEDED_ROUTES = 31
 POST_ONLY_ROUTE = "api/ihr/staff/<str:username>/<slug:action>/"
 # Its value is this tenant's own audit entry of a Patient UPDATE (world.py, _collect_ids).
 AUDIT_ENTRY_ROUTE = "api/ihr/audit/entries/<int:pk>/"
+BATCH_URL = "/api/v1/batch_requests/"
 # Open anonymously in every run: world.py makes the facility fill() puts in it public.
 PUBLIC_FACILITY_ROUTE = "/api/v1/^getallfacilities/(?P<external_id>[^/.]+)/$"
+# Open anonymously in every run: extras.py gives the first user, whom fill() puts in it, a
+# public schedule at that facility (P1-T20a)
+PUBLIC_DOCTOR_ROUTE = (
+    "/api/v1/^facility/(?P<facility_external_id>[^/.]+)/schedulable_users/"
+    "(?P<external_id>[^/.]+)/$"
+)
+# What anyone may see of a doctor, and of a booking through the patient-OTP routes (P1-T20a):
+# written out here, not taken from public_routes, so a change there must change the test too
+DOCTOR_KEYS = {
+    "id",
+    "first_name",
+    "last_name",
+    "prefix",
+    "suffix",
+    "profile_picture_url",
+}
+# A location or healthcare service a booking is for (review S1)
+RESOURCE_KEYS = {
+    "practitioner": DOCTOR_KEYS,
+    "location": {
+        "id",
+        "name",
+        "description",
+        "location_type",
+        "form",
+        "status",
+        "mode",
+    },
+    "healthcare_service": {"id", "name", "service_type", "internal_type"},
+}
+BOOKING_KEYS = {
+    "id",
+    "token_slot",
+    "booked_on",
+    "status",
+    "note",
+    "resource_type",
+    "resource",
+    "facility",
+    "patient",
+    "created_date",
+    "modified_date",
+    "token",
+}
 
 
 def _reviewed_list(path):
@@ -100,6 +149,11 @@ def _owns(response, tenant):
 
 
 NOT_SIGNED_IN = b"Authentication credentials were not provided."
+
+
+def _rows(model, obj):
+    """``obj``'s row through the plain manager: CARE's default one hides soft-deleted rows."""
+    return model._base_manager.filter(pk=obj.pk)
 
 
 # The crawl signs in as each tenant's CARE superuser so every route has data to show; real
@@ -237,8 +291,9 @@ class CrossTenantIsolationTests(SimpleTestCase):
             "Anonymous 2xx on routes not in anonymous_allowlist.txt",
         )
         # The public facility's detail: open every run (world.py fixes the facility public).
-        self.assertIn(PUBLIC_FACILITY_ROUTE, allowed)
-        self.assertIn(PUBLIC_FACILITY_ROUTE, open_routes)
+        for route in (PUBLIC_FACILITY_ROUTE, PUBLIC_DOCTOR_ROUTE):
+            self.assertIn(route, allowed)
+            self.assertIn(route, open_routes)
         # Some entries are open only for certain data, so entries that did not answer are
         # reported, not failed.
         if stale := sorted(allowed - open_routes):
@@ -627,35 +682,697 @@ class CrossTenantIsolationTests(SimpleTestCase):
         with schema_context("public"), self.assertRaises(ImproperlyConfigured):
             manager.signed_url(file_obj)
 
-    # --- batch endpoint ---------------------------------------------------------------------
+    # --- batch endpoint (allow-list since P1-T20a) --------------------------------------------
+
+    def _entries(self, tenant, *, writes=False):
+        """The number of audit entries in ``tenant``'s schema: any write anywhere adds one.
+        ``writes``: row writes only, without the one entry per request that tried a change."""
+        where = " WHERE kind = 'write'" if writes else ""
+        with schema_context("public"), connection.cursor() as cursor:
+            cursor.execute(
+                f'SELECT count(*) FROM "{tenant.schema}".ihr_audit_entry{where}'  # noqa: S608
+            )
+            return cursor.fetchone()[0]
 
     def test_batch_requests_stay_in_the_callers_tenant(self):
+        """On a route the web app batches (InvoiceChargeItemTitle.tsx: a dispense, GET)."""
         client = self._staff_client(self.b)
-        own = {
-            "requests": [
-                {"url": "/api/v1/users/", "method": "GET", "reference_id": "users"},
-                {"url": "/api/v1/facility/", "method": "GET", "reference_id": "fac"},
-            ]
-        }
-        response = client.post("/api/v1/batch_requests/", own, format="json")
-        self.assertEqual(response.status_code, 200, response.content[:300])
-        self.assertIn(str(self.b.admin.external_id), response.content.decode())
-        self.assertEqual(_leaks(response, self.a), set())
-
-        a_facility = self.a.first_id_by_model["facility.facility"]
-        foreign = {
+        own = self.b.first_id_by_model["emr.medicationdispense"]
+        batch = {
             "requests": [
                 {
-                    "url": f"/api/v1/facility/{a_facility}/",
+                    "url": f"/api/v1/medication/dispense/{own}/",
                     "method": "GET",
-                    "reference_id": "a-facility",
+                    "reference_id": "own",
                 }
             ]
         }
-        response = client.post("/api/v1/batch_requests/", foreign, format="json")
+        response = client.post(BATCH_URL, batch, format="json")
+        self.assertEqual(response.status_code, 200, response.content[:300])
+        self.assertEqual(response.json()["results"][0]["status_code"], 200)
+        self.assertIn(own, response.content.decode())
+        self.assertEqual(_leaks(response, self.a), set())
+
+        a_dispense = self.a.first_id_by_model["emr.medicationdispense"]
+        foreign = {
+            "requests": [
+                {
+                    "url": f"/api/v1/medication/dispense/{a_dispense}/",
+                    "method": "GET",
+                    "reference_id": "a-dispense",
+                }
+            ]
+        }
+        response = client.post(BATCH_URL, foreign, format="json")
         self.assertEqual(response.status_code, 400, response.content[:300])
         self.assertEqual(response.json()["results"][0]["status_code"], 404)
         self.assertEqual(_leaks(response, self.a), set())
+
+    def test_batch_refuses_unreviewed_sub_requests_and_runs_nothing(self):
+        """One refused sub-request refuses the whole batch before anything runs: a reviewed
+        write next to it is not made, nothing at all is written, and the refusal is one fixed
+        line with no value from the request."""
+        from care.emr.models.scheduling import TokenBooking
+
+        from ihr_platform import batch
+
+        client = self._staff_client(self.b)
+        facility = self.b.first_id_by_model["facility.facility"]
+        patient = self.b.first_id_by_model["emr.patient"]
+        dispense = self.b.first_id_by_model["emr.medicationdispense"]
+        with schema_context(self.b.schema):
+            booking = (
+                TokenBooking.objects.filter(
+                    status="booked",
+                    token_slot__resource__facility__external_id=facility,
+                )
+                .order_by("pk")
+                .first()
+            )
+            self.assertIsNotNone(booking, "no booked appointment in the fixtures")
+            note = booking.note
+        appointment = f"/api/v1/facility/{facility}/appointments/{booking.external_id}/"
+        # A reviewed write (useEncounterProgressController.ts: scheduleApi.appointments.update)
+        write = {
+            "url": appointment,
+            "method": "PUT",
+            "body": {"status": "booked", "note": f"{self.b.canary} batch probe"},
+            "reference_id": "write",
+        }
+        dispense_url = f"/api/v1/medication/dispense/{dispense}/"
+        refused = {
+            "unlisted route": ("GET", "/api/v1/users/", {}, "not_listed"),
+            "unlisted method on a listed route": (
+                "DELETE",
+                f"/api/v1/patient/{patient}/",
+                {},
+                "not_listed",
+            ),
+            "another route behind a listed template": (
+                "GET",
+                "/api/v1/medication/dispense/summary/",
+                {},
+                "not_listed",
+            ),
+            "patient-OTP route": (
+                "GET",
+                "/api/v1/otp/slots/get_appointments/",
+                {},
+                "not_listed",
+            ),
+            "blocked route": ("POST", "/api/v1/auth/login/", {}, "not_listed"),
+            "nested batch": ("POST", BATCH_URL, {"requests": [write]}, "nested"),
+            "encoded slash": (
+                "PUT",
+                f"/api/v1/patient/{patient}%2Fconsent%2F{patient}/",
+                {},
+                "bad_url",
+            ),
+            "path parameter": ("PUT", f"/api/v1/patient/{patient};x=1/", {}, "bad_url"),
+            "dot segments": ("GET", f"{dispense_url}../../../users/", {}, "bad_url"),
+            "query string": ("GET", f"{dispense_url}?limit=1", {}, "bad_url"),
+            "GET with a body (a query)": (
+                "GET",
+                dispense_url,
+                {"limit": "1"},
+                "bad_url",
+            ),
+            "absolute URL": (
+                "GET",
+                f"http://evil.example{dispense_url}",
+                {},
+                "bad_url",
+            ),
+            "other host": ("GET", f"//evil.example{dispense_url}", {}, "bad_url"),
+            "lower-case method": ("put", appointment, {}, "bad_method"),
+            "HEAD": ("HEAD", dispense_url, {}, "bad_method"),
+            "OPTIONS": ("OPTIONS", dispense_url, {}, "bad_method"),
+            "a request-factory attribute": ("generic", dispense_url, {}, "bad_method"),
+        }
+        # The session's first request writes its own sign-in rows: before the counting
+        self.assertEqual(client.get("/api/v1/users/getcurrentuser/").status_code, 200)
+        line_re = (
+            r"^ihr-batch: refused hospital=iso-beta reason=(?P<reason>[a-z_]+) "
+            r"method=(?:GET|POST|PUT|PATCH|DELETE|other) route=[A-Za-z0-9_.:-]+$"
+        )
+        for case, (method, url, body, reason) in refused.items():
+            with self.subTest(case=case):
+                sub = {"url": url, "method": method, "body": body, "reference_id": "no"}
+                before = self._entries(self.b, writes=True)
+                with (
+                    patch.object(
+                        batch, "execute_serially", wraps=batch.execute_serially
+                    ) as ran,
+                    patch.object(batch, "_emit") as emitted,
+                ):
+                    response = client.post(
+                        BATCH_URL, {"requests": [write, sub]}, format="json"
+                    )
+                self.assertEqual(response.status_code, 400, response.content[:300])
+                self.assertEqual(
+                    response.json(),
+                    {
+                        "results": [
+                            {
+                                "reference_id": "no",
+                                "status_code": 403,
+                                "data": batch.REFUSED,
+                            }
+                        ]
+                    },
+                )
+                ran.assert_not_called()
+                self.assertEqual(
+                    self._entries(self.b, writes=True), before, "the batch wrote"
+                )
+                [line] = [c.args[0] for c in emitted.call_args_list]
+                self.assertRegex(line, line_re)
+                self.assertEqual(re.match(line_re, line)["reason"], reason)
+                for value in (patient, dispense, str(booking.external_id), "evil"):
+                    self.assertNotIn(value, line)
+        with schema_context(self.b.schema):
+            self.assertEqual(TokenBooking.objects.get(pk=booking.pk).note, note)
+        # Positive control: the same write alone runs (so it was the refusal that stopped it)
+        response = client.post(BATCH_URL, {"requests": [write]}, format="json")
+        self.assertEqual(response.status_code, 200, response.content[:300])
+        with schema_context(self.b.schema):
+            self.assertEqual(
+                TokenBooking.objects.get(pk=booking.pk).note, write["body"]["note"]
+            )
+
+    # --- anonymous and patient-OTP routes (P1-T20a) -------------------------------------------
+
+    def _probe_practitioner(self, facility):
+        """A staff member of A not yet scheduled at ``facility``, given a private schedule."""
+        from datetime import timedelta
+
+        from care.emr.models.scheduling import SchedulableResource, Schedule
+        from care.users.models import User
+        from django.utils import timezone
+
+        with schema_context(self.a.schema):
+            scheduled = SchedulableResource.objects.filter(facility=facility).values(
+                "user_id"
+            )
+            probe = (
+                User.objects.exclude(id__in=scheduled)
+                .filter(is_active=True, deleted=False)
+                .order_by("pk")
+                .first()
+            )
+            resource = SchedulableResource.objects.create(
+                facility=facility, resource_type="practitioner", user=probe
+            )
+            now = timezone.now()
+            schedule = Schedule.objects.create(
+                resource=resource,
+                name="probe",
+                valid_from=now - timedelta(days=1),
+                valid_to=now + timedelta(days=7),
+                is_public=False,
+            )
+        return probe, resource, schedule, now
+
+    def test_public_doctor_list_shows_only_name_title_and_photo(self):
+        """Exact keys on list and detail; only a public facility, only a practitioner with a
+        public schedule that has not ended (by IST day, as CARE's slot generator: its last
+        day still counts, review C1), only active staff (each one hidden from both)."""
+        from care.emr.models.scheduling import SchedulableResource, Schedule
+        from care.facility.models import Facility
+        from care.users.models import User
+
+        anonymous = APIClient(HTTP_HOST=self.a.domain, raise_request_exception=False)
+        facility_id = self.a.first_id_by_model["facility.facility"]
+        base = f"/api/v1/facility/{facility_id}/schedulable_users/"
+        doctor = self.a.first_id_by_model["users.user"]  # extras.py: a public schedule
+
+        def listed():
+            response = anonymous.get(base)
+            self.assertEqual(response.status_code, 200, response.content[:300])
+            for item in response.json()["results"]:
+                self.assertEqual(set(item), DOCTOR_KEYS)
+            return {item["id"] for item in response.json()["results"]}
+
+        def shown(user_id):
+            response = anonymous.get(f"{base}{user_id}/")
+            if response.status_code == 200:
+                self.assertEqual(set(response.json()), DOCTOR_KEYS)
+                return True
+            self.assertEqual(response.status_code, 404, response.content[:300])
+            return False
+
+        self.assertIn(doctor, listed())
+        self.assertTrue(shown(doctor))
+        with schema_context(self.a.schema):
+            facility = Facility.objects.get(external_id=facility_id)
+            staff = User.objects.get(external_id=doctor)
+            body = anonymous.get(base).content.decode()
+            for value in {staff.username, staff.phone_number, staff.email} - {""}:
+                self.assertNotIn(value, body)
+        probe, resource, schedule, now = self._probe_practitioner(facility)
+        probe_id = str(probe.external_id)
+        # The web app sends valid_to as a date: stored as 00:00 IST of the schedule's last day
+        midnight = timezone.make_aware(datetime.combine(timezone.localdate(), time.min))
+        cases = (
+            ("only a private schedule", {"is_public": False}, None, False),
+            ("public and current", {"is_public": True}, None, True),
+            ("its last day, 15:00 IST", {"valid_to": midnight}, None, True),
+            (
+                "ended yesterday",
+                {"valid_to": midnight - timedelta(days=1)},
+                None,
+                False,
+            ),
+            (
+                "deleted",
+                {"valid_to": now + timedelta(days=7), "deleted": True},
+                None,
+                False,
+            ),
+            ("public again", {"deleted": False}, None, True),
+            ("staff switched off", {}, {"is_active": False}, False),
+            ("staff deleted", {}, {"is_active": True, "deleted": True}, False),
+            ("staff back", {}, {"deleted": False}, True),
+        )
+        try:
+            for case, schedule_change, user_change, visible in cases:
+                with (
+                    self.subTest(case=case),
+                    schema_context(self.a.schema),
+                    freeze_time(midnight + timedelta(hours=15)),
+                ):
+                    if schedule_change:
+                        _rows(Schedule, schedule).update(**schedule_change)
+                    if user_change:
+                        _rows(User, probe).update(**user_change)
+                    self.assertEqual(probe_id in listed(), visible)
+                    self.assertEqual(shown(probe_id), visible)
+            with schema_context(self.a.schema):
+                Facility.objects.filter(pk=facility.pk).update(is_public=False)
+            with self.subTest(case="facility not public"):
+                self.assertEqual(listed(), set())
+                self.assertFalse(shown(doctor))
+        finally:
+            with schema_context(self.a.schema):
+                Facility.objects.filter(pk=facility.pk).update(is_public=True)
+                _rows(User, probe).update(is_active=True, deleted=False)
+                _rows(Schedule, schedule).delete()
+                _rows(SchedulableResource, resource).delete()
+
+    def _assert_public_booking(self, booking):
+        self.assertEqual(set(booking), BOOKING_KEYS)
+        slot = booking["token_slot"]
+        self.assertEqual(
+            set(slot),
+            {"id", "availability", "start_datetime", "end_datetime", "allocated"},
+        )
+        self.assertEqual(
+            set(slot["availability"]), {"id", "name", "tokens_per_slot", "schedule"}
+        )
+        self.assertEqual(set(slot["availability"]["schedule"]), {"id", "name"})
+        self.assertEqual(
+            set(booking["resource"]), RESOURCE_KEYS[booking["resource_type"]]
+        )
+        self.assertEqual(set(booking["facility"]), {"id", "name"})
+        # the patient's own record, as CARE's OTP view shows it to the phone's owner
+        self.assertEqual(
+            set(booking["patient"]),
+            {
+                "id",
+                "name",
+                "gender",
+                "phone_number",
+                "emergency_phone_number",
+                "address",
+                "pincode",
+                "date_of_birth",
+                "year_of_birth",
+                "geo_organization",
+                "blood_group",
+                "extensions",
+            },
+        )
+        if booking["token"] is not None:
+            self.assertEqual(set(booking["token"]), {"number", "status", "category"})
+            self.assertEqual(
+                set(booking["token"]["category"]), {"id", "name", "shorthand"}
+            )
+
+    def test_patient_otp_bookings_show_no_staff_records(self):
+        """List (with a booking front-desk staff made), create and cancel: the exact keys at
+        every level, and nothing of the staff who booked or of the doctor beyond the public
+        projection."""
+        from care.emr.models.scheduling import TokenBooking, TokenSlot
+        from config.patient_otp_token import PatientToken
+        from django.db.models import F
+        from django.utils import timezone
+
+        with schema_context(self.a.schema):
+            staff_booking = (
+                TokenBooking.objects.filter(booked_by__isnull=False)
+                .exclude(patient__phone_number="")
+                .select_related("patient", "booked_by", "token_slot__resource__user")
+                .order_by("pk")
+                .first()
+            )
+            self.assertIsNotNone(
+                staff_booking, "no booking made by staff in the fixtures"
+            )
+            patient = staff_booking.patient
+            people = (staff_booking.booked_by, staff_booking.token_slot.resource.user)
+            secret_values = {
+                value
+                for person in people
+                for value in (person.username, person.phone_number, person.email)
+                if value
+            }
+            slot = (
+                TokenSlot.objects.filter(
+                    availability__schedule__is_public=True,
+                    start_datetime__gt=timezone.now(),
+                    allocated__lt=F("availability__tokens_per_slot"),
+                )
+                .exclude(
+                    id__in=TokenBooking.objects.filter(patient=patient).values(
+                        "token_slot_id"
+                    )
+                )
+                .order_by("start_datetime")
+                .first()
+            )
+            self.assertIsNotNone(slot, "no free public slot in the fixtures")
+            token = PatientToken()
+            token["phone_number"] = patient.phone_number
+            token = str(token)
+        client = APIClient(HTTP_HOST=self.a.domain)
+        client.credentials(HTTP_AUTHORIZATION=f"Bearer {token}")
+
+        def check(response):
+            self.assertEqual(response.status_code, 200, response.content[:300])
+            body = response.content.decode()
+            for value in secret_values:
+                self.assertNotIn(value, body)
+            return response.json()
+
+        listed = check(client.get("/api/v1/otp/slots/get_appointments/"))["results"]
+        self.assertIn(str(staff_booking.external_id), {b["id"] for b in listed})
+        for booking in listed:
+            self._assert_public_booking(booking)
+
+        created = check(
+            client.post(
+                f"/api/v1/otp/slots/{slot.external_id}/create_appointment/",
+                {"patient": str(patient.external_id), "note": "otp probe"},
+                format="json",
+            )
+        )
+        self._assert_public_booking(created)
+        cancelled = check(
+            client.post(
+                "/api/v1/otp/slots/cancel_appointment/",
+                {"patient": str(patient.external_id), "appointment": created["id"]},
+                format="json",
+            )
+        )
+        self._assert_public_booking(cancelled)
+        self.assertEqual(cancelled["status"], "cancelled")
+
+    def _probe_rooms(self, keep, facility, encounter):
+        """A theatre in a block, both holding ``encounter`` (another patient's), the theatre's
+        parent copy cold; and a healthcare service."""
+        from care.emr.models.healthcare_service import HealthcareService
+        from care.emr.models.location import FacilityLocation
+
+        room = {
+            "facility": facility,
+            "description": "probe",
+            "status": "active",
+            "operational_status": "O",
+            "system_availability_status": "available",
+            "current_encounter": encounter,
+        }
+        block = keep(
+            FacilityLocation, name="probe block", mode="kind", form="wa", **room
+        )
+        theatre = keep(
+            FacilityLocation,
+            name="probe theatre",
+            mode="instance",
+            form="ro",
+            parent=block,
+            **room,
+        )
+        _rows(FacilityLocation, theatre).update(cached_parent_json={})
+        service = keep(
+            HealthcareService,
+            facility=facility,
+            name="probe service",
+            extra_details="",
+            internal_type="scheduling",
+        )
+        return theatre, service
+
+    def _book_as_staff(self, keep, kind, target, patient, staff):
+        """A booking ``staff`` made for ``patient`` on a new, non-public schedule of
+        ``target`` (a ``kind`` resource); its id."""
+        from datetime import timedelta
+
+        from care.emr.models.scheduling import (
+            Availability,
+            SchedulableResource,
+            Schedule,
+            TokenBooking,
+            TokenSlot,
+        )
+        from django.utils import timezone
+
+        now = timezone.now()
+        resource = keep(
+            SchedulableResource,
+            facility=target.facility,
+            resource_type=kind,
+            **{kind: target},
+        )
+        schedule = keep(
+            Schedule,
+            resource=resource,
+            name="probe",
+            valid_from=now - timedelta(days=1),
+            valid_to=now + timedelta(days=7),
+            is_public=False,
+        )
+        availability = keep(
+            Availability,
+            schedule=schedule,
+            name="probe",
+            slot_type="appointment",
+            slot_size_in_minutes=10,
+            tokens_per_slot=1,
+        )
+        slot = keep(
+            TokenSlot,
+            resource=resource,
+            availability=availability,
+            start_datetime=now + timedelta(days=1),
+            end_datetime=now + timedelta(days=1, minutes=10),
+            allocated=1,
+        )
+        booking = keep(
+            TokenBooking,
+            token_slot=slot,
+            patient=patient,
+            booked_by=staff,
+            status="booked",
+            note="probe",
+        )
+        return str(booking.external_id)
+
+    def test_patient_otp_bookings_of_a_location_or_service_show_its_name_only(self):
+        """Bookings staff made on a non-public location and healthcare-service schedule
+        (review S1): the room and its parent each hold another patient's encounter, the room's
+        parent copy is cold. The OTP list shows the exact keys at every level, nothing of the
+        other patient or the care team, and the GET writes nothing (CARE's serialiser saves the
+        parent copy, an audited write)."""
+        from care.emr.models import Encounter
+        from care.emr.models.patient import Patient
+        from care.facility.models import Facility
+        from care.users.models import User
+        from config.patient_otp_token import PatientToken
+
+        made = []  # (model, row), removed in reverse order
+
+        def keep(model, **values):
+            row = model.objects.create(**values)
+            made.append((model, row))
+            return row
+
+        try:
+            with schema_context(self.a.schema):
+                facility = Facility.objects.get(
+                    external_id=self.a.first_id_by_model["facility.facility"]
+                )
+                patient = (
+                    Patient.objects.exclude(phone_number="").order_by("pk").first()
+                )
+                encounter = (
+                    Encounter.objects.exclude(
+                        patient__phone_number=patient.phone_number
+                    )
+                    .exclude(patient__name=patient.name)
+                    .select_related("patient")
+                    .order_by("pk")
+                    .first()
+                )
+                self.assertIsNotNone(encounter, "no other patient's encounter")
+                staff = User.objects.get(username=self.a.username)
+                secret_values = {
+                    encounter.patient.name,
+                    encounter.patient.phone_number,
+                    str(encounter.external_id),
+                    staff.username,
+                } - {""}
+                theatre, service = self._probe_rooms(keep, facility, encounter)
+                bookings = {
+                    self._book_as_staff(keep, kind, target, patient, staff): kind
+                    for kind, target in (
+                        ("location", theatre),
+                        ("healthcare_service", service),
+                    )
+                }
+                token = PatientToken()
+                token["phone_number"] = patient.phone_number
+            client = APIClient(HTTP_HOST=self.a.domain)
+            client.credentials(HTTP_AUTHORIZATION=f"Bearer {token}")
+            before = self._entries(self.a, writes=True)
+            response = client.get("/api/v1/otp/slots/get_appointments/")
+            self.assertEqual(response.status_code, 200, response.content[:300])
+            for value in secret_values:
+                self.assertNotIn(value, response.content.decode())
+            listed = {b["id"]: b for b in response.json()["results"]}
+            for booking_id, kind in bookings.items():
+                with self.subTest(resource_type=kind):
+                    self.assertEqual(listed[booking_id]["resource_type"], kind)
+                    self._assert_public_booking(listed[booking_id])
+            self.assertEqual(
+                self._entries(self.a, writes=True), before, "the OTP GET wrote a row"
+            )
+            with schema_context(self.a.schema):
+                theatre.refresh_from_db()
+                self.assertEqual(theatre.cached_parent_json, {})
+        finally:
+            with schema_context(self.a.schema):
+                for model, row in reversed(made):
+                    _rows(model, row).delete()
+
+    def test_public_organisations_are_government_only(self):
+        """The anonymous address picker: no team or role organisation by filter or by id."""
+        from care.emr.models.organization import Organization
+
+        anonymous = APIClient(HTTP_HOST=self.a.domain, raise_request_exception=False)
+        with schema_context(self.a.schema):
+            probes = [
+                Organization.objects.create(
+                    name=f"{self.a.canary} {kind} probe", org_type=kind
+                )
+                for kind in ("team", "role")
+            ]
+            govt = {
+                str(i)
+                for i in Organization.objects.filter(org_type="govt").values_list(
+                    "external_id", flat=True
+                )
+            }
+        try:
+            self.assertTrue(govt)
+            response = anonymous.get("/api/v1/govt/organization/?limit=1000")
+            self.assertEqual(response.status_code, 200, response.content[:300])
+            shown = {o["id"] for o in response.json()["results"]}
+            self.assertTrue(shown)
+            self.assertEqual(
+                shown - govt, set(), "a non-government organisation listed"
+            )
+            for org_type in ("team", "role", "product_supplier", "TEAM"):
+                with self.subTest(org_type=org_type):
+                    response = anonymous.get(
+                        f"/api/v1/govt/organization/?org_type={org_type}"
+                    )
+                    self.assertEqual(response.status_code, 200)
+                    self.assertEqual(response.json()["results"], [])
+            for probe in probes:
+                with self.subTest(detail=probe.org_type):
+                    response = anonymous.get(
+                        f"/api/v1/govt/organization/{probe.external_id}/"
+                    )
+                    self.assertEqual(response.status_code, 404, response.content[:300])
+            response = anonymous.get(f"/api/v1/govt/organization/{sorted(govt)[0]}/")
+            self.assertEqual(response.status_code, 200)  # positive control
+        finally:
+            with schema_context(self.a.schema):
+                Organization.objects.filter(pk__in=[p.pk for p in probes]).delete()
+
+    def test_public_facility_finder_drops_raw_key_field(self):
+        """The duplicate raw-key field only (review C5): the key itself is still inside the
+        unsigned read_cover_image_url until P1-T20b signs it, and that test is P1-T20b's."""
+        anonymous = APIClient(HTTP_HOST=self.a.domain, raise_request_exception=False)
+        facility = self.a.first_id_by_model["facility.facility"]
+        listed = anonymous.get("/api/v1/getallfacilities/")
+        detail = anonymous.get(f"/api/v1/getallfacilities/{facility}/")
+        for response in (listed, detail):
+            self.assertEqual(response.status_code, 200, response.content[:300])
+        for item in [*listed.json()["results"], detail.json()]:
+            self.assertNotIn("cover_image_url", item)
+            self.assertIn("read_cover_image_url", item)
+
+    def test_anonymous_gets_write_no_audit_entry(self):
+        """Every anonymous data route, with every organisation's parent copy expired so CARE
+        saves it again on read: the copy is refreshed, and no audit entry is written."""
+        from care.emr.models.organization import Organization
+        from care.facility.models import Facility
+
+        anonymous = APIClient(HTTP_HOST=self.a.domain, raise_request_exception=False)
+        facility_id = self.a.first_id_by_model["facility.facility"]
+        doctor = self.a.first_id_by_model["users.user"]
+        with schema_context(self.a.schema):
+            child = (
+                Organization.objects.filter(org_type="govt", parent__isnull=False)
+                .select_related("parent")
+                .order_by("pk")
+                .first()
+            )
+            self.assertIsNotNone(child, "no government organisation with a parent")
+            Facility.objects.filter(external_id=facility_id).update(
+                geo_organization=child
+            )
+            Organization.objects.update(cached_parent_json={})
+        paths = (
+            "/api/v1/govt/organization/",
+            f"/api/v1/govt/organization/?parent={child.parent.external_id}",
+            f"/api/v1/govt/organization/{child.external_id}/",
+            "/api/v1/getallfacilities/",
+            f"/api/v1/getallfacilities/{facility_id}/",
+            f"/api/v1/facility/{facility_id}/schedulable_users/",
+            f"/api/v1/facility/{facility_id}/schedulable_users/{doctor}/",
+            "/api/v1/plug_config/",
+            "/api/ihr/bootstrap/",
+        )
+        before = self._entries(self.a)
+        for path in paths:
+            with self.subTest(path=path):
+                self.assertEqual(anonymous.get(path).status_code, 200)
+        self.assertEqual(self._entries(self.a), before, "an anonymous GET was audited")
+        with schema_context(self.a.schema):
+            child.refresh_from_db()
+            self.assertTrue(child.cached_parent_json, "the save path did not run")
+
+    def test_care_routes_reach_our_classes(self):
+        """Every route of the swapped viewsets, in every form, reaches our class (A4)."""
+        from ihr_platform import route_swaps
+
+        self.assertEqual(route_swaps.check(), [])
+        originals = set(route_swaps.swapped)
+        self.assertEqual(len(originals), len(route_swaps.SWAPS))
+        served = [route for route, cls, _ in self.routes if cls in originals]
+        self.assertEqual(served, [], "a route still serves CARE's own class")
 
     # --- the release gate (P1-T18a) ---------------------------------------------------------
 

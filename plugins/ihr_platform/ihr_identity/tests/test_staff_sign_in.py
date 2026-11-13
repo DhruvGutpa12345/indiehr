@@ -311,13 +311,24 @@ class StaffSessionTests(SimpleTestCase):
 
     # --- CSRF -------------------------------------------------------------------------------
 
+    # A route the web app batches (P1-T20a: a batch runs only those, batch_allowlist.txt), for
+    # a dispense that does not exist: a signed-in sub-request gets 404, the batch 400.
+    BATCHED = "/api/v1/medication/dispense/00000000-0000-4000-8000-000000000000/"
+
     def _batch(self, client, **headers):
-        body = {"requests": [{"url": ME, "method": "GET", "reference_id": "me"}]}
+        body = {
+            "requests": [{"url": self.BATCHED, "method": "GET", "reference_id": "me"}]
+        }
         return client.post("/api/v1/batch_requests/", body, format="json", **headers)
+
+    def assert_ran(self, response):
+        """Past the batch's own checks, and the sub-request signed in with the session."""
+        self.assertEqual(response.status_code, 400, response.content[:300])
+        self.assertEqual(response.json()["results"][0]["status_code"], 404)
 
     def test_unsafe_requests_need_the_header_and_this_origin(self):
         client = self.client_for()
-        self.assertEqual(self._batch(client).status_code, 200)
+        self.assert_ran(self._batch(client))
         bare = APIClient(HTTP_HOST=HOST)
         bare.cookies[settings.IHR_SESSION_COOKIE] = client.cookies[
             settings.IHR_SESSION_COOKIE
@@ -329,13 +340,10 @@ class StaffSessionTests(SimpleTestCase):
         self.assertEqual(
             self._batch(client, HTTP_ORIGIN="https://evil.test").status_code, 403
         )
-        self.assertEqual(
-            self._batch(client, HTTP_ORIGIN="https://testserver").status_code, 200
-        )
+        self.assert_ran(self._batch(client, HTTP_ORIGIN="https://testserver"))
 
     def test_batch_sub_requests_use_the_session(self):
-        response = self._batch(self.client_for())
-        self.assertEqual(response.json()["results"][0]["status_code"], 200)
+        self.assert_ran(self._batch(self.client_for()))
 
     # --- CARE's own sign-in is off ----------------------------------------------------------
 
@@ -370,9 +378,11 @@ class StaffSessionTests(SimpleTestCase):
             "/api/v1/mfa.json",
         ):
             self.assertIs(resolve(suffixed).func.view_class, Blocked, suffixed)
+        # Inside a batch they are refused before anything resolves (P1-T20a: not on the batch
+        # allow-list); before P1-T20a they reached Blocked's 404
         body = {"requests": [{"url": routes[0], "method": "POST", "reference_id": "x"}]}
         batch = client.post("/api/v1/batch_requests/", body, format="json")
-        self.assertEqual(batch.json()["results"][0]["status_code"], 404)
+        self.assertEqual(batch.json()["results"][0]["status_code"], 403)
 
     def test_care_jwt_is_no_longer_accepted(self):
         from rest_framework_simplejwt.tokens import RefreshToken
