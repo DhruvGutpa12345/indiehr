@@ -81,7 +81,7 @@
     "type": "prometheus",
     "uid": "prometheus"
    },
-   "description": "5 rules in deploy/logs/alerts; fewer means vmalert is down or not scraped",
+   "description": "6 rules in deploy/logs/alerts; fewer means vmalert is down or not scraped",
    "fieldConfig": {
     "defaults": {
      "thresholds": {
@@ -93,7 +93,7 @@
        },
        {
         "color": "green",
-        "value": 5
+        "value": 6
        }
       ]
      }

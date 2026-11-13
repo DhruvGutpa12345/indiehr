@@ -21,6 +21,7 @@ from urllib.parse import urlencode
 
 from django import forms
 from django.conf import settings
+from django.db import OperationalError, connection, transaction
 from django.http import HttpResponse, HttpResponseRedirect
 from django.shortcuts import get_object_or_404, render
 from django.utils import timezone
@@ -30,8 +31,9 @@ from ihr_identity import oidc
 from ihr_identity.sessions import seal, unseal
 from ihr_identity.tokens import TokenRejectedError, verify_id_token
 
+from ihr_platform import release
 from ihr_platform.console import auth
-from ihr_platform.models import Hospital, TenantOperation
+from ihr_platform.models import FleetRun, Hospital, TenantOperation
 from ihr_platform.provisioning import runner, steps
 
 LOGIN_STATE_SECONDS = 600
@@ -215,15 +217,41 @@ def signed_out(request):
 @require_GET
 @operator_required
 def home(request):
-    hospitals = Hospital.objects.exclude(schema_name="public").order_by("slug")
-    operations = TenantOperation.objects.order_by("-created_at")[:20]
+    hospitals = list(
+        Hospital.objects.exclude(schema_name="public")
+        .select_related("schema_state")
+        .order_by("slug")
+    )
+    code = release.code_fingerprint()
+    for hospital in hospitals:  # why a hospital answers 503 (P1-T18a review S10)
+        state = getattr(hospital, "schema_state", None)
+        if state is not None and state.upgrading_since:
+            hospital.release_note = (
+                f"held since {timezone.localtime(state.upgrading_since):%d-%m-%Y %H:%M}"
+                f" ({state.hold_reason or 'release'})"
+            )
+        elif state is None or state.schema_fingerprint != code:
+            hospital.release_note = "schema not this build's"
+        else:
+            hospital.release_note = ""
+    # Provisioning runs by default; a release adds one "upgrade" row per hospital
+    # (ihr_fleet_run), shown with ?kind=upgrade next to the fleet runs themselves
+    kind = request.GET.get("kind")
+    upgrades = kind == TenantOperation.Kind.UPGRADE
+    operations = TenantOperation.objects.order_by("-created_at")
+    if upgrades:
+        operations = operations.filter(kind=TenantOperation.Kind.UPGRADE)
+    else:
+        operations = operations.exclude(kind=TenantOperation.Kind.UPGRADE)
     return render(
         request,
         "ihr_console/home.html",
         {
             "operator": request.operator,
             "hospitals": hospitals,
-            "operations": operations,
+            "operations": operations[:20],
+            "upgrades": upgrades,
+            "fleet_runs": FleetRun.objects.order_by("-started_at")[:10],
             "suffix": settings.IHR_TENANT_DOMAIN_SUFFIX,
         },
     )
@@ -342,10 +370,19 @@ def _first_admin_setup(op):
     from care.users.models import User
     from django_tenants.utils import schema_context
 
-    with schema_context(op.hospital.schema_name):
-        done = User.objects.filter(
-            pk=op.result["admin_user_id"], is_active=True
-        ).exists()
+    # Never into a schema held for a release or not on this build's (S10): it may be
+    # migrating, and the read would wait behind its locks
+    if not release.schema_ready(op.hospital):
+        return {"upgrading": True}
+    try:
+        with schema_context(op.hospital.schema_name), transaction.atomic():
+            with connection.cursor() as cursor:
+                cursor.execute("SET LOCAL lock_timeout = '2s'")
+            done = User.objects.filter(
+                pk=op.result["admin_user_id"], is_active=True
+            ).exists()
+    except OperationalError:  # a lock it could not get in time: show it as upgrading
+        return {"upgrading": True}
     sent_at = op.result.get("setup_email_sent_at")
     return {
         "done": done,

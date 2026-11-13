@@ -1,0 +1,4 @@
+key,english,hindi,clinical,note,used_in,ok (your mark),your correction
+upgrading_title,This hospital's system is being upgraded,इस अस्पताल का सिस्टम अपग्रेड हो रहा है,,"सिस्टम and अपग्रेड kept in English loan form, as staff say them","plugins/ihr_platform/ihr_platform/release_gate.py TEXT (the release gate's notice and 503 page, P1-T18a)",,
+upgrading_body,It will be back shortly. This page reloads by itself every minute.,यह जल्द ही फिर से उपलब्ध होगा। यह पेज हर मिनट अपने आप फिर से लोड होता है।,,पेज/लोड as loan words (glossary style),"plugins/ihr_platform/ihr_platform/release_gate.py TEXT (the release gate's notice and 503 page, P1-T18a)",,
+upgrading_until,Planned to end by {time} IST on {date}.,{date} को {time} IST तक पूरा होने की योजना है।,,"{date} is DD-MM-YYYY, {time} HH:MM; IST kept in Latin letters","plugins/ihr_platform/ihr_platform/release_gate.py TEXT (the release gate's notice and 503 page, P1-T18a)",,

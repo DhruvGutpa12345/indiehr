@@ -25,6 +25,7 @@ from django.db import connection
 from django_tenants.clone import CloneSchema
 from django_tenants.utils import schema_context
 
+from ihr_platform import release
 from ihr_platform.models import Domain, Hospital, generate_schema_name
 from ihr_platform.seeding import load_demo_data
 
@@ -115,6 +116,9 @@ class Command(BaseCommand):
             )
             hospital.auto_create_schema = False  # the clone already made the schema
             hospital.save()
+            release.record(
+                hospital
+            )  # no migrate ran, so no signal recorded it (P1-T18a)
             Domain.objects.create(
                 domain=f"bench-{count:04d}.bench.test", tenant=hospital
             )

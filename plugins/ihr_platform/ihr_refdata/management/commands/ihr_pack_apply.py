@@ -28,6 +28,7 @@ from django.core.management.base import BaseCommand, CommandError
 from django.db import transaction
 from django_tenants.utils import get_public_schema_name, schema_context
 from ihr_audit import context as audit
+from ihr_platform import release
 from ihr_platform.models import Hospital
 from ihr_platform.provisioning import runner
 
@@ -81,6 +82,35 @@ class Command(BaseCommand):
             "letters, digits or . _ @ -; not with --startup)",
         )
 
+    def _selection(self, slug, *, check):
+        """Live hospitals, never one held for a release or behind this build (S6): with
+        --slug that one refuses; with --all it is left out, and returned second so that it
+        is still alerted on and counted (its packs are not applied)."""
+        hospitals = Hospital.objects.exclude(
+            schema_name=get_public_schema_name()
+        ).order_by("slug")
+        if slug:
+            hospital = hospitals.filter(slug=slug).first()
+            if hospital is None:
+                msg = f"No hospital with slug {slug!r}"
+                raise CommandError(msg)
+            if hospital.status != Hospital.Status.ACTIVE:
+                msg = f"{slug} is {hospital.status}: only live hospitals are changed here."
+                raise CommandError(msg)
+            if not check:
+                release.require_ready(hospital)
+        live = hospitals.filter(status=Hospital.Status.ACTIVE)
+        ready = list(live.filter(release.ready_q()))
+        if slug:
+            return [h for h in ready if h.slug == slug], []
+        left_out = list(live.exclude(pk__in=[h.pk for h in ready]))
+        for skipped in left_out:
+            self.stdout.write(
+                f"{skipped.slug}: left out (held for a release or not on this "
+                "build's schema: ihr_fleet_run check)"
+            )
+        return ready, left_out
+
     def handle(self, *args, slug, all, startup, check, operator, **options):  # noqa: A002
         if startup and (not all or check):
             raise CommandError("--startup goes with --all, and never with --check")
@@ -95,21 +125,7 @@ class Command(BaseCommand):
         else:
             operator = "startup" if startup else "check"
         actor = f"packs:{operator}"
-        hospitals = Hospital.objects.exclude(
-            schema_name=get_public_schema_name()
-        ).order_by("slug")
-        if slug:
-            hospital = hospitals.filter(slug=slug).first()
-            if hospital is None:
-                msg = f"No hospital with slug {slug!r}"
-                raise CommandError(msg)
-            if hospital.status != Hospital.Status.ACTIVE:
-                msg = f"{slug} is {hospital.status}: only live hospitals are changed here."
-                raise CommandError(msg)
-        hospitals = list(hospitals.filter(status=Hospital.Status.ACTIVE))
-        if slug:
-            hospitals = [h for h in hospitals if h.slug == slug]
-
+        hospitals, left_out = self._selection(slug, check=check)
         via = "startup" if startup else "operator"
         with audit.job({"job": "packs", "via": via}, actor):
             try:
@@ -127,6 +143,10 @@ class Command(BaseCommand):
             problems = sum(outcome in ("failed", "deferred") for _, outcome in outcomes)
             busy = [h for h, outcome in outcomes if outcome == "busy"]  # --startup only
             problems += len(self._retry(busy, releases, actor))
+        if not check:  # never applied, so alerted on like a failure
+            for hospital in left_out:
+                self.stderr.write(log_line(hospital.slug, "failed"))
+            problems += len(left_out)
         if problems and not startup:
             msg = f"{problems} hospital(s) not done (see above)"
             raise CommandError(msg)

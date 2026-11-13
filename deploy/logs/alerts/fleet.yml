@@ -1,0 +1,38 @@
+# Release gate and fleet runner (P1-T18a). The fixed line
+# "ihr-fleet: hospital=<slug> outcome=failed|deferred|held" means that hospital answers 503
+# ("upgrading") to everyone while the rest of the fleet works. It is written:
+# - by ihr_fleet_run at the end of each run, for each live hospital it leaves not served and
+#   each hospital a step of the run failed for: the start-up one-shot (service "migrate"; a
+#   live hospital whose schema is behind, which stops the start, or whose role sync was
+#   refused) and an operator's run on staging (`scripts/staging.sh fleet ...`, which also runs
+#   in a "migrate" container; never `staging.sh manage`, whose admin container logs nothing);
+#   in dev the worker's container ("celery") runs both;
+# - every minute by the worker (ihr_platform.report_unserved: staging "celery-worker", dev
+#   "celery") for each live hospital still not served, so the alert keeps firing until the
+#   hospital is served again and never resolves while it is down (S3).
+# A provisioning or offboarding hospital is not served by design and is never named (S8).
+# Its TenantOperation of kind "upgrade" (the console, or the fleet run's records) names the
+# step and a safe error: fix the cause, then `ihr_fleet_run --resume <the run>`. A hospital
+# held only by a refused role sync is released by the resume once its roles pass; if it is
+# held on purpose (a release window), `ihr_fleet_run release --slug <it>` serves it again.
+# Forgery (as packs.yml, S1): only container lines (source:=container) of the services that run
+# ihr_fleet_run or the report (never the web backend, whose access log prints request paths
+# anyone can choose), and only a whole line that is exactly ours, with a slug-shaped hospital.
+# A forged line can at most raise a false alert naming a slug: the label is never put into the
+# action's command. Tests: scripts/check-logs.py (cases in deploy/logs/tests/alert-cases.json)
+# and scripts/test_staging_logs.py.
+groups:
+  - name: release-fleet
+    type: vlogs
+    interval: 1m
+    rules:
+      # Ten minutes: the worker repeats the line every minute while a live hospital is not
+      # served, so the alert holds while it is down and resolves soon after it is served again
+      - alert: HospitalNotServed
+        expr: '_time:10m source:=container service:in(migrate, celery, celery-worker) "ihr-fleet: hospital=" | extract_regexp "^ihr-fleet: hospital=(?P<hospital>[a-z][a-z0-9-]{2,30}) outcome=(?:failed|deferred|held)$" | filter hospital:~"^[a-z][a-z0-9-]{2,30}$" | stats by (hospital) count() as failures'
+        labels:
+          severity: critical
+          service: fleet
+        annotations:
+          summary: 'Hospital {{ $labels.hospital }} is not served after a release step ({{ $value }} times in 10 minutes): it answers 503 upgrading'
+          action: 'Read that hospital''s newest upgrade TenantOperation (step and error), fix the cause, then run scripts/staging.sh fleet --resume <its fleet run> --operator <you>; if it is held on purpose and should be served: scripts/staging.sh fleet release --slug <the hospital named above> --operator <you>'

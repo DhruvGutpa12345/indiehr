@@ -1,0 +1,8 @@
+# Migrations this build still counts as known although no file and no `replaces` names them
+# (release.py, P1-T18a). A hospital schema whose django_migrations holds a tenant-app row
+# unknown to the build reads as "ahead" (newer than the code) and is not served. When an
+# upstream sync deletes old migration files, or a squashed migration drops its `replaces`
+# list, add the names it drops here, one `app_label.migration_name` per line, with the sync
+# commit (docs/UPSTREAM.md, after-sync checklist). The test
+# ihr_platform.tests.test_release ... test_every_recorded_migration_of_a_new_hospital_is_known
+# fails until they are listed.

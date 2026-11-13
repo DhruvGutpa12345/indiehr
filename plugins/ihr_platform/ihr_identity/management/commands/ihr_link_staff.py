@@ -11,6 +11,7 @@ import uuid
 from django.core.management.base import BaseCommand, CommandError
 from django.utils import timezone
 from django_tenants.utils import schema_context
+from ihr_platform import release
 from ihr_platform.models import Hospital
 
 from ihr_identity.models import StaffIdentity
@@ -32,6 +33,7 @@ class Command(BaseCommand):
         if hospital is None:
             msg = f"No hospital {slug!r}"
             raise CommandError(msg)
+        release.require_ready(hospital)  # never into a held or older schema (S6)
         with schema_context(hospital.schema_name):
             from care.users.models import User
 

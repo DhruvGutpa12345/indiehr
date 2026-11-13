@@ -330,6 +330,109 @@ Before merging, also do these (found by the trial):
 - add Hindi for `file_too_large`;
 - re-translate `pin_page_limit_reached` (its English changed).
 
+### Q-K29 — How releases and rollbacks work (P1-T18; auto-accepted by Claude, 2026-11-13, awaiting owner confirmation)
+
+This builds TENANCY §7.2 and your Q-T1 answer (a short announced window around 02:00 IST).
+
+- **A ⭐ (taken).**
+  - **Split:** P1-T18a (the per-hospital gate and the fleet runner), then P1-T18b (release,
+    rollback, runbook, drill).
+  - **Hospital migrations run only in `staging.sh release`,** the announced window. A plain
+    `up` refuses to start if any hospital's schema does not match the code.
+  - **At the window's start every hospital is held** (it answers "upgrading"). A restore point
+    is then taken, the public schema and each hospital are migrated (2 at a time), and each
+    hospital is released when it is done.
+  - **A hospital whose migration fails stays held while the others go live.** The window does
+    not close, and you are alerted. It is resumed after a fix.
+  - **Rollback without a restore** only when nothing changed in the database or Keycloak.
+    Otherwise it is a restore to the window's restore point, which needs an explicit flag and
+    loses only writes made after the window, if any.
+  - **No e-mail announcement to hospitals.** That is sending on your behalf: yours to decide.
+    The announcement is a banner (the web app's part comes with P1-T24).
+- B. Keep migrating at every `up` (simpler, but migrations would run at any hour, under live
+  traffic, with no way back).
+
+### Q-K30 — Separate database roles (P1-T19; auto-accepted by Claude, 2026-11-13, awaiting owner confirmation)
+
+This builds TENANCY §6.10. The Phase 1 review rated it High.
+
+- **A ⭐ (taken).**
+  - **Split:** P1-T19a (the roles, the grants, the run-time refusal, the audit hardening,
+    tests run as the app role) and P1-T19b (moving staging: new secrets made on your machine,
+    the move under a full stop, the drill, the local proof).
+  - **Two roles:**
+    - `ihr_owner` runs migrations, the provisioner and admin one-offs;
+    - `ihr_app` serves requests and runs the workers. It cannot change schemas, disable
+      triggers, write terminology, fake a migrated schema, or forge audit entries and seals.
+  - **The provisioner keeps owner rights.** It creates and drops hospital schemas. Everything it
+    acts on is made read-only for the app, so a web-app bug cannot steer it. The runner-up is a
+    separate DDL job.
+  - **Sealing the audit chain** goes through a database function owned by the owner, and the
+    entry's time and transaction id are set by the database (an ADR-010 amendment, Proposed).
+  - **A container on the wrong role refuses to start,** and you are alerted.
+  - **Existing servers:** `ihr` is renamed to `ihr_owner` with a **new** password. The new
+    password goes into your password manager.
+- B. Keep one role and rely on detection (verify plus fingerprints) alone.
+
+### Q-K31 — Public routes and pictures (P1-T20; auto-accepted by Claude, 2026-11-13, awaiting owner confirmation)
+
+This builds your Q-T3 answer (presigned, no public bucket) and the Phase 1 review's R1-02 and
+R1-03.
+
+- **A ⭐ (taken).**
+  - **Split:** P1-T20a (routes), then P1-T20b (files).
+  - **The public doctor list stays open before the patient signs in** (the booking page shows
+    doctors first). It is trimmed to name, title and photo, and covers public facilities only.
+    Today it also gives out staff phone numbers, user names and last sign-in times.
+  - **Pictures** (staff photos, facility covers) are served by signed links valid for 24 hours.
+    The public bucket is removed. Anyone holding a current link can still see that picture.
+  - **Batch requests** may only call the routes the web app actually batches; anything else is
+    refused before it runs.
+  - **Patient files and pictures** get separate storage keys. On AWS with role-based access,
+    the separation relies on bucket policy.
+- B. Require the patient's OTP sign-in before showing any doctor (more private, but it changes
+  how booking works).
+
+### Q-K32 — Watching the audit trail (P1-T21; auto-accepted by Claude, 2026-11-13, awaiting owner confirmation)
+
+- **A ⭐ (taken).**
+  - **A small `audit-watch` service** (about 192 MB) holds only the fingerprint *reader* key. It
+    checks:
+    - seal lag every minute;
+    - each hospital's chain from a stored checkpoint, and the newest fingerprints, every 15
+      minutes;
+    - a slice of old entries every night;
+    - the full recompute, monthly, on the restore-drill copy.
+  - **You are mailed** when a chain breaks, a fingerprint mismatches, triggers are missing, a
+    fingerprint is late (over 2 h 15 min), sealing lags (over 15 min, critical over 1 h), or the
+    watch itself stops. Only a fixed log line names the hospital.
+  - **Suspended, offboarding and archived hospitals** are sealed every 10 minutes too (today they
+    never are).
+- B. A host timer instead of a resident service (no resident memory, but it needs your sudo for
+  a new timer).
+
+### Q-K33 — Per-hospital dumps and single-hospital restore (P1-T22; auto-accepted by Claude, 2026-11-13, awaiting owner confirmation)
+
+- **A ⭐ (taken).**
+  - **Split:** P1-T22a (nightly dumps), then P1-T22b (single-hospital restore and the drill).
+  - **Dumps:** each hospital at about 03:30 IST, encrypted with a key of their own (which goes
+    into your password manager), kept about 28 days in the other-region backup bucket.
+  - **The dumper** has read-only database rights.
+  - **Restoring one hospital** parks its live schema, restores under the real name, migrates,
+    reconciles, and keeps the audit trail provable with a restore record. It never touches
+    other hospitals.
+  - Security state never goes back: deactivations stay, and all sessions end.
+  - Parked schemas are deleted after 7 days.
+  - Picture and patient-file buckets get versioning (old versions kept 35 days).
+  - A nightly dump can lose up to 24 h for that hospital; `--from-pitr` restores to within 15
+    minutes.
+- B. Rely on whole-cluster restore only (undoing one hospital's mistake rolls back every
+  hospital).
+
+TENANCY §7.5 and §7.7 are corrected (amendment, Proposed):
+- no restore under a side name, because our audit triggers would write into the live trail;
+- the erasure ledger lives outside the hospital's schema.
+
 **Still open:** Q-B4 (final MVP module list: assumed as in PLAN.md Phase 2) and Q-B6/B7 (pricing, timeline). Q-F2 is moot while AI is deferred.
 
 ---

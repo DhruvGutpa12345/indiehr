@@ -23,4 +23,4 @@ groups:
           service: packs
         annotations:
           summary: 'Reference packs failed to apply to hospital {{ $labels.hospital }} ({{ $value }} times in 24 hours)'
-          action: 'Read that hospital''s PackApply rows (the error), fix the cause, then run ihr_pack_apply --slug <the hospital named above> --operator <you>'
+          action: 'Read that hospital''s PackApply rows (the error), fix the cause, then run ihr_pack_apply --slug <the hospital named above> --operator <you> (it refuses a hospital that is held or not on this build''s schema: ihr_fleet_run check first)'

@@ -9,6 +9,7 @@
 #                                                (--new-database: an empty database where backups exist)
 #   scripts/staging.sh smoke                     check every public address through Traefik
 #   scripts/staging.sh manage <args>             one-off manage.py command (no admin credentials)
+#   scripts/staging.sh fleet <args>              ihr_fleet_run (P1-T18a), logged for its alert
 #   scripts/staging.sh ps | logs [service] | down
 #   scripts/staging.sh keys ensure | status      the signing keys Keycloak knows the backend and
 #                                                workers by (P1-T8d2; made here, never copied)
@@ -2327,6 +2328,9 @@ case "${1:-}" in
   up) up "${@:2}" ;;
   smoke) smoke ;;
   manage) compose --profile admin run --rm --no-deps -T admin python manage.py "${@:2}" ;;
+  # The fleet runner in the one-shot's (logged) container, never the unlogged admin one: its
+  # "ihr-fleet:" lines must reach the HospitalNotServed alert (deploy/logs/alerts/fleet.yml, S3)
+  fleet) compose run --rm --no-deps -T migrate python manage.py ihr_fleet_run "${@:2}" ;;
   ps) compose ps ;;
   logs) compose logs --tail=200 "${@:2}" ;;
   keys) keys_cmd "${@:2}" ;;

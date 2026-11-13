@@ -10,7 +10,7 @@ suspended, offboarding or archived hospital is left as it is.
 
 from django.core.management.base import BaseCommand, CommandError
 from django_tenants.utils import schema_context
-from ihr_platform import pincodes
+from ihr_platform import pincodes, release
 from ihr_platform.models import Hospital
 
 from ihr_tenant_settings import geography
@@ -38,7 +38,14 @@ class Command(BaseCommand):
             if hospital.status != Hospital.Status.ACTIVE:
                 msg = f"{slug} is {hospital.status}: only live hospitals are changed."
                 raise CommandError(msg)
-        hospitals = hospitals.filter(status=Hospital.Status.ACTIVE)
+            release.require_ready(hospital)  # never into a held or older schema (S6)
+        live = hospitals.filter(status=Hospital.Status.ACTIVE)
+        hospitals = live.filter(release.ready_q())
+        for skipped in live.exclude(pk__in=hospitals.values("pk")):
+            self.stdout.write(
+                f"{skipped.slug}: left out (held for a release or not on this build's "
+                "schema: ihr_fleet_run check)"
+            )
         for hospital in hospitals:
             with schema_context(hospital.schema_name):
                 states, added = geography.load_all()

@@ -81,6 +81,12 @@ def problems(lock=False):
     return out
 
 
+class RoleSyncRefused(CommandError):  # noqa: N818 (a refusal, named as the command says it)
+    """The guarded sync refused (or would refuse). Its message is built only from role names,
+    permission slugs and holder counts per model, never row values, so error records keep it
+    (release.safe_error, S7)."""
+
+
 class Command(CareSync):
     help = CareSync.help + " (guarded: never deletes what someone holds; ihr_roles)"
 
@@ -95,12 +101,12 @@ class Command(CareSync):
         if options.get("check"):
             found = problems()
             if found:
-                raise CommandError("role sync would be refused: " + "; ".join(found))
+                raise RoleSyncRefused("role sync would be refused: " + "; ".join(found))
             return None
         with transaction.atomic():
             found = problems(lock=True)
             if found:
                 msg = ("refusing to sync roles: " + "; ".join(found)
                        + ". Re-register the role (names are permanent), or reassign its holders first.")  # fmt: skip
-                raise CommandError(msg)
+                raise RoleSyncRefused(msg)
             return super().handle(*args, **options)

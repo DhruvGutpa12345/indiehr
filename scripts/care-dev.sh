@@ -2,7 +2,7 @@
 # Run upstream CARE locally with the IndieHR low-memory override (P0-T5), in tenant mode with
 # two synthetic demo hospitals at http://alpha.localhost:8080 and http://beta.localhost:8080
 # (P1-T2b), and Keycloak on demand (P1-T3: `scripts/care-dev.sh keycloak help`).
-# Usage: scripts/care-dev.sh <up|down|ps|logs|seed|reset-passwords|frontend|shell|keycloak|provision|provision-demo|audit-anchors|s3-check|pincodes|locale-preview>
+# Usage: scripts/care-dev.sh <up|down|ps|logs|seed|reset-passwords|migrate-hospitals|frontend|shell|keycloak|provision|provision-demo|audit-anchors|s3-check|pincodes|locale-preview>
 set -euo pipefail
 ROOT="$(git -C "$(dirname "$0")" rev-parse --show-toplevel)"
 BACKEND="$ROOT/apps/backend"
@@ -276,6 +276,19 @@ case "${1:-}" in
     echo "New passwords written to deploy/seed/TEST_USERS.md"
     ;;
   shell) "${COMPOSE[@]}" exec backend bash ;;
+  migrate-hospitals)
+    # After pulling new hospital migrations (P1-T18a): the worker's start-up never migrates a
+    # hospital (as on staging), so until this runs the hospitals answer 503 "upgrading" and
+    # the worker stops at its check. Migrates them (held meanwhile), then starts the worker.
+    # A one-off container of the worker's image and settings (the web app waits for the worker)
+    "${COMPOSE[@]}" up -d --wait db redis
+    # shellcheck disable=SC2016 # $@ is expanded by the container's shell
+    "${COMPOSE[@]}" run --rm --no-deps -T --entrypoint bash celery -c \
+      'python manage.py migrate_schemas --shared --noinput -v 0 &&
+       python manage.py ihr_fleet_run migrate check roles packs --operator care-dev "$@"' \
+      bash "${@:2}"
+    "${COMPOSE[@]}" up -d --wait
+    ;;
   frontend)
     # Serve a pre-built bundle (from CI artifact) unpacked into deploy/dev/frontend-build
     BUILD="$ROOT/deploy/dev/frontend-build"

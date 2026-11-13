@@ -69,6 +69,9 @@ def apply_tenancy(settings):  # noqa: PLR0915 (one flat list of settings)
     middleware = [m for m in settings["MIDDLEWARE"] if "TenantMainMiddleware" not in m]
     settings["MIDDLEWARE"] = [
         "django_tenants.middleware.main.TenantMainMiddleware",
+        # A hospital held for a release, or whose schema is not this build's, answers 503
+        # before anything touches its schema (P1-T18a)
+        "ihr_platform.release_gate.ReleaseGateMiddleware",
         # Platform hosts (the operator console): before CARE's session/auth middleware
         "ihr_platform.console.middleware.PlatformHostMiddleware",
         # Who did what, outside CARE's per-request transaction (P1-T6a)

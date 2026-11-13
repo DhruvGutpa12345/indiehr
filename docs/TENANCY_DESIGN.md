@@ -148,7 +148,7 @@ Two of the three independent designs converged on this.
      - writes one result row per tenant to `TenantOperation`.
    - **Window length budget** = (pre-flight minutes per schema × tenants ÷ parallelism) + 15 minutes margin, published with each release. Hospitals get a **downtime procedure** (read-only notice, paper forms, back-entry afterwards) even though there is no full outage kit (ADR-000). If an upstream migration is too slow, we ship a logged patch that rewrites it (e.g. a batched data migration).
    - CARE's `maintenance_mode` app is process-wide; during the window we use our per-tenant gate instead (checked in P1-T1a).
-   - A per-tenant **migration fingerprint gate** returns "upgrading" (503) for any tenant whose schema doesn't match the running build.
+   - A per-tenant **migration fingerprint gate** returns "upgrading" (503) for any tenant whose schema doesn't match the running build. *(P1-T18a, 2026-11-13, Q-K29 awaiting the owner: built as `release_gate.py` + `HospitalSchemaState`; the fleet runner is `ihr_fleet_run` with a fork pool, per-hospital locks and records. Differences from this text: the start-up one-shot never migrates hospitals (it checks, and refuses if a live hospital is behind); hospital migrations run only in `staging.sh release` (P1-T18b); a hospital whose migration fails stays held while the others go live; a role-check refusal holds only that hospital. Design and attack: docs/reviews/p1-t18/design.md.)*
    - **Pre-flight on staging:** time the migration against a copy of the largest tenant; fail the release if one schema takes over 120 s or a migration rewrites a large table.
 3. **Our own container entry scripts** live outside `apps/`:
    - the beat script never runs `migrate`;

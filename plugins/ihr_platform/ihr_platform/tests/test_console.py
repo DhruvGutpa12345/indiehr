@@ -14,9 +14,10 @@ from django_tenants.utils import schema_context
 from ihr_identity import oidc, testing
 from ihr_identity.sessions import unseal
 
+from ihr_platform import release
 from ihr_platform.console import auth
 from ihr_platform.management.commands import ihr_provision_worker as worker
-from ihr_platform.models import Hospital, OperatorAccount, TenantOperation
+from ihr_platform.models import FleetRun, Hospital, OperatorAccount, TenantOperation
 from ihr_platform.test_runner import TEST_SCHEMA
 
 HOST = "console.testserver"
@@ -402,6 +403,56 @@ class ConsoleTests(SimpleTestCase):
         page = self.browser.get(f"/ops/operations/{op.id}/").content.decode()
         self.assertIn("has set up their account", page)
         self.assertNotIn("Send the setup e-mail again", page)
+
+    def test_the_home_page_shows_holds_upgrades_and_fleet_runs(self):
+        """P1-T18a review S10: an operator can see why a hospital answers 503 (held, and
+        why), the upgrade records (?kind=upgrade) and the fleet runs; a held hospital's
+        schema is never read for its first admin."""
+        self.sign_in()
+        hospital = Hospital.objects.get(schema_name=TEST_SCHEMA)
+        release.hold([hospital.pk], reason=release.HOLD_ROLES)
+        self.addCleanup(release.release_hold, [hospital.pk])
+        run = FleetRun.objects.create(
+            steps=["check", "roles"],
+            operator="cons-test",
+            tenant_fingerprint=release.code_fingerprint(),
+            public_fingerprint=release.code_fingerprint(release.PUBLIC),
+            status=FleetRun.Status.INCOMPLETE,
+            counts={"held": 1},
+        )
+        self.addCleanup(FleetRun.objects.filter(pk=run.pk).delete)
+        TenantOperation.objects.create(
+            kind=TenantOperation.Kind.UPGRADE,
+            slug="cons-upgrade",
+            hospital=hospital,
+            status="failed",
+            result={"outcome": "held"},
+            fleet_run=run,
+        )
+        page = self.browser.get("/ops/").content.decode()
+        self.assertIn("held since", page)
+        self.assertIn("(roles)", page)
+        self.assertIn(str(run.id), page)
+        self.assertIn("1 held", page)
+        self.assertNotIn("cons-upgrade", page)  # provisioning runs by default
+        page = self.browser.get("/ops/?kind=upgrade").content.decode()
+        self.assertIn("cons-upgrade", page)
+        self.assertIn("(held)", page)
+
+        op = TenantOperation.objects.create(
+            kind="provision",
+            slug="cons-held-setup",
+            hospital=hospital,
+            status="succeeded",
+            input={"admin_email": "first.admin@cons.example.test"},
+            result={"admin_user_id": 1},
+        )
+        with mock.patch(
+            "care.users.models.User.objects.filter",
+            side_effect=AssertionError("read the held hospital's schema"),
+        ):
+            page = self.browser.get(f"/ops/operations/{op.id}/").content.decode()
+        self.assertIn("is being upgraded", page)
 
     def _delete_user(self, user):
         with schema_context(TEST_SCHEMA):

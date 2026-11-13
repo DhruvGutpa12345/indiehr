@@ -150,6 +150,8 @@ class TenantOperation(models.Model):
     class Kind(models.TextChoices):
         PROVISION = "provision"
         ROLLBACK = "rollback"
+        # One hospital's part of a fleet run (ihr_fleet_run, P1-T18a); grouped by fleet_run
+        UPGRADE = "upgrade"
 
     class Status(models.TextChoices):
         PENDING = "pending"
@@ -179,6 +181,13 @@ class TenantOperation(models.Model):
     created_at = models.DateTimeField(auto_now_add=True)
     started_at = models.DateTimeField(null=True, blank=True)
     finished_at = models.DateTimeField(null=True, blank=True)
+    fleet_run = models.ForeignKey(
+        "FleetRun",
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name="operations",
+    )
 
     class Meta:
         constraints = [
@@ -192,6 +201,103 @@ class TenantOperation(models.Model):
 
     def __str__(self):
         return f"{self.kind} {self.slug} ({self.status})"
+
+
+class HospitalSchemaState(models.Model):
+    """Which build a hospital's schema was last verified for, and whether it is held for a
+    release (P1-T18a, ``ihr_platform/release.py``).
+
+    In its own row, never on ``Hospital``: a full ``Hospital.save()`` (ihr_create_tenant and
+    others) must never be able to write an old copy back over it. Written only with
+    ``get_or_create`` and queryset ``update()``; ``save()`` refuses to change an existing row.
+
+    - ``schema_fingerprint``: the code fingerprint the schema was verified against (every
+      tenant-app migration of that build applied, no unknown one recorded), or "" when it was
+      checked and found behind or ahead. The gate serves the hospital only when it equals the
+      running build's.
+    - ``upgrading_since``: the hold of a release window; set and cleared only by ihr_fleet_run.
+    - ``hold_reason``: why it is held (``window``, ``migrate`` or ``roles``).
+    """
+
+    hospital = models.OneToOneField(
+        Hospital,
+        primary_key=True,
+        on_delete=models.CASCADE,
+        related_name="schema_state",
+    )
+    schema_fingerprint = models.CharField(max_length=64, blank=True)
+    checked_at = models.DateTimeField(null=True, blank=True)
+    upgrading_since = models.DateTimeField(null=True, blank=True)
+    # Why it is held (release.HOLD_*): a window, a migration, or a refused role sync. A run
+    # whose roles then pass releases only a "roles" hold, never a window's (C4/S2).
+    hold_reason = models.CharField(max_length=16, blank=True)
+
+    def __str__(self):
+        held = f" held ({self.hold_reason})" if self.upgrading_since else ""
+        return f"{self.hospital_id}: {self.schema_fingerprint[:12] or '-'}{held}"
+
+    def save(self, *args, **kwargs):
+        if not self._state.adding:
+            msg = "HospitalSchemaState is changed only with update() (release.py)."
+            raise RuntimeError(msg)
+        super().save(*args, **kwargs)
+
+
+class FleetRun(models.Model):
+    """One run of ``ihr_fleet_run`` over the fleet (P1-T18a). Each hospital's part is a
+    TenantOperation of kind ``upgrade`` pointing here; ``--resume <id>`` continues a run."""
+
+    class Status(models.TextChoices):
+        RUNNING = "running"
+        FINISHED = "finished"  # every selected hospital done
+        INCOMPLETE = "incomplete"  # some hospital failed, was deferred or stays held
+        FAULT = "fault"  # stopped for the whole fleet (a check failed, a crash)
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    steps = models.JSONField(default=list)
+    selection = models.JSONField(default=dict)  # statuses, slugs, resumed hospitals
+    parallel = models.PositiveSmallIntegerField(default=2)
+    operator = models.CharField(max_length=150)
+    startup = models.BooleanField(default=False)
+    tenant_fingerprint = models.CharField(max_length=64)
+    public_fingerprint = models.CharField(max_length=64)
+    app_version = models.CharField(max_length=64, blank=True)
+    resumed_from = models.ForeignKey(
+        "self", null=True, blank=True, on_delete=models.SET_NULL
+    )
+    status = models.CharField(
+        max_length=16, choices=Status.choices, default=Status.RUNNING
+    )
+    counts = models.JSONField(default=dict)  # outcome -> hospitals
+    error = models.CharField(max_length=400, blank=True)
+    started_at = models.DateTimeField(auto_now_add=True)
+    finished_at = models.DateTimeField(null=True, blank=True)
+
+    def __str__(self):
+        return f"fleet run {self.id} ({self.status})"
+
+
+class MaintenanceWindow(models.Model):
+    """An announced release window (P1-T18a; set by ``ihr_fleet_run window``). Public data:
+    the gate's upgrading notice shows it, so staff know when to expect their hospital back."""
+
+    start = models.DateTimeField()
+    minutes = models.PositiveIntegerField()
+    note = models.CharField(max_length=200, blank=True)
+    created_by = models.CharField(max_length=150)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ("-start",)
+
+    def __str__(self):
+        return f"window {self.start:%d-%m-%Y %H:%M} +{self.minutes} min"
+
+    @property
+    def end(self):
+        from datetime import timedelta
+
+        return self.start + timedelta(minutes=self.minutes)
 
 
 class OperatorAccount(models.Model):

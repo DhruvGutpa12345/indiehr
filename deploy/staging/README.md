@@ -7,7 +7,7 @@ One VM in an Indian region (provider-neutral, ADR-011), Docker Compose, Traefik 
 | Command | What it does |
 |---|---|
 | `scripts/staging.sh init <suffix>` | Writes `.env` (site settings, image digests) and `secrets/*.env` (mode 600, git-ignored). Refuses to overwrite. `<suffix>`: hospitals live at `<slug>.<suffix>` |
-| `scripts/staging.sh up` | Database, Redis, migrations, web app, Celery, Keycloak, Traefik; then the Keycloak realms and the two workers' narrow accounts |
+| `scripts/staging.sh up` | Database, Redis, the platform's (public) migrations, web app, Celery, Keycloak, Traefik; then the Keycloak realms and the two workers' narrow accounts. Never migrates a hospital (P1-T18a): if a live hospital's schema is not the new build's, the `migrate` one-shot refuses and nothing starts; migrate hospitals in the announced window (`staging.sh release`, P1-T18b; until then `staging.sh fleet migrate check roles packs --operator <you>`, then `up`). A hospital this build's release already tried and left held (its migration failed) stays at 503 and the others start |
 | `scripts/staging.sh smoke` | 20 checks through Traefik: what is public and what is not, TLS redirect, HSTS, token issuer, production mode, no query strings in logs |
 | `scripts/staging.sh manage <args>` | One-off `manage.py` (never logged; no Keycloak admin credential) |
 | `scripts/staging.sh local-proof` | All of the above on this machine (127.0.0.1, self-signed certificate) |
@@ -503,13 +503,30 @@ minute. Only container lines count. A hospital whose staff share one address and
 RateLimitedAddress: raise its limit (see "Per-IP limits" above).
 
 **Reference packs** (`deploy/logs/alerts/packs.yml`, P1-T15a). The start-up one-shot applies the
-packs (CARE's system value sets first) to every live hospital with `ihr_pack_apply --all
---startup`. One hospital's failure never stops the start: it is recorded in that hospital
-(a `PackApply` row with the error) and logged as `ihr-packs: hospital=<slug> outcome=failed`.
+packs (CARE's system value sets first) to every live hospital (`ihr_fleet_run ... packs
+--startup`, which applies them exactly as `ihr_pack_apply --all --startup` does). One hospital's
+failure never stops the start: it is recorded in that hospital (a `PackApply` row with the error)
+and logged as `ihr-packs: hospital=<slug> outcome=failed`.
+
+**Hospitals not served** (`deploy/logs/alerts/fleet.yml`, P1-T18a). After each fleet run
+(`ihr_fleet_run`: the start-up one-shot, or an operator's run with `scripts/staging.sh fleet`),
+every live hospital that is held or whose schema is not this build's, and every hospital a
+step of the run failed for, is logged as `ihr-fleet: hospital=<slug> outcome=failed|deferred|held`;
+the worker repeats the line every minute while a live hospital stays unserved, so the alert
+does not clear while it is down. A provisioning or offboarding hospital is not served by design
+and is never named. That hospital answers 503 "upgrading" while the rest work. Its newest
+`upgrade` operation names the step and a safe error; fix the cause, then
+`scripts/staging.sh fleet --resume <fleet run id> --operator <you>` (a hospital held only by a
+refused role sync is released by that resume once its roles pass). A hospital held on purpose
+(a window) is served again with `scripts/staging.sh fleet release --slug <it> --operator <you>`.
+Always run the fleet runner with `staging.sh fleet`, never `staging.sh manage`: the admin
+container logs nothing, so its lines would never reach the alert. One fleet run at a time; a run
+killed half-way is closed as interrupted by its `--resume`.
 
 | Alert | When | Severity |
 |---|---|---|
 | PackApplyFailed | exactly that whole line, from the `migrate` one-shot (dev: `celery`), in the last 24 hours (the mail names the hospital; request paths in the web backend's log can never raise it) | warning |
+| HospitalNotServed | exactly the `ihr-fleet:` line above (outcome failed, deferred or held), from the `migrate` container (the one-shot and `staging.sh fleet`) or the worker's per-minute report (`celery-worker`; dev: `celery`), in the last 24 hours | critical |
 
 Fix the cause, then `scripts/staging.sh manage ihr_pack_apply --slug <slug> --operator <you>`
 (`<you>`: 1-64 letters, digits or `. _ @ -`; recorded as `packs:<you>`).
@@ -770,9 +787,10 @@ hand, once per release:
 ## Roles and rollbacks (P1-T11a, ADR-017)
 
 At every start, the `migrate` one-shot syncs CARE's roles and permissions, and ours, into every
-hospital. It runs `sync_permissions_roles --check` for all hospitals first, then the sync itself.
-The sync is our guarded version (`ihr_roles`). It **refuses**, and the start stops, rather than
-delete:
+active or suspended hospital (`ihr_fleet_run ... roles`). It runs `sync_permissions_roles
+--check` for all of them first, then the sync itself for those that passed. The sync is our
+guarded version (`ihr_roles`). It **refuses** rather than delete (P1-T18a: a refusing hospital
+is held, answers 503 "upgrading" and is alerted on, `HospitalNotServed`; the others start):
 
 - a system role that someone still holds;
 - a permission that a hospital's own role still has.
@@ -780,10 +798,12 @@ delete:
 CARE's own sync would delete both silently, along with the memberships or grants that point at
 them.
 
-**If the start stops with "refusing to sync roles":** the image you started is missing a role or
+**If a hospital is held with "role sync would be refused":** the image you started is missing a role or
 permission that hospitals use. Usually that means a rollback. Roll forward to the image that
 registered it. If the role is really to go, reassign its holders first. Role names are
-permanent: a retired role stays registered with no grants.
+permanent: a retired role stays registered with no grants. Then run
+`scripts/staging.sh fleet --resume <the start-up's fleet run> --operator <you>` (or simply `up`
+again): once its roles pass, the hold the refusal set is released.
 
 **Never roll back past P1-T11a** once hospitals hold any of our roles. Older images run CARE's
 unguarded sync, which would delete those memberships in every hospital.

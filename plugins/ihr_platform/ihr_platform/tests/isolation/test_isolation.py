@@ -514,11 +514,13 @@ class CrossTenantIsolationTests(SimpleTestCase):
         from ihr_audit.tasks import setup_periodic_tasks as setup_audit_tasks
 
         from ihr_platform.beat import PLATFORM_ONCE, ActiveTenantScheduler
+        from ihr_platform.tasks import setup_periodic_tasks as setup_platform_tasks
 
         # CARE registers these from on_after_finalize; if an earlier test already finalized the
         # app, that hook never fired in this process. Registering again is idempotent (by name).
         setup_periodic_tasks(app)
         setup_audit_tasks(app)
+        setup_platform_tasks(app)
         scheduler = ActiveTenantScheduler(app=app, lazy=True)
         entries = scheduler._tenant_aware_beat_schedule_to_dict(app.conf.beat_schedule)
         self.assertTrue(
@@ -551,9 +553,16 @@ class CrossTenantIsolationTests(SimpleTestCase):
             for name, fields in entries.items()
             if fields.get("options", {}).get("headers", {}).get(PLATFORM_ONCE)
         }
-        self.assertEqual(once, {"ihr_audit_anchor@__all_tenants_only__"})
+        # The audit fingerprint, and the per-minute report of hospitals not served (P1-T18a)
         self.assertEqual(
-            sorted(s for s, name in sent if name in once), ["public"], sent
+            once,
+            {
+                "ihr_audit_anchor@__all_tenants_only__",
+                "ihr_fleet_unserved@__all_tenants_only__",
+            },
+        )
+        self.assertEqual(
+            sorted(s for s, name in sent if name in once), ["public"] * len(once), sent
         )
         per_schema = Counter(s for s, name in sent if name not in once)
         self.assertNotIn("public", per_schema)
@@ -646,6 +655,62 @@ class CrossTenantIsolationTests(SimpleTestCase):
         self.assertEqual(response.status_code, 400, response.content[:300])
         self.assertEqual(response.json()["results"][0]["status_code"], 404)
         self.assertEqual(_leaks(response, self.a), set())
+
+    # --- the release gate (P1-T18a) ---------------------------------------------------------
+
+    def test_gated_hospital_shows_nothing(self):
+        """B held for a release: every route on B's host answers 503 to B's own admin and to
+        nobody signed in, except bootstrap.js, a stub from public data; nothing of B's in any
+        answer, no audit entry written in B, and A is still served."""
+        from ihr_platform import release
+
+        def entries():
+            with connection.cursor() as cursor:
+                table = f'"{self.b.schema}".ihr_audit_entry'
+                cursor.execute(f"SELECT count(*) FROM {table}")  # noqa: S608
+                return cursor.fetchone()[0]
+
+        admin = self._staff_client(self.b)  # signed in before the window opened
+        anonymous = APIClient(HTTP_HOST=self.b.domain, raise_request_exception=False)
+        with schema_context("public"):
+            before = entries()
+            release.hold([self.b.hospital.pk])
+        try:
+            answers, leaks, crawled = Counter(), [], 0
+            for route, cls, allows_get in self.routes:
+                if not allows_get:
+                    continue
+                path = fill(route, cls, self.b)
+                if path is None:
+                    continue
+                for who, client in (("admin", admin), ("anonymous", anonymous)):
+                    response = client.get(path)
+                    crawled += 1
+                    answers[response.status_code] += 1
+                    # the one exception: the web app's first script, a public-data stub
+                    expected = 200 if path == "/api/ihr/bootstrap.js" else 503
+                    if response.status_code != expected:
+                        leaks.append(f"{who} {path} -> {response.status_code}")
+                    if found := _leaks(response, self.b):
+                        leaks.append(f"{who} {path} -> {sorted(found)[:3]}")
+            changed = admin.post("/api/v1/patient/", {}, format="json")
+            stub = anonymous.get("/api/ihr/bootstrap.js")
+            a_me = self._staff_client(self.a).get("/api/v1/users/getcurrentuser/")
+            with schema_context("public"):
+                after = entries()
+        finally:
+            with schema_context("public"):
+                release.release_hold([self.b.hospital.pk])
+        print(f"\n[isolation] gated B: {crawled} requests, statuses {dict(answers)}")
+        self.assertGreater(crawled, 200)
+        self.assertEqual(leaks, [], "a held hospital answered or showed its data")
+        self.assertEqual(changed.status_code, 503)
+        self.assertEqual(stub.status_code, 200)
+        self.assertIn(b"__IHR_UPGRADING__", stub.content)
+        self.assertEqual(_leaks(stub, self.b), set())
+        self.assertEqual(after, before, "a gated request wrote B's audit trail")
+        self.assertEqual(a_me.status_code, 200)  # the gate is per hospital
+        self.assertEqual(_leaks(a_me, self.b), set())
 
     # --- runs last: everything above has populated the cache --------------------------------
 

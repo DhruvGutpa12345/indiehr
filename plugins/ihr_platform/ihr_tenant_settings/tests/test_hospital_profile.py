@@ -119,6 +119,17 @@ class HospitalProfileTests(SimpleTestCase):
         connection.set_schema(TEST_SCHEMA)
         super().tearDown()
 
+    def test_a_new_hospital_is_recorded_by_the_signal(self):
+        """P1-T18a review C10: ihr_create_tenant records nothing itself; the
+        schema_migrated signal does, so the new hospital is served by the release gate."""
+        from ihr_platform import release
+
+        connection.set_schema_to_public()
+        self.assertEqual(
+            release.recorded(self.second), (release.code_fingerprint(), None)
+        )
+        self.assertTrue(release.schema_ready(self.second))
+
     def _set(self, schema, **fields):
         with schema_context(schema):
             profile = HospitalProfile.current()

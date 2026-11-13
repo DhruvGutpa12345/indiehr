@@ -211,6 +211,10 @@ class TenantTestRunner(DiscoverRunner):
                 status=Hospital.Status.ACTIVE,
             )
             tenant.save()  # creates the schema and migrates every CARE app into it
+        # Normally recorded by the schema_migrated signal; also for a kept database (P1-T18a)
+        from ihr_platform import release
+
+        release.record(tenant)
         for domain in TEST_DOMAINS:
             Domain.objects.get_or_create(domain=domain, defaults={"tenant": tenant})
 

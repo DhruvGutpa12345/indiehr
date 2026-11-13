@@ -8,6 +8,10 @@ For each queued ``StaffInvitation``:
     hospital" e-mail with a one-time link (72 h). Activation then needs that link, a sign-in
     with password and code, and the "Join" click (ihr_identity.join).
 Either way the CARE user is linked (``StaffIdentity``) and stays inactive until then.
+
+Work for a hospital held for a release, or whose schema is not this build's (P1-T18a,
+``release.py``), is never picked up and never failed: it waits, queued, until the hospital is
+served again.
 """
 
 import hashlib
@@ -23,6 +27,7 @@ from django.utils import timezone
 from django_tenants.utils import schema_context
 from ihr_audit import context as audit
 
+from ihr_platform import release
 from ihr_platform.models import Hospital, StaffInvitation
 
 logger = logging.getLogger(__name__)
@@ -33,6 +38,15 @@ MAX_ERROR = 400
 
 class InvitationError(Exception):
     """Delivery is impossible as things stand (shown to operators; no retry)."""
+
+
+class HospitalNotReady(Exception):  # noqa: N818 (a state, not a failure)
+    """The hospital is held for a release or not on this build's schema: wait (P1-T18a)."""
+
+
+def _check_ready(hospital):
+    if not release.schema_ready(hospital):
+        raise HospitalNotReady
 
 
 URL_LIKE = re.compile(r"(?i)\b(?:[a-z][a-z0-9+.-]*://|www\.)\S*")
@@ -52,8 +66,9 @@ def claim_next():
     now = timezone.now()
     with transaction.atomic():
         inv = (
-            StaffInvitation.objects.select_for_update(skip_locked=True)
+            StaffInvitation.objects.select_for_update(skip_locked=True, of=("self",))
             .filter(status=StaffInvitation.Status.QUEUED)
+            .filter(release.ready_q("hospital__"))
             .exclude(not_before__gt=now)
             .order_by("created_at")
             .first()
@@ -79,6 +94,8 @@ def deliver_once():
             deliver(inv)
     except WaitForSetup:
         _wait(inv)
+    except HospitalNotReady:
+        _defer(inv)
     except InvitationError as exc:
         _failed(inv, str(exc), final=True)
     except Exception as exc:  # recorded; tried again after a delay, up to MAX_ATTEMPTS
@@ -103,6 +120,13 @@ def _wait(inv):
     inv.save(update_fields=["attempts", "not_before", "error"])
 
 
+def _defer(inv):
+    """Held for a release since it was claimed: not an attempt, tried again later."""
+    inv.attempts -= 1
+    inv.not_before = timezone.now() + timedelta(seconds=RETRY_SECONDS)
+    inv.save(update_fields=["attempts", "not_before"])
+
+
 def _failed(inv, error, *, final):
     inv.error = error.replace("\n", " ")[:MAX_ERROR]
     if final:
@@ -116,6 +140,7 @@ def deliver(inv):
     from ihr_platform.keycloak.hospital import ensure_member, hospital_ids
 
     hospital = inv.hospital
+    _check_ready(hospital)  # before its schema is read (P1-T18a)
     if hospital.status != Hospital.Status.ACTIVE or hospital.keycloak_org_id is None:
         raise InvitationError("the hospital is not live")
     user = _care_user(inv)
@@ -327,8 +352,9 @@ def handle_request_once():
 
     with transaction.atomic():
         req = (
-            StaffAccessRequest.objects.select_for_update(skip_locked=True)
+            StaffAccessRequest.objects.select_for_update(skip_locked=True, of=("self",))
             .filter(status=StaffAccessRequest.Status.QUEUED)
+            .filter(release.ready_q("hospital__"))
             .order_by("created_at")
             .first()
         )
@@ -343,6 +369,12 @@ def handle_request_once():
             f"worker:for {req.requested_by}",
         ):
             handle_request(req)
+    except HospitalNotReady:
+        # Nothing was done yet: back on the queue, picked up once the hospital is served
+        StaffAccessRequest.objects.filter(pk=req.pk).update(
+            status=StaffAccessRequest.Status.QUEUED
+        )
+        return True
     except (RequestError, InvitationError) as exc:
         status, error = StaffAccessRequest.Status.FAILED, str(exc)
     except Exception as exc:
@@ -359,6 +391,7 @@ def handle_request(req):
     from ihr_platform.models import StaffAccessRequest
 
     hospital = req.hospital
+    _check_ready(hospital)  # before its schema is read (P1-T18a)
     if hospital.status != Hospital.Status.ACTIVE or hospital.keycloak_org_id is None:
         raise RequestError("the hospital is not live")
     admin = keycloak_admin()
@@ -541,9 +574,14 @@ def expire_due(now=None):
         return 0
     _last_expiry["at"] = time.monotonic()
     now = now or timezone.now()
-    due = StaffInvitation.objects.filter(
-        status=StaffInvitation.Status.SENT, expires_at__lt=now
-    ).select_related("hospital")
+    # A hospital held for a release keeps its invitations until it is served (P1-T18a)
+    due = (
+        StaffInvitation.objects.filter(
+            status=StaffInvitation.Status.SENT, expires_at__lt=now
+        )
+        .filter(release.ready_q("hospital__"))
+        .select_related("hospital")
+    )
     expired = 0
     admin = None
     for inv in due:

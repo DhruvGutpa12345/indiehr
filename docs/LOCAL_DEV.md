@@ -5,7 +5,7 @@ This setup fits the current **6.7 GB** dev machine. It runs in **tenant mode**: 
 ## Start
 
 ```bash
-scripts/care-dev.sh up          # build image if missing, create ihr_dev, start db/redis/storage/api/worker (migrates every hospital)
+scripts/care-dev.sh up          # build image if missing, create ihr_dev, start db/redis/storage/api/worker (migrates the shared schema only)
 scripts/care-dev.sh seed        # first time only: hospitals alpha + beta with CARE's demo data and our test users (~3 min each)
 scripts/care-dev.sh frontend    # serve the web app bundle; /api is passed through to the backend
 ```
@@ -15,6 +15,24 @@ Then open **http://alpha.localhost:8080** or **http://beta.localhost:8080** (bro
 > Each hospital has its own users and its **own password**: the same username exists in both, as separate accounts. `seed` replaces CARE's public fixture passwords; lost them? `scripts/care-dev.sh reset-passwords` makes new ones.
 > `http://localhost:8080` is the platform's own address: it has no hospital, so the app there cannot sign in.
 > Guided tour of the app: [CLICK_THROUGH.md](CLICK_THROUGH.md).
+
+### After pulling new migrations (P1-T18a)
+
+As on staging, starting the worker never migrates a hospital. Its start-up checks that every
+live hospital's schema is this build's (`ihr_fleet_run check --record`); a hospital that is
+behind stops it ("not on this build's schema ... dev: scripts/care-dev.sh migrate-hospitals"),
+and the backend answers 503 `upgrading` for that hospital (its `bootstrap.js` shows an
+"upgrading" notice in English and Hindi). Then:
+
+```bash
+scripts/care-dev.sh migrate-hospitals   # holds, migrates and checks every hospital, syncs roles and packs, starts the worker
+```
+
+Extra options go to `ihr_fleet_run` (e.g. `--slug alpha`, `--parallel 1`). A hospital that
+fails stays held (503) and is named on a line `ihr-fleet: hospital=<slug> outcome=failed`;
+after a fix, `--resume <fleet run id>` (printed) continues; until then the worker still starts
+(a hospital this release left held stays at 503, the others are served). A fresh database needs
+nothing extra: `up` then `seed` records each new hospital as it is created.
 
 ## Keycloak (staff sign-in, P1-T3)
 
@@ -105,7 +123,7 @@ The overrides live in `deploy/dev/care-local.override.yaml`; CARE's files are un
 | Web app served by our non-root nginx image from a CI-built bundle | No local Node build (needs ~4 GB) |
 | Bundle built with `deploy/frontend.env` and checked by `scripts/check-bundle-egress.sh`; enforced CSP allows only the page's own origin (API) and `localhost:9100` (files) | No third-party calls (P0-T10). Facility map and address search are blocked on purpose |
 | Test-user passwords replaced, one per hospital | CARE's fixture passwords are public in its source |
-| Tenant mode: `DJANGO_SETTINGS_MODULE=ihr_platform.settings.local`, database `ihr_dev`; the worker runs `ihr_create_tenant --public --domain localhost`, syncs roles per hospital (`all_tenants_command --no-public`) and applies the reference packs, CARE's system value sets first, to every live hospital (`ihr_pack_apply --all --startup`, P1-T15a) | One schema per hospital, as in production (ADR-002) |
+| Tenant mode: `DJANGO_SETTINGS_MODULE=ihr_platform.settings.local`, database `ihr_dev`; the worker runs `migrate_schemas --shared`, `ihr_create_tenant --public --domain localhost`, then `ihr_fleet_run check roles packs --record --startup`: checks every live hospital is on this build's schema (P1-T18a), syncs roles per hospital and applies the reference packs, CARE's system value sets first (P1-T15a). Hospitals are migrated only by `scripts/care-dev.sh migrate-hospitals` | One schema per hospital, as in production (ADR-002); hospitals migrate only in a release window, as in production |
 | nginx passes `/api/` to `backend:9000` (`API_UPSTREAM`) keeping the browser's host | The backend picks the hospital from the address; no cross-origin API calls |
 
 ## Ports

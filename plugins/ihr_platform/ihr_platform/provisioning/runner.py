@@ -11,10 +11,12 @@ from contextlib import contextmanager
 from django.db import connection, connections
 from django.utils import timezone
 
+from ihr_platform import release
 from ihr_platform.models import SCHEMA_NAME_RE, Domain, Hospital, TenantOperation
 from ihr_platform.provisioning import steps
 
-MAX_ERROR = 300
+# Steps after this one work in the schema: it must be this build's first (P1-T18a)
+SCHEMA_STEP = steps.STEP_NAMES.index("schema")
 # A crashed run stays "running"; the lock above is what keeps two runs apart.
 OPEN = {
     TenantOperation.Status.PENDING,
@@ -27,6 +29,10 @@ PERSONAL_FIELDS = ("admin_email", "admin_first_name", "admin_last_name", "phone"
 
 class ProvisioningError(Exception):
     pass
+
+
+class HospitalUpgrading(ProvisioningError):  # noqa: N818 (a state, not a failure)
+    """The hospital is held for a release (ihr_fleet_run): try again once it is released."""
 
 
 def start(form, requested_by):
@@ -75,9 +81,31 @@ def is_busy(slug):
 
 
 def _safe_error(exc):
-    """The exception's class and a short message (operators see it; no secrets in it)."""
-    text = str(exc).replace("\n", " ")
-    return f"{type(exc).__name__}: {text[:MAX_ERROR]}"
+    """What operators see of a failure: never row values or secrets (release.safe_error)."""
+    return release.safe_error(exc)
+
+
+def _check_not_held(hospital_id):
+    hospital = Hospital.objects.filter(pk=hospital_id).first()
+    row = release.recorded(hospital) if hospital is not None else None
+    if row is not None and row[1] is not None:
+        msg = f"{hospital.slug} is held for a release; try again once it is released."
+        raise HospitalUpgrading(msg)
+    return hospital
+
+
+def _schema_is_this_builds(op, form, record):
+    """A run resumed across a release must never go on with an older schema (C3, O6): if the
+    schema was not verified for this build, the schema step runs again (a no-op migrate when
+    nothing is missing), which records it."""
+    hospital = Hospital.objects.filter(pk=op.hospital_id).first()
+    row = release.recorded(hospital) if hospital is not None else None
+    if hospital is None or (row is not None and row[0] == release.code_fingerprint()):
+        return
+    connection.set_schema_to_public()
+    steps.schema(op, form)
+    connection.set_schema_to_public()
+    record["migrated_again_at"] = timezone.now().isoformat()
 
 
 def run(op, stop_after=None):
@@ -91,6 +119,8 @@ def run(op, stop_after=None):
         if op.status not in OPEN:
             msg = f"This operation is {op.status}; start a new one instead."
             raise ProvisioningError(msg)
+        if op.hospital_id:
+            _check_not_held(op.hospital_id)
         form = steps.OnboardingForm(**op.input)
         # Operations recorded before a step was added get it, pending, in its place.
         by_name = {record["name"]: record for record in op.steps}
@@ -101,7 +131,10 @@ def run(op, stop_after=None):
         op.status = TenantOperation.Status.RUNNING
         op.started_at = op.started_at or timezone.now()
         op.save()
-        for record, (name, step) in zip(op.steps, steps.STEPS, strict=True):
+        schema_record = op.steps[SCHEMA_STEP]
+        for index, (record, (name, step)) in enumerate(
+            zip(op.steps, steps.STEPS, strict=True)
+        ):
             if record["status"] == "succeeded":
                 continue
             record.update(status="running", started_at=timezone.now().isoformat())
@@ -110,6 +143,8 @@ def run(op, stop_after=None):
             began = time.monotonic()
             try:
                 connection.set_schema_to_public()
+                if index > SCHEMA_STEP:
+                    _schema_is_this_builds(op, form, schema_record)
                 step(op, form)
             except Exception as exc:
                 connection.set_schema_to_public()
@@ -211,6 +246,10 @@ def resend_setup(op):
         raise ProvisioningError("Only a finished provisioning has a setup e-mail.")
     with exclusive(op.slug):
         op.refresh_from_db()
+        hospital = _check_not_held(op.hospital_id)
+        if hospital is not None and not release.schema_ready(hospital):
+            msg = f"{op.slug} is not on this release's schema yet; try again later."
+            raise HospitalUpgrading(msg)
         try:
             sent = steps.resend_setup(op)
         except Exception as exc:

@@ -96,7 +96,8 @@ def run_one_operation():
             else:
                 runner.run(op)
     except runner.ProvisioningError as exc:
-        if runner.is_busy(op.slug):
+        # Held for a release (P1-T18a), or another run holds this hospital: wait
+        if isinstance(exc, runner.HospitalUpgrading) or runner.is_busy(op.slug):
             # Another run (the command line, another provisioner) holds this hospital:
             # put the request back rather than dropping it.
             TenantOperation.objects.filter(pk=op.pk, queued_at__isnull=True).update(

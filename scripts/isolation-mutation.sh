@@ -49,6 +49,13 @@ terminology-install|plugins/ihr_platform/ihr_terminology/apps.py|        client.
 role-sync-guard|plugins/ihr_platform/ihr_roles/management/commands/sync_permissions_roles.py|        if held:|        if False:|ihr_roles.tests.test_guarded_sync.GuardedSync.test_refuses_to_delete_a_held_role|
 patient-global-edit-refused|plugins/ihr_platform/ihr_platform/settings/secure.py|    if settings.get("PATIENT_GLOBAL_EDIT_ACCESS_ENABLED"):|    if False:|ihr_platform.tests.test_secure_settings.SecureRulesTests.test_patient_global_edit_access_is_refused|
 packs-edited-row-kept|plugins/ihr_platform/ihr_refdata/engine.py|        elif record is not None and record.applied_sha256 == have:|        elif record is not None:|ihr_refdata.tests.test_engine.RuleTests.test_an_edited_row_waits_for_the_admin|
+release-gate|plugins/ihr_platform/ihr_platform/settings/tenancy.py|        "ihr_platform.release_gate.ReleaseGateMiddleware",\n||test_gated_hospital_shows_nothing|
+release-gate-auth|plugins/ihr_platform/ihr_identity/authentication.py|    if not release.servable(tenant):  # held, or not on this build's schema (P1-T18a)|    if False:|ihr_platform.tests.test_release.DefenceInDepthTests.test_staff_and_service_sign_ins_refuse|
+release-gate-beat|plugins/ihr_platform/ihr_platform/beat.py|        return active.filter(release.ready_q())|        return active|ihr_platform.tests.test_release.DefenceInDepthTests.test_beat_skips_a_held_hospital|
+release-gate-staff-worker|plugins/ihr_platform/ihr_platform/invitations.py|            .filter(status=StaffInvitation.Status.QUEUED)\n            .filter(release.ready_q("hospital__"))|            .filter(status=StaffInvitation.Status.QUEUED)|ihr_platform.tests.test_release.DefenceInDepthTests.test_the_staff_worker_waits_and_never_fails_the_work|
+release-gate-celery-task|plugins/ihr_platform/ihr_platform/apps.py|        celery_gate.install()|        pass|ihr_platform.tests.test_release.CeleryGateTests.test_a_queued_task_never_runs_in_a_held_hospital|
+release-roles-hold-released|plugins/ihr_platform/ihr_platform/fleet.py|                release.release_hold(passed, reason=release.HOLD_ROLES)|                pass|ihr_platform.tests.test_release.FleetTests.test_a_role_refusal_hold_is_released_by_its_resume|
+release-roles-never-lift-window|plugins/ihr_platform/ihr_platform/fleet.py|                release.release_hold(passed, reason=release.HOLD_ROLES)|                release.release_hold(passed)|ihr_platform.tests.test_release.FleetTests.test_a_run_whose_roles_pass_never_lifts_a_window_hold|
 TABLE
 )
 

@@ -198,10 +198,18 @@ services:
       retries: 10
     mem_limit: 384m
 
-  # One-shot: schema changes, the platform's own addresses, roles and the reference packs
-  # (code lists, P1-T15a) in every live hospital. The web app and workers start only after
-  # it has finished without error; one hospital's failed pack apply is recorded and alerted
-  # on (deploy/logs/alerts/packs.yml) but never stops the start.
+  # One-shot: the platform's (public) schema changes and its own addresses, then a check that
+  # every live hospital's schema is this build's (recorded for the release gate, P1-T18a),
+  # then roles and the reference packs (code lists, P1-T15a) in every live hospital. It never
+  # migrates a hospital: a hospital behind (or ahead of) this build stops the start, and
+  # hospitals are migrated only in the announced window (`staging.sh fleet migrate ...`;
+  # P1-T18b's `staging.sh release`). It never records "" over a hospital the previous build
+  # still serves. A hospital whose migration this build's release already tried and left held
+  # does not stop the start: it stays at 503 and is alerted on, and the others start. The
+  # web app and workers start only after it has finished without
+  # error; one hospital's failed role sync is held and alerted on (deploy/logs/alerts/
+  # fleet.yml), and a failed pack apply recorded and alerted on (packs.yml), but neither stops
+  # the start.
   migrate:
     <<: *app
     restart: "no"
@@ -209,12 +217,10 @@ services:
       - bash
       - -c
       - >-
-        python manage.py migrate --noinput
+        python manage.py migrate_schemas --shared --noinput
         && python manage.py ihr_create_tenant --public --domain localhost
         --domain console.${IHR_TENANT_DOMAIN_SUFFIX} --domain backend
-        && python manage.py all_tenants_command --no-public sync_permissions_roles --check
-        && python manage.py all_tenants_command --no-public sync_permissions_roles
-        && python manage.py ihr_pack_apply --all --startup
+        && python manage.py ihr_fleet_run check roles packs --record --startup
     depends_on:
       db:
         condition: service_healthy

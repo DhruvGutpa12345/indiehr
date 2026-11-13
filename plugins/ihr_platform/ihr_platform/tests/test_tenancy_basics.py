@@ -35,6 +35,13 @@ PUBLIC_TABLE_ALLOW_LIST = {
     # commit), the same for every hospital; no hospital or patient data, and no hospital table
     # points at it (each hospital's own pack state is in its schema)
     "ihr_refdata_registry_packrelease",
+    # Releases (P1-T18a): per hospital, which build its schema was verified for and whether it
+    # is held for a release window (fingerprints and times, no hospital or patient data); the
+    # fleet runner's runs (steps, counts, operator); the announced windows (start, length, a
+    # short public note)
+    "ihr_platform_hospitalschemastate",
+    "ihr_platform_fleetrun",
+    "ihr_platform_maintenancewindow",
 }
 SECOND_DOMAIN = "second.testserver"
 

@@ -7,6 +7,7 @@ very instances it deletes (``ihr_release_addresses``); nothing process-wide is s
 
 from django.db.models.signals import pre_delete
 from django.dispatch import receiver
+from django_tenants.signals import schema_migrated
 
 from ihr_platform.models import Domain, Hospital, RetiredAddress
 
@@ -28,3 +29,17 @@ def retire_slug(sender, instance, **kwargs):
 def retire_domain(sender, instance, **kwargs):
     if not _released(instance, instance.tenant):
         RetiredAddress.objects.get_or_create(kind="domain", value=instance.domain)
+
+
+# --- release state (P1-T18a) -------------------------------------------------------------
+
+
+@receiver(schema_migrated)
+def record_schema_after_migrate(sender, schema_name, **kwargs):
+    """django-tenants sends this after a schema's migrations finished without error (never
+    after a failure). Record which build that schema now matches (release.py): covers
+    provisioning, ihr_create_tenant, the test runner and a manual migrate_schemas."""
+    from ihr_platform import release
+
+    if release.RECORD_ON_SIGNAL["on"]:
+        release.record_after_migrate(schema_name)

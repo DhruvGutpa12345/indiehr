@@ -17,7 +17,8 @@
 </table>
 {% if setup %}
 <h2>First administrator</h2>
-{% if setup.done %}<p class="ok">{{ setup.email }} has set up their account and signed in.</p>
+{% if setup.upgrading %}<p class="muted">The hospital is being upgraded (held for a release, or not on this build's schema yet): its first administrator is shown again once it is served.</p>
+{% elif setup.done %}<p class="ok">{{ setup.email }} has set up their account and signed in.</p>
 {% elif setup.sent_at %}<p>Setup e-mail sent to {{ setup.email }} on {{ setup.sent_at|date:"d-m-Y H:i" }}; the link works once, for {{ setup.hours }} hours. Waiting for them to set up their password and authenticator.</p>
 {% if setup.problem %}<p class="error" role="alert">{{ setup.problem }}</p>{% endif %}
 <p class="muted">Sending again replaces the unused account, so earlier links stop working.</p>

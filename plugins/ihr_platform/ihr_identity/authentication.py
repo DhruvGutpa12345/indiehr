@@ -15,6 +15,7 @@ from django.contrib.auth import get_user_model
 from django.db import connection
 from django.utils import timezone
 from ihr_audit import context as audit
+from ihr_platform import release
 from ihr_platform.links import hospital_origins
 from ihr_platform.models import Hospital
 from rest_framework.authentication import BaseAuthentication, TokenAuthentication
@@ -40,6 +41,8 @@ def check_stored_token(token, now=None):
     tenant = connection.tenant
     if tenant.status != Hospital.Status.ACTIVE:
         raise TokenRejectedError("hospital is not active")
+    if not release.servable(tenant):  # held, or not on this build's schema (P1-T18a)
+        raise TokenRejectedError("hospital is being upgraded")
     if tenant.keycloak_org_id is None:
         raise TokenRejectedError("hospital is not linked to Keycloak")
     try:
@@ -248,4 +251,6 @@ class ServiceTokenAuthentication(TokenAuthentication):
             raise AuthenticationFailed("Tokens are for machine accounts only.")
         if connection.tenant.status != Hospital.Status.ACTIVE:
             raise AuthenticationFailed("Hospital is not active.")
+        if not release.servable(connection.tenant):  # P1-T18a
+            raise AuthenticationFailed("Hospital is being upgraded.")
         return user, token

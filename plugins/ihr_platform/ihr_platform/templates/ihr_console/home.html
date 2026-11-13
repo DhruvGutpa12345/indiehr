@@ -3,20 +3,34 @@
 <h1>Hospitals</h1>
 <p><a href="/ops/hospitals/new/">+ New hospital</a></p>
 <table>
-  <tr><th>Address</th><th>Name</th><th>Status</th><th>Live since</th></tr>
+  <tr><th>Address</th><th>Name</th><th>Status</th><th>Live since</th><th>Release</th></tr>
   {% for h in hospitals %}
   <tr><td>{{ h.slug }}.{{ suffix }}</td><td>{{ h.name }}</td><td>{{ h.status }}</td>
-      <td>{{ h.activated_at|date:"d-m-Y H:i"|default:"—" }}</td></tr>
-  {% empty %}<tr><td colspan="4" class="muted">No hospitals yet.</td></tr>{% endfor %}
+      <td>{{ h.activated_at|date:"d-m-Y H:i"|default:"—" }}</td>
+      <td{% if h.release_note %} class="error"{% endif %}>{{ h.release_note|default:"served" }}</td></tr>
+  {% empty %}<tr><td colspan="5" class="muted">No hospitals yet.</td></tr>{% endfor %}
 </table>
-<h2>Recent provisioning runs</h2>
+{% if upgrades %}<h2>Recent upgrades (one per hospital and fleet run)</h2>
+<p><a href="/ops/">Show provisioning runs</a></p>
+{% else %}<h2>Recent provisioning runs</h2>
+<p><a href="/ops/?kind=upgrade">Show upgrades</a></p>{% endif %}
 <table>
   <tr><th>Address</th><th>Kind</th><th>Status</th><th>Started</th><th></th></tr>
   {% for op in operations %}
   <tr><td>{{ op.slug }}</td><td>{{ op.kind }}</td>
-      <td>{{ op.status }}{% if op.queued_at %} (queued: {{ op.queued_action }}){% endif %}</td>
+      <td>{{ op.status }}{% if op.queued_at %} (queued: {{ op.queued_action }}){% endif %}{% if op.kind == "upgrade" %} ({{ op.result.outcome }}){% endif %}</td>
       <td>{{ op.created_at|date:"d-m-Y H:i" }}</td>
-      <td>{% if op.kind == "provision" %}<a href="/ops/operations/{{ op.id }}/">details</a>{% endif %}</td></tr>
+      <td>{% if op.kind != "rollback" %}<a href="/ops/operations/{{ op.id }}/">details</a>{% endif %}</td></tr>
   {% empty %}<tr><td colspan="5" class="muted">None yet.</td></tr>{% endfor %}
+</table>
+<h2>Fleet runs</h2>
+<table>
+  <tr><th>Run</th><th>Steps</th><th>By</th><th>Status</th><th>Hospitals</th><th>Started</th></tr>
+  {% for run in fleet_runs %}
+  <tr><td>{{ run.id }}</td><td>{{ run.steps|join:", " }}</td><td>{{ run.operator }}</td>
+      <td>{{ run.status }}</td>
+      <td>{% for outcome, n in run.counts.items %}{{ n }} {{ outcome }}{% if not forloop.last %}, {% endif %}{% endfor %}</td>
+      <td>{{ run.started_at|date:"d-m-Y H:i" }}</td></tr>
+  {% empty %}<tr><td colspan="6" class="muted">None yet.</td></tr>{% endfor %}
 </table>
 {% endblock %}

@@ -171,7 +171,11 @@ def admin_account(op, form):
 
 
 def schema(op, form):
-    """Run every migration in the hospital's schema; a resume finishes the migrations."""
+    """Run every migration in the hospital's schema; a resume finishes the migrations.
+    Then check it is this build's and record that (P1-T18a): the later steps and the gate
+    need it."""
+    from ihr_platform import release
+
     hospital = _hospital(op)
     call_command(
         "migrate_schemas",
@@ -180,6 +184,11 @@ def schema(op, form):
         interactive=False,
         verbosity=0,
     )
+    connection.set_schema_to_public()
+    state = release.record(hospital)
+    if not state.current:
+        msg = f"the schema is {state.verdict} after migrating, not this build's"
+        raise StepError(msg)
 
 
 def domains(op, form):

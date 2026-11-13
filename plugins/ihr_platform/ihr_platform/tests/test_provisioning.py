@@ -14,6 +14,7 @@ from django.db import connection
 from django.test import SimpleTestCase
 from django_tenants.utils import schema_context, schema_exists
 
+from ihr_platform import release
 from ihr_platform.models import Domain, Hospital, RetiredAddress, TenantOperation
 from ihr_platform.provisioning import runner, steps
 from ihr_platform.test_runner import TEST_SCHEMA
@@ -185,9 +186,24 @@ class ProvisioningTests(SimpleTestCase):
             self.assertEqual(op.status, "failed")
             failed = [s for s in op.steps if s["status"] == "failed"]
             self.assertEqual([s["name"] for s in failed], [name])
-            self.assertIn(f"injected failure in {name}", failed[0]["error"])
-        runner.run(op)
+            # S7: a message that is not one of ours keeps no text, only where it was raised
+            self.assertRegex(
+                failed[0]["error"], r"^RuntimeError; at test_provisioning\.py:\d+$"
+            )
+            self.assertNotIn("injected failure", failed[0]["error"])
+        # A release between two runs (P1-T18a, C3/O6): the schema is not this build's any
+        # more, so before the next step the schema step runs again and records it
+        other_build = "f" * 64
+        with (
+            mock.patch.object(steps, "schema", side_effect=steps.schema) as again,
+            mock.patch.object(release, "code_fingerprint", return_value=other_build),
+        ):
+            runner.run(op)
+            self.assertEqual(again.call_count, 1)
+            hospital = Hospital.objects.get(slug="prov-one")
+            self.assertEqual(release.recorded(hospital)[0], other_build)
         op.refresh_from_db()
+        self.assertIn("migrated_again_at", op.steps[steps.STEP_NAMES.index("schema")])
         self.assertEqual(op.status, "succeeded")
         self.assertTrue(all(s["status"] == "succeeded" for s in op.steps))
         self.assertTrue(all("seconds" in s for s in op.steps))
@@ -238,6 +254,8 @@ class ProvisioningTests(SimpleTestCase):
         runner.run(op)
         self.assertEqual(self._contents(hospital, op), counts)
         self.assertEqual(len(self.kc.sent), 1)
+        # ...and the schema step recorded this build again (the gate serves it)
+        self.assertTrue(release.servable(hospital))
 
         # Sending again replaces the unused account (Keycloak cannot cancel a sent link,
         # so the earlier link must die with the old account) and re-links the new one.

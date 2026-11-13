@@ -11,6 +11,7 @@ from pathlib import Path
 from django.core.exceptions import ValidationError
 from django.core.management.base import BaseCommand, CommandError
 from django_tenants.utils import schema_context
+from ihr_platform import release
 from ihr_platform.models import Hospital
 
 from ihr_tenant_settings.models import HospitalProfile
@@ -55,6 +56,7 @@ class Command(BaseCommand):
         if hospital is None:
             msg = f"No hospital with slug {slug!r}"
             raise CommandError(msg)
+        release.require_ready(hospital)  # never into a held or older schema (S6)
         with schema_context(hospital.schema_name):
             profile = HospitalProfile.current()
             for field in TEXT_FIELDS:
