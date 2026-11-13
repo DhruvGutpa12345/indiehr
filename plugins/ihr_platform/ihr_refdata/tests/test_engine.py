@@ -20,6 +20,7 @@ from ihr_audit import context as audit
 from ihr_platform.models import Hospital
 from ihr_platform.provisioning import runner
 from ihr_platform.test_runner import TEST_SCHEMA
+from ihr_platform.testing import owner_for_test
 from ihr_refdata_registry.models import PackRelease
 
 from ihr_refdata import engine, manifest, valuesets
@@ -49,6 +50,9 @@ class PackCase(TestCase):
     databases = {"default"}
 
     def setUp(self):
+        # Pack apply and the pending decisions are owner-run (the migrate one-shot,
+        # ihr_fleet_run, provisioning, an operator's one-off; P1-T19a)
+        owner_for_test(self)
         # Only the test hospital is live here (rolled back with the test)
         Hospital.objects.exclude(
             schema_name__in=[get_public_schema_name(), TEST_SCHEMA]

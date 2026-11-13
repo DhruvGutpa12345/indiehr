@@ -434,6 +434,7 @@ def coverage(connection, schema):
             problems.append(
                 f"{schema}: audit functions are missing or were changed (migrate)"
             )
+        problems += _sealing_problems(cursor, schema)  # the stamp trigger too
         row_oid = functions.get("ihr_audit_row", (None,))[0]
         for table in tables(cursor, schema):
             have = installed.get(table, {})
@@ -458,12 +459,23 @@ def coverage(connection, schema):
     return problems
 
 
+def _sealing_problems(cursor, schema):
+    """The sealing functions and the stamp trigger (P1-T19a, S2/S3): there, enabled and
+    this build's (seal.ensure_sealing, every migrate, puts them back)."""
+    from ihr_audit.seal import sealing_problems
+
+    return sealing_problems(cursor, schema)
+
+
 def _unclassified(cursor, schema):
-    """Secret-looking columns nobody has classified."""
+    """Secret-looking columns nobody has classified. From the catalogue, never
+    information_schema, which hides the tables the reading role has no rights on (S8)."""
     problems = []
     cursor.execute(
-        "SELECT table_name, column_name FROM information_schema.columns "
-        "WHERE table_schema = %s ORDER BY 1, 2",
+        "SELECT c.relname, a.attname FROM pg_attribute a "
+        "JOIN pg_class c ON c.oid = a.attrelid JOIN pg_namespace s ON s.oid = c.relnamespace "
+        "WHERE s.nspname = %s AND c.relkind IN ('r', 'p', 'v', 'm', 'f') "
+        "AND a.attnum > 0 AND NOT a.attisdropped ORDER BY 1, 2",
         [schema],
     )
     for table, column in cursor.fetchall():

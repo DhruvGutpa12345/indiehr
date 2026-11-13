@@ -173,3 +173,19 @@ What is recorded:
 - Every write costs one more insert. Patient-linked rows written only through an encounter cost one indexed lookup.
 - The trail grows with use. Its retention is decided with the retention engine (P4-T3); until then nothing deletes it.
 - The trail holds patient data and gets the same protection as the records: the same schema, backups and access rules.
+
+## Amendment (P1-T19a, 2026-11-13): who may write what the chain relies on
+
+- **Status:** Proposed (Q-K30, awaiting the owner). It changes how the chain is written, not what it guarantees.
+- **Why:** with separate database roles (P1-T19, `ihr_platform/db_roles.py`) the web app and the workers run as `ihr_app`, which must still insert entries (the row triggers run as the caller, and the request middleware inserts directly). A plain INSERT right would let code running as the app choose an entry's `txid`, `at`, `salt` or `id`, and insert seals: backdate a forged entry, poison a sealed window, pre-claim ids, or forge a seal that stops sealing for good (P1-T19 attack, S2 and S3).
+- **Entries:**
+  - `ihr_app` may insert only the data columns (`kind`, `actor`, `context`, `tbl`, `op`, `row_pk`, `patients`, `data`); an explicit `id`, `txid`, `at` or `salt` is refused by privilege. It may read entries, never update, delete or truncate them (the append-only triggers become a second line).
+  - A BEFORE INSERT trigger, `ihr_audit_stamp`, forces `txid`, `at` and `salt` to the database's own values for every insert, the owner's too (migration `ihr_audit.0004`, kept current by `ensure_sealing` below). `coverage()` reports it missing or disabled.
+- **Seals:**
+  - `ihr_app` reads seals and never inserts one. Sealing moves into each hospital schema: `ihr_audit_seal_next()`, SECURITY DEFINER, owned by the database owner, no arguments, its `search_path` pinned to `pg_catalog, pg_temp`, EXECUTE revoked from PUBLIC and granted to `ihr_app` only (by `ensure_grants`). It computes every window, bound and hash itself, exactly as the Python sealer did (at most about 5,000 entries a seal, never inside a transaction, never above the oldest running transaction), and inserts the seal. The beat job (`ihr_audit.seal`) calls it.
+  - `ihr_audit_seal_run(batch, format)` is the owner's own (not executable by the app): tests use it for small batches and the older formats.
+  - `verify` stays in Python and recomputes every seal from the entries, so a changed sealing function is caught like any other tampering (the reason §5 kept sealing out of a database function).
+  - Migration 0004 installed the functions and the stamp trigger once, from SQL frozen in it. From then on `ihr_audit.seal.ensure_sealing`, on every hospital schema's post_migrate, keeps them this build's: a comment on `ihr_audit_seal_next` holds the build's version and a fingerprint of each function as held, so any migrate puts back one that was dropped or altered (`SECURITY INVOKER`, a lost `search_path`, an edited body) and brings every schema to a newer build's sealing code; `coverage()` reports one that is not current.
+  - A sealing run that finds the schema's advisory lock taken returns at once (`pg_try_advisory_xact_lock`): the app role may take the same key, and must not be able to make every sealer wait. `seal_once` bounds each call (30 s `statement_timeout`).
+- **Not changed:** what the chain covers and how it is verified, the export formats, the outside fingerprints. Any session may still set the audit actor and context it labels its own writes with (noted in P1-T19's design, §7).
+- **Still not protected:** a database owner (as before), and a live attacker running as `ihr_app` who delays sealing: holding the per-hospital seal lock (sealing then skips that schema each minute) or keeping a transaction open (the horizon). Nothing can be forged that way, and the verifier's "is the sealer running?" (SealerLate) reports it.

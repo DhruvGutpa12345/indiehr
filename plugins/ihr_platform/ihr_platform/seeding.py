@@ -22,6 +22,7 @@ def load_demo_data(schema_name, domain):
 
     from ihr_platform.models import Hospital
     from ihr_platform.provisioning import runner
+    from ihr_platform.testing import as_owner
 
     hospital = Hospital.objects.get(schema_name=schema_name)
     care_call_command = fixture_context.call_command
@@ -37,7 +38,12 @@ def load_demo_data(schema_name, domain):
             # --startup): take its lock, as every other caller on a live hospital does
             live = hospital.status == Hospital.Status.ACTIVE
             try:
-                with runner.exclusive(hospital.slug) if live else nullcontext():
+                # Pack apply is an owner-run job (it records the release in public); in tests
+                # that run as the app role it runs as the owner, as in production (P1-T19a)
+                with (
+                    runner.exclusive(hospital.slug) if live else nullcontext(),
+                    as_owner(),
+                ):
                     engine.apply_packs(hospital, operator="demo-seed")
             except runner.ProvisioningError:
                 msg = (

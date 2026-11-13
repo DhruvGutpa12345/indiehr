@@ -14,7 +14,16 @@ Steps, always run in this order whatever order they are named in:
   the schema and records it (release.py).
 - ``check``: verify every selected schema against this build; ``--record`` writes the
   fingerprint of each schema found current (never "" over a recorded one: the previous build
-  may still be serving it, S4). Without ``migrate`` in the same run, a live (active or
+  may still be serving it, S4). It also reports how each schema's database grants differ from
+  the model (P1-T19a, ihr_platform/db_roles.py), without changing them; ``migrate`` repairs
+  them for every hospital it handles: migrated or already current (a hospital whose grants
+  cannot be repaired is held and noted, the others go on: review C3), and as far as they can
+  be for one whose migration failed (C2). A fleet-wide run (no hospitals named) also covers
+  every other hospital schema in the catalogue: ``migrate`` converges the grants of the
+  archived, deferred and unselected ones and of any schema with no hospital row, and
+  ``check`` reports them (second review of C2: an app process gates a hospital whose schema
+  gives the app a right beyond the model, but the app role is shared, so only the owner's
+  repair takes the right away). Without ``migrate`` in the same run, a live (active or
   suspended) hospital that is not this build's is a fault for the whole fleet: the start-up
   one-shot then refuses to start, pointing to the release (design item 9). The exception is a
   hospital this build's release already tried and left held (C2): it stays gated and is
@@ -572,6 +581,7 @@ class Fleet:
         self.err = err or (lambda line: sys.stderr.write(f"{line}\n"))
         self.entries = []
         self.run_row = None
+        self.granted = set()  # schemas whose grants this run has tried to converge
 
     # selection ----------------------------------------------------------------------------
 
@@ -748,13 +758,16 @@ class Fleet:
             self._note(entry, "hold", "done")
 
     def _migrate(self):
+        self._migrate_selected()
+        self._converge_rest()
+
+    def _migrate_selected(self):
         todo = []
         for entry in self._alive():
             if needs_migrate(entry.hospital):
                 todo.append(entry)
             else:
-                settle(entry.hospital)
-                self._note(entry, "migrate", "done", note="already this build's")
+                self._already_current(entry)
         if not todo:
             return
         # Mark, then migrate (design item 3): the gate answers 503 for them from now on
@@ -795,6 +808,11 @@ class Fleet:
             time.sleep(delay)
             waiting = busy
 
+    def _already_current(self, entry):
+        settle(entry.hospital)
+        if self._repair_grants(entry):
+            self._note(entry, "migrate", "done", note="already this build's")
+
     def _fallback(self, entry, result):
         code = result.get("exit_code")
         self.err(
@@ -826,13 +844,139 @@ class Fleet:
         }
         if result.get("outcome") != "done":
             self._note(entry, "migrate", result.get("outcome", "failed"), **details)
+            self._converge_grants(entry)
             return
         state = settle(entry.hospital)
-        if state.current:
-            self._note(entry, "migrate", "done", **details)
-        else:
+        if not state.current:
             details["error"] = f"the schema is {state.verdict} after migrating"
             self._note(entry, "migrate", "failed", **details)
+            self._converge_grants(entry)
+        elif self._repair_grants(entry):
+            self._note(entry, "migrate", "done", **details)
+
+    def _repair_grants(self, entry):
+        """The app role's grants on this hospital's schema (P1-T19a; post_migrate did it for
+        a migrated one, this also covers one already current). Off: nothing. True when they
+        were brought to the model. A problem only an operator can fix (RolesError, required
+        mode) or a lock time-out stops this hospital alone (C3): it is held and noted, and the
+        run goes on with the others."""
+        from django.db import DatabaseError
+
+        from ihr_platform import db_roles
+
+        slug = entry.hospital.slug
+        self.granted.add(entry.hospital.schema_name)
+        try:
+            findings = db_roles.ensure_grants(connection, entry.hospital.schema_name)
+        except (db_roles.RolesError, DatabaseError) as exc:
+            connection.set_schema_to_public()
+            release.hold([entry.hospital.pk], reason=release.HOLD_MIGRATE)
+            self._note(
+                entry,
+                "migrate",
+                "held",
+                error=f"database grants: {release.safe_error(exc)}"[:300],
+            )
+            return False
+        if changed := db_roles.applied(findings):
+            self.out(f"{slug}: {changed} database grant(s) repaired")
+        if problems := findings.of("problem"):
+            self.out(
+                f"{slug}: {len(problems)} database grant problem(s) left for an operator "
+                "(ihr_db_role_check --report)"
+            )
+        return True
+
+    def _converge_grants(self, entry):
+        """A hospital whose migration did not finish stays held, and its grants are still
+        brought to the model as far as they can be: revoking a right beyond it is always
+        safe, so no process keeps finding a stale right there (C2). What is left (a table
+        the lists name that its schema does not have yet) waits for its migration."""
+        from django.db import DatabaseError
+
+        from ihr_platform import db_roles
+
+        self.granted.add(entry.hospital.schema_name)
+        try:
+            db_roles.ensure_grants(connection, entry.hospital.schema_name)
+        except (db_roles.RolesError, DatabaseError) as exc:
+            connection.set_schema_to_public()
+            self.out(
+                f"{entry.hospital.slug}: database grants: {release.safe_error(exc)}"[
+                    :300
+                ]
+            )
+
+    def _other_schemas(self, done):
+        """A fleet-wide run's other hospital schemas: those in the catalogue (never from
+        Hospital rows) that are not in ``done``. None when hospitals were named (``--slug``,
+        ``--resume``) or the roles are off."""
+        from ihr_platform import db_roles
+
+        if self.slugs or db_roles.mode() == "off":
+            return []
+        with connection.cursor() as cursor:
+            return [s for s in db_roles.hospital_schemas(cursor) if s not in done]
+
+    def _converge_rest(self):
+        """The grants of every hospital schema this run did not converge (archived, deferred,
+        not selected, or with no hospital row) are brought to the model too (second review of
+        C2): an app process only gates a hospital whose schema gives the app a right beyond
+        the model, and the shared app role could still use the right through any hospital it
+        serves. Revoking such a right is always safe. A schema that cannot be repaired (a
+        lock time-out, or a problem only an operator can fix) is named and the run goes on;
+        the app processes keep it gated and DatabaseSchemaGated keeps naming it."""
+        from django.db import DatabaseError
+
+        from ihr_platform import db_roles
+
+        for schema in self._other_schemas(self.granted):
+            self.granted.add(schema)
+            try:
+                findings = db_roles.ensure_grants(connection, schema)
+            except (db_roles.RolesError, DatabaseError) as exc:
+                connection.set_schema_to_public()
+                self.out(
+                    f"{schema} (not migrated by this run): database grants: "
+                    f"{release.safe_error(exc)}"[:300]
+                )
+                continue
+            if changed := db_roles.applied(findings):
+                self.out(
+                    f"{schema} (not migrated by this run): {changed} database grant(s) "
+                    "repaired"
+                )
+
+    def _grant_findings(self, entry):
+        """Report only (ihr_fleet_run check): how this schema's grants differ."""
+        from ihr_platform import db_roles
+
+        findings = list(
+            db_roles.report(connection, [entry.hospital.schema_name], database=False)
+        )
+        for finding in findings[:10]:
+            self.out(f"{entry.hospital.slug}: database grants: {finding}")
+        if len(findings) > 10:  # noqa: PLR2004
+            self.out(
+                f"{entry.hospital.slug}: database grants: {len(findings)} differences"
+            )
+        return len(findings)
+
+    def _report_rest(self):
+        """check, fleet-wide: how the other hospital schemas' grants differ (report only;
+        a fleet-wide migrate repairs them)."""
+        from ihr_platform import db_roles
+
+        taken = {e.hospital.schema_name for e in self.entries}
+        for schema in self._other_schemas(taken):
+            findings = list(db_roles.report(connection, [schema], database=False))
+            for finding in findings[:10]:
+                self.out(f"{schema} (not in this run): database grants: {finding}")
+            if len(findings) > 10:  # noqa: PLR2004
+                self.out(
+                    f"{schema} (not in this run): database grants: {len(findings)} "
+                    "differences"
+                )
 
     def _failed_in_this_release(self, hospital, row):
         """Held, and a run of this build that migrates already tried it and did not finish
@@ -856,8 +1000,14 @@ class Fleet:
             if platform is not None:
                 release.record(platform)
         code, mismatched = release.code_fingerprint(), []
+        from ihr_platform import db_roles
+
+        if public_grants := list(db_roles.report(connection, ["public"])):
+            for finding in public_grants[:20]:
+                self.out(f"public: database grants: {finding}")
         for entry in self._alive():
             hospital = entry.hospital
+            grants = self._grant_findings(entry)
             if self.record_found:
                 # Only a current schema is written: never "" while the previous build may
                 # still serve this hospital (S4)
@@ -867,7 +1017,8 @@ class Fleet:
             row = release.recorded(hospital)
             fingerprint = row[0] if row else ""
             if state.current and fingerprint == code:
-                self._note(entry, "check", "done")
+                details = {"grants_differ": grants} if grants else {}
+                self._note(entry, "check", "done", **details)
                 continue
             problem = (
                 state.describe() if not state.current else "not recorded (use --record)"
@@ -890,6 +1041,7 @@ class Fleet:
                 mismatched.append(hospital.slug)
                 self._note(entry, "check", "failed", error=problem[:300])
             self.out(f"{hospital.slug}: {problem}")
+        self._report_rest()
         if mismatched and "migrate" not in self.steps:
             msg = (
                 f"{len(mismatched)} live hospital(s) are not on this build's schema "

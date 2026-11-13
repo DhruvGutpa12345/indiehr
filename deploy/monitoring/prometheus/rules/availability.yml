@@ -133,10 +133,16 @@ groups:
   - name: containers
     rules:
       # A service of the stack whose container is missing counts as not running (the host
-      # timer writes 0 for it). Critical for the services hospitals use; the workers and the
-      # monitoring itself are warnings.
+      # timer writes 0 for it). Critical for the services hospitals use; provisioner,
+      # staff-worker and the monitoring itself are warnings. A release window stops the four
+      # workers on purpose (scripts/staging.sh release, P1-T18b): they are not paged until the
+      # window's end (ihr_release_workers_stopped_until_seconds, written by the release and
+      # removed when it ends, so a release that stops with them down is paged).
       - alert: ContainerNotRunning
-        expr: ihr_container_running{service!~"provisioner|staff-worker|prometheus|alertmanager|node-exporter|blackbox-exporter|postgres-exporter|redis-exporter|fluent-bit|victorialogs|vmalert|logs-archive|heartbeat-stub|smtp-test"} == 0
+        expr: >-
+          ihr_container_running{service!~"celery-worker|celery-beat|provisioner|staff-worker|prometheus|alertmanager|node-exporter|blackbox-exporter|postgres-exporter|redis-exporter|fluent-bit|victorialogs|vmalert|logs-archive|heartbeat-stub|smtp-test"} == 0
+          or (ihr_container_running{service=~"celery-worker|celery-beat"} == 0
+              unless on() (ihr_release_workers_stopped_until_seconds > time()))
         for: 5m
         labels:
           severity: critical
@@ -144,7 +150,10 @@ groups:
           summary: "Container {{ $labels.service }} is not running"
 
       - alert: ContainerNotRunning
-        expr: ihr_container_running{service=~"provisioner|staff-worker|prometheus|alertmanager|node-exporter|blackbox-exporter|postgres-exporter|redis-exporter|fluent-bit|victorialogs|vmalert|logs-archive|heartbeat-stub|smtp-test"} == 0
+        expr: >-
+          ihr_container_running{service=~"prometheus|alertmanager|node-exporter|blackbox-exporter|postgres-exporter|redis-exporter|fluent-bit|victorialogs|vmalert|logs-archive|heartbeat-stub|smtp-test"} == 0
+          or (ihr_container_running{service=~"provisioner|staff-worker"} == 0
+              unless on() (ihr_release_workers_stopped_until_seconds > time()))
         for: 5m
         labels:
           severity: warning

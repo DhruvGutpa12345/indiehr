@@ -18,6 +18,7 @@ from ihr_platform import release
 from ihr_platform.models import Domain, Hospital, RetiredAddress, TenantOperation
 from ihr_platform.provisioning import runner, steps
 from ihr_platform.test_runner import TEST_SCHEMA
+from ihr_platform.testing import owner_for_test
 
 
 def form(slug, **changes):
@@ -101,6 +102,10 @@ class ProvisioningTests(SimpleTestCase):
     databases = {"default"}
 
     def setUp(self):
+        # The provisioner (and the ihr_provision command) runs as the database owner: it
+        # makes and drops schemas (P1-T19a). The console's queueing is tested as the app
+        # role in test_console.
+        owner_for_test(self)
         connection.set_schema_to_public()
         self.kc = FakeKeycloak()
         patches = [

@@ -85,6 +85,15 @@ def _safe_error(exc):
     return release.safe_error(exc)
 
 
+def built_by(op, hospital):
+    """Refuse unless ``op`` is the operation the owner recorded as the one that built
+    ``hospital`` (P1-T19a review S1). The app may insert operations, and an operation row says
+    which hospital it names; Hospital.provisioning_operation is written only by the owner-run
+    reserve step, so a forged or copied operation never reaches a hospital it did not build."""
+    if hospital is None or hospital.provisioning_operation != op.pk:
+        raise ProvisioningError("This operation did not build the hospital it names.")
+
+
 def _check_not_held(hospital_id):
     hospital = Hospital.objects.filter(pk=hospital_id).first()
     row = release.recorded(hospital) if hospital is not None else None
@@ -120,7 +129,7 @@ def run(op, stop_after=None):
             msg = f"This operation is {op.status}; start a new one instead."
             raise ProvisioningError(msg)
         if op.hospital_id:
-            _check_not_held(op.hospital_id)
+            built_by(op, _check_not_held(op.hospital_id))
         form = steps.OnboardingForm(**op.input)
         # Operations recorded before a step was added get it, pending, in its place.
         by_name = {record["name"]: record for record in op.steps}
@@ -222,6 +231,7 @@ def rollback(op, requested_by):
 
 
 def _check_rollback_target(op, hospital):
+    built_by(op, hospital)
     if (
         str(hospital.uuid) != op.result.get("hospital_uuid")
         or hospital.schema_name != op.result.get("schema_name")
@@ -247,7 +257,8 @@ def resend_setup(op):
     with exclusive(op.slug):
         op.refresh_from_db()
         hospital = _check_not_held(op.hospital_id)
-        if hospital is not None and not release.schema_ready(hospital):
+        built_by(op, hospital)
+        if not release.schema_ready(hospital):
             msg = f"{op.slug} is not on this release's schema yet; try again later."
             raise HospitalUpgrading(msg)
         try:

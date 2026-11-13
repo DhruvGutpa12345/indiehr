@@ -383,7 +383,11 @@ class DeployTests(unittest.TestCase):
     def test_unfinished_deploy_is_marked_and_old_images_pruned(self):
         self.assertLess(DEPLOY.index("/DEPLOYING"), DEPLOY.index('ship_image "$BACKEND"'))
         self.assertIn("rm -f $REMOTE_ROOT/DEPLOYING", DEPLOY)
-        self.assertIn("docker image prune -f", DEPLOY)
+        # P1-T18b: pruning moved to the release's record on the server, after smoke, and keeps
+        # the last 3 logged releases' images (scripts/test_release_scripts.py)
+        self.assertIn("scripts/staging.sh release-record", DEPLOY)
+        staging = (ROOT / "scripts" / "staging.sh").read_text()
+        self.assertIn("docker image prune -f", staging.split("release_prune() {", 1)[1].split("\n}\n", 1)[0])
 
 
 class OsAndNeutralityTests(unittest.TestCase):

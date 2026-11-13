@@ -134,6 +134,9 @@ def reserve(op, form):
     form.validate()
     with transaction.atomic():
         hospital = Hospital(slug=form.slug, name=form.name)
+        # Which operation built it, where the app cannot write (S1): roll-back and the
+        # setup e-mail act only for this operation (runner.built_by)
+        hospital.provisioning_operation = op.pk
         hospital.auto_create_schema = False  # migrated by the schema step, resumably
         hospital.save()
         created = not schema_exists(hospital.schema_name)
@@ -174,7 +177,7 @@ def schema(op, form):
     """Run every migration in the hospital's schema; a resume finishes the migrations.
     Then check it is this build's and record that (P1-T18a): the later steps and the gate
     need it."""
-    from ihr_platform import release
+    from ihr_platform import db_roles, release
 
     hospital = _hospital(op)
     call_command(
@@ -185,6 +188,9 @@ def schema(op, form):
         verbosity=0,
     )
     connection.set_schema_to_public()
+    # The app role's grants (P1-T19a): post_migrate did it; a resume whose migrations were
+    # all applied already repairs here too. Off: nothing
+    db_roles.ensure_grants(connection, hospital.schema_name)
     state = release.record(hospital)
     if not state.current:
         msg = f"the schema is {state.verdict} after migrating, not this build's"

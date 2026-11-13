@@ -57,6 +57,8 @@ deploy/staging/.db-created
 deploy/staging/secrets/
 deploy/staging/.init.*/
 deploy/staging/generated/
+# Release log, the release in progress and each release's stack files (P1-T18b)
+deploy/staging/releases/
 
 # OpenTofu (P1-T8b4): providers, state, plans and real settings never go into git
 infra/**/.terraform/

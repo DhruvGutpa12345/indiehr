@@ -61,7 +61,7 @@ jobs:
               - 'scripts/check-bundle-egress.sh'
               - 'scripts/*check-storage-keys.py'
               - '.github/workflows/apps.yml'
-            # Mutation runs cost one full-stack job per row (26 today: scripts/isolation-mutation.sh
+            # Mutation runs cost one full-stack job per row (35 today: scripts/isolation-mutation.sh
             # list), so they run only when an isolation control or its tests change
             isolation:
               - 'plugins/ihr_platform/**'
@@ -209,10 +209,22 @@ jobs:
       - name: Start services (with ihr_platform mounted)
         run: $COMPOSE up -d --wait || ($COMPOSE logs && exit 1)
 
-      - name: CARE suite + ihr_platform tests inside a tenant schema
+      # P1-T19a: our suites and the isolation suite run as the app role (ihr_app, SET ROLE on
+      # every test connection; the owner only inside ihr_platform.testing.as_owner()), so a
+      # missing or extra database grant fails here, not on a server
+      - name: Plugin suites + isolation suite as the app role (IHR_DB_ROLES=test)
         run: |
           set +e
-          $COMPOSE exec -T backend python manage.py test --settings=ihr_platform.settings.test --noinput -v 2 ihr_platform ihr_tenant_settings ihr_identity ihr_audit ihr_terminology ihr_roles ihr_refdata ihr_refdata_registry . > tenant-tests.log 2>&1
+          $COMPOSE exec -T -e IHR_DB_ROLES=test backend python manage.py test --settings=ihr_platform.settings.test --noinput -v 2 ihr_platform ihr_tenant_settings ihr_identity ihr_audit ihr_terminology ihr_roles ihr_refdata ihr_refdata_registry > plugin-tests.log 2>&1
+          status=$?
+          grep -vE "\.\.\. ok$" plugin-tests.log | tail -400
+          exit $status
+
+      - name: CARE suite inside a tenant schema
+        if: success() || failure()
+        run: |
+          set +e
+          $COMPOSE exec -T backend python manage.py test --settings=ihr_platform.settings.test --noinput -v 2 . > tenant-tests.log 2>&1
           status=$?
           grep -vE "\.\.\. ok$" tenant-tests.log | tail -400
           exit $status
@@ -220,8 +232,12 @@ jobs:
       - name: Summary
         if: always()
         run: |
-          grep -E "^Ran [0-9]+ tests|^OK|^FAILED|Tenant mode" tenant-tests.log || true
-          grep -E "^(ERROR|FAIL):" tenant-tests.log | sort | uniq -c | sort -rn | head -40 || true
+          for log in plugin-tests.log tenant-tests.log; do
+            [ -f "$log" ] || continue
+            echo "== $log"
+            grep -E "^Ran [0-9]+ tests|^OK|^FAILED|Tenant mode|Database roles" "$log" || true
+            grep -E "^(ERROR|FAIL):" "$log" | sort | uniq -c | sort -rn | head -40 || true
+          done
 
       - name: Service logs on failure
         if: failure()
@@ -285,8 +301,13 @@ jobs:
       - name: The guarding tests must fail
         run: |
           read -r -a labels <<<"$(../../scripts/isolation-mutation.sh test "$MUTATION")"
+          # A row may need settings, e.g. IHR_DB_ROLES=test for a database-role control (P1-T19a)
+          envs=()
+          while read -r setting; do
+            [ -n "$setting" ] && envs+=(-e "$setting")
+          done < <(../../scripts/isolation-mutation.sh env "$MUTATION")
           set +e
-          $COMPOSE exec -T backend python manage.py test --settings=ihr_platform.settings.test --noinput -v 2 "${labels[@]}" > mutation.log 2>&1
+          $COMPOSE exec -T "${envs[@]}" backend python manage.py test --settings=ihr_platform.settings.test --noinput -v 2 "${labels[@]}" > mutation.log 2>&1
           status=$?
           set -e
           grep -E "^(FAIL|ERROR):|^Ran |^OK|^FAILED|Error:" mutation.log | head -40 || true

@@ -26,6 +26,7 @@ from django.db import connection
 from django_tenants.utils import schema_context
 from ihr_platform import client_keys
 from ihr_platform.keycloak.hospital import client_id_for
+from ihr_platform.testing import as_owner
 from rest_framework.test import APIClient
 
 from ihr_identity import client_auth, oidc, sessions
@@ -41,9 +42,10 @@ def public_keys():
 
 
 def ensure_org_id(hospital):
-    """Give a test hospital a Keycloak organisation id if it has none."""
+    """Give a test hospital a Keycloak organisation id if it has none (in production
+    ihr_keycloak_sync does, as the database owner: P1-T19a)."""
     if hospital.keycloak_org_id is None:
-        with schema_context("public"):
+        with schema_context("public"), as_owner():
             type(hospital).objects.filter(pk=hospital.pk).update(
                 keycloak_org_id=uuid.uuid4()
             )

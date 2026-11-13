@@ -7,6 +7,7 @@
 #   scripts/care-tenancy.sh init                      # (re)create care_tenancy + shared schema
 #   scripts/care-tenancy.sh ihr_create_tenant --slug alpha --name "Alpha Hospital" --domain alpha.localhost
 #   scripts/care-tenancy.sh test --settings=ihr_platform.settings.test ihr_platform
+#   IHR_DB_ROLES=test scripts/care-tenancy.sh test ...   # tests run as the app role (P1-T19a)
 #   scripts/care-tenancy.sh <any manage.py command and arguments>
 set -euo pipefail
 ROOT="$(git -C "$(dirname "$0")" rev-parse --show-toplevel)"
@@ -19,6 +20,7 @@ manage() {
     -e DJANGO_SETTINGS_MODULE=ihr_platform.settings.local \
     -e PYTHONPATH=/ihr/plugins/ihr_platform \
     -e SNOWSTORM_DEPLOYMENT_URL=http://127.0.0.1:9/fhir \
+    ${IHR_DB_ROLES:+-e IHR_DB_ROLES="$IHR_DB_ROLES"} \
     -e HOME=/tmp -e PYTHONDONTWRITEBYTECODE=1 \
     -v "$ROOT/apps/backend:/app:ro" -v "$ROOT/plugins:/ihr/plugins:ro" -w /app \
     --user "$(id -u):$(id -g)" care_local python manage.py "$@"

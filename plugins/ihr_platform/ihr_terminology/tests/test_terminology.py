@@ -22,6 +22,7 @@ from django_tenants.utils import schema_context
 from ihr_identity import testing
 from ihr_platform.models import Hospital
 from ihr_platform.test_runner import TEST_SCHEMA
+from ihr_platform.testing import as_owner, owner_for_test
 
 from ihr_terminology import client, ecl, engine, loader, ucum
 from ihr_terminology.models import CodeSystemVersion, Concept, Designation
@@ -122,7 +123,8 @@ NUM_CS = _cs(
 
 
 def load(res, sha="0" * 64):
-    with schema_context("public"):
+    # The loader is an admin one-off: it runs as the database owner (P1-T19a)
+    with schema_context("public"), as_owner():
         return loader.load_resource(
             res, source="test", sha256=sha, operator="test-runner"
         )
@@ -810,6 +812,9 @@ class ReadOnly(TestCase):
 
 
 class Loader(TestCase):
+    def setUp(self):
+        owner_for_test(self)  # ihr_terminology_load: an admin one-off, the owner
+
     def test_versions_retire_and_identical_loads_are_skipped(self):
         v1 = load(TEST_CS, sha="a" * 64)
         self.assertEqual(

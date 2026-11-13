@@ -1,5 +1,5 @@
 {
- "_comment": "scripts/check-logs.py: these journal entries go through the real redaction steps into a throwaway VictoriaLogs, then vmalert runs deploy/logs/alerts/ on them. 'expect' lists, per alert, the values of its key label it must fire (or wait to fire) for, and no others: client_ip, or hospital for PackApplyFailed and HospitalNotServed.",
+ "_comment": "scripts/check-logs.py: these journal entries go through the real redaction steps into a throwaway VictoriaLogs, then vmalert runs deploy/logs/alerts/ on them. 'expect' lists, per alert, the values of its key label it must fire (or wait to fire) for, and no others: client_ip, hospital for PackApplyFailed, HospitalNotServed and ReleaseWindowOverrun, or reason for DatabaseRoleRefused.",
  "fixtures": [
   {
    "count": 1,
@@ -804,6 +804,342 @@
     "CONTAINER_NAME": "indiehr-staging-celery-beat-1",
     "COM_DOCKER_COMPOSE_SERVICE": "celery-beat"
    }
+  },
+  {
+   "count": 1,
+   "record": {
+    "MESSAGE": "ihr-fleet: hospital=iota outcome=overrun",
+    "_HOSTNAME": "srv1",
+    "PRIORITY": "3",
+    "_TRANSPORT": "journal",
+    "_COMM": "dockerd",
+    "_UID": "0",
+    "_SYSTEMD_UNIT": "docker.service",
+    "CONTAINER_NAME": "indiehr-staging-celery-worker-1",
+    "COM_DOCKER_COMPOSE_SERVICE": "celery-worker"
+   }
+  },
+  {
+   "count": 1,
+   "record": {
+    "MESSAGE": "ihr-fleet: hospital=devover outcome=overrun",
+    "_HOSTNAME": "srv1",
+    "PRIORITY": "3",
+    "_TRANSPORT": "journal",
+    "_COMM": "dockerd",
+    "_UID": "0",
+    "_SYSTEMD_UNIT": "docker.service",
+    "CONTAINER_NAME": "care-celery-1",
+    "COM_DOCKER_COMPOSE_SERVICE": "celery"
+   }
+  },
+  {
+   "count": 1,
+   "record": {
+    "MESSAGE": "ihr-fleet: hospital=kappa outcome=overrun",
+    "_HOSTNAME": "srv1",
+    "PRIORITY": "3",
+    "_TRANSPORT": "journal",
+    "_COMM": "dockerd",
+    "_UID": "0",
+    "_SYSTEMD_UNIT": "docker.service",
+    "CONTAINER_NAME": "indiehr-staging-migrate-1",
+    "COM_DOCKER_COMPOSE_SERVICE": "migrate"
+   }
+  },
+  {
+   "count": 1,
+   "record": {
+    "MESSAGE": "ihr-fleet: hospital=webover outcome=overrun",
+    "_HOSTNAME": "srv1",
+    "PRIORITY": "3",
+    "_TRANSPORT": "journal",
+    "_COMM": "dockerd",
+    "_UID": "0",
+    "_SYSTEMD_UNIT": "docker.service",
+    "CONTAINER_NAME": "indiehr-staging-backend-1",
+    "COM_DOCKER_COMPOSE_SERVICE": "backend"
+   }
+  },
+  {
+   "count": 1,
+   "record": {
+    "MESSAGE": "ihr-fleet: hospital=lambda outcome=overrun (late)",
+    "_HOSTNAME": "srv1",
+    "PRIORITY": "3",
+    "_TRANSPORT": "journal",
+    "_COMM": "dockerd",
+    "_UID": "0",
+    "_SYSTEMD_UNIT": "docker.service",
+    "CONTAINER_NAME": "indiehr-staging-celery-worker-1",
+    "COM_DOCKER_COMPOSE_SERVICE": "celery-worker"
+   }
+  },
+  {
+   "count": 1,
+   "record": {
+    "MESSAGE": "ihr-db-role: refused role=app reason=superuser",
+    "_HOSTNAME": "srv1",
+    "PRIORITY": "3",
+    "_TRANSPORT": "journal",
+    "_COMM": "dockerd",
+    "_UID": "0",
+    "_SYSTEMD_UNIT": "docker.service",
+    "CONTAINER_NAME": "indiehr-staging-backend-1",
+    "COM_DOCKER_COMPOSE_SERVICE": "backend"
+   }
+  },
+  {
+   "count": 1,
+   "record": {
+    "MESSAGE": "ihr-db-role: refused role=app reason=membership",
+    "_HOSTNAME": "srv1",
+    "PRIORITY": "3",
+    "_TRANSPORT": "journal",
+    "_COMM": "dockerd",
+    "_UID": "0",
+    "_SYSTEMD_UNIT": "docker.service",
+    "CONTAINER_NAME": "indiehr-staging-celery-worker-1",
+    "COM_DOCKER_COMPOSE_SERVICE": "celery-worker"
+   }
+  },
+  {
+   "count": 1,
+   "record": {
+    "MESSAGE": "ihr-db-role: refused role=owner reason=not_owner",
+    "_HOSTNAME": "srv1",
+    "PRIORITY": "3",
+    "_TRANSPORT": "journal",
+    "_COMM": "dockerd",
+    "_UID": "0",
+    "_SYSTEMD_UNIT": "docker.service",
+    "CONTAINER_NAME": "indiehr-staging-provisioner-1",
+    "COM_DOCKER_COMPOSE_SERVICE": "provisioner"
+   }
+  },
+  {
+   "count": 1,
+   "record": {
+    "MESSAGE": "ihr-db-role: refused role=app reason=extra_privileges",
+    "_HOSTNAME": "srv1",
+    "PRIORITY": "3",
+    "_TRANSPORT": "journal",
+    "_COMM": "dockerd",
+    "_UID": "0",
+    "_SYSTEMD_UNIT": "docker.service",
+    "CONTAINER_NAME": "care-celery-1",
+    "COM_DOCKER_COMPOSE_SERVICE": "celery"
+   }
+  },
+  {
+   "count": 1,
+   "record": {
+    "MESSAGE": "ihr-db-role: refused role=none reason=roles_off",
+    "_HOSTNAME": "srv1",
+    "PRIORITY": "3",
+    "_TRANSPORT": "journal",
+    "_COMM": "dockerd",
+    "_UID": "0",
+    "_SYSTEMD_UNIT": "docker.service",
+    "CONTAINER_NAME": "indiehr-staging-celery-beat-1",
+    "COM_DOCKER_COMPOSE_SERVICE": "celery-beat"
+   }
+  },
+  {
+   "count": 1,
+   "record": {
+    "MESSAGE": "ihr-db-role: gated schema=h_testhosp01 reason=extra_privileges",
+    "_HOSTNAME": "srv1",
+    "PRIORITY": "3",
+    "_TRANSPORT": "journal",
+    "_COMM": "dockerd",
+    "_UID": "0",
+    "_SYSTEMD_UNIT": "docker.service",
+    "CONTAINER_NAME": "indiehr-staging-backend-1",
+    "COM_DOCKER_COMPOSE_SERVICE": "backend"
+   }
+  },
+  {
+   "count": 1,
+   "record": {
+    "MESSAGE": "ihr-db-role: refused role=app reason=wrong_role (and more)",
+    "_HOSTNAME": "srv1",
+    "PRIORITY": "3",
+    "_TRANSPORT": "journal",
+    "_COMM": "dockerd",
+    "_UID": "0",
+    "_SYSTEMD_UNIT": "docker.service",
+    "CONTAINER_NAME": "indiehr-staging-backend-1",
+    "COM_DOCKER_COMPOSE_SERVICE": "backend"
+   }
+  },
+  {
+   "count": 1,
+   "record": {
+    "MESSAGE": "10.0.0.9 - - [x] \"GET /ihr-db-role: refused role=app reason=forged\" 404 179",
+    "_HOSTNAME": "srv1",
+    "PRIORITY": "3",
+    "_TRANSPORT": "journal",
+    "_COMM": "dockerd",
+    "_UID": "0",
+    "_SYSTEMD_UNIT": "docker.service",
+    "CONTAINER_NAME": "indiehr-staging-backend-1",
+    "COM_DOCKER_COMPOSE_SERVICE": "backend"
+   }
+  },
+  {
+   "count": 1,
+   "record": {
+    "MESSAGE": "ihr-db-role: refused role=app reason=forged",
+    "_HOSTNAME": "srv1",
+    "PRIORITY": "3",
+    "_TRANSPORT": "journal",
+    "_COMM": "dockerd",
+    "_UID": "0",
+    "_SYSTEMD_UNIT": "docker.service",
+    "CONTAINER_NAME": "indiehr-staging-traefik-1",
+    "COM_DOCKER_COMPOSE_SERVICE": "traefik"
+   }
+  },
+  {
+   "count": 1,
+   "record": {
+    "MESSAGE": "ihr-db-role: refused role=root reason=forged",
+    "_HOSTNAME": "srv1",
+    "PRIORITY": "3",
+    "_TRANSPORT": "journal",
+    "_COMM": "dockerd",
+    "_UID": "0",
+    "_SYSTEMD_UNIT": "docker.service",
+    "CONTAINER_NAME": "indiehr-staging-staff-worker-1",
+    "COM_DOCKER_COMPOSE_SERVICE": "staff-worker"
+   }
+  },
+  {
+   "count": 1,
+   "record": {
+    "MESSAGE": "ihr-db-role: refused role=app reason=controls",
+    "_HOSTNAME": "srv1",
+    "PRIORITY": "3",
+    "_TRANSPORT": "journal",
+    "_COMM": "dockerd",
+    "_UID": "0",
+    "_SYSTEMD_UNIT": "docker.service",
+    "CONTAINER_NAME": "indiehr-staging-backend-1",
+    "COM_DOCKER_COMPOSE_SERVICE": "backend"
+   }
+  },
+  {
+   "count": 1,
+   "record": {
+    "MESSAGE": "ihr-db-role: gated schema=h_testhosp02 reason=controls",
+    "_HOSTNAME": "srv1",
+    "PRIORITY": "3",
+    "_TRANSPORT": "journal",
+    "_COMM": "dockerd",
+    "_UID": "0",
+    "_SYSTEMD_UNIT": "docker.service",
+    "CONTAINER_NAME": "indiehr-staging-celery-worker-1",
+    "COM_DOCKER_COMPOSE_SERVICE": "celery-worker"
+   }
+  },
+  {
+   "count": 1,
+   "record": {
+    "MESSAGE": "ihr-db-role: gated schema=h_forged0001 reason=controls",
+    "_HOSTNAME": "srv1",
+    "PRIORITY": "3",
+    "_TRANSPORT": "journal",
+    "_COMM": "dockerd",
+    "_UID": "0",
+    "_SYSTEMD_UNIT": "docker.service",
+    "CONTAINER_NAME": "indiehr-staging-traefik-1",
+    "COM_DOCKER_COMPOSE_SERVICE": "traefik"
+   }
+  },
+  {
+   "count": 1,
+   "record": {
+    "MESSAGE": "ihr-db-role: gated schema=public reason=controls",
+    "_HOSTNAME": "srv1",
+    "PRIORITY": "3",
+    "_TRANSPORT": "journal",
+    "_COMM": "dockerd",
+    "_UID": "0",
+    "_SYSTEMD_UNIT": "docker.service",
+    "CONTAINER_NAME": "indiehr-staging-backend-1",
+    "COM_DOCKER_COMPOSE_SERVICE": "backend"
+   }
+  },
+  {
+   "count": 1,
+   "record": {
+    "MESSAGE": "ihr-db-role: gated schema=h_testhosp03 reason=controls and more",
+    "_HOSTNAME": "srv1",
+    "PRIORITY": "3",
+    "_TRANSPORT": "journal",
+    "_COMM": "dockerd",
+    "_UID": "0",
+    "_SYSTEMD_UNIT": "docker.service",
+    "CONTAINER_NAME": "indiehr-staging-backend-1",
+    "COM_DOCKER_COMPOSE_SERVICE": "backend"
+   }
+  },
+  {
+   "count": 1,
+   "record": {
+    "MESSAGE": "2026-11-13 04:30:00.123 UTC [57] FATAL:  password authentication failed for user \"ihr_app\"",
+    "_HOSTNAME": "srv1",
+    "PRIORITY": "3",
+    "_TRANSPORT": "journal",
+    "_COMM": "dockerd",
+    "_UID": "0",
+    "_SYSTEMD_UNIT": "docker.service",
+    "CONTAINER_NAME": "indiehr-staging-db-1",
+    "COM_DOCKER_COMPOSE_SERVICE": "db"
+   }
+  },
+  {
+   "count": 1,
+   "record": {
+    "MESSAGE": "2026-11-13 04:30:01.456 UTC [58] FATAL:  password authentication failed for user \"postgres\"",
+    "_HOSTNAME": "srv1",
+    "PRIORITY": "3",
+    "_TRANSPORT": "journal",
+    "_COMM": "dockerd",
+    "_UID": "0",
+    "_SYSTEMD_UNIT": "docker.service",
+    "CONTAINER_NAME": "indiehr-staging-db-1",
+    "COM_DOCKER_COMPOSE_SERVICE": "db"
+   }
+  },
+  {
+   "count": 1,
+   "record": {
+    "MESSAGE": "10.0.0.9 - - [x] \"GET /FATAL:  password authentication failed for user \\\"ihr_owner\\\"\" 404 179",
+    "_HOSTNAME": "srv1",
+    "PRIORITY": "3",
+    "_TRANSPORT": "journal",
+    "_COMM": "dockerd",
+    "_UID": "0",
+    "_SYSTEMD_UNIT": "docker.service",
+    "CONTAINER_NAME": "indiehr-staging-backend-1",
+    "COM_DOCKER_COMPOSE_SERVICE": "backend"
+   }
+  },
+  {
+   "count": 1,
+   "record": {
+    "MESSAGE": "2026-11-13 04:30:02.789 UTC [59] FATAL:  password authentication failed for user \"ihr_owner\" (forged)",
+    "_HOSTNAME": "srv1",
+    "PRIORITY": "3",
+    "_TRANSPORT": "journal",
+    "_COMM": "dockerd",
+    "_UID": "0",
+    "_SYSTEMD_UNIT": "docker.service",
+    "CONTAINER_NAME": "indiehr-staging-db-1",
+    "COM_DOCKER_COMPOSE_SERVICE": "db"
+   }
   }
  ],
  "expect": {
@@ -829,6 +1165,25 @@
    "devhosp",
    "gamma",
    "theta"
+  ],
+  "ReleaseWindowOverrun": [
+   "devover",
+   "iota"
+  ],
+  "DatabaseRoleRefused": [
+   "controls",
+   "extra_privileges",
+   "membership",
+   "not_owner",
+   "roles_off",
+   "superuser"
+  ],
+  "DatabaseSchemaGated": [
+   "h_testhosp01",
+   "h_testhosp02"
+  ],
+  "DatabaseRoleLoginFailed": [
+   "ihr_app"
   ]
  },
  "expect_state": {
@@ -837,6 +1192,10 @@
   "FailedSignInsFromAddress": "firing",
   "RateLimitedAddress": "pending",
   "PackApplyFailed": "firing",
-  "HospitalNotServed": "firing"
+  "HospitalNotServed": "firing",
+  "ReleaseWindowOverrun": "firing",
+  "DatabaseRoleRefused": "firing",
+  "DatabaseSchemaGated": "firing",
+  "DatabaseRoleLoginFailed": "firing"
  }
 }

@@ -10,6 +10,7 @@ from django_tenants.utils import schema_context
 
 from ihr_platform.models import Domain, Hospital
 from ihr_platform.test_runner import TEST_SCHEMA
+from ihr_platform.testing import as_owner
 
 PUBLIC_TABLE_ALLOW_LIST = {
     "django_migrations",
@@ -62,7 +63,7 @@ class TenancyBasicsTests(SimpleTestCase):
     @classmethod
     def setUpClass(cls):
         super().setUpClass()
-        with schema_context("public"):
+        with schema_context("public"), as_owner():  # a new hospital: the owner's work
             cls.second = Hospital.objects.filter(slug="second-test").first()
             if cls.second is None:
                 cls.second = Hospital(slug="second-test", name="Second Test Hospital")
@@ -73,7 +74,7 @@ class TenancyBasicsTests(SimpleTestCase):
 
     @classmethod
     def tearDownClass(cls):
-        with schema_context("public"), connection.cursor() as cursor:
+        with schema_context("public"), as_owner(), connection.cursor() as cursor:
             schema = cls.second.schema_name
             Domain.objects.filter(tenant=cls.second).delete()
             Hospital.objects.filter(pk=cls.second.pk).delete()

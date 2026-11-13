@@ -12,6 +12,7 @@ from care.emr.models.organization import OrganizationUser
 from care.security.models import PermissionModel, RoleModel, RolePermission
 from care.users.models import User
 from django.db import connection
+from ihr_platform.testing import as_owner
 from model_bakery import baker
 
 from ihr_audit import anchor, export, verify_export
@@ -264,8 +265,8 @@ class ProofTests(ViewerCase):
 
         for version in (1, 2, 3):
             baker.make(Patient, name=f"format {version}")
-            with patch.object(seal, "FORMAT", version):
-                seal_once(connection.schema_name)
+            with as_owner():  # older formats: the owner's own sealing function
+                seal_once(connection.schema_name, version=version)
         problems, _summary = seal.verify(connection.schema_name)
         self.assertEqual(problems, [])
         with connection.cursor() as cursor:

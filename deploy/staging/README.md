@@ -7,12 +7,13 @@ One VM in an Indian region (provider-neutral, ADR-011), Docker Compose, Traefik 
 | Command | What it does |
 |---|---|
 | `scripts/staging.sh init <suffix>` | Writes `.env` (site settings, image digests) and `secrets/*.env` (mode 600, git-ignored). Refuses to overwrite. `<suffix>`: hospitals live at `<slug>.<suffix>` |
-| `scripts/staging.sh up` | Database, Redis, the platform's (public) migrations, web app, Celery, Keycloak, Traefik; then the Keycloak realms and the two workers' narrow accounts. Never migrates a hospital (P1-T18a): if a live hospital's schema is not the new build's, the `migrate` one-shot refuses and nothing starts; migrate hospitals in the announced window (`staging.sh release`, P1-T18b; until then `staging.sh fleet migrate check roles packs --operator <you>`, then `up`). A hospital this build's release already tried and left held (its migration failed) stays at 503 and the others start |
-| `scripts/staging.sh smoke` | 20 checks through Traefik: what is public and what is not, TLS redirect, HSTS, token issuer, production mode, no query strings in logs |
+| `scripts/staging.sh up` | Database, Redis, the platform's (public) migrations, web app, Celery, Keycloak, Traefik; then the Keycloak realms and the two workers' narrow accounts. Never migrates a hospital (P1-T18a): if a live hospital's schema is not the new build's, the `migrate` one-shot refuses and nothing starts; migrate hospitals in the announced window (`staging.sh release`, P1-T18b: see "Releases" below). A hospital this build's release already tried and left held (its migration failed) stays at 503 and the others start |
+| `scripts/staging.sh release` / `rollback` / `releases` | The new images in the announced window, rolling back, the releases in force (P1-T18b): see "Releases" below |
+| `scripts/staging.sh smoke` | 20 checks through Traefik: what is public and what is not, TLS redirect, HSTS, token issuer, production mode, no query strings in logs; and every active hospital served (a held one, 503 "upgrading", fails it: P1-T18b) |
 | `scripts/staging.sh manage <args>` | One-off `manage.py` (never logged; no Keycloak admin credential) |
 | `scripts/staging.sh local-proof` | All of the above on this machine (127.0.0.1, self-signed certificate) |
 | `scripts/staging.sh acme-init …` etc. | The wildcard certificate: see below |
-| `scripts/deploy.sh --host ihr@<address>` | From this machine to a bootstrapped server: builds our two images (web app from the CI bundle), sends them with `docker save \| ssh docker load` (skipped when the server has that build), sends the tracked stack files and, as a tar stream over SSH, `.env` + `secrets/` (mode 600), then runs `staging.sh up` and `smoke` there, removes the images it replaced (`docker image prune`) and writes `/srv/indiehr/DEPLOYED` (commit and dirty flag as labelled on the images, image IDs, web bundle id). `/srv/indiehr/DEPLOYING` is written first and removed only on success: if it is still there, the last deploy failed part-way. The backend image is built from the committed files (`git archive`), never from git-ignored ones. Refuses a dirty git tree without `--allow-dirty`, images built from another commit with `--no-build` unless `--allow-dirty`, and a server whose host key is not yet in `known_hosts` |
+| `scripts/deploy.sh --host ihr@<address>` | From this machine to a bootstrapped server: builds our two images (web app from the CI bundle), sends them with `docker save \| ssh docker load` (skipped when the server has that build), sends the tracked stack files and, as a tar stream over SSH, `.env` + `secrets/` (mode 600), then runs `staging.sh up` and `smoke` there (or, with `--release`, `staging.sh release`: required when the build changes a schema, decided before anything is sent; see "Releases"), logs the release once smoke passes, removes release images beyond the last 3 logged releases and untagged ones, and writes `/srv/indiehr/DEPLOYED` (commit and dirty flag as labelled on the images, image IDs, web bundle id). `/srv/indiehr/DEPLOYING` is written first and removed only on success: if it is still there, the last deploy failed part-way. The backend image is built from the committed files (`git archive`), never from git-ignored ones. Refuses a dirty git tree without `--allow-dirty`, images built from another commit with `--no-build` unless `--allow-dirty`, and a server whose host key is not yet in `known_hosts` |
 | `scripts/deploy.sh --local-proof` | The same into the throwaway VM of `scripts/local-vm.sh` (settings from `staging.sh init app.ihr-proof.in --vm`, kept in `~/.cache/indiehr/vm/staging`); runs `staging.sh local-proof` there (hospital `alpha` + smoke). Runbook: `deploy/host/README.md` |
 
 **On the server** the layout mirrors the repository (compose.yaml uses `../keycloak` and
@@ -375,7 +376,7 @@ alert can still arrive a few minutes first (it fires sooner); its repeats are th
 | Group | Alerts |
 |---|---|
 | Pipeline | Watchdog (always on, pings the dead-man switch about once a minute), DailyHeartbeat (a mail at 09:00 IST every day), AlertmanagerNotificationsFailing (also to the dead-man switch's `/fail`), AlertmanagerConfigNotLoaded, PrometheusRuleFailures, PrometheusCannotReachAlertmanager, HostMetricsStale |
-| Availability | PublicEndpointDown (auth, status; 3 min), TargetDown (5 min; critical for traefik, keycloak, postgres, redis, s3, node), PostgresDown / RedisDown (the exporter answers but cannot reach its server or log in; 5 min), BackendHealth, KeycloakNotReady, ContainerNotRunning (critical for the hospitals' services, warning for the workers and monitoring), ContainerUnhealthy, ContainerRestarting (more than 2 in 15 min) |
+| Availability | PublicEndpointDown (auth, status; 3 min), TargetDown (5 min; critical for traefik, keycloak, postgres, redis, s3, node), PostgresDown / RedisDown (the exporter answers but cannot reach its server or log in; 5 min), BackendHealth, KeycloakNotReady, ContainerNotRunning (critical for the hospitals' services and `celery-worker`/`celery-beat`, warning for `provisioner`, `staff-worker` and monitoring; the four workers not until the window's end while a release has them stopped, see "Releases"), ContainerUnhealthy, ContainerRestarting (more than 2 in 15 min) |
 | Capacity | DiskFreeLow (20 GB warning, 12 GB critical on `/`; other data mounts also below 25 % / 15 %; `/boot` never), DiskFillingUp (below 12 GB within 7 days), MemoryLow (10 % / 5 %), OomKill, SwapInUse, ContainerMemoryNearLimit (90 %), CpuLoadHigh, JournalNearCap, JournalSuppressed, PgConnectionsHigh (80 of 100), PgLongTransaction (1 h), RedisMemoryHigh (80 % / 90 %), RedisPersistenceFailing, CeleryBacklog (200 for 10 min) |
 | Backups | BackupUnhealthy, BackupTooOld (26 h), BackupCheckStale (2 h), WalSpoolStuck (10 min), WalSpoolNearCap (75 %), WalArchiveFailing |
 | Time, certificates, keys | NtpUnsynced, NtpOffset (chrony's own offset; 100 ms / 1 s), NtpSourceNotIndian, NtpReadingFailed, TlsCertExpiry (21 / 7 days), AcmeDnsDown, ClientKeyAge (150 / 365 days), ClientKeyMissing, ClientKeyCheckStale (also when never checked) |
@@ -532,6 +533,25 @@ Fix the cause, then `scripts/staging.sh manage ihr_pack_apply --slug <slug> --op
 (`<you>`: 1-64 letters, digits or `. _ @ -`; recorded as `packs:<you>`).
 A busy hospital (another job holds its lock) is tried again after 5, 15 and 30 seconds; still
 busy after that, it is recorded (`outcome=deferred`) and alerted on like a failure.
+
+**Database roles** (P1-T19a, `deploy/logs/alerts/db-roles.yml`; they fire only once
+`IHR_DB_ROLES=required`, which comes with the move of the roles, P1-T19b):
+
+| Alert | When | Severity |
+|---|---|---|
+| DatabaseRoleRefused | `ihr-db-role: refused role=<app\|owner\|none> reason=<code>` from a service that runs as a declared role, in the last 30 minutes: that container serves nothing | critical |
+| DatabaseSchemaGated | `ihr-db-role: gated schema=<schema> reason=<extra_privileges\|controls>` from an app service (the worker repeats it every minute), in the last 15 minutes: that hospital schema is not served, and the shared app role may still hold the right | critical |
+| DatabaseRoleLoginFailed | Postgres's own `password authentication failed for user "<ihr_app\|ihr_owner\|...>"`, from the `db` container, in the last 10 minutes: a split role's password may have been changed by whoever could log in as it | critical |
+
+Runbook: `manage.py ihr_db_role_check --report` in the container names every finding. Grants
+and controls: a fleet-wide `scripts/staging.sh fleet migrate --operator <you>` (no `--slug`:
+it repairs every hospital schema, archived ones too), then restart the app containers.
+Stored settings on a role (`reason=role_settings`, which anyone holding the app role can
+cause): as postgres, `ALTER ROLE ihr_app RESET ALL` and `ALTER ROLE ihr_app IN DATABASE ihr
+RESET ALL`. A large object the app owns (`reason=owns_objects`): as postgres, keep a copy for
+the incident, then `SELECT lo_unlink(oid) FROM pg_largeobject_metadata WHERE lomowner =
+'ihr_app'::regrole`. A password: set it again from the secrets. Treat each of these as a sign
+the app role was used by someone else.
 
 **The pipeline itself** (Prometheus, `rules/logs.yml`):
 
@@ -783,6 +803,107 @@ hand, once per release:
    load was interrupted, run `ANALYZE ihr_terminology_concept, ihr_terminology_designation` by
    hand.
 5. **Prune** the retired version later with `--prune`, also off-hours.
+
+## Releases (P1-T18b)
+
+A **release** replaces the backend, web app, Postgres and Keycloak images. Hospital schemas
+change only inside an **announced window** (Q-T1: about 02:00 IST), with every hospital held
+(503 "upgrading", and the web app's notice) so no request writes into a schema while it
+migrates. Design: `docs/reviews/p1-t18/design.md`.
+
+| Command | What it does |
+|---|---|
+| `scripts/staging.sh fleet window --start "DD-MM-YYYY HH:MM" --minutes 90 --note "…" --operator <you>` | Announce the window ahead (IST; public: `/api/ihr/bootstrap/` carries it for the web app's notice). Runs in the running backend when one runs (after deploy.sh has loaded a new build too: never the new build on the old schema). E-mailing hospital admins is yours: it is not built |
+| `scripts/deploy.sh --host … --release [--now]` | Build, send, then `staging.sh release` on the server, **detached there** (`setsid nohup`: a dropped SSH connection never stops it half-way); deploy.sh follows its output (`deploy/staging/releases/release-<tag>-<time>.out`, its exit status in `….out.rc`) until it ends. A build that changes the hospitals' or the platform's schema (its migration fingerprints differ from the release logged on the server; the first P1-T18 release on a server with a database), and any build while a release is unfinished on the server (`releases/attempt`), is **refused without `--release`, before anything is sent**. A build without migrations deploys with a plain start as before |
+| `scripts/staging.sh release [--now [--minutes N] [--note T]] [--operator <you>]` | On the server, with the new images already loaded (deploy.sh did it), the old ones still running. Refused if the backend is not running while another app service (a worker, the web app) is: stop the stack first (`down`) or start the old backend again. First it writes the release's record (`releases/attempt`), before any change. In order: **(1)** refuses unless an announced window is open now (`--now`: announce one from this minute); **(2a)** the full audit check (`ihr_audit_verify --all`: every hash chain and stored fingerprint) by the outgoing build while it still serves, capped (`IHR_RELEASE_AUDIT_SECONDS`, 1800 s; its result is the release's `audit=`); **(2)** holds every hospital in one transaction (`ihr_fleet_run hold`, by the outgoing build); **(3)** stops `celery-worker`, `celery-beat`, `provisioner`, `staff-worker` (not paged as down until the window's end, below); **(4)** waits until no transaction that began before the hold is open (60 s cap, `IHR_RELEASE_DRAIN_SECONDS`); **(5)** seals the audit trail and writes one fingerprint, with the outgoing build and the worker's add-only key: no chain recomputed, no fingerprint read (capped: `IHR_RELEASE_SEAL_SECONDS`, 300 s; `seal=` and `seal_s=` in the log; skipped, and said, without the fingerprint bucket); **(6)** `pg_create_restore_point('release-<tag>-<epoch>')`, a name never used before, its LSN and time recorded (a full backup first if the repository has none); **(7)** the platform's migrations, then `ihr_fleet_run migrate check roles packs` (2 hospitals at a time, in the logged `migrate` container); **(8)** `up` with the new images; **(9)** smoke, which checks every active hospital. Logged in `releases/releases.log` only when every live hospital is served and smoke passes; then the window is cleared. The same build deployed again (a plain start for a changed setting) is logged once |
+| `scripts/staging.sh release --finish` | After a failed hospital was fixed and resumed: checks again (every hospital served, smoke), logs the release, clears the window |
+| `scripts/staging.sh rollback [--operator <you>]` | Back to the release before the running one, or, while a release is unfinished, back to the release logged last (whether the unfinished one had started or still stopped before its start), **only when nothing changed in the database or Keycloak**: the hospitals' and the platform's fingerprints equal, and the same Keycloak and Postgres images; or the unfinished release stopped before its restore point (nothing migrated). Checks first that every image of the target is still here (nothing changes otherwise), and refuses while hospitals are held for a window with no release in progress (nothing says what held them). Then it re-points the backend and web app images, restores that release's stack files (server), runs `up`, lifts the window's holds, syncs the roles again (holding any hospital whose sync this build refuses), clears the window and runs smoke; the rollback is logged after smoke (a rollback that stopped is run again as it was). Otherwise it refuses and says why |
+| `scripts/staging.sh rollback --restore [--operator <you>]` | Back across migrations. Before anything changes: every image of the target is here, a backup from before the restore point exists, the repository holds the WAL up to the point (else, with no room for a copy, refused), and the disk has room for a copy of the whole database volume (`pg_wal` included) plus the 20 GB floor (`IHR_DEPLOY_MIN_FREE_GB`). Asks you to type the target release's tag, stops the stack (`down`, **never `down -v`**: that also deletes the log store, the signing keys and the WAL spool), keeps the current database in a new volume `indiehr-staging_pgdata-pre-rollback-<tag>-<time>` when the disk has room (marked `.ihr-rollback-copy-complete` when whole; a copy that fails is removed and nothing is restored; else the database is replaced: the prompt says which), points Postgres at the target's image, restores with pgBackRest to the window's restore point (`restore --target-name release-<tag>-<epoch> --set <the backup before it>`), logs the rollback, starts the previous release's images, serves the hospitals again, runs smoke and then a full backup of the new timeline |
+| `scripts/staging.sh releases` | The releases in force, newest last (and one in progress) |
+
+**What is kept** (`deploy/staging/releases/`, git-ignored, mode 600): `releases.log` (per release:
+tag, time, every image id, both migration fingerprints, the restore point and its LSN and time,
+the audit check's and the seal's results; per rollback: from, to, restored or not; never a
+setting or a secret, `scripts/release_log.py` refuses any other value); `attempt` (the release in
+progress, written before its first change: a release whose smoke never passed is never a
+rollback target, but its restore point is used. The restore point belongs to the open window,
+not to a build: a `release` of a fixed build while one is unfinished keeps that point, `rp_from`
+naming the release it was taken for; a plain start refuses then);
+`stack-<tag>.tgz` (the tracked stack files exactly as deploy.sh sent them: never `.env`,
+`secrets/`, `generated/` or keys). Every image is tagged `:<tag>` as well as `:staging` (checked
+against its id): `<tag>` is the commit's first 12 hex digits, `<sha12>-dirty-<8 of the image id>`
+for a build with uncommitted changes. The images of the last 3 logged releases (and the running
+one) are never removed; deploy.sh checks for the 20 GB floor plus the images' size before it
+loads any (`IHR_DEPLOY_MIN_FREE_GB`).
+
+**A hospital fails in the window.** It stays held (503 "upgrading") while the others are
+served; `release` exits non-zero and leaves the window announced. Its newest `upgrade`
+TenantOperation (console, `?kind=upgrade`) names the step and a value-free error; the
+`HospitalNotServed` alert names it, and keeps firing while it stays down (the worker names a
+window-held hospital every minute once its step in the window failed). Fix the cause, then
+`scripts/staging.sh fleet --resume <the fleet run> --operator <you>`, then
+`scripts/staging.sh release --finish`; or fix it in a new build and release that (it keeps the
+window's restore point). While a window's hold outlasts its budget (the announced window's end;
+120 minutes after the hold with no window), the worker writes
+`ihr-fleet: hospital=<slug> outcome=overrun` every minute and **ReleaseWindowOverrun**
+(`deploy/logs/alerts/fleet.yml`, critical) fires.
+
+**If the release stops part-way**, it says what it changed:
+- *before the hold* ("did not start"): nothing was held, stopped or migrated; the record of a
+  release in progress is as it was. A window announced by `--now` stays (clear it with
+  `fleet window --clear`, or release again inside it);
+- *held, nothing migrated* (before its restore point): every hospital is held and the workers are
+  stopped; the database is unchanged. `scripts/staging.sh rollback` (no `--restore`) serves them
+  again with the running build and clears the window; or fix and `release` again;
+- *after its restore point* (the platform's migrations fail, a pack is bad, before or after the
+  start): run `release` again after the fix (any build: the window's restore point is kept) or
+  roll back (`rollback` leaves the unfinished release for the release logged last, even when
+  that one still runs; `--restore` goes to the window's point). Nobody writes the overrun line
+  while the workers are stopped, so stay at the console.
+
+The workers a window stops do not page **ContainerNotRunning** until the window's end: the
+release writes `ihr_release_workers_stopped_until_seconds` (`<textfile dir>/ihr_release.prom`)
+and removes it when it ends, so a release that stops with the workers down is paged 5 minutes
+later. A rollback that stops says where (images re-pointed; the stack down with the database
+unchanged; during the restore; restored and logged) and how to go on.
+
+**What each way back costs:**
+- **Fix forward:** nothing is lost; the failed hospital waits.
+- **Rollback without a restore:** nothing is lost; a few minutes of `up` (measured below).
+- **Rollback with a restore:** every hospital is offline for the whole restore, and everything
+  written after the restore point is lost: hospitals served by the release being left (and
+  their staff's Keycloak changes: invitations, password and authenticator resets, disabled
+  accounts) lose those writes; inside the window, before any hospital was served again,
+  nothing is lost. Audit fingerprints stored after the point will not match the restored
+  trail (expected: record it in the incident). It ends with a full backup of the new timeline
+  (`backup-now full`; run it by hand if it failed). Use it inside the window; outside it,
+  prefer fixing forward. ADR-007's 4-hour restore target is the upper bound.
+
+**Not covered:** the first release that brings P1-T18 itself onto a server whose running build
+has no gate (`ihr_fleet_run hold` does not exist there): stop the stack first
+(`scripts/staging.sh down`), then `release` (with nothing serving it skips the announcement,
+hold, drain and seal; it refuses while any app service still runs). The changes from the
+P1-T18b review (the record before the first change, carried restore points, unique point names,
+the detached release, the kept copy's sizing, the seal-only window) are proven by
+`scripts/test_release_scripts.py` and the rule tests; the drill below predates them and is to be
+run again through `scripts/deploy.sh --release` against the local VM. Unpacking an older stack archive leaves files a newer release added
+(harmless: compose reads only the files it names). The nightly backup (02:30) may run inside
+the window; it does not block the restore point.
+
+**Drill** (local staging proof on this machine, 13-11-2026; 3 hospitals, a few hundred MB of
+database, so these are lower bounds; a server's restore scales with the database and WAL):
+
+| Step | Result | Time |
+|---|---|---|
+| Release N (plain start: `release-note`, `up`, smoke, `release-record`) | logged; every hospital served | 94 s |
+| Release N+1 with a tenant migration, `beta` forced to fail | first try stopped at the restore point (a bug, fixed): every hospital stayed held (503), window kept; run again: alpha and gamma migrated and served, beta failed (value-free error naming the migration), stays 503, `ihr-fleet: hospital=beta outcome=failed`, release exit 1, window kept, nothing logged | 30 s + 149 s |
+| Resume (cause removed; `fleet --resume`, then `release --finish`) | beta migrated; all served; release logged; window cleared | 4 s + 49 s |
+| Release N+2 (no migration) | all held for its 40 s of hold, seal, restore point and migrations; logged | 168 s |
+| Rollback N+2 to N+1 (no restore) | backend and web app re-pointed, `up`, smoke; nothing lost | 126 s |
+| Rollback N+1 to N without a restore | refused at once: the hospitals' schema changed | 0 s |
+| Rollback N+1 to N `--restore` | a wrong typed tag refused with nothing changed; then stop, copy kept (`pgdata-pre-rollback-…`), restore to `release-<N+1>` from the full backup before it, N's images, `up`, holds released, smoke 0 failures; a profile edit made after N+1 was gone (as stated), beta's migration row gone; every other volume (logs, keys, WAL spool, backups state) untouched | 205 s (stack down about 35 s of it, then `up`) |
+| `backup-now full` after the restore | the new timeline backed up | 20 s |
+| Window budget | a window of 1 minute and a held hospital: the worker wrote `ihr-fleet: hospital=gamma outcome=overrun` about 90 s later (the alert path itself is proven by `scripts/check-logs.py`; a proof logs to Docker's files, not the journal) | — |
 
 ## Roles and rollbacks (P1-T11a, ADR-017)
 

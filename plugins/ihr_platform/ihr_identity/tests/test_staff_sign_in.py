@@ -17,6 +17,7 @@ from django.utils import timezone
 from django_tenants.utils import schema_context
 from ihr_platform.models import Hospital
 from ihr_platform.test_runner import TEST_SCHEMA
+from ihr_platform.testing import as_owner, owner_for_test
 from rest_framework.authtoken.models import Token
 from rest_framework.test import APIClient
 
@@ -164,7 +165,7 @@ class StaffSessionTests(SimpleTestCase):
 
     def test_suspended_hospital_refuses_everyone(self):
         client = self.client_for()
-        with schema_context("public"):
+        with schema_context("public"), as_owner():  # an operator's change (the owner)
             Hospital.objects.filter(pk=self.hospital.pk).update(status="suspended")
         try:
             from django.db import connection
@@ -172,7 +173,7 @@ class StaffSessionTests(SimpleTestCase):
             connection.tenant.status = "suspended"
             self.assert_refused(client)
         finally:
-            with schema_context("public"):
+            with schema_context("public"), as_owner():
                 Hospital.objects.filter(pk=self.hospital.pk).update(status="active")
             connection.tenant.status = "active"
 
@@ -622,6 +623,7 @@ class LinkStaffCommandTests(SimpleTestCase):
     databases = {"default"}
 
     def test_link_needs_confirmation_and_refuses_superusers(self):
+        owner_for_test(self)  # ihr_link_staff: an admin one-off, the owner (P1-T19a)
         user = User.objects.create_user(
             username=f"link-{time.time_ns()}", password="x-Unused-1"
         )

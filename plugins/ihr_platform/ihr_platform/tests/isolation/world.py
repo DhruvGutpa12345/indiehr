@@ -18,6 +18,11 @@ reaches their detail routes too.
 
 Every write to ``public`` (the PIN sample, each hospital) registers its own removal right away
 through ``cleanup`` (the test class's ``addClassCleanup``), so nothing outlives a failed set-up.
+
+With ``IHR_DB_ROLES=test`` the crawl runs as the app role (P1-T19a); what only owner-run
+processes do in production (making a hospital and its schema, loading the PIN directory,
+dropping it all again) runs inside ``as_owner()``. The seeding itself drives the API, as the
+app role.
 """
 
 import re
@@ -32,6 +37,7 @@ from django_tenants.utils import schema_context
 
 from ihr_platform.models import Domain, Hospital
 from ihr_platform.seeding import load_demo_data
+from ihr_platform.testing import as_owner
 from ihr_platform.tests.isolation.extras import seed_extras
 
 UUID_RE = re.compile(r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}")
@@ -66,7 +72,7 @@ class Tenant:
 
 
 def _create(slug, name, domain, canary, cleanup):
-    with schema_context("public"):
+    with schema_context("public"), as_owner():
         hospital = Hospital.objects.filter(slug=slug).first()
         if hospital is None:
             hospital = Hospital(slug=slug, name=name, status=Hospital.Status.ACTIVE)
@@ -82,11 +88,11 @@ def _load_pin_sample(cleanup):
     from ihr_platform.models import PinDirectoryLoad, PostOffice
 
     def remove():
-        with schema_context("public"):
+        with schema_context("public"), as_owner():
             PostOffice.objects.all().delete()
             PinDirectoryLoad.objects.all().delete()
 
-    with schema_context("public"):
+    with schema_context("public"), as_owner():  # ihr_load_pincodes: an admin one-off
         cleanup(remove)
         pincodes.load(PIN_SAMPLE.read_bytes(), PIN_SAMPLE.name, date(2026, 10, 1))
 
@@ -231,7 +237,7 @@ def build_world(cleanup):
 
 
 def drop_world(*tenants):
-    with schema_context("public"), connection.cursor() as cursor:
+    with schema_context("public"), as_owner(), connection.cursor() as cursor:
         for tenant in tenants:
             Domain.objects.filter(tenant=tenant.hospital).delete()
             Hospital.objects.filter(pk=tenant.hospital.pk).delete()

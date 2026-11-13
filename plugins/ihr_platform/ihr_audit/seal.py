@@ -23,11 +23,27 @@ Windows are contiguous from txid 0, so every entry belongs to exactly one seal. 
 changing or adding an entry, or a seal, breaks a recomputed hash. A database owner could
 recompute the whole chain: the hourly fingerprints kept outside the database (anchor.py)
 catch that. Entries written in the last moments are unsealed until the next run (every minute).
+
+Who writes what (P1-T19a, ADR-010 amendment): the app role may insert only an entry's data
+columns, and a BEFORE INSERT trigger forces its ``txid``, ``at`` and ``salt`` (so it can
+neither backdate an entry nor slip one into a sealed window). It never inserts a seal: seals are
+made by ``ihr_audit_seal_next()`` in each hospital schema, a SECURITY DEFINER function owned by
+the database owner, with no arguments and its search_path pinned, that computes every window,
+hash and bound itself (``_FUNCTIONS`` below, built from the same canonical texts). Migration
+0004 installed them once, from SQL frozen in it; ``ensure_sealing`` (every hospital schema's
+post_migrate) keeps them, and the stamp trigger, this build's: a dropped, altered or older
+function is replaced by any migrate (review C5). ``verify`` stays here and recomputes
+everything independently, so a changed function is caught like any other tampering.
+
+A sealing run that finds another one working on the schema returns at once (review S6:
+``pg_try_advisory_xact_lock``): the app role may take the same advisory lock, and must never be
+able to make every sealer wait. ``seal_once`` also bounds the call (``statement_timeout``).
 """
 
 import hashlib
 
 from django.db import connection, transaction
+from ihr_platform import db_functions
 from psycopg import sql
 
 GENESIS = bytes(32)
@@ -89,74 +105,311 @@ def seal_hash(prev, seq, lower, upper, count, entries_hash, version=FORMAT):
     return hashlib.sha256(bytes(prev) + head + bytes(entries_hash)).digest()
 
 
-def _upper_bound(cursor, names, lower, horizon):
-    """The window's end: the horizon, or earlier so a seal covers about BATCH entries.
-    Never a window with no entries: the loop below would stop there for good."""
-    window = "FROM {entry} WHERE txid >= %s::xid8 AND txid < %s::xid8"
-    cursor.execute(
-        sql.SQL("SELECT min(txid)::text " + window).format(**names),
-        [lower, horizon],
+# One sealing call never runs longer than this (S6): the beat job tries again next minute
+SEAL_TIMEOUT = "30s"
+
+
+def seal_once(schema, batch=None, version=None):
+    """Seal everything that is final. Returns the number of entries sealed (0 also when
+    another sealing run holds the schema).
+
+    As the app does: ``ihr_audit_seal_next()`` (BATCH entries a seal, format FORMAT). With
+    ``batch`` or ``version``, the owner-only ``ihr_audit_seal_run`` (tests: small batches,
+    the older formats); the app role may not execute it."""
+    with transaction.atomic(), connection.cursor() as cursor:
+        cursor.execute(f"SET LOCAL statement_timeout = '{SEAL_TIMEOUT}'")
+        if batch is None and version is None:
+            cursor.execute(
+                sql.SQL("SELECT {}.ihr_audit_seal_next()").format(
+                    sql.Identifier(schema)
+                )
+            )
+        else:
+            cursor.execute(
+                sql.SQL("SELECT {}.ihr_audit_seal_run(%s, %s::smallint)").format(
+                    sql.Identifier(schema)
+                ),
+                [
+                    BATCH if batch is None else batch,
+                    FORMAT if version is None else version,
+                ],
+            )
+        return cursor.fetchone()[0]
+
+
+# The sealing functions of one hospital schema (ensure_sealing; migration 0004 froze the first
+# version). The windows are cut exactly as the Python sealer before them did: at most about
+# BATCH entries, never inside a transaction, never an empty window, never above the horizon
+# (the oldest transaction still running).
+_FUNCTIONS = """
+CREATE OR REPLACE FUNCTION {schema}.ihr_audit_seal_run(p_batch integer, p_version smallint)
+RETURNS bigint LANGUAGE plpgsql SET search_path = pg_catalog, pg_temp AS $f$
+DECLARE
+    v_seq bigint := 0;
+    v_lower xid8 := '0';
+    v_prev bytea := decode(repeat('00', 32), 'hex');
+    v_horizon xid8;
+    v_upper xid8;
+    v_first xid8;
+    v_nth xid8;
+    v_count bigint;
+    v_leaves bytea;
+    v_hash bytea;
+    v_sealed bigint := 0;
+    v_last record;
+BEGIN
+    IF p_version IS NULL OR p_version NOT IN ({versions}) OR p_batch IS NULL OR p_batch < 1 THEN
+        RAISE EXCEPTION 'ihr_audit_seal_run: unknown format or batch';
+    END IF;
+    -- Another run is sealing this schema (or someone holds its key): nothing to do now (S6)
+    IF NOT pg_try_advisory_xact_lock(hashtext({lock})) THEN
+        RETURN 0;
+    END IF;
+    SELECT s.seq, s.upper_txid, s.hash INTO v_last
+        FROM {schema}.ihr_audit_seal s ORDER BY s.seq DESC LIMIT 1;
+    IF FOUND THEN
+        v_seq := v_last.seq;
+        v_lower := v_last.upper_txid;
+        v_prev := v_last.hash;
+    END IF;
+    v_horizon := pg_snapshot_xmin(pg_current_snapshot());
+    WHILE v_lower < v_horizon LOOP
+        SELECT min(e.txid) INTO v_first FROM {schema}.ihr_audit_entry e
+            WHERE e.txid >= v_lower AND e.txid < v_horizon;
+        IF v_first IS NULL THEN
+            v_upper := v_horizon;
+        ELSE
+            SELECT e.txid INTO v_nth FROM {schema}.ihr_audit_entry e
+                WHERE e.txid >= v_lower AND e.txid < v_horizon
+                ORDER BY e.txid, e.id OFFSET p_batch LIMIT 1;
+            IF NOT FOUND THEN
+                v_upper := v_horizon;  -- fewer than a batch: all of them
+            ELSIF v_nth = v_first THEN
+                -- one transaction wrote more than a batch: take it whole
+                v_upper := ((v_first::text)::numeric + 1)::text::xid8;
+            ELSE
+                v_upper := v_nth;
+            END IF;
+        END IF;
+        IF p_version = 1 THEN
+            SELECT count(*), sha256(coalesce(string_agg({leaf1}, ''::bytea
+                ORDER BY e.txid, e.id), ''::bytea)) INTO v_count, v_leaves
+                FROM {schema}.ihr_audit_entry e WHERE e.txid >= v_lower AND e.txid < v_upper;
+        ELSIF p_version = 2 THEN
+            SELECT count(*), sha256(coalesce(string_agg({leaf2}, ''::bytea
+                ORDER BY e.txid, e.id), ''::bytea)) INTO v_count, v_leaves
+                FROM {schema}.ihr_audit_entry e WHERE e.txid >= v_lower AND e.txid < v_upper;
+        ELSE
+            SELECT count(*), sha256(coalesce(string_agg({leaf3}, ''::bytea
+                ORDER BY e.txid, e.id), ''::bytea)) INTO v_count, v_leaves
+                FROM {schema}.ihr_audit_entry e WHERE e.txid >= v_lower AND e.txid < v_upper;
+        END IF;
+        EXIT WHEN v_count = 0;
+        v_seq := v_seq + 1;
+        v_hash := sha256(v_prev || convert_to(
+            CASE p_version WHEN 1 THEN {tag1} WHEN 2 THEN {tag2} ELSE {tag3} END
+            || v_seq::text || '|' || v_lower::text || '|' || v_upper::text || '|'
+            || v_count::text, 'UTF8') || v_leaves);
+        INSERT INTO {schema}.ihr_audit_seal (seq, lower_txid, upper_txid, entries,
+            entries_hash, prev_hash, hash, version)
+        VALUES (v_seq, v_lower, v_upper, v_count, v_leaves, v_prev, v_hash, p_version);
+        v_prev := v_hash;
+        v_sealed := v_sealed + v_count;
+        v_lower := v_upper;
+    END LOOP;
+    RETURN v_sealed;
+END $f$;
+
+CREATE OR REPLACE FUNCTION {schema}.ihr_audit_seal_next() RETURNS bigint
+LANGUAGE sql SECURITY DEFINER SET search_path = pg_catalog, pg_temp
+AS $f$ SELECT {schema}.ihr_audit_seal_run({batch}, {version}::smallint) $f$;
+
+REVOKE ALL ON FUNCTION {schema}.ihr_audit_seal_run(integer, smallint) FROM PUBLIC;
+REVOKE ALL ON FUNCTION {schema}.ihr_audit_seal_next() FROM PUBLIC;
+"""
+
+
+def functions_sql(schema):
+    """The sealing functions of ``schema``, as SQL (ensure_sealing). EXECUTE on
+    ihr_audit_seal_next goes to the app role only (ihr_platform/db_roles.py)."""
+    return sql.SQL(_FUNCTIONS).format(
+        schema=sql.Identifier(schema),
+        lock=sql.Literal(f"ihr_audit_seal:{schema}"),
+        versions=sql.SQL(", ").join(sql.Literal(v) for v in sorted(CANONICAL)),
+        batch=sql.Literal(BATCH),
+        version=sql.Literal(FORMAT),
+        leaf1=sql.SQL(leaf_sql(1)),
+        leaf2=sql.SQL(leaf_sql(2)),
+        leaf3=sql.SQL(leaf_sql(3)),
+        tag1=sql.Literal(_TAG[1]),
+        tag2=sql.Literal(_TAG[2]),
+        tag3=sql.Literal(_TAG[3]),
     )
-    first = cursor.fetchone()[0]
-    if first is None:
-        return horizon
+
+
+# The trigger that forces an entry's txid, time and salt (S2)
+STAMP_FUNCTION = """
+CREATE OR REPLACE FUNCTION {schema}.ihr_audit_stamp() RETURNS trigger
+LANGUAGE plpgsql SET search_path = pg_catalog, pg_temp AS $f$
+BEGIN
+    NEW.txid := pg_current_xact_id();
+    NEW.at := clock_timestamp();
+    NEW.salt := uuid_send(gen_random_uuid());
+    RETURN NEW;
+END $f$;
+"""
+STAMP_TRIGGER = (
+    "CREATE OR REPLACE TRIGGER ihr_audit_stamp BEFORE INSERT ON {schema}.ihr_audit_entry "
+    "FOR EACH ROW EXECUTE FUNCTION {schema}.ihr_audit_stamp()"
+)
+SEALING = ("ihr_audit_seal_next", "ihr_audit_seal_run", "ihr_audit_stamp")
+# This build's: the SQL and every constant baked into it
+SEALING_VERSION = db_functions.version(
+    _FUNCTIONS,
+    STAMP_FUNCTION,
+    STAMP_TRIGGER,
+    repr(sorted(CANONICAL.items())),
+    repr(sorted(_TAG.items())),
+    str(BATCH),
+    str(FORMAT),
+)
+# Installed by ihr_audit 0004 first: before it, a schema has no sealing at all
+SEALING_MIGRATION = ("ihr_audit", "0004_owner_writes_the_chain")
+
+
+def _stamp_triggers(cursor, schemas):
+    """{schema: (enabled, function name)} of the stamp trigger on the entries."""
+    cursor.execute(
+        "SELECT n.nspname, t.tgenabled, p.proname FROM pg_trigger t "
+        "JOIN pg_class c ON c.oid = t.tgrelid "
+        "JOIN pg_namespace n ON n.oid = c.relnamespace JOIN pg_proc p ON p.oid = t.tgfoid "
+        "WHERE n.nspname = ANY(%s) AND c.relname = 'ihr_audit_entry' "
+        "AND t.tgname = 'ihr_audit_stamp'",
+        [list(schemas)],
+    )
+    return {schema: (enabled, name) for schema, enabled, name in cursor.fetchall()}
+
+
+def _stamp_trigger(cursor, schema):
+    """(enabled, function name) of the stamp trigger on the entries, or None."""
+    return _stamp_triggers(cursor, [schema]).get(schema)
+
+
+def sealing_problems(cursor, schema):
+    """Why this schema's sealing functions or stamp trigger are not this build's."""
+    return _judge(
+        schema,
+        db_functions.held(cursor, schema, SEALING),
+        _stamp_trigger(cursor, schema),
+    )
+
+
+def sealing_problems_by_schema(cursor, schemas):
+    """What the run-time check (ihr_platform/db_roles.py) gates a hospital for, for every
+    schema in ``schemas`` whose sealing is installed (any of its functions is there), in two
+    queries: {schema: [problem]}, only schemas with one. A sealing function missing or changed
+    since it was installed (its fingerprint no longer matches the anchor's stamp), or the
+    stamp trigger missing or off. An older build's functions, unchanged as installed, are not:
+    the schema's next migrate brings them to this build's (``sealing_problems``), and a release
+    that changes their SQL without a migration must not stop every hospital. A schema with none
+    of them is older than ihr_audit 0004 (not served: the release gate) or lost them all (the
+    app's sealing then fails, and SealerLate fires)."""
+    schemas = list(schemas)
+    held = db_functions.held_in(cursor, schemas, SEALING)
+    triggers = _stamp_triggers(cursor, schemas)
+    found = {}
+    for schema in schemas:
+        if schema not in held:
+            continue
+        functions = held[schema]
+        problems = []
+        if missing := sorted(set(SEALING) - set(functions)):
+            problems.append(
+                f"{schema}: sealing functions {', '.join(missing)} missing (migrate puts "
+                "them back)"
+            )
+        elif not db_functions.unchanged(functions, SEALING, "ihr_audit_seal_next"):
+            problems.append(
+                f"{schema}: sealing functions changed since they were installed (migrate "
+                "puts them back)"
+            )
+        problems += _trigger_problems(schema, triggers.get(schema))
+        if problems:
+            found[schema] = problems
+    return found
+
+
+def _judge(schema, functions, trigger):
+    problems = []
+    if not db_functions.intact(
+        functions, SEALING, "ihr_audit_seal_next", SEALING_VERSION
+    ):
+        missing = sorted(set(SEALING) - set(functions))
+        problems.append(
+            f"{schema}: sealing functions "
+            + (
+                f"{', '.join(missing)} missing"
+                if missing
+                else "changed or not this build's"
+            )
+            + " (migrate puts them back)"
+        )
+    return problems + _trigger_problems(schema, trigger)
+
+
+def _trigger_problems(schema, trigger):
+    problems = []
+    if trigger is None or trigger[1] != "ihr_audit_stamp":
+        problems.append(f"{schema}.ihr_audit_entry: trigger ihr_audit_stamp is missing")
+    elif trigger[0] not in ("O", "A"):
+        problems.append(
+            f"{schema}.ihr_audit_entry: trigger ihr_audit_stamp is not enabled"
+        )
+    return problems
+
+
+def _sealing_installed(cursor, schema):
     cursor.execute(
         sql.SQL(
-            "SELECT txid::text " + window + " ORDER BY txid, id OFFSET %s LIMIT 1"
-        ).format(**names),
-        [lower, horizon, BATCH],
+            "SELECT to_regclass({}) IS NOT NULL AND EXISTS (SELECT 1 FROM {} "
+            "WHERE app = %s AND name = %s)"
+        ).format(
+            sql.Literal(f'"{schema}".ihr_audit_seal'),
+            sql.Identifier(schema, "django_migrations"),
+        ),
+        list(SEALING_MIGRATION),
     )
-    row = cursor.fetchone()
-    if row is None:
-        return horizon  # fewer than BATCH entries: all of them
-    if row[0] == first:
-        return str(
-            int(first) + 1
-        )  # one transaction wrote more than BATCH: take it whole
-    return row[0]
+    return cursor.fetchone()[0]
 
 
-def seal_once(schema):
-    """Seal everything that is final. Returns the number of entries sealed."""
-    names = _names(schema)
-    sealed = 0
-    with transaction.atomic(), connection.cursor() as cursor:
-        cursor.execute(
-            "SELECT pg_advisory_xact_lock(hashtext(%s))", [f"ihr_audit_seal:{schema}"]
-        )
-        cursor.execute(
-            sql.SQL(
-                "SELECT seq, upper_txid::text, hash FROM {seal} ORDER BY seq DESC LIMIT 1"
-            ).format(**names)
-        )
-        last = cursor.fetchone()
-        seq, lower, prev = (
-            (last[0], last[1], bytes(last[2])) if last else (0, "0", GENESIS)
-        )
-        cursor.execute("SELECT pg_snapshot_xmin(pg_current_snapshot())::text")
-        horizon = cursor.fetchone()[0]
-        while int(lower) < int(horizon):
-            upper = _upper_bound(cursor, names, lower, horizon)
+def ensure_sealing(conn, schema):
+    """Bring the sealing functions and the stamp trigger of ``schema`` to this build's
+    (post_migrate, as the owner, before the grants: db_roles gives EXECUTE back to the app).
+    Changes nothing when they are current. True if it changed something."""
+    with conn.cursor() as cursor:
+        cursor.execute("SELECT to_regclass(%s)", [f'"{schema}".django_migrations'])
+        if cursor.fetchone()[0] is None or not _sealing_installed(cursor, schema):
+            return False
+        if not sealing_problems(cursor, schema):
+            return False
+    ident = sql.Identifier(schema)
+    with transaction.atomic(using=conn.alias), conn.cursor() as cursor:
+        cursor.execute("SET LOCAL lock_timeout = '5s'")
+        cursor.execute(functions_sql(schema))
+        cursor.execute(sql.SQL(STAMP_FUNCTION).format(schema=ident))
+        trigger = _stamp_trigger(cursor, schema)
+        if trigger is None or trigger[1] != "ihr_audit_stamp":
+            cursor.execute(sql.SQL(STAMP_TRIGGER).format(schema=ident))
+        if trigger is None or trigger[0] not in ("O", "A"):
             cursor.execute(
-                sql.SQL(_window_hash(FORMAT)).format(**names), [lower, upper]
+                sql.SQL("ALTER TABLE {} ENABLE TRIGGER ihr_audit_stamp").format(
+                    sql.Identifier(schema, "ihr_audit_entry")
+                )
             )
-            count, entries_hash = cursor.fetchone()
-            if count == 0:
-                break
-            seq += 1
-            new = seal_hash(prev, seq, lower, upper, count, entries_hash, FORMAT)
-            cursor.execute(
-                sql.SQL(
-                    "INSERT INTO {seal} (seq, lower_txid, upper_txid, entries, "
-                    "entries_hash, prev_hash, hash, version) "
-                    "VALUES (%s, %s::xid8, %s::xid8, %s, %s, %s, %s, %s)"
-                ).format(**names),
-                [seq, lower, upper, count, bytes(entries_hash), prev, new, FORMAT],
-            )
-            prev = new
-            sealed += count
-            lower = upper
-    return sealed
+        db_functions.write_stamp(
+            cursor, schema, "ihr_audit_seal_next", "", SEALING, SEALING_VERSION
+        )
+    return True
 
 
 def verify(schema, stale_minutes=10, as_of=None):

@@ -47,6 +47,7 @@ from ihr_platform.models import (
 )
 from ihr_platform.provisioning import runner
 from ihr_platform.test_runner import TEST_SCHEMA
+from ihr_platform.testing import as_owner, owner_for_test
 
 HOST = "testserver"
 OTHER_BUILD = "f" * 64
@@ -63,7 +64,7 @@ def _rows(schema):
 
 
 def _add_row(schema, app, name):
-    with connection.cursor() as cursor:
+    with as_owner(), connection.cursor() as cursor:  # only migrate (the owner) records
         cursor.execute(
             f'INSERT INTO "{schema}".django_migrations (app, name, applied) '
             "VALUES (%s, %s, now())",
@@ -119,7 +120,7 @@ class FingerprintTests(TestCase):
         audit = sorted(n for a, n in rows if a == "ihr_audit")
         removed = [("ihr_identity", max(n for a, n in rows if a == "ihr_identity"))]
         removed += [("ihr_audit", audit[-1]), ("ihr_audit", audit[-2])]
-        with connection.cursor() as cursor:
+        with as_owner(), connection.cursor() as cursor:
             for app, name in removed:
                 cursor.execute(
                     f'DELETE FROM "{TEST_SCHEMA}".django_migrations '
@@ -136,7 +137,8 @@ class FingerprintTests(TestCase):
         self.assertEqual(state.verdict, "ahead")
         self.assertEqual(state.unknown, (("facility", "9999_future"),))
         hospital = testhosp()
-        self.assertEqual(release.record(hospital).fingerprint, "")
+        with as_owner():  # recorded by migrate and ihr_fleet_run (the owner)
+            self.assertEqual(release.record(hospital).fingerprint, "")
         self.assertEqual(release.recorded(hospital)[0], "")
         self.assertFalse(release.servable(hospital))
         response = self.client.get("/api/ihr/bootstrap/", HTTP_HOST=HOST)
@@ -149,7 +151,7 @@ class FingerprintTests(TestCase):
 
     def test_a_missing_tenant_migration_reads_as_behind(self):
         leaf = max(n for a, n in _rows(TEST_SCHEMA) if a == "ihr_tenant_settings")
-        with connection.cursor() as cursor:
+        with as_owner(), connection.cursor() as cursor:
             cursor.execute(
                 f'DELETE FROM "{TEST_SCHEMA}".django_migrations '
                 "WHERE app = 'ihr_tenant_settings' AND name = %s",
@@ -161,6 +163,7 @@ class FingerprintTests(TestCase):
         self.assertEqual(state.fingerprint, "")
 
     def test_a_schema_without_migrations_is_missing(self):
+        owner_for_test(self)  # schema_state is the fleet runner's check (the owner)
         with connection.cursor() as cursor:
             cursor.execute('CREATE SCHEMA "h_emptyrel01"')
         self.assertEqual(release.schema_state("h_emptyrel01").verdict, "missing")
@@ -181,12 +184,14 @@ class FingerprintTests(TestCase):
             state.save()
         # A full save of the hospital (ihr_create_tenant does one) cannot touch it (C2)
         hospital = testhosp()
-        release.hold([hospital.pk])
-        hospital.name = hospital.name  # an old copy, saved whole
-        hospital.save()
+        with as_owner():  # ihr_fleet_run's hold, then ihr_create_tenant's full save
+            release.hold([hospital.pk])
+            hospital.name = hospital.name  # an old copy, saved whole
+            hospital.save()
         self.assertIsNotNone(release.recorded(hospital)[1])
 
     def test_the_signal_records_and_fleet_children_leave_it_to_the_parent(self):
+        owner_for_test(self)  # sent by migrate_schemas, which runs as the owner
         hospital = testhosp()
         HospitalSchemaState.objects.filter(pk=hospital.pk).update(schema_fingerprint="")
         release.RECORD_ON_SIGNAL["on"] = False
@@ -206,7 +211,7 @@ class SafeErrorTests(TestCase):
     """O10: an error record never holds row values."""
 
     def test_a_real_unique_violation_keeps_its_names_not_its_values(self):
-        with connection.cursor() as cursor:
+        with as_owner(), connection.cursor() as cursor:  # a scratch table: the owner's
             cursor.execute("CREATE TEMP TABLE ihr_probe (phone text UNIQUE)")
             cursor.execute("INSERT INTO ihr_probe VALUES ('+919876543210')")
             try:
@@ -299,7 +304,10 @@ class GateTests(TestCase):
         self.hospital = testhosp()
 
     def _hold(self):
-        release.hold([self.hospital.pk])
+        with (
+            as_owner()
+        ):  # ihr_fleet_run hold (the owner); the gate itself runs as the app
+            release.hold([self.hospital.pk])
         connection.set_schema_to_public()
 
     def test_api_requests_get_503_json(self):
@@ -326,11 +334,12 @@ class GateTests(TestCase):
         self.assertIn("अपग्रेड", page)
 
     def test_bootstrap_js_is_a_stub_from_public_data_only(self):
-        MaintenanceWindow.objects.create(
-            start=timezone.now() - timedelta(minutes=5),
-            minutes=60,
-            created_by="test",
-        )
+        with as_owner():  # ihr_fleet_run window (the owner)
+            MaintenanceWindow.objects.create(
+                start=timezone.now() - timedelta(minutes=5),
+                minutes=60,
+                created_by="test",
+            )
         self._hold()
         with CaptureQueriesContext(connection) as queries:
             response = self.client.get("/api/ihr/bootstrap.js", HTTP_HOST=HOST)
@@ -360,12 +369,13 @@ class GateTests(TestCase):
         self.assertEqual(entries(), before)
 
     def test_a_schema_of_another_build_is_gated_and_platform_hosts_never_are(self):
-        call_command(
-            "ihr_create_tenant",
-            public=True,
-            domain=["platform.testserver"],
-            verbosity=0,
-        )
+        with as_owner():  # the migrate one-shot's ihr_create_tenant --public
+            call_command(
+                "ihr_create_tenant",
+                public=True,
+                domain=["platform.testserver"],
+                verbosity=0,
+            )
         with mock.patch.object(release, "code_fingerprint", return_value=OTHER_BUILD):
             self.assertEqual(
                 self.client.get("/api/ihr/bootstrap/", HTTP_HOST=HOST).status_code, 503
@@ -401,7 +411,8 @@ class DefenceInDepthTests(TestCase):
         with self.assertRaises(TokenRejectedError) as raised:
             check_stored_token("x")
         self.assertNotIn("upgraded", str(raised.exception))
-        release.hold([self.hospital.pk])
+        with as_owner():  # ihr_fleet_run hold
+            release.hold([self.hospital.pk])
         connection.set_tenant(self.hospital)
         with self.assertRaisesMessage(TokenRejectedError, "being upgraded"):
             check_stored_token("x")
@@ -420,9 +431,11 @@ class DefenceInDepthTests(TestCase):
         from ihr_platform.beat import ActiveTenantScheduler
 
         self.assertIn(self.hospital, ActiveTenantScheduler.get_queryset())
-        release.hold([self.hospital.pk])
+        with as_owner():  # ihr_fleet_run hold
+            release.hold([self.hospital.pk])
         self.assertNotIn(self.hospital, ActiveTenantScheduler.get_queryset())
-        release.release_hold([self.hospital.pk])
+        with as_owner():
+            release.release_hold([self.hospital.pk])
         with mock.patch.object(release, "code_fingerprint", return_value=OTHER_BUILD):
             self.assertNotIn(self.hospital, ActiveTenantScheduler.get_queryset())
 
@@ -445,7 +458,8 @@ class DefenceInDepthTests(TestCase):
             action=StaffAccessRequest.Action.RESET_SIGN_IN,
             requested_by="test",
         )
-        release.hold([self.hospital.pk])
+        with as_owner():  # ihr_fleet_run hold; the staff worker below runs as the app
+            release.hold([self.hospital.pk])
         self.assertIsNone(invitations.claim_next())
         self.assertFalse(invitations.handle_request_once())
         self.assertEqual(invitations.expire_due(now=timezone.now()), 0)
@@ -458,13 +472,15 @@ class DefenceInDepthTests(TestCase):
         self.assertIsNotNone(inv.not_before)
         req.refresh_from_db()
         self.assertEqual(req.status, StaffAccessRequest.Status.QUEUED)
-        release.release_hold([self.hospital.pk])
+        with as_owner():
+            release.release_hold([self.hospital.pk])
         StaffInvitation.objects.filter(pk=inv.pk).update(not_before=None)
         self.assertEqual(invitations.claim_next().pk, inv.pk)
 
     def test_operator_commands_refuse_a_held_hospital(self):
         """S6: the commands an operator runs into one hospital (or all) never write into a
         schema that is held for a release or behind this build."""
+        owner_for_test(self)  # operators' one-off commands run as the owner (admin)
         geography = "ihr_tenant_settings.management.commands.ihr_load_geography"
         release.hold([self.hospital.pk])
         for args in (
@@ -496,6 +512,7 @@ class DefenceInDepthTests(TestCase):
         self.assertNotIn("testhosp: 0 states", out.getvalue())
 
     def test_provisioning_waits_for_a_held_hospital(self):
+        owner_for_test(self)  # the provisioner runs as the owner
         op = TenantOperation.objects.create(
             kind=TenantOperation.Kind.PROVISION,
             hospital=self.hospital,
@@ -566,6 +583,9 @@ class FleetTests(SimpleTestCase):
     databases = {"default"}
 
     def setUp(self):
+        owner_for_test(
+            self
+        )  # ihr_fleet_run runs as the owner; first, so _clean does too
         connection.set_schema_to_public()
         self.slugs = []
         self.addCleanup(self._clean)
@@ -667,6 +687,78 @@ class FleetTests(SimpleTestCase):
         nothing, out, _, _ = self._run([], resume=again.pk, slugs=[])
         self.assertIsNone(nothing)
         self.assertIn("nothing to resume", out[-1])
+
+    def test_a_hospital_whose_grants_cannot_be_repaired_is_held_alone(self):
+        """P1-T19a review C3: a problem only an operator can fix (RolesError in required
+        mode) or a lock time-out while repairing one hospital's database grants holds and
+        notes that hospital; the run goes on, and the others are released."""
+        from ihr_platform import db_roles
+
+        a, b, c = (self._hospital(s) for s in ("fleet-ga", "fleet-gb", "fleet-gc"))
+        real = db_roles.ensure_grants
+
+        def grants(conn, schemas=None, **kwargs):
+            if schemas == b.schema_name:
+                raise db_roles.RolesError("database roles: a grant to a dropped role")
+            if schemas == c.schema_name:
+                cause = psycopg.errors.LockNotAvailable("canceling statement")
+                raise OperationalError(str(cause)) from cause
+            return real(conn, schemas, **kwargs)
+
+        with mock.patch.object(db_roles, "ensure_grants", side_effect=grants):
+            run, _, err, _ = self._run(["migrate"])
+        ops = self._ops(run)
+        self.assertEqual(
+            {slug: op.result["outcome"] for slug, op in ops.items()},
+            {"fleet-ga": "done", "fleet-gb": "held", "fleet-gc": "held"},
+        )
+        self.assertTrue(release.schema_ready(a))
+        for hospital in (b, c):
+            self.assertFalse(release.schema_ready(hospital))
+            self.assertIsNotNone(release.recorded(hospital)[1])  # still held
+            self.assertIn(
+                "database grants", ops[hospital.slug].steps[0]["error"], hospital.slug
+            )
+            self.assertIn(f"ihr-fleet: hospital={hospital.slug} outcome=held", err)
+        self.assertIn("SQLSTATE 55P03", ops["fleet-gc"].steps[0]["error"])
+        self.assertEqual(
+            (run.status, run.counts), ("incomplete", {"done": 1, "held": 2})
+        )
+
+    def test_a_fleet_wide_migrate_repairs_every_hospital_schema(self):
+        """P1-T19a second review of C2: an app process gates a hospital whose schema gives
+        the app a right beyond the model, but the app role is shared, so the right stays
+        usable through any hospital it serves. A fleet-wide check reports the schemas no step
+        takes (archived here), and a fleet-wide migrate takes the right away there too."""
+        from ihr_platform import db_roles
+
+        if db_roles.mode() != "test":
+            self.skipTest("needs IHR_DB_ROLES=test (the app role's grants)")
+        archived = self._hospital("fleet-arch", Hospital.Status.ARCHIVED)
+        schema = archived.schema_name
+        with connection.cursor() as cursor:
+            cursor.execute(f'CREATE TABLE "{schema}".emr_p1t19a (id int)')
+            cursor.execute(f'GRANT TRUNCATE ON "{schema}".emr_p1t19a TO ihr_app')
+
+        def extras():
+            findings = db_roles.report(connection, [schema], database=False)
+            return [f.text for f in findings.of("extra")]
+
+        self.assertEqual(extras(), [f"{schema}.emr_p1t19a: ihr_app has TRUNCATE"])
+        _, out, _, _ = self._run(["check"], slugs=[], record=True)
+        self.assertIn(
+            f"{schema} (not in this run): database grants: extra: {schema}.emr_p1t19a: "
+            "ihr_app has TRUNCATE",
+            out,
+        )
+        self.assertTrue(extras())  # check only reports
+        # Naming hospitals leaves the others alone
+        self._run(["migrate"], slugs=["testhosp"])
+        self.assertTrue(extras())
+        run, out, _, _ = self._run(["migrate"], slugs=[])
+        self.assertNotIn("fleet-arch", self._ops(run))  # never migrated...
+        self.assertEqual(extras(), [])  # ... but its grants are the model's
+        self.assertTrue(any(line.startswith(f"{schema} (not migrated") for line in out))
 
     def test_a_hospital_held_elsewhere_is_retried_then_deferred(self):
         a = self._hospital("fleet-lock")
@@ -1275,6 +1367,100 @@ class FleetTests(SimpleTestCase):
         self.assertNotIn("ihr-fleet: hospital=testhosp outcome=held", lines)
         release.release_hold([testhosp().pk])
 
+    def test_a_hospital_that_failed_in_the_window_is_reported(self):
+        """P1-T18b review O6: a window hold whose step in the window failed (its newest upgrade
+        record since the hold) is named every minute like any other unserved hospital, so
+        HospitalNotServed does not resolve while it is down; one still waiting is not, nor
+        one whose failed record is from before the hold."""
+        from ihr_platform.models import HospitalSchemaState
+
+        hosp = testhosp()
+        release.hold([hosp.pk], reason=release.HOLD_WINDOW)
+        self.addCleanup(release.release_hold, [hosp.pk])
+        HospitalSchemaState.objects.filter(pk=hosp.pk).update(
+            upgrading_since=timezone.now() - timedelta(minutes=5)
+        )
+
+        def report():
+            lines = []
+            with mock.patch.object(tasks, "_emit", side_effect=lines.append):
+                tasks.report_unserved()
+            return lines
+
+        self.assertNotIn("ihr-fleet: hospital=testhosp outcome=held", report())
+        op = TenantOperation.objects.create(
+            kind=TenantOperation.Kind.UPGRADE,
+            hospital=hosp,
+            slug=hosp.slug,
+            status=TenantOperation.Status.FAILED,
+            requested_by="tester",
+            result={"outcome": "failed", "error": "x"},
+        )
+        self.assertEqual(tasks.failed_in_window(), {hosp.pk})
+        self.assertIn("ihr-fleet: hospital=testhosp outcome=held", report())
+        # a newer record that finished: waiting again (the release lifts the hold)
+        TenantOperation.objects.filter(pk=op.pk).update(result={"outcome": "done"})
+        self.assertNotIn("ihr-fleet: hospital=testhosp outcome=held", report())
+        # still being worked on by the run in progress: waiting, not down
+        TenantOperation.objects.filter(pk=op.pk).update(result={"outcome": "running"})
+        self.assertEqual(tasks.failed_in_window(), set())
+        # every other outcome of a record (fleet.py) is down: held by its step or not served at
+        # the end, the run stopped before it, killed, put off; and one no code knows yet
+        self.assertNotIn(
+            "crashed", tasks.FAILED_OUTCOMES
+        )  # a child's result, never a record's
+        for outcome in (*tasks.FAILED_OUTCOMES, "something-new"):
+            TenantOperation.objects.filter(pk=op.pk).update(result={"outcome": outcome})
+            self.assertEqual(tasks.failed_in_window(), {hosp.pk}, outcome)
+            self.assertIn(
+                "ihr-fleet: hospital=testhosp outcome=held", report(), outcome
+            )
+        self.assertTrue({"held", "stopped"} <= set(tasks.FAILED_OUTCOMES))
+        # a failed record from before this window's hold is not this window's
+        TenantOperation.objects.filter(pk=op.pk).update(
+            result={"outcome": "failed"},
+            created_at=timezone.now() - timedelta(days=1),
+        )
+        self.assertEqual(tasks.failed_in_window(), set())
+
+    def test_a_window_hold_past_its_budget_is_reported(self):
+        """P1-T18b: a window's hold is named "overrun" every minute once it outlasts the
+        announced window it began in (or WINDOW_BUDGET_MINUTES with no window); never before,
+        never for a hold of another reason or a provisioning hospital."""
+        from ihr_platform.models import HospitalSchemaState, MaintenanceWindow
+
+        prv = self._hospital("fleet-ovp", Hospital.Status.PROVISIONING)
+        hosp = testhosp()
+        release.hold([hosp.pk, prv.pk], reason=release.HOLD_WINDOW)
+        self.addCleanup(release.release_hold, [hosp.pk, prv.pk])
+        since = timezone.now() - timedelta(minutes=30)
+        HospitalSchemaState.objects.filter(pk__in=[hosp.pk, prv.pk]).update(
+            upgrading_since=since
+        )
+        now = timezone.now()
+        # no announced window: the default budget
+        self.assertEqual(tasks.overrun_slugs(now), [])
+        late = since + timedelta(minutes=tasks.WINDOW_BUDGET_MINUTES)
+        self.assertEqual(tasks.overrun_slugs(late), ["testhosp"])
+        # the announced window the hold began in sets the budget: its end
+        window = MaintenanceWindow.objects.create(
+            start=since - timedelta(minutes=5), minutes=20, created_by="t"
+        )
+        self.addCleanup(window.delete)
+        self.assertEqual(tasks.overrun_slugs(now), ["testhosp"])
+        self.assertEqual(tasks.overrun_slugs(window.end - timedelta(seconds=1)), [])
+        lines = []
+        with mock.patch.object(tasks, "_emit", side_effect=lines.append):
+            tasks.report_unserved()
+        self.assertIn("ihr-fleet: hospital=testhosp outcome=overrun", lines)
+        self.assertNotIn("ihr-fleet: hospital=fleet-ovp outcome=overrun", lines)
+        self.assertNotIn("ihr-fleet: hospital=testhosp outcome=held", lines)
+        # a migration's hold is HospitalNotServed's, never an overrun
+        HospitalSchemaState.objects.filter(pk=hosp.pk).update(
+            hold_reason=release.HOLD_MIGRATE
+        )
+        self.assertEqual(tasks.overrun_slugs(now), [])
+
 
 class ProvisioningAcrossAReleaseTests(TestCase):
     """C3/O6: a provisioning run never goes on after ``schema`` with an older schema."""
@@ -1305,6 +1491,7 @@ class ForkedPoolTests(SimpleTestCase):
     databases = {"default"}
 
     def setUp(self):
+        owner_for_test(self)  # ihr_fleet_run's pool runs as the owner
         connection.set_schema_to_public()
         self.hospital = testhosp()
         self.addCleanup(self._clean)
@@ -1415,6 +1602,7 @@ class MigrationNameTests(TestCase):
         self.addCleanup(connection.set_schema, TEST_SCHEMA)
 
     def test_a_real_failing_migration_is_named(self):
+        owner_for_test(self)  # migrations run as the owner
         leaf = max(n for a, n in _rows(TEST_SCHEMA) if a == "ihr_audit")
         with connection.cursor() as cursor:
             cursor.execute(
@@ -1464,7 +1652,8 @@ class CeleryGateTests(TestCase):
         hospital = testhosp()
         connection.set_tenant(hospital)
         self.assertEqual(call(1), 1)  # served: runs
-        release.hold([hospital.pk])
+        with as_owner():  # ihr_fleet_run hold; the task below runs as the app
+            release.hold([hospital.pk])
         connection.set_tenant(hospital)
         again = mock.MagicMock()
         with (

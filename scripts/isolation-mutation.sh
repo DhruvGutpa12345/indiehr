@@ -9,6 +9,7 @@
 #   scripts/isolation-mutation.sh apply <name>   # edit the working tree (CI checkout only)
 #   scripts/isolation-mutation.sh test <name>    # the test labels to run for <name>
 #   scripts/isolation-mutation.sh expect <name>  # regexes (one per line) the run's log must match
+#   scripts/isolation-mutation.sh env <name>     # NAME=value lines the test run needs (may be none)
 #
 # "apply" fails if the code it targets is not found, so a refactor cannot turn a mutation into
 # a silent no-op. Never commit a mutated tree: CI applies these to a throwaway checkout.
@@ -17,11 +18,13 @@ ROOT="${IHR_ROOT:-$(git -C "$(dirname "$0")" rev-parse --show-toplevel)}"  # IHR
 CLS="ihr_platform.tests.isolation.test_isolation.CrossTenantIsolationTests"
 
 # Isolation and security controls, one row each:
-# name | file | exact text to find | replacement | tests that must all fail | leak signature
+# name | file | exact text to find | replacement | tests that must all fail | leak signature | env
 # The text to find must occur exactly once as a substring (not merely as a whole line).
 # "leak signature": only where the leak already breaks building the two-tenant world (that is how
 # the identifier-config leak first showed up), a regex for that leak's own error. A log line
 # matching it counts in place of the test's FAIL; any other setUpClass error does not.
+# "env" (optional): comma-separated NAME=value settings the test run needs, e.g. IHR_DB_ROLES=test
+# for a control that only the tests run as the app role can see (P1-T19a).
 MUTATIONS=$(cat <<'TABLE'
 cache-key-function|plugins/ihr_platform/ihr_platform/settings/tenancy.py|        cache["KEY_FUNCTION"] = "django_tenants.cache.make_key"\n        cache["REVERSE_KEY_FUNCTION"] = "django_tenants.cache.reverse_key"|        pass|test_zz_redis_keyspace_is_tenant_prefixed,test_crawl_never_shows_the_other_tenants_data|
 file-key-prefix|plugins/ihr_platform/ihr_platform/settings/tenancy.py|    settings["FILE_OBJECT_KEY_PREFIX_FUNCTION"] = (\n        "ihr_platform.storage.tenant_key_prefix"\n    )|    pass|test_file_object_keys_carry_the_tenant|
@@ -56,14 +59,27 @@ release-gate-staff-worker|plugins/ihr_platform/ihr_platform/invitations.py|     
 release-gate-celery-task|plugins/ihr_platform/ihr_platform/apps.py|        celery_gate.install()|        pass|ihr_platform.tests.test_release.CeleryGateTests.test_a_queued_task_never_runs_in_a_held_hospital|
 release-roles-hold-released|plugins/ihr_platform/ihr_platform/fleet.py|                release.release_hold(passed, reason=release.HOLD_ROLES)|                pass|ihr_platform.tests.test_release.FleetTests.test_a_role_refusal_hold_is_released_by_its_resume|
 release-roles-never-lift-window|plugins/ihr_platform/ihr_platform/fleet.py|                release.release_hold(passed, reason=release.HOLD_ROLES)|                release.release_hold(passed)|ihr_platform.tests.test_release.FleetTests.test_a_run_whose_roles_pass_never_lifts_a_window_hold|
+db-roles-audit-append-only|plugins/ihr_platform/ihr_platform/db_roles.py|    "append": Grant(frozenset({"SELECT"}), (("INSERT", AUDIT_DATA_COLUMNS),)),|    "append": Grant(DML, (("INSERT", AUDIT_DATA_COLUMNS),)),|ihr_platform.tests.test_db_roles.AppRoleTests.test_audit_entries_are_append_only_by_privilege||IHR_DB_ROLES=test
+db-role-refusal-closes|plugins/ihr_platform/ihr_platform/db_roles.py|    connection.close()\n    msg = (\n        f"Refusing to use the database as|    msg = (\n        f"Refusing to use the database as|ihr_platform.tests.test_db_roles.RefusalTests.test_a_refused_role_stays_refused|
+db-roles-queue-guard|plugins/ihr_platform/ihr_platform/queue_guard.py|    NEW.hospital_id := NULL;|    NULL;|ihr_platform.tests.test_db_roles.AppRoleTests.test_a_forged_operation_is_only_a_new_request||IHR_DB_ROLES=test
+db-roles-provisioner-built-by|plugins/ihr_platform/ihr_platform/provisioning/runner.py|    if hospital is None or hospital.provisioning_operation != op.pk:\n        raise ProvisioningError("This operation did not build the hospital it names.")|    pass|ihr_platform.tests.test_db_roles.ProvisionerInputTests.test_only_the_building_operation_reaches_its_hospital|
+db-roles-hospital-gated|plugins/ihr_platform/ihr_platform/release.py|    if hospital.schema_name in db_roles.gated_schemas():\n        return False|    pass|ihr_platform.tests.test_db_roles.GatedHospitalTests.test_a_gated_hospital_is_not_served|
+db-roles-column-grants-kept|plugins/ihr_platform/ihr_platform/db_roles.py|            grants = [f.statement for f in after if f.statement is not None]|            pass|ihr_platform.tests.test_db_roles.GrantsTests.test_a_table_revoke_keeps_the_column_grants||IHR_DB_ROLES=test
+db-roles-masking-helper|plugins/ihr_platform/ihr_platform/db_roles.py|    "ihr_audit_last4": {APP},\n||ihr_platform.tests.test_db_roles.GrantsTests.test_a_new_hospitals_masking_helper_is_the_apps||IHR_DB_ROLES=test
+db-roles-controls-refuse-or-gate|plugins/ihr_platform/ihr_platform/db_roles.py|        elif item.kind == "problem" and item.control:|        elif False:|ihr_platform.tests.test_db_roles.GrantsTests.test_a_broken_control_refuses_or_gates||IHR_DB_ROLES=test
+db-roles-fleet-converges-every-schema|plugins/ihr_platform/ihr_platform/fleet.py|        self._converge_rest()\n||ihr_platform.tests.test_release.FleetTests.test_a_fleet_wide_migrate_repairs_every_hospital_schema||IHR_DB_ROLES=test
 TABLE
 )
 
 row() {
   local line
   line=$(grep -E "^$1\|" <<<"$MUTATIONS") || { echo "unknown mutation: $1" >&2; exit 2; }
-  IFS='|' read -r NAME FILE FIND REPLACE TESTS SIGNATURE <<<"$line"
+  IFS='|' read -r NAME FILE FIND REPLACE TESTS SIGNATURE ENVS <<<"$line"
   [[ -n "$TESTS" ]] || { echo "mutation $1 names no test" >&2; exit 2; }
+  local e
+  for e in ${ENVS//,/ }; do
+    [[ "$e" =~ ^IHR_[A-Z_]+=[a-z]+$ ]] || { echo "mutation $1: bad env $e" >&2; exit 2; }
+  done
 }
 
 mutate() {
@@ -150,5 +166,9 @@ case "${1:-}" in
       if [[ -n "$SIGNATURE" ]]; then echo "$anchor|$SIGNATURE"; else echo "$anchor"; fi
     done
     ;;
-  *) sed -n '5,10p' "$0"; exit 1 ;;
+  env)
+    row "${2:?name}"
+    for e in ${ENVS//,/ }; do echo "$e"; done
+    ;;
+  *) sed -n '5,11p' "$0"; exit 1 ;;
 esac

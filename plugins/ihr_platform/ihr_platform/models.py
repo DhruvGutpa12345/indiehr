@@ -58,6 +58,10 @@ class Hospital(TenantMixin):
     # When it first went live (P1-T5a). Never cleared: only a hospital that never went live
     # can be rolled back, and only its slug and addresses are released again.
     activated_at = models.DateTimeField(null=True, blank=True, editable=False)
+    # The provisioning operation that built it (P1-T19a review S1): set once, by the owner-run
+    # provisioner's reserve step, never by the app (this table is read-only for it). Roll-back
+    # and resending the first admin's setup e-mail act only for that operation.
+    provisioning_operation = models.UUIDField(null=True, blank=True, editable=False)
 
     # v1 provisioning: create the schema and run every migration in it (no cloning).
     auto_create_schema = True

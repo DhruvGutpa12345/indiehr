@@ -20,6 +20,7 @@ from ihr_identity.models import StaffIdentity
 from ihr_platform.links import frontend_base_url
 from ihr_platform.models import Domain, Hospital, RetiredAddress, generate_schema_name
 from ihr_platform.test_runner import TEST_SCHEMA
+from ihr_platform.testing import as_owner
 from rest_framework.test import APIClient
 
 from ihr_tenant_settings.branding import initials
@@ -91,12 +92,13 @@ class HospitalProfileTests(SimpleTestCase):
         connection.set_schema_to_public()
         if not Hospital.objects.filter(slug=SECOND_SLUG).exists():
             # No --domain: the address must default to <slug>.<IHR_TENANT_DOMAIN_SUFFIX>.
-            call_command(
-                "ihr_create_tenant",
-                slug=SECOND_SLUG,
-                name="Brand Test LLP",
-                verbosity=0,
-            )
+            with as_owner():  # ihr_create_tenant runs as the owner (P1-T19a)
+                call_command(
+                    "ihr_create_tenant",
+                    slug=SECOND_SLUG,
+                    name="Brand Test LLP",
+                    verbosity=0,
+                )
         connection.set_schema_to_public()
         cls.second = Hospital.objects.get(slug=SECOND_SLUG)
         cls.second_domain = Domain.objects.get(tenant=cls.second).domain
@@ -108,9 +110,9 @@ class HospitalProfileTests(SimpleTestCase):
     def tearDownClass(cls):
         connection.set_schema_to_public()
         schema = cls.second.schema_name
-        Domain.objects.filter(tenant=cls.second).delete()
-        Hospital.objects.filter(pk=cls.second.pk).delete()
-        with connection.cursor() as cursor:
+        with as_owner(), connection.cursor() as cursor:
+            Domain.objects.filter(tenant=cls.second).delete()
+            Hospital.objects.filter(pk=cls.second.pk).delete()
             cursor.execute(f'DROP SCHEMA IF EXISTS "{schema}" CASCADE')
         connection.set_schema(TEST_SCHEMA)
         super().tearDownClass()
@@ -145,7 +147,7 @@ class HospitalProfileTests(SimpleTestCase):
         self.assertEqual(self.provisioned_name, "Brand Test LLP")
 
     def test_slug_can_never_change(self):
-        with schema_context("public"):
+        with schema_context("public"), as_owner():  # the registry: owner-run processes
             hospital = Hospital.objects.get(pk=self.second.pk)
             hospital.slug = "renamed-hospital"
             with self.assertRaises(ValidationError):
@@ -153,7 +155,7 @@ class HospitalProfileTests(SimpleTestCase):
             self.assertEqual(Hospital.objects.get(pk=self.second.pk).slug, SECOND_SLUG)
 
     def test_retired_slugs_and_addresses_are_never_reused(self):
-        with schema_context("public"):
+        with schema_context("public"), as_owner():  # the registry: owner-run processes
             ghost = Hospital(
                 slug="ghost-hospital", name="Ghost", schema_name=generate_schema_name()
             )
@@ -316,7 +318,7 @@ class HospitalProfileTests(SimpleTestCase):
             user.delete()
 
     def test_platform_host_has_no_hospital_routes(self):
-        with schema_context("public"):
+        with schema_context("public"), as_owner():  # ihr_create_tenant --public
             platform, created = Hospital.objects.get_or_create(
                 schema_name="public",
                 defaults={"slug": "public", "name": "Platform", "status": "active"},
@@ -334,7 +336,7 @@ class HospitalProfileTests(SimpleTestCase):
             )
             self.assertEqual(response.status_code, 404)
         finally:
-            with schema_context("public"):
+            with schema_context("public"), as_owner():
                 domain.delete()
                 if created:
                     platform.delete()

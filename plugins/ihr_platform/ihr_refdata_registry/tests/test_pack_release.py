@@ -8,6 +8,7 @@ from django.test import TestCase
 from django_tenants.utils import get_public_schema_name
 from ihr_platform.models import Hospital
 from ihr_platform.test_runner import TEST_SCHEMA
+from ihr_platform.testing import owner_for_test
 from ihr_refdata.models import PackApply
 from ihr_refdata.testing import CARE_COMMIT, TEST_PACK, Packs, vs
 
@@ -18,6 +19,7 @@ class PackReleaseTests(TestCase):
     databases = {"default"}
 
     def setUp(self):
+        owner_for_test(self)  # pack apply records releases: owner-run (P1-T19a)
         Hospital.objects.exclude(
             schema_name__in=[get_public_schema_name(), TEST_SCHEMA]
         ).update(status=Hospital.Status.SUSPENDED)

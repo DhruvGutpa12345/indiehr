@@ -137,6 +137,39 @@ def problems(settings, environ):  # noqa: PLR0912 (one flat list of rules)
             "SENTRY_DSN must stay unset (no data leaves India; P1-T9 monitoring)."
         )
     found += mail_problems(settings)
+    found += db_role_problems(settings)
+    return found
+
+
+def db_role_problems(settings):
+    """Separate database roles (P1-T19): never the tests' mode on a server; once required,
+    each container declares its role, a declared role is always checked (S10), and the web
+    app and the staff worker (they hold the backend's and the staff worker's client keys)
+    never declare the owner (S6, C9)."""
+    found = []
+    roles = settings.get("IHR_DB_ROLES", "off")
+    declared = settings.get("IHR_DB_ROLE", "")
+    if roles not in ("off", "required"):
+        found.append(
+            "IHR_DB_ROLES must be off or required on a server (test is for tests)."
+        )
+    if roles == "required" and declared not in ("app", "owner"):
+        found.append("IHR_DB_ROLE must be app or owner (the role this container uses).")
+    if roles == "off" and declared:
+        # A container that declares a role must check it (S10): one that lost
+        # IHR_DB_ROLES=required would otherwise run unchecked
+        found.append(
+            "IHR_DB_ROLE is set but IHR_DB_ROLES is off: a container that declares its "
+            "database role runs with IHR_DB_ROLES=required."
+        )
+    if declared == "owner" and settings.get("IHR_CLIENT_KEY_PURPOSE") in (
+        "backend",
+        "staff",
+    ):
+        found.append(
+            "IHR_DB_ROLE=owner with the backend's or the staff worker's client key: the web "
+            "app and the staff worker always use the app role."
+        )
     return found
 
 

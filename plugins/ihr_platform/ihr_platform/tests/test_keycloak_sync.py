@@ -17,6 +17,7 @@ from django_tenants.utils import schema_context
 from ihr_platform.keycloak.hospital import HospitalIds
 from ihr_platform.management.commands import ihr_keycloak_sync
 from ihr_platform.models import Hospital
+from ihr_platform.testing import owner_for_test
 
 ENV = {
     "IHR_KEYCLOAK_ADMIN_CLIENT_ID": "test-admin",
@@ -30,6 +31,9 @@ class KeycloakSyncCommandTests(SimpleTestCase):
     databases = {"default"}
 
     def setUp(self):
+        owner_for_test(
+            self
+        )  # ihr_keycloak_sync is an admin one-off: the owner (P1-T19a)
         with schema_context("public"):
             self.hospital = Hospital.objects.get(slug="testhosp")
             self.original = self.hospital.keycloak_org_id

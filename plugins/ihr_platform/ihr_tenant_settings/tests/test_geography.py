@@ -13,6 +13,7 @@ from ihr_identity.models import StaffIdentity
 from ihr_platform import pincodes
 from ihr_platform.models import Hospital, PinDirectoryLoad, PostOffice
 from ihr_platform.test_runner import TEST_SCHEMA
+from ihr_platform.testing import as_owner, owner_for_test
 from rest_framework.test import APIClient
 
 from ihr_tenant_settings import geography
@@ -106,9 +107,13 @@ class DirectoryTests(SimpleTestCase):
         new = Organization.objects.exclude(id__in=self.orgs_before)
         new.filter(parent__isnull=False).delete()
         new.delete()
-        PostOffice.objects.all().delete()
-        PinDirectoryLoad.objects.all().delete()
+        with (
+            as_owner()
+        ):  # the PIN directory is the loader's (an admin one-off: the owner)
+            PostOffice.objects.all().delete()
+            PinDirectoryLoad.objects.all().delete()
 
+    @as_owner()
     def _load(self):
         call_command(
             "ihr_load_pincodes", str(SAMPLE), "--released", "01-10-2026", verbosity=0
@@ -124,6 +129,7 @@ class DirectoryTests(SimpleTestCase):
             HEADER
             + "Pune H.O,411001,H.O,Delivery,PUNE,MAHARASHTRA\nX,999999,B.O,Delivery,X,ATLANTIS\n"
         )
+        owner_for_test(self)  # ihr_load_pincodes: an admin one-off, the owner (P1-T19a)
         with self.assertRaisesMessage(ValueError, "'ATLANTIS' (1 rows)"):
             pincodes.load(bad.encode(), "bad.csv")
         self.assertEqual(PostOffice.objects.count(), 10)  # unchanged
@@ -139,6 +145,7 @@ class DirectoryTests(SimpleTestCase):
             call_command("ihr_load_pincodes", str(SAMPLE), "--released", "2026-10-01")
 
     def test_geography_is_loaded_once(self):
+        owner_for_test(self)  # ihr_load_geography: an admin one-off, the owner
         with self.assertRaisesMessage(CommandError, "ihr_load_pincodes first"):
             call_command("ihr_load_geography", "--all", verbosity=0)
         self._load()
@@ -204,6 +211,9 @@ class DirectoryTests(SimpleTestCase):
         self.assertEqual(Organization.objects.count(), count)
 
     def test_only_live_hospitals_are_changed(self):
+        owner_for_test(
+            self
+        )  # an operator's status change and ihr_load_geography: the owner
         self._load()
         with schema_context("public"):
             hospital = Hospital.objects.get(schema_name=TEST_SCHEMA)

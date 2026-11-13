@@ -10,6 +10,14 @@
 #   scripts/staging.sh smoke                     check every public address through Traefik
 #   scripts/staging.sh manage <args>             one-off manage.py command (no admin credentials)
 #   scripts/staging.sh fleet <args>              ihr_fleet_run (P1-T18a), logged for its alert
+#   scripts/staging.sh release [--now [--minutes N] [--note T]] [--operator NAME] | --finish
+#                                                the new images in the announced window (P1-T18b):
+#                                                hold all, stop workers, drain, seal, restore point,
+#                                                migrate, start, smoke every hospital, log it
+#   scripts/staging.sh rollback [--restore] [--operator NAME]
+#                                                back to the release before (--restore: to the
+#                                                restore point of the one left; loses later writes)
+#   scripts/staging.sh releases                  the logged releases in force, newest last
 #   scripts/staging.sh ps | logs [service] | down
 #   scripts/staging.sh keys ensure | status      the signing keys Keycloak knows the backend and
 #                                                workers by (P1-T8d2; made here, never copied)
@@ -33,7 +41,8 @@
 #                                                database backups (P1-T8c); bucket key on stdin
 #   scripts/staging.sh backup-status | backup-now [full|diff]
 #   scripts/staging.sh restore-drill [--target "YYYY-MM-DD HH:MM:SS+05:30"] [--keep | --clean]
-#   scripts/staging.sh restore [--target ...]   a lost server: into this stack's empty volume
+#   scripts/staging.sh restore [--target ... | --target-name release-<tag> [--set <label>]]
+#                                                a lost server: into this stack's empty volume
 #   scripts/staging.sh monitoring-init <alert-recipient> [--from A] | --test
 #                                                metrics and e-mail alerts (P1-T9a); the alerts'
 #                                                ZeptoMail token and dead-man ping URL on stdin
@@ -351,9 +360,14 @@ smoke() {  # every public address through Traefik, as a browser would reach it
   # given in .env / the environment (a VM proof, or a server before its DNS exists)
   resolve="${IHR_SMOKE_RESOLVE:-$(env_get IHR_SMOKE_RESOLVE)}"
   [[ -z "$resolve" && "$bind" == "127.0.0.1" ]] && resolve=127.0.0.1
-  local curl_args=(-sk --max-time 20)
+  local curl_args=(-sk --max-time 20) slugs=() slug
+  # Every active hospital (P1-T18b, O1): each must be served, never "503 upgrading"
+  mapfile -t slugs < <(compose exec -T db psql -U postgres -d ihr -Atc \
+    "SELECT slug FROM ihr_platform_hospital WHERE schema_name <> 'public' AND status = 'active' ORDER BY slug" 2>/dev/null \
+    | grep -E '^[a-z][a-z0-9-]{2,30}$' || true)
   if [[ -n "$resolve" ]]; then
-    for host in "$suffix" "alpha.$suffix" "console.$suffix" "auth.$suffix" "nope.$suffix" "files.$suffix" "status.$suffix" "ops.$suffix"; do
+    for host in "$suffix" "alpha.$suffix" "console.$suffix" "auth.$suffix" "nope.$suffix" "files.$suffix" "status.$suffix" "ops.$suffix" \
+        ${slugs[@]+"${slugs[@]/%/.$suffix}"}; do
       curl_args+=(--resolve "$host:$port:$resolve" --resolve "$host:${IHR_HTTP_PORT:-80}:$resolve")
     done
   fi
@@ -413,6 +427,10 @@ smoke() {  # every public address through Traefik, as a browser would reach it
     "$(compose exec -T backend python -c 'import importlib.util, json, pathlib; d = pathlib.Path(importlib.util.find_spec("ihr_terminology").origin).parent; print(len(json.loads((d / "content" / "MANIFEST.json").read_text())["files"]))' 2>/dev/null || echo unreadable)" \
     "$(compose exec -T backend python manage.py ihr_terminology_load --status 2>/dev/null | grep -c '^active ' || true)"
   check "unknown hospital address: no branding" 404 "$(code "https://nope.$suffix:$port/api/ihr/bootstrap/")"
+  if ((${#slugs[@]} == 0)); then echo "skip  every hospital served: no active hospital yet"; fi
+  for slug in ${slugs[@]+"${slugs[@]}"}; do
+    check "hospital $slug served (not held: 503 upgrading)" 200 "$(code "https://$slug.$suffix:$port/api/ihr/bootstrap/")"
+  done
   check "bare suffix not served" 404 "$(code "https://$suffix:$port/")"
   check "HSTS on the console" "max-age=31536000" "$(header "https://console.$suffix:$port/ops/" strict-transport-security)"
   if [[ "$(code "https://alpha.$suffix:$port/api/ihr/bootstrap/")" == 200 ]]; then
@@ -604,7 +622,7 @@ restore_drill() {  # a copy of the database from the backups, checked, then remo
   [[ -z "$target" ]] || check_target "$target"
   backup_config
   # Room for a second copy beside the live database (the same disk): twice its size
-  need="$(compose exec -T db psql -U postgres -Atc "SELECT sum(pg_database_size(datname)) / 1048576 FROM pg_database" | tr -d '[:space:]')"
+  need="$(compose exec -T db psql -U postgres -Atc "SELECT (sum(pg_database_size(datname)) / 1048576)::bigint FROM pg_database" | tr -d '[:space:]')"
   free="$(df -Pm "$(docker info --format '{{.DockerRootDir}}')" 2>/dev/null | awk 'NR==2 {print $4}')"
   if [[ -n "$need" && -n "$free" ]] && ((free < 2 * need + 1024)); then
     die "not enough disk for a copy: ${free} MB free, about $((2 * need + 1024)) MB needed"
@@ -651,17 +669,32 @@ restore_drill() {  # a copy of the database from the backups, checked, then remo
   echo "Restore drill passed."
 }
 
-restore_live() {  # restore [--target T]: a lost server's database, into this stack's own volume
-  local target="" project="${IHR_PROJECT:-indiehr-staging}" vol i state
+restore_live() {  # restore [--target T | --target-name NAME [--set LABEL]]: a lost server's
+  # database, into this stack's own volume. --target-name: a restore point (pg_create_restore_point;
+  # `staging.sh release` takes one per release), from the backup --set names (one taken before
+  # the point). --replace-database: only for `staging.sh rollback --restore`, which has stopped
+  # the stack and kept a copy where the disk allowed: the volume's database is replaced.
+  local target="" name="" set="" replace=0 project="${IHR_PROJECT:-indiehr-staging}" vol i state
+  local usage="usage: scripts/staging.sh restore [--target 'YYYY-MM-DD HH:MM:SS+05:30' | --target-name <restore point> [--set <backup label>]]"
   while (($#)); do
     case "$1" in
       --target) target="${2:?--target 'YYYY-MM-DD HH:MM:SS+05:30'}"; shift ;;
-      *) die "usage: scripts/staging.sh restore [--target 'YYYY-MM-DD HH:MM:SS+05:30']" ;;
+      --target-name) name="${2:?--target-name <restore point>}"; shift ;;
+      --set) set="${2:?--set <backup label>}"; shift ;;
+      --replace-database) replace=1 ;;
+      *) die "$usage" ;;
     esac
     shift
   done
+  [[ -z "$target" || -z "$name" ]] || die "$usage"
+  [[ -z "$name" || "$name" =~ ^release-[0-9a-f]{12}(-dirty-[0-9a-f]{8})?(-[0-9]{10})?$ ]] || die "--target-name: a release's restore point (release-<tag>-<epoch>)"
+  [[ -z "$set" || "$set" =~ ^[0-9]{8}-[0-9]{6}F(_[0-9]{8}-[0-9]{6}[DI])?$ ]] || die "--set: a backup label as pgbackrest info prints it"
   [[ -n "$(env_get IHR_BACKUP)" ]] || die "no backup settings here (backup-init, with --existing-passphrase on a new server)"
   [[ -z "$target" ]] || check_target "$target"
+  local how=()
+  if [[ -n "$target" ]]; then how=(--type=time "--target=$target" --target-action=promote)
+  elif [[ -n "$name" ]]; then how=(--type=name "--target=$name" --target-action=promote ${set:+"--set=$set"})
+  fi
   vol="${project}_pgdata"
   if [[ -n "$(compose ps -q db 2>/dev/null)" ]]; then die "the stack is running: scripts/staging.sh down first"; fi
   backup_config
@@ -673,16 +706,16 @@ restore_live() {  # restore [--target T]: a lost server's database, into this st
   state="$(docker run --rm --user 70:70 --network none -v "$vol:/var/lib/postgresql" --entrypoint sh \
     "$(env_get IHR_POSTGRES_IMAGE)" -c "$PG_STATE")" || die "could not read $vol"
   case "$state" in
-    db) die "$vol already holds a database; restore only into an empty one (on a new server: scripts/staging.sh down -v first, if the stack was started)" ;;
+    db) ((replace)) || die "$vol already holds a database; restore only into an empty one. On a new server that was started by mistake: scripts/staging.sh down, then docker volume rm $vol (never down -v: it also deletes the log store, the signing keys and the WAL spool). To go back to a release's restore point: scripts/staging.sh rollback --restore" ;;
     restoring) echo "== An unfinished restore is in $vol: starting it again" ;;
   esac
   # The marker stays until recovery has finished: up refuses a half-restored database
   docker run --rm --user 70:70 --network none -v "$vol:/var/lib/postgresql" --entrypoint sh \
     "$(env_get IHR_POSTGRES_IMAGE)" -c 'touch /var/lib/postgresql/.ihr-restore-incomplete && find /var/lib/postgresql/18 -mindepth 1 -delete 2>/dev/null; mkdir -p /var/lib/postgresql/18/docker && chmod 700 /var/lib/postgresql/18/docker'
-  echo "== Restore $([[ -n "$target" ]] && echo "to $target" || echo "to the newest moment in the backups") into $vol"
-  trap 'docker rm -f ihr-restore ihr-restore-spool ihr-restore-recovery >/dev/null 2>&1' EXIT
-  pg_container ihr-restore "$vol:/var/lib/postgresql" pgbackrest --stanza=main \
-    ${target:+--type=time "--target=$target" --target-action=promote} restore
+  echo "== Restore to ${target:-${name:-the newest moment in the backups}}${set:+ from backup $set} into $vol"
+  # (inside staging.sh rollback, its own trap still says where the rollback stopped)
+  trap 'rc=$?; docker rm -f ihr-restore ihr-restore-spool ihr-restore-recovery >/dev/null 2>&1; [[ -z "${REL_RB_STAGE:-}" ]] || rel_rollback_exit "$rc"' EXIT
+  pg_container ihr-restore "$vol:/var/lib/postgresql" pgbackrest --stanza=main "${how[@]}" restore
   if docker start -a ihr-restore; then i=0; else i=$?; fi
   ((i == 0)) || die "restore failed"
   # The spool before recovery: our own surviving WAL pushed (replayed below), another
@@ -704,6 +737,722 @@ restore_live() {  # restore [--target T]: a lost server's database, into this st
   echo "Restored. Next: scripts/staging.sh up (it pushes the new timeline), then scripts/staging.sh backup-now full"
 }
 
+
+# ---- Releases and rollbacks (P1-T18b; deploy/staging/README.md "Releases") --------------------
+# releases/releases.log: one line per finished release and per rollback (scripts/release_log.py
+# says what a line holds); releases/attempt: the release in progress; releases/stack-<tag>.tgz:
+# each release's stack files as scripts/deploy.sh sent them (tracked files only, mode 600).
+REL_DIR="$DIR/releases"
+REL_LOG="$REL_DIR/releases.log"
+REL_ATTEMPT="$REL_DIR/attempt"
+RELEASES_KEPT=3  # the images of the last 3 logged releases are never removed
+REL_TAG_RE='^[0-9a-f]{12}(-dirty-[0-9a-f]{8})?$'
+FP_RE='^[0-9a-f]{64}$'
+REL_WORKERS=(celery-worker celery-beat provisioner staff-worker)
+REL_DRAIN_SECONDS="${IHR_RELEASE_DRAIN_SECONDS:-60}"
+# The full audit check before the hold (hospitals still served) and the seal inside the window,
+# each capped (O7)
+REL_AUDIT_SECONDS="${IHR_RELEASE_AUDIT_SECONDS:-1800}"
+REL_SEAL_SECONDS="${IHR_RELEASE_SEAL_SECONDS:-300}"
+
+rlog() { python3 "$ROOT/scripts/release_log.py" "$@"; }
+rel_sql() { compose exec -T db psql -U postgres -d ihr -v ON_ERROR_STOP=1 -Atc "$1"; }
+rel_held_count() {  # rel_held_count: how many hospitals are held for a window; nothing if unreadable
+  local n
+  n="$(rel_sql "SELECT count(*) FROM ihr_platform_hospitalschemastate WHERE hold_reason = 'window' AND upgrading_since IS NOT NULL" 2>/dev/null || true)"
+  [[ ! "$n" =~ ^[0-9]+$ ]] || echo "$n"
+}
+rel_lock() {  # one release or rollback at a time (fd 9 stays open until the script ends)
+  (umask 077; mkdir -p "$REL_DIR")
+  exec 9>"$REL_DIR/.lock"
+  flock -n 9 || die "another release or rollback is running here"
+}
+rel_operator() {  # who runs it, as ihr_fleet_run records it (1-64 of letters, digits, . _ @ -)
+  local who="${1:-$(id -un)}"
+  [[ "$who" =~ ^[A-Za-z0-9._@-]{1,64}$ ]] || die "--operator: 1-64 letters, digits or . _ @ -"
+  echo "$who"
+}
+rel_images() {  # "<name> <image>" for each of our images in this stack
+  local g
+  printf 'backend %s\nfrontend %s\npostgres %s\nkeycloak %s\n' "$(env_get IHR_BACKEND_IMAGE)" \
+    "$(env_get IHR_FRONTEND_IMAGE)" "$(env_get IHR_POSTGRES_IMAGE)" "$(env_get IHR_KEYCLOAK_IMAGE)"
+  [[ -z "$(env_get IHR_ACME)" ]] || printf 'acmedns %s\n' "$(env_get IHR_ACMEDNS_IMAGE)"
+  if [[ -n "$(env_get IHR_MONITORING)" ]]; then
+    g="$(env_get IHR_GRAFANA_IMAGE)"; printf 'grafana %s\n' "${g:-indiehr-grafana:staging}"
+  fi
+}
+image_id() { docker image inspect -f '{{.Id}}' "$1" 2>/dev/null; }
+image_label() {  # image_label <image> <label>: its value, or nothing
+  local v; v="$(docker image inspect -f "{{index .Config.Labels \"$2\"}}" "$1" 2>/dev/null || true)"
+  [[ "$v" == "<no value>" ]] || echo "$v"
+}
+repo_of() {  # repo_of <name:tag>: the name without its tag
+  local r="${1%@*}"
+  [[ "${r##*/}" != *:* ]] || r="${r%:*}"
+  echo "$r"
+}
+release_tag_of() {  # release_tag_of <backend image or id>: its release tag (release_log.py tag)
+  local id rev dirty
+  id="$(image_id "$1")" || die "no image $1"
+  rev="$(image_label "$1" org.opencontainers.image.revision)"
+  dirty="$(image_label "$1" ihr.git-dirty)"
+  rlog tag "${rev:-none}" "${dirty:-no}" "$id" 2>/dev/null \
+    || die "image $1 carries no commit label: build it with scripts/deploy.sh"
+}
+running_backend_id() {  # the image the running backend was started from; else this stack's image
+  local cid
+  cid="$(compose ps -q backend 2>/dev/null || true)"
+  if [[ -n "$cid" ]]; then docker inspect -f '{{.Image}}' "$cid"; else image_id "$(env_get IHR_BACKEND_IMAGE)"; fi
+}
+release_tag_images() {  # release_tag_images <tag>: each of our images also as <name>:<tag>, checked
+  local tag="$1" name ref id
+  [[ "$tag" =~ $REL_TAG_RE ]] || die "not a release tag: $tag"
+  while read -r name ref; do
+    id="$(image_id "$ref")" || die "image $ref ($name) is not here"
+    docker tag "$id" "$(repo_of "$ref"):$tag"
+    [[ "$(image_id "$(repo_of "$ref"):$tag")" == "$id" ]] || die "$(repo_of "$ref"):$tag is not $id"
+  done < <(rel_images)
+}
+image_fingerprints() {  # image_fingerprints <backend image>: "<tenant> <public>" code fingerprints
+  # (ihr_platform/release.py) read from the image itself: no database, no network, no secret
+  local out
+  out="$(docker run --rm --network none --cap-drop ALL --security-opt no-new-privileges:true \
+    --memory 512m --entrypoint python -e DJANGO_SETTINGS_MODULE=ihr_platform.settings.test "$1" -c \
+    'import django; django.setup(); from ihr_platform import release; print(release.code_fingerprint(), release.code_fingerprint("public"))' \
+    2>/dev/null | tail -1)"
+  [[ "$out" =~ ^[0-9a-f]{64}\ [0-9a-f]{64}$ ]] || die "could not read the migration fingerprints of $1 (built before P1-T18a?)"
+  echo "$out"
+}
+rel_fields() {  # rel_fields <tag> <backend image>: the image and fingerprint fields of a release line
+  local name ref fps
+  printf 'tag=%s\n' "$1"
+  while read -r name ref; do printf '%s=%s\n' "$name" "$(image_id "$ref")"; done < <(rel_images)
+  fps="$(image_fingerprints "$2")"
+  read -r -a fps <<< "$fps"
+  printf 'tenant_fp=%s\npublic_fp=%s\n' "${fps[0]}" "${fps[1]}"
+}
+attempt_get() {  # attempt_get <key>: a field of the release in progress
+  [[ -f "$REL_ATTEMPT" ]] || return 0
+  tr ' ' '\n' < "$REL_ATTEMPT" | sed -n "s/^$1=//p"
+}
+rel_unserved() {  # rel_unserved <tenant fingerprint>: live hospitals this build does not serve
+  [[ "$1" =~ $FP_RE ]] || die "not a fingerprint: $1"
+  rel_sql "SELECT h.slug FROM ihr_platform_hospital h
+    LEFT JOIN ihr_platform_hospitalschemastate s ON s.hospital_id = h.id
+    WHERE h.schema_name <> 'public' AND h.status IN ('active', 'suspended')
+      AND (s.hospital_id IS NULL OR s.upgrading_since IS NOT NULL OR s.schema_fingerprint <> '$1')
+    ORDER BY h.slug"
+}
+old_manage() {  # a manage.py command in the running (outgoing) backend: the old build
+  compose exec -T backend python manage.py "$@"
+}
+window_open_now() {  # window_open_now "<ihr_fleet_run window's line>": the window holds this minute
+  python3 -c '
+import datetime as dt, re, sys
+m = re.match(r"window: (\d\d-\d\d-\d{4} \d\d:\d\d) IST for (\d+) min", sys.argv[1])
+if not m:
+    sys.exit(1)
+ist = dt.timezone(dt.timedelta(hours=5, minutes=30))
+start = dt.datetime.strptime(m[1], "%d-%m-%Y %H:%M").replace(tzinfo=ist)
+sys.exit(0 if start <= dt.datetime.now(ist) < start + dt.timedelta(minutes=int(m[2])) else 1)' "$1"
+}
+window_end() {  # window_end "<ihr_fleet_run window's line>": the window's end in epoch seconds (or fail)
+  python3 -c '
+import datetime as dt, re, sys
+m = re.match(r"window: (\d\d-\d\d-\d{4} \d\d:\d\d) IST for (\d+) min", sys.argv[1])
+if not m:
+    sys.exit(1)
+ist = dt.timezone(dt.timedelta(hours=5, minutes=30))
+start = dt.datetime.strptime(m[1], "%d-%m-%Y %H:%M").replace(tzinfo=ist)
+print(int((start + dt.timedelta(minutes=int(m[2]))).timestamp()))' "$1"
+}
+rel_workers_marker() {  # rel_workers_marker <until epoch>|clear: while a release has the workers
+  # stopped, ContainerNotRunning does not page for them until then (the window's end; O6). A
+  # textfile metric beside host-metrics.sh's (deploy/monitoring/prometheus/rules/availability.yml);
+  # removed when the release ends, so a release that stops with the workers down is paged
+  local dir f
+  [[ -n "$(env_get IHR_MONITORING)" ]] || return 0
+  dir="$(textfile_dir)"; f="$dir/ihr_release.prom"
+  [[ -d "$dir" && -w "$dir" ]] || return 0
+  if [[ "$1" == clear ]]; then rm -f "$f"; return 0; fi
+  [[ "$1" =~ ^[0-9]+$ ]] || return 0
+  printf '%s\n' "# HELP ihr_release_workers_stopped_until_seconds A release window has the workers stopped until then (staging.sh release)" \
+    "# TYPE ihr_release_workers_stopped_until_seconds gauge" "ihr_release_workers_stopped_until_seconds $1" > "$f.tmp"
+  chmod 644 "$f.tmp"
+  mv -f "$f.tmp" "$f"
+}
+rel_drain() {  # rel_drain <hold time>: until no transaction of the app began before the hold
+  local i=0 n=""
+  while ((i <= REL_DRAIN_SECONDS)); do
+    n="$(rel_sql "SELECT count(*) FROM pg_stat_activity WHERE datname = current_database()
+      AND pid <> pg_backend_pid() AND usename <> 'postgres' AND xact_start < '$1'::timestamptz")"
+    if [[ "$n" == 0 ]]; then echo "drained (${i} s)"; return 0; fi
+    sleep 2; i=$((i + 2))
+  done
+  echo "WARNING: $n transaction(s) begun before the hold still open after $REL_DRAIN_SECONDS s; going on" \
+    "(what they commit later is not in the restore point)" >&2
+}
+rel_audit_check() {  # rel_audit_check: the whole audit check (triggers, hash chains, every outside
+  # fingerprint) by the outgoing build in the running backend (its read-only key), BEFORE the hold:
+  # no hospital waits for it (O7). Capped (IHR_RELEASE_AUDIT_SECONDS). Prints ok, problems,
+  # timeout or skipped.
+  local rc=0
+  if ! grep -q '^IHR_AUDIT_ANCHOR_WRITE_KEY=.' "$SECRETS/anchor-write.env" 2>/dev/null; then
+    echo "audit: skipped, no fingerprint storage set up here (secrets/anchor-write.env)" >&2
+    echo skipped; return 0
+  fi
+  compose exec -T backend timeout "$REL_AUDIT_SECONDS" python manage.py ihr_audit_verify --all >&2 || rc=$?
+  case "$rc" in
+    0) echo ok ;;
+    124) echo "WARNING: the audit check did not end within $REL_AUDIT_SECONDS s (IHR_RELEASE_AUDIT_SECONDS); going on" >&2; echo timeout ;;
+    *) echo "WARNING: the audit check with the outgoing build reported problems (above); going on" >&2; echo problems ;;
+  esac
+}
+# Inside the window only what is final is sealed and one fingerprint written: no chain is
+# recomputed and no stored fingerprint read while every hospital is held (O7; the full check ran
+# before the hold). ihr_audit's own functions, as ihr_audit_verify --seal --anchor calls them.
+REL_SEAL_PY='from django_tenants.utils import schema_context
+from ihr_audit import anchor
+from ihr_audit.seal import seal_once
+from ihr_platform.models import Hospital
+for h in Hospital.objects.exclude(schema_name="public").order_by("slug"):
+    with schema_context(h.schema_name):
+        seal_once(h.schema_name)
+print("fingerprint written:", anchor.write())'
+rel_seal() {  # rel_seal <outgoing backend image id>: seal and fingerprint the audit trail with the
+  # old build and the worker's add-only key (seal and one fingerprint only, capped:
+  # IHR_RELEASE_SEAL_SECONDS). Prints ok, problems, timeout or skipped.
+  local repo rc=0
+  if ! grep -q '^IHR_AUDIT_ANCHOR_WRITE_KEY=.' "$SECRETS/anchor-write.env" 2>/dev/null; then
+    echo "audit: skipped, no fingerprint storage set up here (secrets/anchor-write.env)" >&2
+    echo skipped; return 0
+  fi
+  repo="$(repo_of "$(env_get IHR_BACKEND_IMAGE)"):ihr-outgoing"
+  docker tag "$1" "$repo"
+  IHR_BACKEND_IMAGE="$repo" compose run --rm --no-deps -T celery-worker \
+    timeout "$REL_SEAL_SECONDS" python manage.py shell -c "$REL_SEAL_PY" >&2 || rc=$?
+  docker rmi "$repo" >/dev/null 2>&1 || true
+  case "$rc" in
+    0) echo ok ;;
+    124) echo "WARNING: sealing did not end within $REL_SEAL_SECONDS s (IHR_RELEASE_SEAL_SECONDS); going on" >&2; echo timeout ;;
+    *) echo "WARNING: sealing with the outgoing build failed (above); going on" >&2; echo problems ;;
+  esac
+}
+rel_repo_info() {  # the repository's info as JSON: through the running backup service when it runs
+  # (repo_info's `up --no-start` would re-create a running db whose image tag deploy.sh moved)
+  if [[ -n "$(compose ps -q backup 2>/dev/null || true)" ]]; then
+    compose exec -T backup pgbackrest --stanza=main --output=json --log-level-console=error info
+  else
+    repo_info
+  fi
+}
+rel_restore_point() {  # rel_restore_point <tag>: "<name> <lsn> <epoch>", or "- - -" without backups.
+  # The name is unique, release-<tag>-<epoch>: recovery stops at the FIRST point of a name, so a
+  # release of one build twice must never make two of them (D4)
+  local name point
+  name="release-$1-$(date +%s)"
+  if [[ -z "$(env_get IHR_BACKUP)" ]]; then
+    echo "no backups set up here: no restore point (a rollback across migrations is impossible)" >&2
+    echo "- - -"; return 0
+  fi
+  rlog point-free "$REL_LOG" "$REL_ATTEMPT" "$name" >&2 || die "refused: restore point $name is already in the release log"
+  # A restore point needs a backup from before it
+  if ! rel_repo_info | grep -q '"label"'; then
+    echo "no backup in the repository yet: a full one first" >&2
+    compose exec -T backup pgbackrest --stanza=main --type=full backup >&2
+  fi
+  # Its WAL file is closed at once, so the spool pushes it within seconds
+  point="$(rel_sql "SELECT pg_create_restore_point('$name')::text || ' ' || extract(epoch FROM now())::bigint")"
+  rel_sql "SELECT pg_switch_wal()" >/dev/null
+  echo "$name $point"
+}
+rel_backup_set() {  # rel_backup_set <epoch>: the newest backup label that ended before it
+  rel_repo_info | python3 -c '
+import json, sys
+limit = int(sys.argv[1])
+sets = [b for s in json.load(sys.stdin) for b in s.get("backup", []) if b["timestamp"]["stop"] < limit]
+if not sets:
+    sys.exit("no backup in the repository ended before the restore point")
+print(max(sets, key=lambda b: b["timestamp"]["stop"])["label"])' "$1"
+}
+rel_wal_archived() {  # rel_wal_archived <lsn>: the repository already holds the WAL up to that
+  # position, so a restore can reach the point: asked before anything is stopped or replaced (O10)
+  local seg
+  [[ "$1" =~ ^[0-9A-F]{1,8}/[0-9A-F]{1,8}$ ]] || return 1
+  seg="$(rel_sql "SELECT pg_walfile_name('$1')")" || return 1
+  [[ "$seg" =~ ^[0-9A-F]{24}$ ]] || return 1
+  rel_repo_info | python3 -c '
+import json, sys
+seg = sys.argv[1]
+tops = [a.get("max") or "" for s in json.load(sys.stdin) for a in s.get("archive", [])]
+sys.exit(0 if any(len(t) == 24 and t[8:] >= seg[8:] for t in tops) else 1)' "$seg"
+}
+rel_db_used_mb() {  # the database volume's real size in MB, pg_wal included (a copy takes all of it)
+  docker run --rm --network none --user 70:70 --cap-drop ALL --security-opt no-new-privileges:true \
+    -v "${IHR_PROJECT:-indiehr-staging}_pgdata:/v:ro" --entrypoint du "$(env_get IHR_POSTGRES_IMAGE)" -sm /v \
+    | awk '{print $1}'
+}
+release_prune() {  # untag release images beyond the kept ones (never one a container uses)
+  local kept name ref repo t
+  mapfile -t kept < <(rlog keep "$REL_LOG" "$REL_ATTEMPT" "$RELEASES_KEPT" "$(release_tag_of "$(running_backend_id)" 2>/dev/null || true)")
+  while read -r name ref; do
+    repo="$(repo_of "$ref")"
+    while read -r t; do
+      [[ "$t" =~ $REL_TAG_RE ]] || continue
+      [[ " ${kept[*]} " != *" $t "* ]] || continue
+      if docker rmi "$repo:$t" >/dev/null 2>&1; then echo "removed $repo:$t (beyond the last $RELEASES_KEPT releases)"; fi
+    done < <(docker image ls --format '{{.Tag}}' "$repo")
+  done < <(rel_images)
+  # Untagged layers: only on a server (this machine's other images are not ours to remove)
+  [[ -f "$DIR/.local" ]] || docker image prune -f >/dev/null
+}
+release_note() {  # release_note [--release] [key=value...]: the release in progress (releases/attempt),
+  # from this stack's images. scripts/deploy.sh writes it before a plain start; `release` (with
+  # --release) before its first change and again with its restore point. A plain start never
+  # overwrites an unfinished release's record (its window, holds and restore point; D3/O4), and
+  # nothing drops a restore point the record holds.
+  local tag fields=() key given by_release=0 open_rp
+  if [[ "${1:-}" == --release ]]; then by_release=1; shift; fi
+  given=" $* "
+  open_rp="$(attempt_get restore_point)"
+  if ((by_release == 0)) && [[ "$(attempt_get via)" == release || "$open_rp" =~ ^release- ]]; then
+    die "release $(attempt_get tag) is unfinished (releases/attempt: its window, holds and restore point). Finish it (scripts/staging.sh release --finish), roll back (scripts/staging.sh rollback [--restore]), or release this build in the window (scripts/staging.sh release: it keeps that restore point)"
+  fi
+  if [[ "$open_rp" =~ ^release- && "$given" != *" restore_point=$open_rp "* ]]; then
+    die "releases/attempt holds restore point $open_rp: it is never dropped (scripts/staging.sh release carries it over)"
+  fi
+  tag="$(release_tag_of "$(env_get IHR_BACKEND_IMAGE)")"
+  release_tag_images "$tag" >&2
+  mapfile -t fields < <(rel_fields "$tag" "$(env_get IHR_BACKEND_IMAGE)")
+  for key in restore_point lsn rp_time audit; do  # "-" unless given
+    [[ "$given" == *" $key="* ]] || fields+=("$key=-")
+  done
+  [[ "$given" == *" via="* ]] || fields+=(via=plain)
+  (umask 077; mkdir -p "$REL_DIR"
+   rlog line kind=attempt "time=$(date -Iseconds)" "${fields[@]}" "$@" > "$REL_ATTEMPT.tmp")
+  mv "$REL_ATTEMPT.tmp" "$REL_ATTEMPT"
+  echo "$tag"
+}
+release_record() {  # release_record: the release in progress is logged (its smoke passed: the
+  # caller ran it), if the running backend is its build and every live hospital is served
+  local tag running fp unserved line top
+  [[ -f "$REL_ATTEMPT" ]] || die "no release in progress (releases/attempt)"
+  tag="$(attempt_get tag)"; fp="$(attempt_get tenant_fp)"
+  running="$(running_backend_id)"
+  [[ "$running" == "$(attempt_get backend)" ]] || die "the running backend is not release $tag's build"
+  unserved="$(rel_unserved "$fp")"
+  [[ -z "$unserved" ]] || die "not every live hospital is served: $(echo "$unserved" | tr '\n' ' ')"
+  # The build logged last, deployed again (a changed setting, a proof): one release, logged once,
+  # so a rollback never goes from it to itself (D1)
+  top="$(rlog state "$REL_LOG" | tail -1)"
+  if [[ "$top" == "$tag" ]]; then
+    rm -f "$REL_ATTEMPT"
+    echo "Release $tag is already the last logged release: not logged again"
+    return 0
+  fi
+  line="$(sed "s/^kind=attempt /kind=release /; s/\$/ finished=$(date -Iseconds)/" "$REL_ATTEMPT")"
+  # shellcheck disable=SC2086 # the line's words (checked again here)
+  line="$(rlog line $line)"
+  (umask 077; echo "$line" >> "$REL_LOG")
+  rm -f "$REL_ATTEMPT"
+  echo "Logged release $tag in $REL_LOG"
+  release_prune
+}
+rel_unpack_stack() {  # rel_unpack_stack <tag>: that release's stack files (a server; never .env,
+  # secrets/, generated/ or keys: the archive holds tracked files only). Files a later release
+  # added stay (harmless: nothing reads them unless the compose files name them). Under umask 022
+  # whatever the caller's: Prometheus and Fluent Bit (user 65534) read their settings (O2).
+  local tag="$1" tmp
+  if git -C "$ROOT" rev-parse --git-dir >/dev/null 2>&1; then
+    echo "== A checkout (a proof on this machine): its stack files are git's; check out $tag's commit if they changed"
+    return 0
+  fi
+  [[ -f "$REL_DIR/stack-$tag.tgz" ]] || { echo "WARNING: no stack files kept for $tag: the current ones stay" >&2; return 0; }
+  tmp="$(mktemp -d "$REL_DIR/.unpack.XXXXXX")"
+  # New files (new inodes), so this script, still running, reads on undisturbed
+  (umask 022
+   tar -C "$tmp" --no-same-owner -xzf "$REL_DIR/stack-$tag.tgz"
+   cd "$tmp" && find . -type f -print0 | while IFS= read -r -d '' f; do
+     mkdir -p "$ROOT/$(dirname "$f")"; cp -p --remove-destination "$f" "$ROOT/$f"; done)
+  rm -rf "$tmp"
+  echo "== Stack files of $tag restored into $ROOT"
+}
+rel_check_images() {  # rel_check_images <names> <plan file>: every target image of those names is
+  # here (checked before anything changes, D5)
+  local names=" $1 " name ref id missing=()
+  while read -r name ref; do
+    [[ "$names" == *" $name "* ]] || continue
+    id="$(sed -n "s/^target_$name=//p" "$2")"
+    [[ -n "$id" ]] || continue
+    docker image inspect "$id" >/dev/null 2>&1 || missing+=("$name=$id")
+  done < <(rel_images)
+  ((${#missing[@]} == 0)) || die "images of the target are no longer here: ${missing[*]} (nothing was changed)"
+}
+rel_point_images() {  # rel_point_images <names> <plan file>: this stack's tags at the target's images
+  # (all checked first: never half re-pointed)
+  local names=" $1 " name ref id
+  rel_check_images "$1" "$2"
+  while read -r name ref; do
+    [[ "$names" == *" $name "* ]] || continue
+    id="$(sed -n "s/^target_$name=//p" "$2")"
+    [[ -n "$id" ]] || continue
+    docker tag "$id" "$ref"
+    echo "$ref -> $id"
+  done < <(rel_images)
+}
+
+rel_rollback_advice() {  # rel_rollback_advice: the rollbacks `rollback` accepts now, found the way
+  # it finds them (release_log.py plan with the running build), so advice never names one it
+  # refuses (D3/O4)
+  local running out ways=()
+  running="$( (release_tag_of "$(running_backend_id)") 2>/dev/null)" || running=""
+  if [[ -z "$running" ]]; then
+    echo "the running build could not be read: scripts/staging.sh rollback [--restore] says whether it can"
+    return 0
+  fi
+  if rlog plan "$REL_LOG" "$REL_ATTEMPT" "$running" >/dev/null 2>&1; then
+    ways+=("scripts/staging.sh rollback (no --restore: it lifts the holds and clears the window; nothing is lost)")
+  fi
+  if out="$(rlog plan "$REL_LOG" "$REL_ATTEMPT" "$running" --restore 2>/dev/null)"; then
+    ways+=("scripts/staging.sh rollback --restore (back to the window's restore point $(sed -n 's/^restore_point=//p' <<< "$out"); what was written since is lost)")
+  fi
+  if ((${#ways[@]} == 0)); then
+    echo "no rollback is accepted from here (scripts/staging.sh rollback says why): fix forward"
+  elif ((${#ways[@]} == 1)); then
+    echo "${ways[0]}"
+  else
+    echo "${ways[0]}; or ${ways[1]}"
+  fi
+}
+# The EXIT trap of release (globals: a trap runs after the function's locals are gone)
+REL_STAGE=0 REL_PREV="" REL_HAD_PREV=0 REL_ANNOUNCED=0 REL_OP="" REL_HELD_STATE=""
+rel_release_exit() {  # rel_release_exit <exit status>: what the release changed, and the way on.
+  # Stage 0: nothing held, stopped or migrated; 1: hospitals held (the hold succeeded, or the
+  # database shows some held) and workers stopped, the database untouched by this release; 2: its
+  # restore point taken and migrations may have begun (D2/D10). The rollback advice is what
+  # `rollback` accepts (rel_rollback_advice)
+  local rc="$1"
+  rel_workers_marker clear
+  if ((rc != 0 && REL_STAGE == 0)); then
+    # Nothing changed: the record of a release in progress goes back to what it was
+    if ((REL_HAD_PREV)); then mv -f "$REL_PREV" "$REL_ATTEMPT"; else rm -f "$REL_ATTEMPT"; fi
+  fi
+  [[ -z "$REL_PREV" ]] || rm -f "$REL_PREV"
+  ((rc != 0)) || return 0
+  case "$REL_STAGE" in
+    0) echo "RELEASE DID NOT START (exit $rc): nothing was held, stopped or migrated; the running build serves as before.$( ((REL_ANNOUNCED == 0)) || echo " The window announced now stays: clear it with scripts/staging.sh fleet window --clear --operator $REL_OP, or release again inside it.")" >&2 ;;
+    1) echo "RELEASE STOPPED BEFORE ANY MIGRATION (exit $rc): ${REL_HELD_STATE:-every hospital is held (503 upgrading), the workers are stopped}, and the window stays announced; the database is unchanged by this release. Serve them again: $(rel_rollback_advice); or fix the cause and run scripts/staging.sh release again (deploy/staging/README.md, Releases)" >&2 ;;
+    *) echo "RELEASE DID NOT FINISH (exit $rc): migrations may have begun; hospitals held so far stay at 503 upgrading and the window stays announced. Fix forward and run scripts/staging.sh release again, with this build or a fixed one (the window's restore point is kept), or roll back: $(rel_rollback_advice) (deploy/staging/README.md, Releases)" >&2 ;;
+  esac
+}
+release() {  # release [--now [--minutes N] [--note T]] [--operator NAME] | --finish [--operator NAME]
+  local now=0 minutes=60 note="" op="" finish=0 new_ref tag fps=() cid="" old_id="" win hold_at="" apps
+  local rp=() carry=() from="" migr=none audit=- seal=- seal_s=- quiet_until unserved t0 fleet_rc=0 smoke_rc=0 held
+  while (($#)); do
+    case "$1" in
+      --now) now=1 ;;
+      --minutes) minutes="${2:?--minutes N}"; shift ;;
+      --note) note="${2:?--note TEXT}"; shift ;;
+      --operator) op="${2:?--operator NAME}"; shift ;;
+      --finish) finish=1 ;;
+      *) die "usage: scripts/staging.sh release [--now [--minutes N] [--note TEXT]] [--operator NAME] | --finish" ;;
+    esac
+    shift
+  done
+  [[ "$minutes" =~ ^[0-9]+$ ]] || die "--minutes N"
+  op="$(rel_operator "$op")"
+  [[ -f "$DIR/.env" ]] || die "run: scripts/staging.sh init <suffix>"
+  rel_lock
+  t0=$SECONDS
+  if ((finish)); then release_finish "$op"; return; fi
+  new_ref="$(env_get IHR_BACKEND_IMAGE)"
+  tag="$(release_tag_of "$new_ref")"
+  win="$(image_fingerprints "$new_ref")"
+  read -r -a fps <<< "$win"
+  cid="$(compose ps -q backend 2>/dev/null || true)"
+  [[ -z "$cid" ]] || old_id="$(docker inspect -f '{{.Image}}' "$cid")"
+  if [[ -n "$old_id" && "$old_id" == "$(image_id "$new_ref")" ]]; then
+    [[ "$(attempt_get tag)" != "$tag" ]] || die "release $tag already runs and is not finished: after the fix, scripts/staging.sh release --finish"
+    die "release $tag already runs: nothing to release (scripts/deploy.sh sends a new build first)"
+  fi
+  if [[ -z "$cid" ]]; then
+    # Without a backend nothing is held: then no other service of the app may run either (D8)
+    apps="$(compose ps --format '{{.Service}}' "${REL_WORKERS[@]}" frontend 2>/dev/null | tr '\n' ' ' || true)"
+    [[ -z "${apps// /}" ]] || die "the backend is not running, but ${apps% } still run(s) and would write during the migrations. Stop the stack first (scripts/staging.sh down), or start the old backend again (docker compose start backend) so the release holds every hospital: nothing changed"
+  fi
+  release_tag_images "$tag"
+  echo "== Release $tag (hospitals' schema ${fps[0]:0:12}, platform's ${fps[1]:0:12}) by $op"
+  # The restore point belongs to the open window, not to a build: an unfinished release's point is
+  # carried over, whatever its build (the database has not been released since; D3/O4)
+  if [[ "$(attempt_get restore_point)" =~ ^release- ]]; then
+    from="$(attempt_get rp_from)"; from="${from:-$(attempt_get tag)}"
+    carry=("restore_point=$(attempt_get restore_point)" "lsn=$(attempt_get lsn)" "rp_time=$(attempt_get rp_time)")
+    [[ "$from" == "$tag" ]] || carry+=("rp_from=$from")
+    migr=started
+  elif [[ "$(attempt_get migrations)" == started ]]; then
+    migr=started  # an unfinished release without backups: its migrations may have begun
+  fi
+  # This release's record before its first change (D2): a rollback finds it from here on. If it
+  # stops before anything is held, the record goes back to what it was (rel_release_exit).
+  REL_OP="$op" REL_STAGE=0 REL_HAD_PREV=0
+  REL_PREV="$(mktemp "$REL_DIR/.attempt-prev.XXXXXX")"
+  if [[ -f "$REL_ATTEMPT" ]]; then cp -p "$REL_ATTEMPT" "$REL_PREV"; REL_HAD_PREV=1; fi
+  trap 'rel_release_exit $?' EXIT
+  release_note --release via=release "migrations=$migr" ${carry[@]+"${carry[@]}"} >/dev/null
+  if [[ -n "$cid" ]]; then
+    # 1. The announcement (the web app shows it; ihr_fleet_run window), by the running build
+    win="$(old_manage ihr_fleet_run window | tail -1)"
+    if ! window_open_now "$win"; then
+      ((now)) || die "no announced window is open now ($win). Announce one ahead (scripts/staging.sh fleet window runs it in the running backend): scripts/staging.sh fleet window --start 'DD-MM-YYYY HH:MM' --minutes 90 --note '...' --operator $op; or pass --now"
+      old_manage ihr_fleet_run window --start "$(TZ=Asia/Kolkata date +'%d-%m-%Y %H:%M')" --minutes "$minutes" \
+        --note "$note" --operator "$op"
+      REL_ANNOUNCED=1
+      win="$(old_manage ihr_fleet_run window | tail -1)"
+    fi
+    echo "$win"
+    # 2a. The whole audit trail checked by the outgoing build while it still serves (capped)
+    echo "== [$((SECONDS - t0)) s] Checking the audit trail (outgoing build, before the hold)"
+    audit="$(rel_audit_check)"
+    # 2. Every hospital held, in one transaction, by the outgoing build (503 upgrading)
+    echo "== [$((SECONDS - t0)) s] Holding every hospital"
+    if ! old_manage ihr_fleet_run hold --operator "$op"; then
+      # One transaction: a failed hold normally held nobody (stage 0, the record goes back). Only
+      # what the database shows is claimed (D2/O3): never "every hospital is held"
+      held="$(rel_held_count)"
+      [[ "$held" != 0 ]] || die "the hold failed (above): no hospital is held"
+      REL_STAGE=1
+      if [[ -n "$held" ]]; then
+        REL_HELD_STATE="the hold failed, and $held hospital(s) are held for the window (503 upgrading); the workers were not stopped"
+      else
+        REL_HELD_STATE="the hold failed, and the database did not say whether any hospital is held; the workers were not stopped"
+      fi
+      die "the hold failed (above)"
+    fi
+    REL_STAGE=1
+    hold_at="$(rel_sql "SELECT now()")"
+    # 3. No worker writes into a hospital from here (and none is paged as down until the window's end)
+    echo "== [$((SECONDS - t0)) s] Stopping the workers: ${REL_WORKERS[*]}"
+    compose stop "${REL_WORKERS[@]}"
+    quiet_until="$(window_end "$win" 2>/dev/null || echo $(($(date +%s) + minutes * 60)))"
+    rel_workers_marker "$quiet_until"
+    # 4. Requests that began before the hold finish (capped)
+    echo "== [$((SECONDS - t0)) s] Draining"
+    rel_drain "$hold_at"
+    # 5. The audit trail sealed and fingerprinted by the outgoing build (seal only, capped)
+    echo "== [$((SECONDS - t0)) s] Sealing and fingerprinting the audit trail (outgoing build)"
+    seal_s=$SECONDS
+    seal="$(rel_seal "$old_id")"
+    seal_s=$((SECONDS - seal_s))
+  else
+    echo "== The stack is not serving: no announcement, hold, drain or seal needed"
+    REL_STAGE=2  # the database starts on this stack's (possibly new) Postgres image
+    release_note --release via=release migrations=started ${carry[@]+"${carry[@]}"} >/dev/null
+    compose up -d --wait db redis
+  fi
+  # 6. The restore point: the window's own (carried from an unfinished release), or a new one
+  if ((${#carry[@]})); then
+    rp=("${carry[0]#restore_point=}" "${carry[1]#lsn=}" "${carry[2]#rp_time=}")
+    echo "== [$((SECONDS - t0)) s] Keeping the window's restore point (taken for release $from): ${rp[0]} at ${rp[1]}"
+  else
+    echo "== [$((SECONDS - t0)) s] Restore point"
+    win="$(rel_restore_point "$tag")"
+    read -r -a rp <<< "$win"
+    carry=("restore_point=${rp[0]}" "lsn=${rp[1]}" "rp_time=${rp[2]}")
+    echo "${rp[0]} at ${rp[1]}"
+  fi
+  REL_STAGE=2
+  release_note --release via=release migrations=started "${carry[@]}" "audit=$audit" "seal=$seal" "seal_s=$seal_s" >/dev/null
+  # 7. The new build: the platform's schema, then each hospital (2 at a time, logged for its alerts)
+  echo "== [$((SECONDS - t0)) s] Platform (public) migrations"
+  compose run --rm --no-deps -T migrate python manage.py migrate_schemas --shared --noinput
+  echo "== [$((SECONDS - t0)) s] Hospital migrations (ihr_fleet_run, as scripts/staging.sh fleet)"
+  compose run --rm --no-deps -T migrate python manage.py ihr_fleet_run migrate check roles packs --operator "$op" || fleet_rc=$?
+  # 8. Start (a hospital this release left held stays at 503; the others start)
+  echo "== [$((SECONDS - t0)) s] Starting release $tag"
+  up
+  rel_workers_marker clear
+  # 9. Every hospital served, and the smoke checks
+  echo "== [$((SECONDS - t0)) s] Smoke"
+  smoke || smoke_rc=$?
+  unserved="$(rel_unserved "${fps[0]}")"
+  if [[ -n "$unserved" || $smoke_rc != 0 || $fleet_rc != 0 ]]; then
+    trap - EXIT
+    rel_release_exit 0
+    echo "RELEASE $tag IS NOT FINISHED ($((SECONDS - t0)) s): not served: ${unserved//$'\n'/ }; fleet run exit $fleet_rc, smoke exit $smoke_rc." >&2
+    echo "The others are served; the window stays announced. Each held hospital's newest upgrade record names the step and error: fix it, then scripts/staging.sh fleet --resume <the fleet run above> --operator $op, then scripts/staging.sh release --finish. Or roll back: $(rel_rollback_advice)." >&2
+    exit 1
+  fi
+  release_finish "$op" --checked
+  trap - EXIT
+  rel_release_exit 0
+  echo "== Release $tag finished in $((SECONDS - t0)) s"
+}
+release_finish() {  # release_finish <operator> [--checked]: close the window and log the release
+  local op="$1" tag
+  [[ -f "$REL_ATTEMPT" ]] || die "no release in progress (releases/attempt)"
+  tag="$(attempt_get tag)"
+  if [[ "${2:-}" != --checked ]]; then
+    smoke || die "release $tag: the smoke checks fail (above): not finished"
+  fi
+  release_record
+  compose run --rm --no-deps -T migrate python manage.py ihr_fleet_run window --clear --operator "$op"
+}
+
+# The EXIT trap of rollback (globals). Stage 0: nothing changed; 1: images re-pointed (no
+# restore); 2: the stack stopped; 3: the database being replaced; 4: restored and logged (D5)
+REL_RB_STAGE="" REL_RB_PLAN="" REL_RB_TARGET="" REL_RB_RP="" REL_RB_SET="" REL_RB_ASIDE=""
+rel_rollback_exit() {  # rel_rollback_exit <exit status>: where a rollback stopped, and the way on
+  local rc="$1"
+  [[ -z "$REL_RB_PLAN" ]] || rm -f "$REL_RB_PLAN"
+  ((rc != 0)) || return 0
+  case "$REL_RB_STAGE" in
+    1) echo "ROLLBACK DID NOT FINISH (exit $rc): this stack's images point at $REL_RB_TARGET; the database was not touched. Fix the cause (above) and run scripts/staging.sh rollback again: it does the same steps again" >&2 ;;
+    2) echo "ROLLBACK STOPPED WITH THE STACK DOWN (exit $rc): the database and the images are unchanged. Start it again: scripts/staging.sh up (then fleet release and fleet window --clear if hospitals are held)" >&2 ;;
+    3) echo "ROLLBACK STOPPED DURING THE RESTORE (exit $rc): the stack is down and its database volume is being replaced (Postgres's tag points at $REL_RB_TARGET's image). Finish the restore: scripts/staging.sh restore --target-name $REL_RB_RP --set $REL_RB_SET --replace-database; then the remaining steps by hand (deploy/staging/README.md, Releases).${REL_RB_ASIDE:+ The database as it was is in volume $REL_RB_ASIDE.}" >&2 ;;
+    4) echo "ROLLBACK DID NOT FINISH (exit $rc): the database is restored to $REL_RB_RP and the rollback to $REL_RB_TARGET is logged; do not run rollback again. Finish by hand: scripts/staging.sh up, fleet release --operator <you>, fleet window --clear --operator <you>, smoke, backup-now full${REL_RB_ASIDE:+ (the database as it was: volume $REL_RB_ASIDE)}" >&2 ;;
+    *) echo "ROLLBACK STOPPED (exit $rc): nothing was changed" >&2 ;;
+  esac
+}
+rollback() {  # rollback [--restore] [--operator NAME]: back to the release before the running one
+  local restore=0 op="" running plan answer project="${IHR_PROJECT:-indiehr-staging}" t0
+  local need free margin floor aside="" set leave target rp rp_time rp_of lsn keep_copy=0 names held
+  while (($#)); do
+    case "$1" in
+      --restore) restore=1 ;;
+      --operator) op="${2:?--operator NAME}"; shift ;;
+      *) die "usage: scripts/staging.sh rollback [--restore] [--operator NAME]" ;;
+    esac
+    shift
+  done
+  op="$(rel_operator "$op")"
+  [[ -f "$DIR/.env" ]] || die "run: scripts/staging.sh init <suffix>"
+  rel_lock
+  # The typed confirmation comes from our own stdin: no docker command below may read it
+  exec 8<&0 0</dev/null
+  t0=$SECONDS
+  REL_RB_STAGE=0
+  running="$(release_tag_of "$(running_backend_id)")"
+  plan="$(mktemp "$REL_DIR/.plan.XXXXXX")"
+  REL_RB_PLAN="$plan"
+  trap 'rel_rollback_exit $?' EXIT
+  # A window's holds with no release in progress to explain them: not a rollback's to guess (D2)
+  if [[ ! -f "$REL_ATTEMPT" ]]; then
+    held="$(rel_held_count)"
+    [[ ! "$held" =~ ^[1-9][0-9]*$ ]] || die "$held hospital(s) are held for a window, but no release is in progress (releases/attempt): nothing here says what held them. Serve them with scripts/staging.sh fleet release --operator $op and clear the window (fleet window --clear --operator $op), or find the release that held them"
+  fi
+  if ((restore)); then rlog plan "$REL_LOG" "$REL_ATTEMPT" "$running" --restore > "$plan" || exit 1
+  else rlog plan "$REL_LOG" "$REL_ATTEMPT" "$running" > "$plan" || exit 1; fi
+  leave="$(sed -n 's/^leave=//p' "$plan")"; target="$(sed -n 's/^target=//p' "$plan")"
+  REL_RB_TARGET="$target"
+  [[ -n "$target" && "$leave" != "$target" ]] || die "refused: $leave would be rolled back to itself"
+  echo "== Rolling back from $leave ($(sed -n 's/^leave_note=//p' "$plan")) to $target"
+  # Every image of the target is here before anything changes, never found missing half-way (D5).
+  # All of them, Postgres and Keycloak too, with or without a restore: deploy.sh already moved this
+  # stack's :staging tags to the build being left, so a tag left alone would make `up` recreate the
+  # database or Keycloak on that build's image (D2/O3/D7). Without a restore, release_log.py plan
+  # allowed only a database that already runs on the target's Postgres and Keycloak (the left
+  # build never ran on it: migrations=none, or the same images)
+  names="backend frontend postgres keycloak acmedns grafana"
+  ((restore == 0)) || [[ -n "$(env_get IHR_BACKUP)" ]] || die "no backups set up here"
+  rel_check_images "$names" "$plan"
+  if [[ ! -f "$REL_DIR/stack-$target.tgz" ]] && ! git -C "$ROOT" rev-parse --git-dir >/dev/null 2>&1; then
+    echo "WARNING: no stack files kept for $target: the current ones stay" >&2
+  fi
+  if ((restore == 0)); then
+    # Same schemas, Keycloak and Postgres, or a release that stopped before its restore point
+    # (release_log.py plan checked): every tag back at the target's image, the database kept
+    REL_RB_STAGE=1
+    rel_point_images "$names" "$plan"
+    rel_unpack_stack "$target"
+    "$ROOT/scripts/staging.sh" up
+    # The window's holds lifted (the schemas are the target's), any hospital whose role sync this
+    # build refuses held again, and the window cleared (D7)
+    "$ROOT/scripts/staging.sh" fleet release --operator "$op"
+    "$ROOT/scripts/staging.sh" fleet roles --operator "$op" || true
+    "$ROOT/scripts/staging.sh" fleet window --clear --operator "$op"
+    "$ROOT/scripts/staging.sh" smoke || die "rolled back to $target, but the smoke checks fail (above)"
+    (umask 077; rlog line kind=rollback "tag=$target" "from=$leave" restored=no "time=$(date -Iseconds)" >> "$REL_LOG")
+    rm -f "$REL_ATTEMPT"
+    echo "== Rolled back to $target in $((SECONDS - t0)) s (nothing lost)"
+    return 0
+  fi
+  rp="$(sed -n 's/^restore_point=//p' "$plan")"; rp_time="$(sed -n 's/^rp_time=//p' "$plan")"
+  lsn="$(sed -n 's/^lsn=//p' "$plan")"; rp_of="$(sed -n 's/^rp_of=//p' "$plan")"
+  REL_RB_RP="$rp"
+  [[ "$rp_time" =~ ^[0-9]+$ ]] || die "the restore point $rp has no time in the log"
+  backup_config
+  set="$(rel_backup_set "$rp_time")" || die "cannot roll back to $rp"
+  REL_RB_SET="$set"
+  # The copy beside it: the volume's real size (pg_wal too), kept only with room for it and the
+  # 20 GB floor the restore, the journal and the log store still need (D6/O10)
+  need="$(rel_db_used_mb)"
+  free="$(df -Pm "$(docker info --format '{{.DockerRootDir}}')" | awk 'NR==2 {print $4}')"
+  [[ "$need" =~ ^[0-9]+$ && "$free" =~ ^[0-9]+$ ]] || die "could not read the database volume's size or the free disk"
+  floor=$(( ${IHR_DEPLOY_MIN_FREE_GB:-20} * 1024 ))
+  margin=$(( need / 5 > floor ? need / 5 : floor ))
+  if ((free > need + margin)); then
+    keep_copy=1
+    aside="${project}_pgdata-pre-rollback-$leave-$(date +%Y%m%d%H%M%S)"
+    ! docker volume inspect "$aside" >/dev/null 2>&1 || die "volume $aside already exists: nothing changed"
+  fi
+  # The only database is never replaced before the restore is shown possible: a backup before the
+  # point (above) and the WAL up to it in the repository (O10)
+  if ! rel_wal_archived "$lsn"; then
+    ((keep_copy)) || die "cannot show that the repository holds the WAL up to $rp (lsn $lsn), and there is no room to keep the current database beside it: refused, nothing changed (scripts/staging.sh backup-status)"
+    echo "WARNING: cannot show that the repository holds the WAL up to $rp (lsn $lsn); the current database is kept beside it" >&2
+  fi
+  echo "== What this rollback does and loses:"
+  echo "- every hospital is offline until it ends (the stack stops; the restore replays WAL from backup $set);"
+  echo "- the database (every hospital, the platform and Keycloak) goes back to restore point $rp,"
+  echo "  taken at $(date -d "@$rp_time" -Iseconds) for release $rp_of, with every hospital held at the start of its window:"
+  echo "  everything written after it is lost (nothing, if no hospital was served since);"
+  echo "- Keycloak's changes since then are lost too: invitations, password and authenticator resets,"
+  echo "  accounts disabled or removed (re-do them; the realm sync runs at the start);"
+  echo "- audit fingerprints stored after it will not match the restored trail (expected: note it in the incident record);"
+  if ((keep_copy)); then echo "- the current database is kept beside it (volume $aside, about $need MB)."
+  else echo "- the current database is REPLACED: not enough disk to keep a copy ($free MB free; $need MB plus a ${floor} MB floor needed)."; fi
+  echo "Type the release tag to roll back to ($target) to go on:"
+  read -r answer <&8 || true
+  [[ "$answer" == "$target" ]] || die "not confirmed: nothing changed"
+  echo "== [$((SECONDS - t0)) s] Stopping the stack (its volumes stay: never down -v)"
+  REL_RB_STAGE=2
+  compose down
+  if ((keep_copy)); then
+    echo "== [$((SECONDS - t0)) s] Keeping the current database in $aside"
+    docker volume create --label "ihr.rollback-from=$leave" "$aside" >/dev/null
+    if ! docker run --rm --network none --user 0 -v "${project}_pgdata:/from:ro" -v "$aside:/to" \
+      --entrypoint sh "$(env_get IHR_POSTGRES_IMAGE)" -c 'cp -a /from/. /to/ && touch /to/.ihr-rollback-copy-complete'; then
+      docker volume rm "$aside" >/dev/null 2>&1 || true
+      die "the copy of the current database failed (the partial copy was removed); nothing was restored"
+    fi
+    REL_RB_ASIDE="$aside"
+  fi
+  echo "== [$((SECONDS - t0)) s] Restoring to $rp (with $target's Postgres image)"
+  REL_RB_STAGE=3
+  rel_point_images "postgres" "$plan"
+  restore_live --target-name "$rp" --set "$set" --replace-database
+  trap 'rel_rollback_exit $?' EXIT  # restore_live set its own
+  # The database is the target's now: logged at once (a failure below is not a rollback to repeat)
+  REL_RB_STAGE=4
+  (umask 077; rlog line kind=rollback "tag=$target" "from=$leave" "restored=$rp" "time=$(date -Iseconds)" >> "$REL_LOG")
+  rm -f "$REL_ATTEMPT"
+  rel_point_images "backend frontend keycloak acmedns grafana" "$plan"
+  rel_unpack_stack "$target"
+  echo "== [$((SECONDS - t0)) s] Starting $target"
+  "$ROOT/scripts/staging.sh" up
+  # The restore point was taken with every hospital held for the window: serve them again, then
+  # hold again any whose role sync this build refuses
+  "$ROOT/scripts/staging.sh" fleet release --operator "$op"
+  "$ROOT/scripts/staging.sh" fleet roles --operator "$op" || true
+  "$ROOT/scripts/staging.sh" fleet window --clear --operator "$op"
+  "$ROOT/scripts/staging.sh" smoke || die "restored and started $target, but the smoke checks fail (above)"
+  echo "== Rolled back to $target with a restore in $((SECONDS - t0)) s"
+  # A full backup of the new timeline at once: a later restore never has to reach back past this
+  # one, or past an older point (D4/O9)
+  echo "== Full backup of the restored database"
+  "$ROOT/scripts/staging.sh" backup-now full || echo "WARNING: the full backup failed (above): run scripts/staging.sh backup-now full" >&2
+  [[ -z "$aside" ]] || echo "The database as it was is in volume $aside: once you are sure, docker volume rm $aside"
+}
 
 # ---- Mail (P1-T8b4): Zoho ZeptoMail, or a stand-in for proofs (compose.mailtest.yaml) ------------
 EMAIL_RE='^[A-Za-z0-9._%+-]+@[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)+$'
@@ -2034,8 +2783,8 @@ for l in sys.stdin:
   # The server's own logs too (sshd, sudo, systemd): anything from the host in the last hour
   check "logs: the host's own services are stored" yes \
     "$(vl_get "/select/logsql/hits?query=source:host&start=1h&step=1h" 2>/dev/null | grep -q '"total":[1-9]' && echo yes || echo no)"
-  # vmalert has both groups of log alerts, and they run
-  check "logs: vmalert runs the log alerts without errors" "2 groups, no errors" \
+  # vmalert has every group of log alerts (one per "  - name:" in deploy/logs/alerts), and they run
+  check "logs: vmalert runs the log alerts without errors" "$(cat "$LOGS_DIR"/alerts/*.yml | grep -c '^  - name:') groups, no errors" \
     "$(prom_get "http://$(vmalert_ip):8880/api/v1/rules" 2>/dev/null | python3 -c 'import json,sys
 g = json.load(sys.stdin)["data"]["groups"]
 e = [r["name"] for x in g for r in x["rules"] if r.get("lastError")]
@@ -2329,8 +3078,21 @@ case "${1:-}" in
   smoke) smoke ;;
   manage) compose --profile admin run --rm --no-deps -T admin python manage.py "${@:2}" ;;
   # The fleet runner in the one-shot's (logged) container, never the unlogged admin one: its
-  # "ihr-fleet:" lines must reach the HospitalNotServed alert (deploy/logs/alerts/fleet.yml, S3)
-  fleet) compose run --rm --no-deps -T migrate python manage.py ihr_fleet_run "${@:2}" ;;
+  # "ihr-fleet:" lines must reach the HospitalNotServed alert (deploy/logs/alerts/fleet.yml, S3).
+  # `fleet window` runs in the running backend when one runs: the build the database's schema is
+  # (after deploy.sh moved the image tags, a one-off would be the new build on the old schema; D10)
+  fleet)
+    if [[ "${2:-}" == window && -n "$(compose ps -q backend 2>/dev/null || true)" ]]; then
+      compose exec -T backend python manage.py ihr_fleet_run "${@:2}"
+    else
+      compose run --rm --no-deps -T migrate python manage.py ihr_fleet_run "${@:2}"
+    fi ;;
+  release) release "${@:2}" ;;
+  rollback) rollback "${@:2}" ;;
+  releases) rlog state "$REL_LOG" "$REL_ATTEMPT" ;;
+  # Internal steps of scripts/deploy.sh (a plain start of a release without migrations)
+  release-note) rel_lock; release_note ;;
+  release-record) rel_lock; release_record ;;
   ps) compose ps ;;
   logs) compose logs --tail=200 "${@:2}" ;;
   keys) keys_cmd "${@:2}" ;;
@@ -2390,5 +3152,5 @@ case "${1:-}" in
     admin_manage ihr_keycloak_sync --all >/dev/null
     smoke
     ;;
-  *) sed -n '5,53p' "$0"; exit 1 ;;
+  *) sed -n '5,63p' "$0"; exit 1 ;;
 esac

@@ -30,6 +30,7 @@ from ihr_platform.test_runner import (
     WRITTEN_REDIS_KEYS,
     unprefixed_redis_keys,
 )
+from ihr_platform.testing import as_owner
 from ihr_platform.tests.isolation.routes import (
     CONVERTER_RE,
     SHARED_VALUE_PARAMS,
@@ -527,7 +528,7 @@ class CrossTenantIsolationTests(SimpleTestCase):
             any("cleanup_expired_otps" in name for name in entries), entries
         )
 
-        with schema_context("public"):
+        with schema_context("public"), as_owner():  # an operator's status change
             Hospital.objects.filter(pk=self.b.hospital.pk).update(
                 status=Hospital.Status.SUSPENDED
             )
@@ -544,7 +545,7 @@ class CrossTenantIsolationTests(SimpleTestCase):
                 for name, fields in entries.items():
                     scheduler.apply_entry(ScheduleEntry(name=name, app=app, **fields))
         finally:
-            with schema_context("public"):
+            with schema_context("public"), as_owner():
                 Hospital.objects.filter(pk=self.b.hospital.pk).update(
                     status=Hospital.Status.ACTIVE
                 )
@@ -674,7 +675,8 @@ class CrossTenantIsolationTests(SimpleTestCase):
         anonymous = APIClient(HTTP_HOST=self.b.domain, raise_request_exception=False)
         with schema_context("public"):
             before = entries()
-            release.hold([self.b.hospital.pk])
+            with as_owner():  # ihr_fleet_run hold: the owner-run release
+                release.hold([self.b.hospital.pk])
         try:
             answers, leaks, crawled = Counter(), [], 0
             for route, cls, allows_get in self.routes:
@@ -699,7 +701,7 @@ class CrossTenantIsolationTests(SimpleTestCase):
             with schema_context("public"):
                 after = entries()
         finally:
-            with schema_context("public"):
+            with schema_context("public"), as_owner():
                 release.release_hold([self.b.hospital.pk])
         print(f"\n[isolation] gated B: {crawled} requests, statuses {dict(answers)}")
         self.assertGreater(crawled, 200)

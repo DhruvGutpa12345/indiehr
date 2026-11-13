@@ -177,6 +177,15 @@ def apply_tenancy(settings):  # noqa: PLR0915 (one flat list of settings)
         "ihr_platform.storage.tenant_key_prefix"
     )
 
+    # Separate database roles (P1-T19, ihr_platform/db_roles.py): off (dev, the plain CI job,
+    # staging until P1-T19b), test (the test runner: tests run as ihr_app) or required
+    # (deployment). IHR_DB_ROLE is the role this process declares it connects as: app|owner.
+    settings.setdefault("IHR_DB_ROLES", os.environ.get("IHR_DB_ROLES", "off"))
+    settings.setdefault("IHR_DB_ROLE", os.environ.get("IHR_DB_ROLE", ""))
+    if settings["IHR_DB_ROLES"] not in ("off", "test", "required"):
+        msg = f"IHR_DB_ROLES must be off, test or required, not {settings['IHR_DB_ROLES']!r}."
+        raise ImproperlyConfigured(msg)
+
     for cache in settings["CACHES"].values():
         cache["KEY_FUNCTION"] = "django_tenants.cache.make_key"
         cache["REVERSE_KEY_FUNCTION"] = "django_tenants.cache.reverse_key"

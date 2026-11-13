@@ -1,0 +1,27 @@
+# Every table in the public schema, classified for the app role ihr_app (P1-T19a, ihr_platform/db_roles.py).
+# One line each: <table> <class> <reason>. Reviewed: a new public table fails the tests (and the run-time
+# check) until it is listed here, and it gets no rights at all meanwhile.
+# Classes: dml (SELECT, INSERT, UPDATE, DELETE), select, none,
+#   queue (SELECT and INSERT, and UPDATE of queued_action, queued_by, queued_at only; what an INSERT may set is
+#   limited by a trigger, ihr_platform/queue_guard.py).
+# Views, materialized views and foreign tables are listed like tables (a view reads with its owner's rights).
+# The owner-run processes (migrate one-shot, admin one-offs, onboarding provisioner) write the select ones.
+# The provisioner trusts what it reads (S1): the app must never write a row it acts on.
+django_content_type select written by migrate's post_migrate only; the app only reads content types
+django_migrations select only migrate (the owner) records migrations; P1-T18's gate reads them
+ihr_platform_hospital select written only by provisioning, ihr_create_tenant and ihr_keycloak_sync (owner); the provisioner's rollback trusts its status and activated_at (S1)
+ihr_platform_domain select written only by provisioning and ihr_create_tenant (owner); routes every request to a hospital
+ihr_platform_retiredaddress select written only by the delete signals of owner-run rollback and offboarding
+ihr_platform_tenantoperation queue the console (app) records a provisioning request and queues run, rollback or resend; the ihr_operation_guard trigger (queue_guard.py) forces every column the provisioner trusts (status, steps, result, hospital, times) on the app's inserts and refuses any other kind; the provisioner acts on a hospital only for the operation recorded on it (S1)
+ihr_platform_hospitalschemastate select the release records and holds (P1-T18): written only by ihr_fleet_run, provisioning and migrate (owner); the gate reads it
+ihr_platform_fleetrun select written only by ihr_fleet_run (owner); the console shows it
+ihr_platform_maintenancewindow select written only by ihr_fleet_run window (owner); the gate's notice shows it
+ihr_platform_operatoraccount select who may use the console: written only by ihr_operator (admin, owner)
+ihr_platform_staffinvitation dml hospitals' Add user writes invitations (backend); the staff worker delivers them (app)
+ihr_platform_staffaccessrequest dml hospital admins' requests (backend); the staff worker carries them out (app)
+ihr_platform_pindirectoryload select the PIN directory's load history: written only by ihr_load_pincodes (admin, owner)
+ihr_platform_postoffice select the PIN directory: written only by ihr_load_pincodes (admin, owner); staff look PIN codes up
+ihr_refdata_registry_packrelease select pack releases: recorded only by pack apply (migrate one-shot, ihr_fleet_run, provisioning; owner)
+ihr_terminology_codesystemversion select read-only terminology (ADR-016): written only by ihr_terminology_load (admin, owner)
+ihr_terminology_concept select read-only terminology (ADR-016): its write guard is a session flag any session can set, so the privilege is the control
+ihr_terminology_designation select read-only terminology (ADR-016): written only by ihr_terminology_load (admin, owner)

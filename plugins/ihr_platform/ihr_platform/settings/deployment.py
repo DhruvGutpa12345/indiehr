@@ -44,6 +44,11 @@ IHR_SESSION_IDLE_SECONDS = env.int("IHR_SESSION_IDLE_SECONDS", default=1800)
 IHR_CLIENT_KEY_PURPOSE = env("IHR_CLIENT_KEY_PURPOSE", default="")
 IHR_CLIENT_KEY_DIR = env("IHR_CLIENT_KEY_DIR", default="/run/ihr-keys")
 IHR_CLIENT_JWKS_DIR = env("IHR_CLIENT_JWKS_DIR", default="/run/ihr-jwks")
+# Separate database roles (P1-T19): "off" until P1-T19b moves staging's roles, then
+# "required"; the role this container declares it connects as (app or owner) is checked on
+# its first database connection.
+IHR_DB_ROLES = env("IHR_DB_ROLES", default="off")
+IHR_DB_ROLE = env("IHR_DB_ROLE", default="")
 # The operator console posts forms (Django CSRF): its https origin is trusted.
 CSRF_TRUSTED_ORIGINS = [IHR_CONSOLE_URL] if IHR_CONSOLE_URL else []
 

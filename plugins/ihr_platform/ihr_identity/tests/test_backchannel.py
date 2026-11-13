@@ -15,6 +15,7 @@ from django.test import SimpleTestCase
 from django_tenants.utils import schema_context
 from ihr_platform.models import Hospital
 from ihr_platform.test_runner import TEST_SCHEMA
+from ihr_platform.testing import as_owner
 from rest_framework.test import APIClient
 
 from ihr_identity import sessions, testing
@@ -34,9 +35,10 @@ class BackChannelLogoutTests(SimpleTestCase):
         super().setUpClass()
         connection.set_schema_to_public()
         try:
-            call_command(
-                "ihr_create_tenant", public=True, domain=[PLATFORM], verbosity=0
-            )
+            with as_owner():  # the migrate one-shot's ihr_create_tenant --public
+                call_command(
+                    "ihr_create_tenant", public=True, domain=[PLATFORM], verbosity=0
+                )
         finally:
             connection.set_schema(TEST_SCHEMA)  # where every other test expects to be
 

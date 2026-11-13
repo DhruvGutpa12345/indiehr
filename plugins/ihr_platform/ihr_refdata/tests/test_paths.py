@@ -17,6 +17,7 @@ from ihr_platform.models import Domain, Hospital, RetiredAddress
 from ihr_platform.provisioning import runner
 from ihr_platform.seeding import load_demo_data
 from ihr_platform.test_runner import TEST_SCHEMA
+from ihr_platform.testing import owner_for_test
 
 from ihr_refdata import engine, manifest
 from ihr_refdata.models import PackApply, PackItem
@@ -46,6 +47,7 @@ class PathTests(SimpleTestCase):
         connection.set_schema(TEST_SCHEMA)
 
     def test_create_tenant_and_the_demo_seed_use_the_packs(self):
+        owner_for_test(self)  # ihr_create_tenant and the demo seed's packs: the owner
         release = manifest.latest()["care-valuesets"]
         self.addCleanup(self._drop)
         connection.set_schema_to_public()

@@ -69,8 +69,17 @@ test("a member of both hospitals holds two independent host-only cookies (dr.mee
   newContext,
 }) => {
   const context = await newContext();
-  const requests: Request[] = [];
-  context.on("request", (request) => requests.push(request));
+  // Each request's host and Cookie header, read when the request is made: reading them later,
+  // after its page has moved on, can hang ("Worker closed"), which once timed this test out
+  const seen: Promise<{ host: string; cookies: string }>[] = [];
+  context.on("request", (request: Request) => {
+    seen.push(
+      request.allHeaders().then((headers) => ({
+        host: new URL(request.url()).host,
+        cookies: headers["cookie"] ?? "",
+      })),
+    );
+  });
 
   const alpha = await context.newPage();
   await signIn(alpha, "alpha", user("dr.meera"));
@@ -113,9 +122,13 @@ test("a member of both hospitals holds two independent host-only cookies (dr.mee
 
   // No request to either address carried the other's cookie, and Keycloak got neither
   const leaks: string[] = [];
-  for (const request of requests) {
-    const host = new URL(request.url()).host;
-    const cookies = (await request.allHeaders())["cookie"] ?? "";
+  const headerReads = await Promise.allSettled(seen);
+  const unread = headerReads.filter((r) => r.status === "rejected").length;
+  // a request whose headers could not be read is never counted as clean
+  expect(unread, "every request's headers were read").toBe(0);
+  for (const read of headerReads) {
+    if (read.status !== "fulfilled") continue;
+    const { host, cookies } = read.value;
     const carriesAlpha = cookies.includes(alphaAfter!.value);
     const carriesBeta = cookies.includes(betaCookie!.value);
     if (host.startsWith("alpha.") && carriesBeta)
@@ -126,5 +139,5 @@ test("a member of both hospitals holds two independent host-only cookies (dr.mee
       leaks.push(`hospital cookie sent to ${host}`);
   }
   expect(leaks).toEqual([]);
-  expect(requests.length).toBeGreaterThan(10);
+  expect(seen.length).toBeGreaterThan(10);
 });

@@ -1,0 +1,67 @@
+# Separate database roles (P1-T19a; ihr_platform/db_roles.py). With IHR_DB_ROLES=required each
+# process checks its database role on its first connection (and each runtime container runs
+# manage.py ihr_db_role_check before it starts). A process whose role is not what it declares
+# (IHR_DB_ROLE: app or owner), or whose app role has a right beyond the reviewed lists, writes
+# one fixed line, "ihr-db-role: refused role=<app|owner|none> reason=<code>", closes its
+# connection and refuses every later one: the container serves nothing (every request 500s, every
+# task fails) or exits and restart-loops. This rule fires on that line at once.
+# A right beyond the model, or a broken control, in one hospital's schema does not refuse the
+# process (P1-T19a review C2): that hospital alone is not served by it, the process writes
+# "ihr-db-role: gated schema=<schema> reason=<extra_privileges|controls>", and the worker writes
+# its lines again every minute (tasks.report_unserved), so DatabaseSchemaGated below lasts as long
+# as the gating, for an archived hospital's schema too; HospitalNotServed (fleet.yml) also names a
+# live gated hospital. Gating hides the hospital, it does not take the right away from the shared
+# app role: a fleet-wide ihr_fleet_run migrate (the owner) repairs every hospital schema, then
+# restart the app containers. With IHR_DB_ROLES=off a process
+# that connects as ihr_app or ihr_owner is refused too (reason roles_off: a moved database whose
+# container lost IHR_DB_ROLES=required), and every later connection of an app process re-checks
+# the role's stored settings, memberships and attributes (a role can ALTER ROLE itself).
+# The reason codes (db_roles.REASONS) are fixed words, never values. Fix: read the container's
+# log (the lines before it name every problem), then run manage.py ihr_db_role_check --report in
+# that container; repair grants with the migrate one-shot (ihr_fleet_run migrate), and anything
+# about the roles themselves (a membership, an attribute, stored settings, a password) as
+# postgres (the roles' runbook comes with their move, P1-T19b).
+# DatabaseRoleLoginFailed: Postgres's own line for a failed login of one of our roles. A role can
+# change its own password (ALTER ROLE ... PASSWORD), which no check short of the superuser can see
+# (design.md, known limit 1); the first sign is every new connection of that role failing. Only
+# the db container's lines, and only the whole message Postgres writes for it.
+# Forgery: only container lines (source:=container) of the services that run as a declared
+# role, and only a whole line that is exactly ours. The web backend is included (it is the main
+# one that would refuse): its access log lines begin with the method or a path, never with
+# "ihr-db-role:", so a request cannot make one. A forged line can at most raise a false alert;
+# the labels are never put into the action's command. Tests: scripts/check-logs.py (cases in
+# deploy/logs/tests/alert-cases.json) and scripts/test_staging_logs.py.
+groups:
+  - name: database-roles
+    type: vlogs
+    interval: 1m
+    rules:
+      # Thirty minutes: a refused container restart-loops and repeats the line; the alert
+      # resolves soon after it starts cleanly
+      - alert: DatabaseRoleRefused
+        expr: '_time:30m source:=container service:in(backend, celery, celery-worker, celery-beat, staff-worker, provisioner, migrate) "ihr-db-role: refused" | extract_regexp "^ihr-db-role: refused role=(?P<role>app|owner|none) reason=(?P<reason>[a-z_]{3,24})$" | filter reason:~"^[a-z_]{3,24}$" | stats by (reason) count() as refusals'
+        labels:
+          severity: critical
+          service: database
+        annotations:
+          summary: 'A container refused its database role ({{ $labels.reason }}, {{ $value }} times in 30 minutes): it serves nothing'
+          action: 'Find the refusing container (docker compose logs, the lines before "ihr-db-role: refused"), run manage.py ihr_db_role_check --report in it, and fix its role or grants (ihr_platform/db_roles.py names each reason); then restart it'
+      # Fifteen minutes: the worker repeats its lines every minute while a schema stays gated;
+      # the alert resolves soon after the app containers restart with the grants repaired
+      - alert: DatabaseSchemaGated
+        expr: '_time:15m source:=container service:in(backend, celery, celery-worker, celery-beat, staff-worker) "ihr-db-role: gated" | extract_regexp "^ihr-db-role: gated schema=(?P<schema>h_[a-z0-9]{10}) reason=(?P<reason>controls|extra_privileges)$" | filter schema:~"^h_[a-z0-9]{10}$" | stats by (schema) count() as lines'
+        labels:
+          severity: critical
+          service: database
+        annotations:
+          summary: 'App processes do not serve hospital schema {{ $labels.schema }}: the app role has a right beyond the model there, or a control there is broken ({{ $value }} lines in 15 minutes)'
+          action: 'Run manage.py ihr_db_role_check --report in the backend container (the lines before "ihr-db-role: gated" name each finding); repair it as the owner with a fleet-wide ihr_fleet_run migrate (it converges every hospital schema, archived ones too), then restart the app containers'
+      # Ten minutes: a role whose password changed fails every new connection until it is set again
+      - alert: DatabaseRoleLoginFailed
+        expr: '_time:10m source:=container service:=db "password authentication failed for user" | extract_regexp "FATAL: +password authentication failed for user \"(?P<role>ihr_app|ihr_owner|ihr_audit_watch|ihr_dump)\"$" | filter role:~"^ihr_(app|owner|audit_watch|dump)$" | stats by (role) count() as failures'
+        labels:
+          severity: critical
+          service: database
+        annotations:
+          summary: 'Postgres refused the password of {{ $labels.role }} ({{ $value }} times in 10 minutes): its password may have been changed by whoever can log in as it'
+          action: 'As postgres, set the role password again from the secrets (the roles runbook, P1-T19b: staging.sh up re-asserts both roles), check its stored settings (ALTER ROLE ... RESET ALL) and treat it as a sign the app role was used by someone else; then restart the app containers'

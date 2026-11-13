@@ -19,6 +19,7 @@ from ihr_platform.console import auth
 from ihr_platform.management.commands import ihr_provision_worker as worker
 from ihr_platform.models import FleetRun, Hospital, OperatorAccount, TenantOperation
 from ihr_platform.test_runner import TEST_SCHEMA
+from ihr_platform.testing import as_owner, owner_call, owner_for_test
 
 HOST = "console.testserver"
 OPS_ISSUER = "https://auth.test/realms/indiehr-ops"
@@ -77,15 +78,19 @@ class ConsoleTests(SimpleTestCase):
     def setUpClass(cls):
         super().setUpClass()
         connection.set_schema_to_public()
-        call_command("ihr_create_tenant", public=True, domain=[HOST], verbosity=0)
+        with as_owner():  # the migrate one-shot's ihr_create_tenant --public (P1-T19a)
+            call_command("ihr_create_tenant", public=True, domain=[HOST], verbosity=0)
         connection.set_schema(TEST_SCHEMA)
 
     def setUp(self):
         connection.set_schema_to_public()
         self.sub = uuid.uuid4()
-        self.account = OperatorAccount.objects.create(
-            keycloak_sub=self.sub, name="Test Operator", added_by="test"
-        )
+        with (
+            as_owner()
+        ):  # the ihr_operator command (admin, the owner); the console is the app
+            self.account = OperatorAccount.objects.create(
+                keycloak_sub=self.sub, name="Test Operator", added_by="test"
+            )
         self.keycloak = testing.fake_keycloak(
             refresh=lambda token: tokens(token.split(".")[1], "n")
         )
@@ -101,8 +106,9 @@ class ConsoleTests(SimpleTestCase):
     def tearDown(self):
         self.keycloak.__exit__(None, None, None)
         connection.set_schema_to_public()
-        OperatorAccount.objects.filter(pk=self.account.pk).delete()
-        TenantOperation.objects.filter(slug__startswith="cons-").delete()
+        with as_owner():
+            OperatorAccount.objects.filter(pk=self.account.pk).delete()
+            TenantOperation.objects.filter(slug__startswith="cons-").delete()
         connection.set_schema(TEST_SCHEMA)
 
     def sign_in(self, sub=None, **overrides):
@@ -175,7 +181,8 @@ class ConsoleTests(SimpleTestCase):
     def test_removal_from_the_list_ends_the_session(self):
         self.sign_in()
         self.assertEqual(self.browser.get("/ops/").status_code, 200)
-        OperatorAccount.objects.filter(pk=self.account.pk).update(active=False)
+        with as_owner():  # ihr_operator remove
+            OperatorAccount.objects.filter(pk=self.account.pk).update(active=False)
         self.assertEqual(self.browser.get("/ops/")["Location"], "/ops/login/")
 
     def test_session_limits(self):
@@ -191,9 +198,13 @@ class ConsoleTests(SimpleTestCase):
 
     def test_the_progress_pages_own_refresh_is_not_activity(self):
         self.sign_in()
-        op = TenantOperation.objects.create(
-            kind="provision", slug="cons-auto", requested_by="test", status="running"
-        )
+        with as_owner():  # running: the provisioner's state
+            op = TenantOperation.objects.create(
+                kind="provision",
+                slug="cons-auto",
+                requested_by="test",
+                status="running",
+            )
         cookie = self.browser.cookies[settings.IHR_OPS_SESSION_COOKIE].value
         old = time.time() - 600
         with schema_context("public"):
@@ -226,9 +237,13 @@ class ConsoleTests(SimpleTestCase):
 
     def test_a_run_left_behind_by_a_stopped_provisioner_can_be_resumed(self):
         self.sign_in()
-        op = TenantOperation.objects.create(
-            kind="provision", slug="cons-stalled", requested_by="test", status="running"
-        )
+        with as_owner():  # running: the provisioner's state
+            op = TenantOperation.objects.create(
+                kind="provision",
+                slug="cons-stalled",
+                requested_by="test",
+                status="running",
+            )
         page = self.browser.get(f"/ops/operations/{op.id}/")
         self.assertContains(page, "stopped part-way")
         self.assertContains(page, "Retry from where it stopped")
@@ -239,6 +254,7 @@ class ConsoleTests(SimpleTestCase):
         self.assertEqual(op.queued_action, "run")
 
     def test_a_refused_run_goes_back_on_the_queue(self):
+        owner_for_test(self)  # the onboarding provisioner runs as the owner
         op = TenantOperation.objects.create(
             kind="provision",
             slug="cons-busy",
@@ -341,25 +357,27 @@ class ConsoleTests(SimpleTestCase):
         detail = self.browser.get(f"/ops/operations/{op.id}/")
         self.assertContains(detail, 'http-equiv="refresh"')  # refreshes while queued
 
-        claimed = worker.claim_next()
-        self.assertEqual((claimed[0].pk, claimed[1]), (op.pk, "run"))
-        self.assertIsNone(worker.claim_next())  # taken off the queue once
-
-        TenantOperation.objects.filter(pk=op.pk).update(status="failed")
+        # The provisioner (the owner) takes it; the console (the app) only queues (P1-T19a)
+        with as_owner():
+            claimed = worker.claim_next()
+            self.assertEqual((claimed[0].pk, claimed[1]), (op.pk, "run"))
+            self.assertIsNone(worker.claim_next())  # taken off the queue once
+            TenantOperation.objects.filter(pk=op.pk).update(status="failed")
         self.browser.post(f"/ops/operations/{op.id}/rollback/")
         op.refresh_from_db()
         self.assertEqual(op.queued_action, "rollback")
-        with mock.patch.object(worker.runner, "rollback") as rollback:
+        with mock.patch.object(worker.runner, "rollback") as rollback, as_owner():
             self.assertTrue(worker.work_once())
         rollback.assert_called_once()
         self.assertIn(str(self.sub), rollback.call_args.args[1])
 
-        TenantOperation.objects.filter(pk=op.pk).update(status="failed")
+        with as_owner():
+            TenantOperation.objects.filter(pk=op.pk).update(status="failed")
         self.browser.post(f"/ops/operations/{op.id}/retry/")
-        with mock.patch.object(worker.runner, "run") as run:
+        with mock.patch.object(worker.runner, "run") as run, as_owner():
             self.assertTrue(worker.work_once())
-        run.assert_called_once()
-        self.assertFalse(worker.work_once())
+            run.assert_called_once()
+            self.assertFalse(worker.work_once())
 
     def test_first_admin_setup_email_can_be_sent_again(self):
         from care.users.models import User
@@ -374,18 +392,19 @@ class ConsoleTests(SimpleTestCase):
                 username=f"cons-{time.time_ns()}"[:16], password=None, is_active=False
             )
         self.addCleanup(lambda: self._delete_user(admin))
-        op = TenantOperation.objects.create(
-            kind="provision",
-            slug="cons-setup",
-            hospital=hospital,
-            status="succeeded",
-            input={"admin_email": "first.admin@cons.example.test"},
-            result={
-                "admin_user_id": admin.pk,
-                "setup_email_sent_at": "2026-11-07T10:00:00+05:30",
-                "setup_link_hours": 72,
-            },
-        )
+        with as_owner():  # a finished provisioning: the provisioner's record
+            op = TenantOperation.objects.create(
+                kind="provision",
+                slug="cons-setup",
+                hospital=hospital,
+                status="succeeded",
+                input={"admin_email": "first.admin@cons.example.test"},
+                result={
+                    "admin_user_id": admin.pk,
+                    "setup_email_sent_at": "2026-11-07T10:00:00+05:30",
+                    "setup_link_hours": 72,
+                },
+            )
         page = self.browser.get(f"/ops/operations/{op.id}/").content.decode()
         self.assertIn(
             "Setup e-mail sent to first.admin@cons.example.test on 07-11-2026", page
@@ -394,7 +413,7 @@ class ConsoleTests(SimpleTestCase):
         self.browser.post(f"/ops/operations/{op.id}/resend-setup/")
         op.refresh_from_db()
         self.assertEqual(op.queued_action, "resend_setup")
-        with mock.patch.object(worker.runner, "resend_setup") as resend:
+        with mock.patch.object(worker.runner, "resend_setup") as resend, as_owner():
             self.assertTrue(worker.work_once())
         resend.assert_called_once()
 
@@ -410,8 +429,12 @@ class ConsoleTests(SimpleTestCase):
         schema is never read for its first admin."""
         self.sign_in()
         hospital = Hospital.objects.get(schema_name=TEST_SCHEMA)
+        owner = (
+            as_owner()
+        )  # ihr_fleet_run's records (the owner); the console only reads
+        owner.__enter__()
         release.hold([hospital.pk], reason=release.HOLD_ROLES)
-        self.addCleanup(release.release_hold, [hospital.pk])
+        self.addCleanup(owner_call, release.release_hold, [hospital.pk])
         run = FleetRun.objects.create(
             steps=["check", "roles"],
             operator="cons-test",
@@ -420,7 +443,7 @@ class ConsoleTests(SimpleTestCase):
             status=FleetRun.Status.INCOMPLETE,
             counts={"held": 1},
         )
-        self.addCleanup(FleetRun.objects.filter(pk=run.pk).delete)
+        self.addCleanup(owner_call, FleetRun.objects.filter(pk=run.pk).delete)
         TenantOperation.objects.create(
             kind=TenantOperation.Kind.UPGRADE,
             slug="cons-upgrade",
@@ -429,6 +452,15 @@ class ConsoleTests(SimpleTestCase):
             result={"outcome": "held"},
             fleet_run=run,
         )
+        op = TenantOperation.objects.create(
+            kind="provision",
+            slug="cons-held-setup",
+            hospital=hospital,
+            status="succeeded",
+            input={"admin_email": "first.admin@cons.example.test"},
+            result={"admin_user_id": 1},
+        )
+        owner.__exit__(None, None, None)
         page = self.browser.get("/ops/").content.decode()
         self.assertIn("held since", page)
         self.assertIn("(roles)", page)
@@ -439,14 +471,6 @@ class ConsoleTests(SimpleTestCase):
         self.assertIn("cons-upgrade", page)
         self.assertIn("(held)", page)
 
-        op = TenantOperation.objects.create(
-            kind="provision",
-            slug="cons-held-setup",
-            hospital=hospital,
-            status="succeeded",
-            input={"admin_email": "first.admin@cons.example.test"},
-            result={"admin_user_id": 1},
-        )
         with mock.patch(
             "care.users.models.User.objects.filter",
             side_effect=AssertionError("read the held hospital's schema"),

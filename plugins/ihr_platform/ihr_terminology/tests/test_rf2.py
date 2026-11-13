@@ -21,6 +21,7 @@ from care.emr.models.valueset import ValueSet
 from care.emr.resources.common.coding import Coding
 from django.test import TestCase
 from django_tenants.utils import schema_context
+from ihr_platform.testing import as_owner, owner_for_test
 
 from ihr_terminology import engine, loader, rf2
 from ihr_terminology.models import CodeSystemVersion, Concept, Designation
@@ -30,7 +31,8 @@ SCT = rf2.SNOMED
 
 
 def load(path=DATA, **kw):
-    with schema_context("public"):
+    # The loader is an admin one-off: it runs as the database owner (P1-T19a)
+    with schema_context("public"), as_owner():
         return rf2.load_release(path, operator="test-runner", **kw)[0]
 
 
@@ -216,6 +218,9 @@ class Rf2Load(TestCase):
 
 
 class Rf2Refusals(TestCase):
+    def setUp(self):
+        owner_for_test(self)  # ihr_terminology_load: an admin one-off, the owner
+
     def test_zip_read_without_extracting_and_checked(self):
         with tempfile.TemporaryDirectory() as tmp:
             path = zipped(tmp, release_members())

@@ -43,7 +43,8 @@ FB = image("fluent/fluent-bit")
 VL = image("victoriametrics/victoria-logs")
 VMA = image("victoriametrics/vmalert")
 # The label each alert names (the rest name client_ip): compared, not just counted
-KEY_LABEL = {"PackApplyFailed": "hospital", "HospitalNotServed": "hospital"}
+KEY_LABEL = {"PackApplyFailed": "hospital", "HospitalNotServed": "hospital", "ReleaseWindowOverrun": "hospital",
+             "DatabaseRoleRefused": "reason", "DatabaseSchemaGated": "schema", "DatabaseRoleLoginFailed": "role"}
 
 
 def check(ok, what):

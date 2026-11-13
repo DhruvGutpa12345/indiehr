@@ -10,6 +10,10 @@
 # - every minute by the worker (ihr_platform.report_unserved: staging "celery-worker", dev
 #   "celery") for each live hospital still not served, so the alert keeps firing until the
 #   hospital is served again and never resolves while it is down (S3).
+# A hospital the worker does not serve because its database role check found rights beyond the
+# model in that hospital's schema (P1-T19a review C2; the worker's log has
+# "ihr-db-role: gated schema=<schema>") is named the same way: repair its grants
+# (`ihr_fleet_run migrate --slug <it>`, or the next release), then restart the app containers.
 # A provisioning or offboarding hospital is not served by design and is never named (S8).
 # Its TenantOperation of kind "upgrade" (the console, or the fleet run's records) names the
 # step and a safe error: fix the cause, then `ihr_fleet_run --resume <the run>`. A hospital
@@ -21,6 +25,16 @@
 # A forged line can at most raise a false alert naming a slug: the label is never put into the
 # action's command. Tests: scripts/check-logs.py (cases in deploy/logs/tests/alert-cases.json)
 # and scripts/test_staging_logs.py.
+#
+# The window's budget (P1-T18b): `scripts/staging.sh release` holds every hospital at the
+# start of the window (hold reason "window"); the release lifts each hold as that hospital is
+# served again. Such a hold is not "down" (no HospitalNotServed line), but once it outlasts
+# the window's budget (the end of the announced window it began in; 120 minutes after it began
+# when no announced window covers it) the worker writes
+# "ihr-fleet: hospital=<slug> outcome=overrun" every minute (ihr_platform.tasks.overrun_slugs,
+# staging "celery-worker", dev "celery"), and ReleaseWindowOverrun fires. While a release has
+# the workers stopped, nobody writes it: `staging.sh release` itself exits non-zero then and
+# says what is held (deploy/staging/README.md, "Releases").
 groups:
   - name: release-fleet
     type: vlogs
@@ -36,3 +50,12 @@ groups:
         annotations:
           summary: 'Hospital {{ $labels.hospital }} is not served after a release step ({{ $value }} times in 10 minutes): it answers 503 upgrading'
           action: 'Read that hospital''s newest upgrade TenantOperation (step and error), fix the cause, then run scripts/staging.sh fleet --resume <its fleet run> --operator <you>; if it is held on purpose and should be served: scripts/staging.sh fleet release --slug <the hospital named above> --operator <you>'
+      # The release window outlasting its budget (P1-T18b): only the worker's per-minute line
+      - alert: ReleaseWindowOverrun
+        expr: '_time:10m source:=container service:in(celery, celery-worker) "ihr-fleet: hospital=" | extract_regexp "^ihr-fleet: hospital=(?P<hospital>[a-z][a-z0-9-]{2,30}) outcome=overrun$" | filter hospital:~"^[a-z][a-z0-9-]{2,30}$" | stats by (hospital) count() as overruns'
+        labels:
+          severity: critical
+          service: fleet
+        annotations:
+          summary: 'Hospital {{ $labels.hospital }} is still held for a release past the window''s budget ({{ $value }} times in 10 minutes): it answers 503 upgrading'
+          action: 'Read the release''s output and the hospital''s newest upgrade TenantOperation; fix forward and run scripts/staging.sh fleet --resume <its fleet run> --operator <you>, or serve it again with scripts/staging.sh fleet release --slug <the hospital named above> --operator <you>, or roll back (deploy/staging/README.md, Releases)'

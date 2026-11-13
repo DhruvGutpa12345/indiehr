@@ -200,6 +200,52 @@ tests:
             exp_annotations:
               summary: "Container keycloak restarted more than twice in 15 minutes"
 
+  # A release window stops the workers on purpose: not paged until the window's end (the
+  # marker's time, 10 min here), then paged; without a marker at once (P1-T18b review O6)
+  - name: workers stopped by a release window
+    interval: 1m
+    input_series:
+      - series: 'ihr_container_running{service="celery-worker"}'
+        values: '0x20'
+      - series: 'ihr_container_running{service="staff-worker"}'
+        values: '0x20'
+      - series: 'ihr_container_running{service="db"}'
+        values: '0x20'
+      - series: 'ihr_release_workers_stopped_until_seconds{instance="node-exporter:9100", job="node"}'
+        values: '600x20'
+    alert_rule_test:
+      - eval_time: 9m
+        alertname: ContainerNotRunning
+        exp_alerts:
+          - exp_labels: {severity: critical, service: db}
+            exp_annotations:
+              summary: "Container db is not running"
+      - eval_time: 16m
+        alertname: ContainerNotRunning
+        exp_alerts:
+          - exp_labels: {severity: critical, service: db}
+            exp_annotations:
+              summary: "Container db is not running"
+          - exp_labels: {severity: critical, service: celery-worker}
+            exp_annotations:
+              summary: "Container celery-worker is not running"
+          - exp_labels: {severity: warning, service: staff-worker}
+            exp_annotations:
+              summary: "Container staff-worker is not running"
+
+  - name: workers stopped with no release window
+    interval: 1m
+    input_series:
+      - series: 'ihr_container_running{service="celery-beat"}'
+        values: '0x10'
+    alert_rule_test:
+      - eval_time: 6m
+        alertname: ContainerNotRunning
+        exp_alerts:
+          - exp_labels: {severity: critical, service: celery-beat}
+            exp_annotations:
+              summary: "Container celery-beat is not running"
+
   # The exporters answer (up 1) while their login or their server fails
   - name: exporters cannot reach postgres or redis
     interval: 1m

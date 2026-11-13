@@ -1,0 +1,12 @@
+# The exceptions to "the app role ihr_app has SELECT, INSERT, UPDATE and DELETE on every table" in a hospital
+# schema (P1-T19a, ihr_platform/db_roles.py). One line each: <table> <class> <reason>. Reviewed.
+# Every table the audit trail does not record (ihr_audit.install.EXEMPT), and every table shaped like an
+# append-only one (ihr_audit_*, *_seal, *_ledger), must be listed here with a class other than dml: the tests
+# fail otherwise, so such a table is never writable by the app by default (S5). Only plain and partitioned
+# tables take the default: a view, materialized view or foreign table gets nothing until it is listed here (a
+# view reads with its owner's rights, so one over the trail or django_migrations must never be dml; S4).
+# Classes: dml, select, none, append (SELECT, and INSERT of the audit data columns only).
+django_migrations select only migrate (the owner) records migrations; the app could otherwise fake a migrated schema for P1-T18's gate or make a later migration skip this hospital (C10, S5)
+django_session none Django's database sessions are unused: staff sessions live in the cache (ADR-009)
+ihr_audit_entry append the trail is append-only: the triggers and the request middleware insert the data columns; id, txid, at and salt are the database's own (S2)
+ihr_audit_seal select seals are written only by ihr_audit_seal_next(), owned by the owner (S3)

@@ -17,6 +17,7 @@ from django.db import DatabaseError, connection, connections, transaction
 from django.test import SimpleTestCase
 from django_tenants.utils import schema_context
 from ihr_platform.test_runner import TEST_SCHEMA
+from ihr_platform.testing import as_owner
 from model_bakery import baker
 from rest_framework.test import APIClient
 
@@ -94,7 +95,8 @@ class CoverageTests(AuditCase):
         )
 
     def test_a_new_table_or_secret_column_is_reported(self):
-        with transaction.atomic():
+        # A migration (the owner) adds a table; post_migrate installs its triggers
+        with as_owner(), transaction.atomic():
             with connection.cursor() as cursor:
                 cursor.execute(
                     "CREATE TABLE ihr_new_thing (id bigint, api_secret text)"
@@ -116,7 +118,7 @@ class CoverageTests(AuditCase):
             transaction.set_rollback(True)
 
     def test_a_disabled_trigger_is_reported(self):
-        with transaction.atomic():
+        with as_owner(), transaction.atomic():  # only the owner can disable a trigger
             with connection.cursor() as cursor:
                 cursor.execute("ALTER TABLE emr_patient DISABLE TRIGGER ihr_audit")
             self.assertIn(
@@ -230,7 +232,7 @@ class WriteTests(AuditCase):
 
     def test_truncate_is_recorded(self):
         since = mark()
-        with transaction.atomic():
+        with as_owner(), transaction.atomic():  # only the owner may truncate (P1-T19a)
             with connection.cursor() as cursor:
                 cursor.execute("CREATE TABLE ihr_trunc_probe (id bigint)")
             ensure_triggers(connection, TEST_SCHEMA)
@@ -403,10 +405,15 @@ class ChainTests(AuditCase):
     def _tampered(self, statement):
         baker.make(Patient)
         seal_once(TEST_SCHEMA)
-        with transaction.atomic():
+        # What only the database owner can do: switch the guards off (the stamp too, so an
+        # entry can be written with any txid) and change the trail
+        with as_owner(), transaction.atomic():
             with connection.cursor() as cursor:
                 cursor.execute(
                     "ALTER TABLE ihr_audit_entry DISABLE TRIGGER ihr_audit_append_only"
+                )
+                cursor.execute(
+                    "ALTER TABLE ihr_audit_entry DISABLE TRIGGER ihr_audit_stamp"
                 )
                 cursor.execute(
                     "ALTER TABLE ihr_audit_seal DISABLE TRIGGER ihr_audit_append_only"
@@ -492,15 +499,11 @@ class ReviewRegressionTests(AuditCase):
         seal_once(TEST_SCHEMA)
         with transaction.atomic(), connection.cursor() as cursor:
             cursor.execute("SELECT pg_current_xact_id()")  # a txid with no entries
-        original = seal.BATCH
-        seal.BATCH = 3
-        try:
-            with transaction.atomic():  # one transaction, more than BATCH entries
-                baker.make(Patient, _quantity=5)
-            baker.make(Patient)
-            seal_once(TEST_SCHEMA)
-        finally:
-            seal.BATCH = original
+        with transaction.atomic():  # one transaction, more than the batch's entries
+            baker.make(Patient, _quantity=5)
+        baker.make(Patient)
+        with as_owner():  # a batch of 3: the owner's own sealing function (P1-T19a)
+            self.assertGreater(seal_once(TEST_SCHEMA, batch=3), 0)
         problems, summary = verify(TEST_SCHEMA)
         self.assertEqual(problems, [])
         self.assertEqual(summary["unsealed_entries"], 0)
@@ -611,6 +614,9 @@ class ReviewRegressionTests(AuditCase):
         self.assertEqual(reads.finish(token)[0], [thread.patient_id])
 
     def test_installing_again_changes_nothing_and_stale_triggers_are_reported(self):
+        owner = as_owner()  # triggers are installed after migrations, by the owner
+        owner.__enter__()
+        self.addCleanup(owner.__exit__, None, None, None)
         self.assertEqual(ensure_triggers(connection, TEST_SCHEMA), 0)
         with transaction.atomic():
             with connection.cursor() as cursor:
@@ -627,7 +633,7 @@ class ReviewRegressionTests(AuditCase):
             transaction.set_rollback(True)
 
     def test_partitioned_tables_are_refused(self):
-        with transaction.atomic():
+        with as_owner(), transaction.atomic():  # a migration (the owner) adds a table
             with connection.cursor() as cursor:
                 cursor.execute(
                     "CREATE TABLE ihr_parted (id bigint, at date) PARTITION BY RANGE (at)"
@@ -658,7 +664,7 @@ class SecondReviewRegressionTests(AuditCase):
         self.assertTrue(any("is the sealer running" in p for p in late), late)
 
     def test_a_function_changed_by_hand_is_reported_and_restored(self):
-        with transaction.atomic():
+        with as_owner(), transaction.atomic():  # by hand: only the owner can
             with connection.cursor() as cursor:
                 cursor.execute(
                     f"CREATE OR REPLACE FUNCTION {TEST_SCHEMA}.ihr_audit_truncate() "
@@ -678,11 +684,11 @@ class SecondReviewRegressionTests(AuditCase):
             "emr.NoteThread", patient=baker.make(Patient), encounter=None
         )
         with transaction.atomic():
-            with connection.cursor() as cursor:
+            with as_owner(), connection.cursor() as cursor:  # a migration renames it
                 cursor.execute(
                     "ALTER TABLE emr_notethread RENAME TO emr_notethread_old"
                 )
-            since = mark()
+            since = mark()  # the write below is the app's
             baker.make("emr.NoteMessage", thread_id=thread.pk)
             [row] = entries_since(since, tbl="emr_notemessage")
             self.assertEqual(row["patients"], [])

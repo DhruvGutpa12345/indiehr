@@ -11,6 +11,10 @@ fails the run on any key without a tenant schema prefix.
 
 Parallel runs are not supported yet: Django clones the test database before we can add the
 tenant schema, so ``--parallel`` is forced to 1.
+
+With ``IHR_DB_ROLES=test`` (P1-T19a) the runner first makes the database roles in the test
+cluster; after set-up it converges the grants and every test connection runs as the app role,
+``ihr_app`` (ihr_platform/testing.py: the owner only inside ``as_owner()``).
 """
 
 import importlib.util
@@ -194,6 +198,15 @@ class TenantTestRunner(DiscoverRunner):
             # Only database-free tests were selected (e.g. one mutation's guarding test):
             # Django creates no test database, so there is no tenant to set up.
             return super().setup_databases(**kwargs)
+        from ihr_platform import db_roles
+
+        roles = db_roles.mode() == "test"
+        if roles:
+            # Cluster-wide, before the test database exists: its migrations converge the
+            # grants as they go (post_migrate)
+            with connection._nodb_cursor() as cursor:  # noqa: SLF001
+                db_roles.create_test_roles(cursor)
+            self.log("Database roles: tests run as ihr_app (IHR_DB_ROLES=test).")
         # Start clean and record from the first write, so provisioning is audited too.
         _test_redis().flushdb()
         _start_recording_redis_writes()
@@ -221,6 +234,13 @@ class TenantTestRunner(DiscoverRunner):
         connection.set_tenant(tenant)
         _initialised_connections.add(connections["default"])
         connection_created.connect(_point_new_connection_at_test_tenant)
+        if roles:
+            from ihr_platform import testing
+
+            for finding in db_roles.ensure_grants(connection):
+                if finding.kind == "problem":  # the classification tests fail on these
+                    self.log(f"Database roles: {finding.text}")
+            testing.start(connection)
         return old_config
 
     def suite_result(self, suite, result, **kwargs):
@@ -238,6 +258,10 @@ class TenantTestRunner(DiscoverRunner):
     def teardown_databases(self, old_config, **kwargs):
         if not old_config:
             return super().teardown_databases(old_config, **kwargs)
+        from ihr_platform import testing
+
+        if testing.active():
+            testing.stop(connection)
         connection_created.disconnect(_point_new_connection_at_test_tenant)
         connection.set_schema_to_public()
         return super().teardown_databases(old_config, **kwargs)

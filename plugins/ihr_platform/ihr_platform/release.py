@@ -289,9 +289,14 @@ def hold_reason(hospital):
 
 def schema_ready(hospital):
     """Not held, and its schema recorded as this build's (one indexed query). The platform
-    (public schema) is never held here."""
+    (public schema) is never held here. Nor is a schema in which this process found rights
+    beyond the model for the app role (P1-T19a review C2, db_roles.gated_schemas)."""
+    from ihr_platform import db_roles
+
     if hospital.schema_name == PUBLIC:
         return True
+    if hospital.schema_name in db_roles.gated_schemas():
+        return False
     row = recorded(hospital)
     return row is not None and row[1] is None and row[0] == code_fingerprint()
 
@@ -318,13 +323,19 @@ def require_ready(hospital):
 
 def ready_q(prefix=""):
     """A filter for rows (of Hospital, or through ``prefix``) whose hospital's schema is
-    ready: recorded as this build's and not held."""
-    return Q(
+    ready: recorded as this build's, not held, and not gated by this process's database
+    role check (P1-T19a review C2)."""
+    from ihr_platform import db_roles
+
+    ready = Q(
         **{
             f"{prefix}schema_state__schema_fingerprint": code_fingerprint(),
             f"{prefix}schema_state__upgrading_since__isnull": True,
         }
     )
+    if gated := db_roles.gated_schemas():
+        ready &= ~Q(**{f"{prefix}schema_name__in": sorted(gated)})
+    return ready
 
 
 def window(now=None):

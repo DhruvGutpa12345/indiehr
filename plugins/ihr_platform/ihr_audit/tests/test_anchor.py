@@ -10,6 +10,7 @@ from care.emr.models import Patient
 from django.db import connection, transaction
 from django.test import override_settings
 from ihr_platform.models import Hospital
+from ihr_platform.testing import as_owner
 from model_bakery import baker
 
 from ihr_audit import anchor, seal, tasks
@@ -89,7 +90,7 @@ class WriteAndCheckTests(AnchorCase):
 
     def test_a_database_owner_rewriting_the_whole_chain_is_caught(self):
         anchor.write(self.store)
-        with transaction.atomic():
+        with as_owner(), transaction.atomic():
             with connection.cursor() as cursor:
                 # What only the database owner can do: switch the guards off, change an
                 # entry, throw the seals away and seal everything again consistently.
@@ -110,7 +111,7 @@ class WriteAndCheckTests(AnchorCase):
 
     def test_cutting_the_newest_seals_is_caught(self):
         anchor.write(self.store)
-        with transaction.atomic():
+        with as_owner(), transaction.atomic():  # what only the database owner can do
             with connection.cursor() as cursor:
                 cursor.execute("ALTER TABLE ihr_audit_seal DISABLE TRIGGER USER")
                 cursor.execute(
