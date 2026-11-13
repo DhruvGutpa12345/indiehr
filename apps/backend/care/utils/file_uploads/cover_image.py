@@ -5,11 +5,24 @@ from typing import Literal
 import boto3
 from django.conf import settings
 from django.core.files.uploadedfile import UploadedFile
+from django.utils.module_loading import import_string
 
 from care.emr.utils.file_manager import key_prefix
 from care.utils.csp.config import BucketType, get_client_config
 
 logger = logging.getLogger(__name__)
+
+
+def image_url(image_key: str | None) -> str | None:
+    """IndieHR: a picture's address from a settings hook (ours signs it), else upstream's."""
+    if not image_key:
+        return None
+    url_function = getattr(settings, "FACILITY_IMAGE_URL_FUNCTION", None)
+    if url_function:
+        return import_string(url_function)(image_key)
+    if settings.FACILITY_CDN:
+        return f"{settings.FACILITY_CDN}/{image_key}"
+    return f"{settings.FACILITY_S3_BUCKET_EXTERNAL_ENDPOINT}/{settings.FACILITY_S3_BUCKET}/{image_key}"
 
 
 def delete_cover_image(image_key: str, folder: Literal["cover_images", "avatars"]):

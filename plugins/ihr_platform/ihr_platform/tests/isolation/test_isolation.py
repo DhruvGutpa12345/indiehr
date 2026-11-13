@@ -1311,8 +1311,8 @@ class CrossTenantIsolationTests(SimpleTestCase):
                 Organization.objects.filter(pk__in=[p.pk for p in probes]).delete()
 
     def test_public_facility_finder_drops_raw_key_field(self):
-        """The duplicate raw-key field only (review C5): the key itself is still inside the
-        unsigned read_cover_image_url until P1-T20b signs it, and that test is P1-T20b's."""
+        """The duplicate raw-key field (review C5); the cover itself is only a signed link
+        (test_picture_links_are_signed_for_this_hospital_only, P1-T20b)."""
         anonymous = APIClient(HTTP_HOST=self.a.domain, raise_request_exception=False)
         facility = self.a.first_id_by_model["facility.facility"]
         listed = anonymous.get("/api/v1/getallfacilities/")
@@ -1322,6 +1322,104 @@ class CrossTenantIsolationTests(SimpleTestCase):
         for item in [*listed.json()["results"], detail.json()]:
             self.assertNotIn("cover_image_url", item)
             self.assertIn("read_cover_image_url", item)
+
+    @staticmethod
+    def _picture_key(tenant, folder, external_id):
+        """A key of the shape CARE's picture uploads make, in ``tenant``'s prefix."""
+        import secrets
+
+        return f"t/{tenant.hospital.uuid}/{folder}/{external_id}_{secrets.token_hex(8)}.png"
+
+    def _assert_signed(self, url, picture_key):
+        self.assertIsNotNone(url, picture_key)
+        self.assertIn(f"/{picture_key}?", url)
+        self.assertIn("X-Amz-Signature=", url)
+        self.assertIn("X-Amz-Expires=86400", url)
+
+    def _served_pictures(self, facility_id, doctor_id):
+        """(finder list item, finder detail, doctor list item, doctor detail) picture links,
+        as anyone gets them"""
+        anonymous = APIClient(HTTP_HOST=self.a.domain, raise_request_exception=False)
+        doctors = f"/api/v1/facility/{facility_id}/schedulable_users/"
+        listed = anonymous.get("/api/v1/getallfacilities/?limit=500")
+        detail = anonymous.get(f"/api/v1/getallfacilities/{facility_id}/")
+        listed_doctors = anonymous.get(f"{doctors}?limit=500")
+        doctor = anonymous.get(f"{doctors}{doctor_id}/")
+        for response in (listed, detail, listed_doctors, doctor):
+            self.assertEqual(response.status_code, 200, response.content[:300])
+        item = next(i for i in listed.json()["results"] if i["id"] == facility_id)
+        for facility in (item, detail.json()):
+            self.assertNotIn("cover_image_url", facility)  # the raw key (review C5)
+        in_list = next(
+            d for d in listed_doctors.json()["results"] if d["id"] == doctor_id
+        )
+        return (
+            item["read_cover_image_url"],
+            detail.json()["read_cover_image_url"],
+            in_list["profile_picture_url"],
+            doctor.json()["profile_picture_url"],
+        )
+
+    def test_picture_links_are_signed_for_this_hospital_only(self):
+        """P1-T20b (Q-T3, A7-A10): a hospital's own picture key gets a signed link, from the
+        models and on the anonymous routes (facility finder, doctor list); another hospital's
+        key gets none, nor does any key in public. The pictures bucket is private, so an
+        unsigned address would not load anyway: this proves none is ever built."""
+        from care.facility.models import Facility
+        from care.users.models import User
+
+        facility_id = self.a.first_id_by_model["facility.facility"]
+        doctor_id = self.a.first_id_by_model["users.user"]  # extras.py: public schedule
+        with schema_context(self.a.schema):
+            facility = Facility.objects.get(external_id=facility_id)
+            staff = User.objects.get(external_id=doctor_id)
+            saved = (facility.cover_image_url, staff.profile_picture_url)
+
+        def store(tenant):
+            """Picture keys in ``tenant``'s prefix, written into A's rows; the models' links"""
+            cover = self._picture_key(tenant, "cover_images", facility_id)
+            photo = self._picture_key(tenant, "avatars", doctor_id)
+            with schema_context(self.a.schema):
+                Facility.objects.filter(pk=facility.pk).update(cover_image_url=cover)
+                User.objects.filter(pk=staff.pk).update(profile_picture_url=photo)
+                facility.refresh_from_db()
+                staff.refresh_from_db()
+                links = (
+                    facility.read_cover_image_url(),
+                    staff.read_profile_picture_url(),
+                )
+            return cover, photo, links
+
+        try:
+            own_cover, own_photo, links = store(self.a)
+            self._assert_signed(links[0], own_cover)
+            self._assert_signed(links[1], own_photo)
+            served = self._served_pictures(facility_id, doctor_id)
+            for url, picture_key in zip(
+                served, (own_cover, own_cover, own_photo, own_photo), strict=True
+            ):
+                self._assert_signed(url, picture_key)
+            # The same link each time (cached), so the browser's image cache works
+            self.assertEqual(self._served_pictures(facility_id, doctor_id), served)
+
+            # Another hospital's keys, written into this hospital's rows: no link at all
+            self.assertEqual(store(self.b)[2], (None, None))
+            self.assertEqual(
+                self._served_pictures(facility_id, doctor_id), (None, None, None, None)
+            )
+
+            # In public (no hospital): no link, and no error
+            with schema_context("public"):
+                self.assertIsNone(
+                    Facility(cover_image_url=own_cover).read_cover_image_url()
+                )
+                self.assertIsNone(
+                    User(profile_picture_url=own_photo).read_profile_picture_url()
+                )
+        finally:
+            with schema_context(self.a.schema):
+                Facility.objects.filter(pk=facility.pk).update(cover_image_url=saved[0])
+                User.objects.filter(pk=staff.pk).update(profile_picture_url=saved[1])
 
     def test_anonymous_gets_write_no_audit_entry(self):
         """Every anonymous data route, with every organisation's parent copy expired so CARE

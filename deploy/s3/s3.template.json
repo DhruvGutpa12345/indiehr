@@ -17,20 +17,29 @@
       ]
     },
     {
-      "name": "ihr-care",
+      "name": "ihr-care-files",
       "credentials": [
         {
-          "accessKey": "@CARE_KEY@",
-          "secretKey": "@CARE_SECRET@"
+          "accessKey": "@FILES_KEY@",
+          "secretKey": "@FILES_SECRET@"
         }
       ],
       "actions": [
         "Read:@PATIENT_BUCKET@",
-        "Write:@PATIENT_BUCKET@",
-        "List:@PATIENT_BUCKET@",
+        "Write:@PATIENT_BUCKET@"
+      ]
+    },
+    {
+      "name": "ihr-care-pictures",
+      "credentials": [
+        {
+          "accessKey": "@PICTURES_KEY@",
+          "secretKey": "@PICTURES_SECRET@"
+        }
+      ],
+      "actions": [
         "Read:@FACILITY_BUCKET@",
-        "Write:@FACILITY_BUCKET@",
-        "List:@FACILITY_BUCKET@"
+        "Write:@FACILITY_BUCKET@"
       ]
     },
     {

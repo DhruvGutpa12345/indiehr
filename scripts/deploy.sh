@@ -187,6 +187,12 @@ fi
 # on the server; this build's stack runs nothing without them
 [[ -f "$ENV_DIR/secrets/db-owner.env" ]] \
   || die "no $ENV_DIR/secrets/db-owner.env: make the split database roles' secrets first (IHR_STAGING_OUT=$ENV_DIR scripts/staging.sh db-split-secrets; deploy/staging/README.md, Moving to split roles)"
+# CARE's storage keys (P1-T20b): one for patient files, one for pictures, made here like the roles'
+# secrets, never on the server (each deploy sends this copy over the server's). The throwaway VM's
+# own folder is split here; anything else unsplit is refused before anything is sent (S1/S2)
+if ((LOCAL_PROOF)); then IHR_STAGING_OUT="$ENV_DIR" scripts/staging.sh s3-split-keys >/dev/null; fi
+IHR_STAGING_OUT="$ENV_DIR" scripts/staging.sh s3-split-keys --check \
+  || die "$ENV_DIR: CARE's storage keys are not split (above): IHR_STAGING_OUT=$ENV_DIR scripts/staging.sh s3-split-keys (deploy/staging/README.md, Object storage)"
 for img in "$BACKEND" "$FRONTEND" "$POSTGRES" "$KEYCLOAK" ${ACMEDNS:+"$ACMEDNS"}; do
   docker image inspect "$img" >/dev/null 2>&1 || die "image $img not found here (drop --no-build)"
   # With --no-build the images may come from another commit: DEPLOYED must not claim HEAD

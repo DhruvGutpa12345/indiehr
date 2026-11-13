@@ -8,7 +8,7 @@ exists yet, and every test runs against mock providers (`tofu test`, no network 
 | Root | Creates | Who runs it |
 |---|---|---|
 | `e2e/` (target, Delhi NCR) | SSH key, firewall group, reserved IP, server, object stores: files + pictures (Delhi), backups (Chennai), each with its regional S3 endpoint in the outputs | the owner, with E2E's API key |
-| `aws/` (alternative, Mumbai) | own VPC, firewall group, key, server (x86, encrypted gp3, IMDSv2), Elastic IP, S3: files + pictures (Mumbai), backups (Hyderabad), CARE's own key | the owner, with the server account's profile |
+| `aws/` (alternative, Mumbai) | own VPC, firewall group, key, server (x86, encrypted gp3, IMDSv2), Elastic IP, S3: files + pictures (Mumbai), backups (Hyderabad), CARE's two keys (one per bucket, P1-T20b) | the owner, with the server account's profile |
 | `aws/anchor/` | the audit fingerprint bucket: Object Lock **COMPLIANCE 10 years**, add-only and read-only keys | the owner, with a **separate** account's profile (ADR-011 §3) |
 
 Both server roots take the same kind of inputs (name, region, size, SSH key, bucket names) and
@@ -59,7 +59,9 @@ leaks, make a new key in MyAccount and delete the old one.
   ignores it when it creates a bucket. The apply fails on purpose until it is on; then apply again;
 - on the backups bucket, a lifecycle rule removing old (noncurrent) versions after 30 days, as
   `infra/aws` sets: pgBackRest's deletes only hide objects in a versioned bucket;
-- object store access keys (console), then CORS and the pictures bucket's public-read policy:
+- object store access keys (console): **one per CARE bucket** (P1-T20b), each attached to its
+  own bucket only (patient files: `FILE_UPLOAD_KEY`; pictures: `FACILITY_S3_KEY`), then CORS and
+  no bucket policy (both buckets private; pictures are read through signed links, Q-T3):
   `deploy/s3/setup_buckets.py` works against any S3 endpoint (each region has its own, see the
   `buckets` output);
 - the fingerprint bucket: create it in the separate account's console **with Object Lock**
@@ -80,8 +82,8 @@ cd infra/e2e && tofu init -backend=false && tofu test   # likewise infra/aws, in
 26 tests: firewall exactly as above in both directions, keys-only server on the reserved
 address, each E2E bucket's regional endpoint, versioning really on (the check fails a bucket
 whose versioning is off), IMDSv2, encrypted disk, no CPU-credit
-bills, buckets private except pictures (GetObject only), HTTPS-only bucket policies, CORS for
-the hospitals only, CARE's key limited to its two buckets, COMPLIANCE 10 years with an add-only
+bills, every bucket private (the pictures too, P1-T20b), HTTPS-only bucket policies, CORS for
+the hospitals only, CARE's two keys each limited to its own bucket's objects, COMPLIANCE 10 years with an add-only
 writer that is explicitly denied every way to remove or unlock, and every input rule
 (regions in India, x86 only, Ubuntu 24.04/26.04, key format, retention ≥ 7 years). CI job
 "Infra modules" runs them. Mutations (weaker metadata tokens, a public files bucket, an extra

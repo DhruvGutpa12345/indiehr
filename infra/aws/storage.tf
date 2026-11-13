@@ -1,6 +1,6 @@
-# CARE's file buckets (Mumbai) and the backup bucket (Hyderabad), all private except that anyone
-# may read an object in the facility bucket (hospital pictures, as CARE expects). Encryption is
-# S3's own (SSE-S3): no provider KMS without a new ADR (ADR-011 rules).
+# CARE's file buckets (Mumbai) and the backup bucket (Hyderabad), all private: the facility bucket
+# (staff photos, facility covers) too, read through 24-hour signed links (P1-T20b, owner answer
+# Q-T3). Encryption is S3's own (SSE-S3): no provider KMS without a new ADR (ADR-011 rules).
 
 locals {
   care_buckets = {
@@ -29,13 +29,12 @@ resource "aws_s3_bucket_ownership_controls" "care" {
 }
 
 resource "aws_s3_bucket_public_access_block" "care" {
-  for_each           = aws_s3_bucket.care
-  bucket             = each.value.id
-  block_public_acls  = true
-  ignore_public_acls = true
-  # Only the facility bucket has a public-read policy (see below)
-  block_public_policy     = each.key != "facility"
-  restrict_public_buckets = each.key != "facility"
+  for_each                = aws_s3_bucket.care
+  bucket                  = each.value.id
+  block_public_acls       = true
+  ignore_public_acls      = true
+  block_public_policy     = true
+  restrict_public_buckets = true
 }
 
 resource "aws_s3_bucket_server_side_encryption_configuration" "care" {
@@ -87,26 +86,18 @@ resource "aws_s3_bucket_cors_configuration" "care" {
   }
 }
 
-# Bucket policies as plain JSON (testable without AWS): HTTPS only; the facility bucket's objects
-# readable by anyone (not listable)
+# Bucket policies as plain JSON (testable without AWS): HTTPS only, nothing for anyone
 locals {
-  https_only = { for k, b in aws_s3_bucket.care : k => {
-    Sid       = "HttpsOnly"
-    Effect    = "Deny"
-    Principal = "*"
-    Action    = "s3:*"
-    Resource  = [b.arn, "${b.arn}/*"]
-    Condition = { Bool = { "aws:SecureTransport" = "false" } }
-  } }
   care_bucket_policy = { for k, b in aws_s3_bucket.care : k => {
     Version = "2012-10-17"
-    Statement = concat([local.https_only[k]], k == "facility" ? [{
-      Sid       = "PublicReadObjectsOnly"
-      Effect    = "Allow"
+    Statement = [{
+      Sid       = "HttpsOnly"
+      Effect    = "Deny"
       Principal = "*"
-      Action    = "s3:GetObject"
-      Resource  = "${b.arn}/*"
-    }] : [])
+      Action    = "s3:*"
+      Resource  = [b.arn, "${b.arn}/*"]
+      Condition = { Bool = { "aws:SecureTransport" = "false" } }
+    }]
   } }
 }
 
@@ -206,30 +197,35 @@ resource "aws_s3_bucket_policy" "backups" {
   depends_on = [aws_s3_bucket_public_access_block.backups]
 }
 
-# ---- CARE's own key: its two buckets' objects, nothing else --------------------------------------
+# ---- CARE's keys: one per bucket (P1-T20b), each its own bucket's objects, nothing else ------------
+# files: patient files and reports (FILE_UPLOAD_KEY); pictures: staff photos and facility covers
+# (FACILITY_S3_KEY). A picture key can never reach a patient file; the backend refuses to start
+# with one key for both (ihr_platform/settings/secure.py).
 resource "aws_iam_user" "care" {
-  name = "${var.name}-care"
-  path = "/indiehr/"
+  for_each = local.care_buckets
+  name     = "${var.name}-care-${each.key}"
+  path     = "/indiehr/"
 }
 
 locals {
-  care_user_policy = {
+  care_user_policy = { for k, b in aws_s3_bucket.care : k => {
     Version = "2012-10-17"
     Statement = [
-      { Sid = "Objects", Effect = "Allow", Action = ["s3:GetObject", "s3:PutObject", "s3:DeleteObject"], Resource = [for b in aws_s3_bucket.care : "${b.arn}/*"] },
-      { Sid = "List", Effect = "Allow", Action = ["s3:ListBucket"], Resource = [for b in aws_s3_bucket.care : b.arn] },
+      { Sid = "Objects", Effect = "Allow", Action = ["s3:GetObject", "s3:PutObject", "s3:DeleteObject"], Resource = ["${b.arn}/*"] },
     ]
-  }
+  } }
 }
 
 resource "aws_iam_user_policy" "care" {
-  name   = "care-buckets"
-  user   = aws_iam_user.care.name
-  policy = jsonencode(local.care_user_policy)
+  for_each = aws_iam_user.care
+  name     = "care-${each.key}-bucket"
+  user     = each.value.name
+  policy   = jsonencode(local.care_user_policy[each.key])
 }
 
-# The secret is kept only in the encrypted state; read it once with
-# `tofu output -raw care_secret_access_key` into secrets/app.env (BUCKET_SECRET)
+# The secrets are kept only in the encrypted state; read each once with
+# `tofu output -json care_keys` into secrets/app.env (FILE_UPLOAD_* and FACILITY_S3_*)
 resource "aws_iam_access_key" "care" {
-  user = aws_iam_user.care.name
+  for_each = aws_iam_user.care
+  user     = each.value.name
 }

@@ -176,6 +176,9 @@ def apply_tenancy(settings):  # noqa: PLR0915 (one flat list of settings)
     settings["FILE_OBJECT_KEY_PREFIX_FUNCTION"] = (
         "ihr_platform.storage.tenant_key_prefix"
     )
+    # Staff photos and facility covers: signed links to this hospital's own keys only, from a
+    # private bucket (P1-T20b, Q-T3); CARE's unsigned (or CDN) address is never built
+    settings["FACILITY_IMAGE_URL_FUNCTION"] = "ihr_platform.storage.facility_image_url"
 
     # Separate database roles (P1-T19, ihr_platform/db_roles.py): off (dev, the plain CI job,
     # staging until P1-T19b), test (the test runner: tests run as ihr_app) or required

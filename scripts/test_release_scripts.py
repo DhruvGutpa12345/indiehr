@@ -543,15 +543,17 @@ class RollbackScript(unittest.TestCase):
             check_modes(self, d / "root")
 
 
-def make_stack_archive(path, compose_text):
-    """A release's kept stack archive (deploy.sh's stack-<tag>.tgz) with this compose.yaml."""
+def make_stack_archive(path, compose_text, extra=None):
+    """A release's kept stack archive (deploy.sh's stack-<tag>.tgz) with this compose.yaml (and
+    the extra files {path: text})."""
     import io
     import tarfile
     with tarfile.open(path, "w:gz") as tar:
-        data = compose_text.encode()
-        info = tarfile.TarInfo("deploy/staging/compose.yaml")
-        info.size = len(data)
-        tar.addfile(info, io.BytesIO(data))
+        for name, text in {"deploy/staging/compose.yaml": compose_text, **(extra or {})}.items():
+            data = text.encode()
+            info = tarfile.TarInfo(name)
+            info.size = len(data)
+            tar.addfile(info, io.BytesIO(data))
 
 
 def make_stack(path):
@@ -765,7 +767,8 @@ class EndToEnd(unittest.TestCase):
     """staging.sh with a fake docker: refusals with the reason before anything changes (no tag,
     no compose up/down/run/stop), and the release's own record."""
 
-    def run_staging(self, entries, *args, attempt_line=None, running="", fake=None, split=True, stacks=None):
+    def run_staging(self, entries, *args, attempt_line=None, running="", fake=None, split=True, stacks=None,
+                    app_extra=""):
         with tempfile.TemporaryDirectory() as d:
             d = Path(d)
             (d / "releases").mkdir()
@@ -776,10 +779,12 @@ class EndToEnd(unittest.TestCase):
                                     "IHR_POSTGRES_IMAGE=indiehr-postgres:staging\nIHR_KEYCLOAK_IMAGE=indiehr-keycloak:staging\n")
             (d / "secrets").mkdir()
             if split:  # the split database roles' addresses (P1-T19b; made by db-split-secrets)
-                (d / "secrets" / "app.env").write_text(f"DATABASE_URL=postgres://ihr_app:{'a' * 43}@db:5432/ihr\n")
+                (d / "secrets" / "app.env").write_text(f"DATABASE_URL=postgres://ihr_app:{'a' * 43}@db:5432/ihr\n"
+                                                       + app_extra)
                 (d / "secrets" / "db-owner.env").write_text(f"DATABASE_URL=postgres://ihr_owner:{'o' * 43}@db:5432/ihr\n")
-            for tag, compose_text in (stacks or {}).items():  # releases' kept stack files
-                make_stack_archive(d / "releases" / f"stack-{tag}.tgz", compose_text)
+            for tag, stack in (stacks or {}).items():  # releases' kept stack files
+                compose_text, extra = stack if isinstance(stack, tuple) else (stack, None)
+                make_stack_archive(d / "releases" / f"stack-{tag}.tgz", compose_text, extra)
             bindir = d / "bin"
             bindir.mkdir()
             dk = bindir / "docker"
@@ -998,7 +1003,10 @@ class EndToEnd(unittest.TestCase):
         named; one that does not predate it still is."""
         base = (f'set -euo pipefail\nREL_SERVE_PREVIOUS="scripts/staging.sh db-roles --serve-previous --operator"\n'
                 f'rel_rollback_advice() {{{func("rel_rollback_advice")}}}\nrel_release_exit() {{{func("rel_release_exit")}}}\n'
+                f'rel_serve_outgoing_advice() {{{func("rel_serve_outgoing_advice")}}}\n'
+                'rel_outgoing_storage() { echo yes; }\n'
                 'rel_workers_marker() { :; }\nrunning_backend_id() { :; }\nrelease_tag_of() { echo R1; }\n'
+                'rel_target_pre_s3split() { return 1; }\n'
                 'rlog() { echo target=R0; echo restore_point=release-r0-1763000000; }\n'
                 'compose() { [[ -z "${BACKEND_RUNS:-}" ]] || echo cid-backend; }\n'
                 'REL_WORKERS=(celery-worker celery-beat provisioner staff-worker)\n'
@@ -1039,6 +1047,111 @@ class EndToEnd(unittest.TestCase):
                               "rlog() { [[ \"${*: -1}\" == --restore ]] || return 1; echo target=R0; echo restore_point=release-r0-1763000000; }\n"
                               "rel_rollback_advice\n"], capture_output=True, text=True)
         self.assertIn("scripts/staging.sh rollback --restore (back to the window's restore point release-r0-1763000000", out.stdout)
+
+    def test_a_first_release_onto_split_keys_stopped_at_stage_1_names_its_backend(self):
+        """Second fixer: the first release onto P1-T20b has no rollback (its target predates the
+        split keys), but stopped before any migration (stage 1) its backend still runs with the
+        keys it was started with: fleet release and fleet window --clear in it serve the
+        hospitals again, named only while its storage key still works."""
+        base = (f'set -euo pipefail\nREL_SERVE_PREVIOUS="scripts/staging.sh db-roles --serve-previous --operator"\n'
+                f'rel_rollback_advice() {{{func("rel_rollback_advice")}}}\n'
+                f'rel_serve_outgoing_advice() {{{func("rel_serve_outgoing_advice")}}}\n'
+                'db_roles_state() { echo split; }\nrunning_backend_id() { :; }\nrelease_tag_of() { echo R1; }\n'
+                'rel_target_presplit() { return 1; }\nrel_target_pre_s3split() { return 0; }\n'
+                'rlog() { echo target=R0; echo restore_point=release-r0-1763000000; }\n'
+                'compose() { [[ -z "${BACKEND_RUNS:-}" ]] || echo cid-backend; }\n'
+                'REL_WORKERS=(celery-worker celery-beat provisioner staff-worker)\n'
+                'REL_LOG=x REL_ATTEMPT=y REL_OP=tester REL_MOVE=0\n')
+        fleet = ("or, as its backend still runs and the database is unchanged by this release, serve the hospitals "
+                 "in it: scripts/staging.sh fleet release --operator tester then scripts/staging.sh fleet window "
+                 "--clear --operator tester")
+        for stage, backend, storage, want, never in (
+            (1, "1", "yes", [fleet, "only while the gateway is not restarted"], []),
+            (1, "1", "provider", [fleet, "only while its old storage key (BUCKET_KEY) still works at the provider"], []),
+            (1, "1", "no", ["its object-storage key is no longer the gateway's"], [fleet]),
+            (1, "", "yes", [], [fleet, "its object-storage key"]),  # no backend runs
+            (2, "1", "yes", [], [fleet, "its object-storage key"]),  # migrations may have begun
+        ):
+            with self.subTest(stage=stage, backend=backend, storage=storage):
+                script = (base + f"rel_outgoing_storage() {{ echo {storage}; }}\nREL_STAGE={stage}\n"
+                          f"BACKEND_RUNS={backend}\nrel_rollback_advice\n")
+                out = subprocess.run(["bash", "-c", script], capture_output=True, text=True)
+                self.assertEqual(out.returncode, 0, out.stderr)
+                self.assertEqual(out.stderr, "")
+                self.assertIn("predates the split object-storage keys (P1-T20b). Fix forward", out.stdout)
+                self.assertNotIn("staging.sh rollback", out.stdout)
+                for text in want:
+                    self.assertIn(text, out.stdout)
+                for text in never:
+                    self.assertNotIn(text, out.stdout)
+
+    def test_outgoing_storage_compares_the_key_ids_the_containers_were_started_with(self):
+        """The backend's own key (BUCKET_KEY, or FILE_UPLOAD_KEY) against the running gateway's."""
+        base = (f'set -euo pipefail\nrel_outgoing_storage() {{{func("rel_outgoing_storage")}}}\n'
+                f'container_env() {{{func("container_env")}}}\n'
+                'compose() { case "$*" in *"ps -q backend") echo cid-b ;; *"ps -q s3") [[ -z "${NO_S3:-}" ]] && echo cid-s || true ;; esac; }\n'
+                'docker() { case "${*: -1}" in cid-b) printf "%b" "$B_ENV" ;; cid-s) printf "%b" "$S_ENV" ;; esac; }\n')
+        for site, b_env, s_env, no_s3, want in (
+            ("local", r"BUCKET_KEY=k1\nX=1\n", r"IHR_S3_CARE_KEY=k1\n", "", "yes"),
+            ("local", r"BUCKET_KEY=k1\n", r"IHR_S3_FILES_KEY=k2\n", "", "no"),  # gateway recreated split
+            ("local", r"BUCKET_KEY=k1\n", r"IHR_S3_CARE_KEY=k1\n", "1", "no"),  # no gateway runs
+            ("local", r"FILE_UPLOAD_KEY=f\n", r"IHR_S3_FILES_KEY=f\n", "", "yes"),
+            ("local", r"FILE_UPLOAD_KEY=f\n", r"IHR_S3_FILES_KEY=g\n", "", "no"),
+            ("", r"BUCKET_KEY=k1\n", "", "", "provider"),
+        ):
+            with self.subTest(site=site, b=b_env, s=s_env, no_s3=no_s3):
+                script = base + f'env_get() {{ echo "{site}"; }}\nrel_outgoing_storage\n'
+                out = subprocess.run(["bash", "-c", script], capture_output=True, text=True,
+                                     env={**os.environ, "B_ENV": b_env, "S_ENV": s_env, "NO_S3": no_s3})
+                self.assertEqual(out.returncode, 0, out.stderr)
+                self.assertEqual(out.stdout.strip(), want)
+
+    def test_fleet_release_at_stage_1_runs_in_the_outgoing_build(self):
+        """Second fixer: after the move of the roles, while a release's migrations have not
+        started and an outgoing build serves, fleet release and hold run in it (old_manage), never
+        the new build on the old schema (D10); once the migrations started, in the new build's
+        migrate one-off as before."""
+        fake = {"FAKE_ROLES": "split", "FAKE_EXEC_OK": "1"}
+        for migrations, outgoing in (("none", True), ("started", False)):
+            with self.subTest(migrations=migrations):
+                out, calls = self.run_staging([release(A)], "fleet", "release", "--operator", "tester",
+                                              running="db backend", fake=fake,
+                                              attempt_line={**attempt(RUNNING), "via": "release", "migrations": migrations})
+                if outgoing:  # (the stand-in docker refuses a compose run: its exit is not looked at)
+                    self.assertEqual(out.returncode, 0, out.stderr)
+                in_old = "exec -T backend python manage.py ihr_fleet_run release --operator tester" in calls
+                in_new = "run --rm --no-deps -T migrate python manage.py ihr_fleet_run release --operator tester" in calls
+                self.assertEqual((in_old, in_new), (outgoing, not outgoing), calls)
+        # the running backend is this stack's build: no outgoing build, the migrate one-off
+        out, calls = self.run_staging([release(A)], "fleet", "release", "--operator", "tester", running="db backend",
+                                      fake={**fake, "FAKE_RUNNING_IMAGE": CURRENT},
+                                      attempt_line={**attempt(RUNNING), "via": "release", "migrations": "none"})
+        self.assertIn("run --rm --no-deps -T migrate python manage.py ihr_fleet_run release --operator tester", calls)
+
+    def test_repo_info_in_a_release_recreates_nothing(self):
+        """Second fixer: with backups set up but the backup service not running, the release's
+        repository read (rel_repo_info) falls back to a one-off that recreates no container: a
+        recreated gateway would carry only the split keys and kill the outgoing backend's key
+        before `up`. A plain repo_info (the stack may be down) still creates what is missing."""
+        base = (f'set -euo pipefail\nrepo_info() {{{func("repo_info")}}}\nrel_repo_info() {{{func("rel_repo_info")}}}\n'
+                'compose() { [[ "$1" == ps ]] && return 0; echo "compose $*" >> "$LOG"; }\n'
+                'env_get() { [[ "$1" == IHR_S3 ]] && echo local || true; }\n'
+                's3_keys_current() { :; }\npg_container() { :; }\ndie() { echo "$*" >&2; exit 1; }\n'
+                'docker() { :; }\n')
+        with tempfile.TemporaryDirectory() as d:
+            log = Path(d) / "log"
+            for call, keep in (("rel_repo_info", True), ("repo_info", False)):
+                with self.subTest(call=call):
+                    log.write_text("")
+                    out = subprocess.run(["bash", "-c", base + call + "\n"], capture_output=True, text=True,
+                                         env={**os.environ, "LOG": str(log)})
+                    self.assertEqual(out.returncode, 0, out.stderr)
+                    ups = [ln for ln in log.read_text().splitlines() if ln.startswith("compose up")]
+                    self.assertEqual(len(ups), 2, ups)
+                    self.assertIn("db backup", ups[0])
+                    self.assertTrue(ups[1].endswith(" s3"), ups)
+                    for ln in ups:
+                        (self.assertIn if keep else self.assertNotIn)("--no-recreate", ln)
 
     def test_serve_previous_starts_the_build_that_ran(self):
         """C1: a release stopped before the move: the build that ran starts on its own
@@ -1226,6 +1339,46 @@ class EndToEnd(unittest.TestCase):
         out, _ = self.run_staging([release(A), release(RUNNING)], "rollback", stacks=new_stack,
                                   fake={"FAKE_IMAGES": " ".join(img(n) for n in (10, 11, 20, 30))})
         self.assertNotIn("predates the split database roles", out.stderr)
+
+    def test_no_rollback_across_the_split_storage_keys(self):
+        """P1-T20b review C1/S3: once this site's storage keys are split, a target whose kept
+        stack predates them (its start.sh knows only the combined ihr-care key) would sign
+        patient files with the pictures key, fail to start its gateway and make the pictures
+        bucket public again: refused before anything changes (both kinds); its own start.sh
+        is not refused for it."""
+        compose = "    env_file:\n      - secrets/app.env\n      - secrets/db-owner.env\n"
+        old = {A: (compose, {"deploy/s3/start.sh": 'KEYS="IHR_S3_ADMIN_KEY IHR_S3_CARE_KEY IHR_S3_CARE_SECRET"\n'})}
+        new = {A: (compose, {"deploy/s3/start.sh": (ROOT / "deploy" / "s3" / "start.sh").read_text()})}
+        split = "FILE_UPLOAD_KEY=f\nFILE_UPLOAD_SECRET=fs\nFACILITY_S3_KEY=p\nFACILITY_S3_SECRET=ps\n"
+        images = {"FAKE_IMAGES": " ".join(img(n) for n in (10, 11, 20, 30))}
+        restorable = release(RUNNING, tenant=7, rp=point(RUNNING), rp_time="1763000000")
+        for extra, running_release in (((), release(RUNNING)), (("--restore",), restorable)):
+            with self.subTest(extra=extra):
+                out, calls = self.run_staging([release(A), running_release], "rollback", *extra, stacks=old,
+                                              app_extra=split, fake=images)
+                self.assertEqual(out.returncode, 1, out.stderr)
+                self.assertIn(f"release {A} predates the split object-storage keys (P1-T20b)", out.stderr)
+                self.assertIn("make the pictures bucket public again", out.stderr)
+                self.assertNothingChanged(calls)
+        out, _ = self.run_staging([release(A), release(RUNNING)], "rollback", stacks=new, app_extra=split, fake=images)
+        self.assertNotIn("predates the split object-storage keys", out.stderr)
+        # a site whose keys are not split yet (both builds before P1-T20b): not refused for it
+        out, _ = self.run_staging([release(A), release(RUNNING)], "rollback", stacks=old, fake=images)
+        self.assertNotIn("predates the split object-storage keys", out.stderr)
+
+    def test_rollback_advice_never_names_a_rollback_across_the_key_split(self):
+        base = (f'set -euo pipefail\nrel_rollback_advice() {{{func("rel_rollback_advice")}}}\n'
+                'db_roles_state() { echo split; }\nrunning_backend_id() { :; }\nrelease_tag_of() { echo R1; }\n'
+                'rlog() { echo target=R0; echo restore_point=release-r0-1763000000; }\n'
+                'rel_target_presplit() { return 1; }\nREL_LOG=x REL_ATTEMPT=y\n')
+        out = subprocess.run(["bash", "-c", base + "rel_target_pre_s3split() { return 0; }\nrel_rollback_advice\n"],
+                             capture_output=True, text=True)
+        self.assertEqual(out.returncode, 0, out.stderr)
+        self.assertIn("predates the split object-storage keys (P1-T20b). Fix forward", out.stdout)
+        self.assertNotIn("staging.sh rollback", out.stdout)
+        out = subprocess.run(["bash", "-c", base + "rel_target_pre_s3split() { return 1; }\nrel_rollback_advice\n"],
+                             capture_output=True, text=True)
+        self.assertIn("scripts/staging.sh rollback (no --restore", out.stdout)
 
     def test_fleet_window_runs_in_the_running_backend(self):
         """D10: never the new build (a one-off of the moved tag) on the old schema."""

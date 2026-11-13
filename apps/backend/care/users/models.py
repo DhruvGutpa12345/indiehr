@@ -2,7 +2,6 @@ import secrets
 import string
 import uuid
 
-from django.conf import settings
 from django.contrib.auth.models import AbstractUser, UserManager
 from django.core.validators import MaxValueValidator, MinValueValidator
 from django.db import models
@@ -200,11 +199,10 @@ class User(AbstractUser):
         return data
 
     def read_profile_picture_url(self):
-        if self.profile_picture_url:
-            if settings.FACILITY_CDN:
-                return f"{settings.FACILITY_CDN}/{self.profile_picture_url}"
-            return f"{settings.FACILITY_S3_BUCKET_EXTERNAL_ENDPOINT}/{settings.FACILITY_S3_BUCKET}/{self.profile_picture_url}"
-        return None
+        # IndieHR: the address from a settings hook (signed links)
+        from care.utils.file_uploads.cover_image import image_url
+
+        return image_url(self.profile_picture_url)
 
     def is_mfa_enabled(self):
         return bool(self.mfa_settings.get("totp", {}).get("enabled", False))

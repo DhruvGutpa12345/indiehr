@@ -139,9 +139,12 @@ never fill the database's disk). `local-proof` always uses SeaweedFS.
 - `.env`: remove the `IHR_S3*` lines; set `IHR_STORAGE_ORIGIN` to the provider's address (the
   web app's CSP allows only that one);
 - `secrets/app.env`: `BUCKET_ENDPOINT` and `BUCKET_EXTERNAL_ENDPOINT` (both the provider's
-  address), `BUCKET_KEY`, `BUCKET_SECRET`, `BUCKET_REGION`, the two bucket names; the buckets need
-  the same CORS (`https://*.<suffix>`) and the facility bucket the public-read policy
-  (`deploy/s3/setup_buckets.py` does both against any S3 endpoint);
+  address), `BUCKET_REGION`, the two bucket names, and **two keys** (P1-T20b): `FILE_UPLOAD_KEY` /
+  `FILE_UPLOAD_SECRET` reaching only the patient files bucket, `FACILITY_S3_KEY` /
+  `FACILITY_S3_SECRET` reaching only the pictures bucket; never `BUCKET_KEY` (the backend refuses
+  to start with it, or with one key for both buckets). Both buckets private, with the same CORS
+  (`https://*.<suffix>`), no public-read policy (`deploy/s3/setup_buckets.py` sets this against
+  any S3 endpoint and removes an old public-read policy);
 - `secrets/anchor-read.env` / `anchor-write.env`: `IHR_AUDIT_ANCHOR_ENDPOINT` (empty for AWS),
   `_BUCKET`, the two keys;
 - copy the files across first; keep the old `s3data` volume until its fingerprints are copied
@@ -149,12 +152,16 @@ never fill the database's disk). `local-proof` always uses SeaweedFS.
 
 | Command | What it does |
 |---|---|
-| `scripts/staging.sh s3-init` | Once, after `init`: makes the four keys (storage admin, CARE, fingerprint writer, fingerprint reader) in `secrets/s3-gateway.env`, gives CARE and the two fingerprint files their one key each, and adds the settings to `.env` |
-| `scripts/staging.sh up` | Also starts SeaweedFS and sets up the buckets (idempotent) |
-| `scripts/staging.sh s3-check` | 38 live checks: each key does what it must and nothing more, the lock holds against every key including the admin, anonymous and browser access through `files.<suffix>` |
+| `scripts/staging.sh s3-init` | Once, after `init`: makes the keys (storage admin, CARE's patient files, CARE's pictures, fingerprint writer, fingerprint reader, backups, log archive) in `secrets/s3-gateway.env`, gives CARE (`secrets/app.env`: `FILE_UPLOAD_*`, `FACILITY_S3_*`) and the two fingerprint files their keys, and adds the settings to `.env` |
+| `scripts/staging.sh s3-split-keys` | **On the deploying machine** (`IHR_STAGING_OUT=<dir>` for another folder, as `db-split-secrets`), once, for a site set up before P1-T20b: two new keys (patient files, pictures) into `secrets/s3-gateway.env` and `secrets/app.env` (`FILE_UPLOAD_*`, `FACILITY_S3_*`), the combined `IHR_S3_CARE_*` and `BUCKET_KEY`/`BUCKET_SECRET` taken out, the old pair kept in `secrets/s3-retired.env` only so `s3-check` can prove it dead. Prints file names only; idempotent (after an interruption it finishes from the gateway's keys). `--check` only says whether the keys are split |
+| `scripts/deploy.sh` | Refuses, before anything is sent, a folder whose keys are not split (it names `s3-split-keys`): each deploy sends that copy over the server's, so the keys are made where they are kept, never on the server. The throwaway VM's folder (`--local-proof`) is split for you |
+| `scripts/staging.sh up` | Also starts SeaweedFS and sets up the buckets (idempotent). On a server, `up`, `release`, `db-roles --migrate`, `rollback` and every start of the s3 container (backup reads, restores) refuse unsplit keys **before anything changes** (no hold, no migrate one-shot, no key made there); a local proof (`.local`) splits its own |
+| `scripts/staging.sh s3-check` | Live checks: each key does what it must and nothing more (the patient files key cannot touch a picture, the pictures key cannot touch a patient file), the retired combined key is unknown to the gateway, the lock holds against every key including the admin, anonymous and browser access through `files.<suffix>` (a picture needs a signed link) |
 
 **Buckets:** `FILE_UPLOAD_BUCKET` (private: the browser uploads and downloads with short-lived
-signed links), `FACILITY_S3_BUCKET` (anyone may read a picture, nobody may list or write), and
+signed links), `FACILITY_S3_BUCKET` (staff photos and facility covers, private too since P1-T20b,
+owner answer Q-T3: the web app gets a 24-hour signed link for each picture of its own hospital,
+nobody reads, lists or writes anonymously), and
 `ihr-audit-anchors` (Object Lock **COMPLIANCE for 10 years**: no key, not even the storage admin,
 can delete or shorten a fingerprint; the verifier's production checks pass).
 
@@ -864,7 +871,8 @@ no password; `up` sets it before anything connects.
 the move. `up` with secrets that are not split refuses too (`db-split-secrets`).
 
 **Going back:** a rollback to a release from before the split is refused before anything changes
-(its kept stack would start the app as `ihr`, which no longer exists): fix forward. So is any
+(its kept stack would start the app as `ihr`, which no longer exists): fix forward. The same holds
+for a release from before the split object-storage keys (P1-T20b; "Releases"). So is any
 rollback while the database still has its single role (a release that stopped before the move):
 its `up` would refuse that database after the image tags moved. Then `db-roles --serve-previous`
 serves the build that ran, and a release's failure message names it instead of a rollback. The move's
@@ -960,6 +968,23 @@ release writes `ihr_release_workers_stopped_until_seconds` (`<textfile dir>/ihr_
 and removes it when it ends, so a release that stops with the workers down is paged 5 minutes
 later. A rollback that stops says where (images re-pointed; the stack down with the database
 unchanged; during the restore; restored and logged) and how to go on.
+
+**Rollback to a release from before P1-T20b: refused, nothing changed.** Once this site's
+object-storage keys are split (`s3-split-keys`), a release whose kept stack predates them (its
+`deploy/s3/start.sh` knows only the combined `ihr-care` key) is refused by `rollback`, with or
+without `--restore`, and never named in a release's advice: its backend would sign patient files
+with the pictures key, its gateway would refuse both new keys (and exit on its next start), and
+its set-up would make the pictures bucket public again (Q-T3). Fix forward. The first release
+onto P1-T20b therefore has no rollback; if it stops, fix the cause and run `release` again.
+If it stops **before any migration** (every hospital held, the workers stopped, the database
+unchanged), the backend that ran still runs with the keys it was started with, and the release
+recreated no container (its repository read with the backup service down recreates nothing): its
+advice then names `fleet release --operator <you>` and `fleet window --clear --operator <you>`,
+which run in that outgoing build (while the release's migrations have not started, `fleet
+release` and `hold` go to it, never to the new build on the old schema), then `start-existing`
+for the stopped workers. It names them only while the running gateway still has that backend's
+key (a provider site: while the old `BUCKET_KEY` still works there), and this holds only until
+the gateway restarts (the deployed `start.sh` refuses the combined key).
 
 **What each way back costs:**
 - **Fix forward:** nothing is lost; the failed hospital waits.

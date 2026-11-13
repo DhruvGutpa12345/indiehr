@@ -49,6 +49,9 @@
 #   scripts/staging.sh acme-new-cert             drop the stored certificate (after changing the CA)
 #   scripts/staging.sh acme-proof [--keep]       certificate proof with Pebble, alone, on this machine
 #   scripts/staging.sh s3-init                   files on the server itself: SeaweedFS (P1-T8b3)
+#   scripts/staging.sh s3-split-keys [--check]   CARE's one storage key split into a patient files
+#                                                key and a pictures key (P1-T20b), on the deploying
+#                                                machine, once (--check: only say whether it is)
 #   scripts/staging.sh s3-check                  live checks of its keys, locks and public paths
 #   scripts/staging.sh mail-init <from> [--host H] [--port P] [--user U] | --test
 #                                                mail via Zoho ZeptoMail (P1-T8b4); token on stdin
@@ -627,6 +630,7 @@ db_roles_cmd() {  # db-roles --migrate [--operator NAME] | --serve-previous [--o
     --migrate)
       op="$(rel_operator "$op")"
       db_need_split_secrets
+      s3_need_split_keys  # before the move: its migrate one-shots start the new build (S1)
       rel_lock
       [[ ! -f "$REL_ATTEMPT" ]] || die "a release is in progress (releases/attempt): finish it (or roll it back) first; a release moves the roles itself"
       # Only a stopped stack, on the build released last (review C2): a database restored to a
@@ -681,6 +685,10 @@ up() {  # up [--new-database]: the flag only where an empty database is really m
   [[ $# -eq 0 || $new_db == 1 ]] || die "usage: scripts/staging.sh up [--new-database]"
   [[ -f "$DIR/.env" ]] || { echo "run: scripts/staging.sh init <suffix>" >&2; exit 1; }
   db_need_split_secrets
+  # CARE's storage keys (P1-T20b) before anything starts: a local proof splits its own (its
+  # folder is where its secrets are made); a server refuses unsplit ones (S1/S2)
+  if [[ "$(env_get IHR_S3)" == local && -f "$DIR/.local" ]]; then s3_split_care_key "$SECRETS"; fi
+  s3_need_split_keys
   [[ -z "$(env_get IHR_BACKUP)" ]] || backup_config
   # Compose reads Fluent Bit's (and Grafana's) env files on every call: those secrets first
   if [[ -n "$(env_get IHR_MONITORING)" ]]; then logs_secrets; dashboards_secrets; fi
@@ -767,10 +775,14 @@ PG_LOG_PRIVACY=(-c log_min_duration_statement=-1 -c log_min_error_statement=pani
 # The database volume's state (PGDATA: compose.yaml): "restoring" while a real restore is unfinished
 PG_STATE='if [ -e /var/lib/postgresql/.ihr-restore-incomplete ]; then echo restoring; elif [ -e /var/lib/postgresql/18/docker/PG_VERSION ]; then echo db; else echo empty; fi'
 
-repo_info() {  # the repository's info as JSON, read by a one-off container (the stack may be down)
-  local rc=0
-  compose up --no-start db backup >/dev/null || die "could not create the stack's containers and volumes"
-  [[ "$(env_get IHR_S3)" != local ]] || compose up -d --wait s3 >/dev/null
+repo_info() {  # repo_info [--keep-running]: the repository's info as JSON, read by a one-off
+  # container (the stack may be down). --keep-running (a release, before its `up`): no existing
+  # container is recreated, so a gateway that the outgoing backend still uses keeps the keys it
+  # was started with (a recreated one would have only the split keys: the second fixer's review)
+  local rc=0 norecreate=()
+  [[ "${1:-}" != --keep-running ]] || norecreate=(--no-recreate)
+  compose up --no-start ${norecreate[@]+"${norecreate[@]}"} db backup >/dev/null || die "could not create the stack's containers and volumes"
+  [[ "$(env_get IHR_S3)" != local ]] || { s3_keys_current >/dev/null; compose up -d --wait ${norecreate[@]+"${norecreate[@]}"} s3 >/dev/null; }
   docker rm -f ihr-repo-info >/dev/null 2>&1 || true
   pg_container ihr-repo-info "" pgbackrest --stanza=main --output=json --log-level-console=error info
   docker start -a ihr-repo-info || rc=$?
@@ -836,7 +848,7 @@ smoke() {  # every public address through Traefik, as a browser would reach it
     check "files: nothing at the root" 418 "$(code "https://files.$suffix:$port/")"
     check "files: fingerprint bucket not public" 418 "$(code "https://files.$suffix:$port/$(env_get IHR_S3_ANCHOR_BUCKET)/anchors/x")"
     check "files: patient files need a signature" 403 "$(code "https://files.$suffix:$port/$(env_get IHR_S3_PATIENT_BUCKET)/x")"
-    check "files: hospital pictures are public (none here yet)" 404 "$(code "https://files.$suffix:$port/$(env_get IHR_S3_FACILITY_BUCKET)/no-such-picture.png")"
+    check "files: hospital pictures need a signature (P1-T20b)" 403 "$(code "https://files.$suffix:$port/$(env_get IHR_S3_FACILITY_BUCKET)/no-such-picture.png")"
   fi
   if [[ -n "$(env_get IHR_BACKUP)" ]]; then
     local bh
@@ -1136,7 +1148,7 @@ restore_live() {  # restore [--target T | --target-name NAME [--set LABEL]]: a l
   # Volumes made the Compose way (labels), then: never over an existing database
   compose up --no-start db backup >/dev/null || die "could not create the stack's containers and volumes"
   # The repository on this stack's own SeaweedFS (a local proof) must be running to read from
-  [[ "$(env_get IHR_S3)" != local ]] || compose up -d --wait s3 >/dev/null
+  [[ "$(env_get IHR_S3)" != local ]] || { s3_keys_current >/dev/null; compose up -d --wait s3 >/dev/null; }
   # Never over a database; an unfinished restore (its marker) is started again from scratch
   state="$(docker run --rm --user 70:70 --network none -v "$vol:/var/lib/postgresql" --entrypoint sh \
     "$(env_get IHR_POSTGRES_IMAGE)" -c "$PG_STATE")" || die "could not read $vol"
@@ -1393,12 +1405,14 @@ rel_seal() {  # rel_seal <outgoing backend image id>: seal and fingerprint the a
     *) echo "WARNING: sealing with the outgoing build failed (above); going on" >&2; echo problems ;;
   esac
 }
-rel_repo_info() {  # the repository's info as JSON: through the running backup service when it runs
-  # (repo_info's `up --no-start` would re-create a running db whose image tag deploy.sh moved)
+rel_repo_info() {  # the repository's info as JSON: through the running backup service when it runs;
+  # else a one-off that recreates nothing (a plain repo_info's `up` would re-create a running db
+  # whose image tag deploy.sh moved, and the gateway with the split keys mid-release, which kills
+  # the outgoing backend's storage key before `up`)
   if [[ -n "$(compose ps -q backup 2>/dev/null || true)" ]]; then
     compose exec -T backup pgbackrest --stanza=main --output=json --log-level-console=error info
   else
-    repo_info
+    repo_info --keep-running
   fi
 }
 rel_restore_point() {  # rel_restore_point <tag>: "<name> <lsn> <epoch>", or "- - -" without backups.
@@ -1556,10 +1570,46 @@ rel_point_images() {  # rel_point_images <names> <plan file>: this stack's tags 
   done < <(rel_images)
 }
 
+container_env() {  # container_env <container id> <name>: that variable as the container was created
+  # with it (its env files then). Callers compare it, never print it
+  docker inspect -f '{{range .Config.Env}}{{println .}}{{end}}' "$1" 2>/dev/null | sed -n "s/^$2=//p" | tail -1
+}
+rel_outgoing_storage() {  # whether the running backend still reaches object storage with the keys
+  # it was started with: "yes" (this stack's gateway runs with the same key id), "no", or
+  # "provider" (a provider's keys: this machine cannot tell)
+  local b s key
+  b="$(compose ps -q backend 2>/dev/null || true)"
+  [[ -n "$b" ]] || { echo no; return 0; }
+  [[ "$(env_get IHR_S3)" == local ]] || { echo provider; return 0; }
+  s="$(compose ps -q s3 2>/dev/null || true)"
+  [[ -n "$s" ]] || { echo no; return 0; }
+  key="$(container_env "$b" BUCKET_KEY)"
+  if [[ -n "$key" ]]; then
+    [[ "$key" == "$(container_env "$s" IHR_S3_CARE_KEY)" ]] && echo yes || echo no
+    return 0
+  fi
+  key="$(container_env "$b" FILE_UPLOAD_KEY)"
+  [[ -n "$key" && "$key" == "$(container_env "$s" IHR_S3_FILES_KEY)" ]] && echo yes || echo no
+}
+rel_serve_outgoing_advice() {  # rel_serve_outgoing_advice: at stage 1 (held, workers stopped, the
+  # database unchanged by this release) with no rollback accepted, the backend that ran still
+  # serves its hospitals once the holds are lifted in it (the fleet dispatch sends fleet release
+  # and hold to it while the release's migrations have not started). Its object-storage key must
+  # still work: the gateway it was started with (rel_repo_info recreates nothing), or the provider's
+  # old key. Prints "; or, ..." or nothing (the second fixer's review)
+  local op="${REL_OP:-<you>}" storage
+  ((${REL_STAGE:-0} == 1)) || return 0
+  [[ -n "$(compose ps -q backend 2>/dev/null || true)" ]] || return 0
+  storage="$(rel_outgoing_storage 2>/dev/null || echo no)"
+  case "$storage" in
+    no) echo "; its backend still runs, but its object-storage key is no longer the gateway's (s3 was recreated with the split keys): serving it again would break patient files and pictures" ;;
+    *) echo "; or, as its backend still runs and the database is unchanged by this release, serve the hospitals in it: scripts/staging.sh fleet release --operator $op then scripts/staging.sh fleet window --clear --operator $op (a worker this release stopped stays stopped until scripts/staging.sh start-existing <it>, of ${REL_WORKERS[*]}; $([[ "$storage" == provider ]] && echo "only while its old storage key (BUCKET_KEY) still works at the provider" || echo "only while the gateway is not restarted: the deployed start.sh refuses the combined key"))" ;;
+  esac
+}
 rel_rollback_advice() {  # rel_rollback_advice: the rollbacks `rollback` accepts now, found the way
   # it finds them (release_log.py plan with the running build, then rel_roles_guard), so advice
   # never names one it refuses (D3/O4; review C1)
-  local running out ways=() presplit=0 state
+  local running out ways=() presplit=0 pres3=0 state t
   # Before the move of the roles no rollback is accepted (rel_roles_guard): the build that ran
   # serves again on its own containers. The database's own answer first; unreadable, what this
   # release knows (REL_MOVE: the move was still to come)
@@ -1580,17 +1630,23 @@ rel_rollback_advice() {  # rel_rollback_advice: the rollbacks `rollback` accepts
     return 0
   fi
   if out="$(rlog plan "$REL_LOG" "$REL_ATTEMPT" "$running" 2>/dev/null)"; then
-    if rel_target_presplit "$(sed -n 's/^target=//p' <<< "$out")"; then presplit=1
+    t="$(sed -n 's/^target=//p' <<< "$out")"
+    if rel_target_presplit "$t"; then presplit=1
+    elif rel_target_pre_s3split "$t"; then pres3=1
     else ways+=("scripts/staging.sh rollback (no --restore: it lifts the holds and clears the window; nothing is lost)"); fi
   fi
   if out="$(rlog plan "$REL_LOG" "$REL_ATTEMPT" "$running" --restore 2>/dev/null)"; then
-    if rel_target_presplit "$(sed -n 's/^target=//p' <<< "$out")"; then presplit=1
+    t="$(sed -n 's/^target=//p' <<< "$out")"
+    if rel_target_presplit "$t"; then presplit=1
+    elif rel_target_pre_s3split "$t"; then pres3=1
     else ways+=("scripts/staging.sh rollback --restore (back to the window's restore point $(sed -n 's/^restore_point=//p' <<< "$out"); what was written since is lost)"); fi
   fi
   if ((${#ways[@]} == 0 && presplit)); then
-    echo "no rollback is accepted from here: the release before this one predates the split database roles (P1-T19b). Fix forward"
+    echo "no rollback is accepted from here: the release before this one predates the split database roles (P1-T19b). Fix forward$(rel_serve_outgoing_advice)"
+  elif ((${#ways[@]} == 0 && pres3)); then
+    echo "no rollback is accepted from here: the release before this one predates the split object-storage keys (P1-T20b). Fix forward$(rel_serve_outgoing_advice)"
   elif ((${#ways[@]} == 0)); then
-    echo "no rollback is accepted from here (scripts/staging.sh rollback says why): fix forward"
+    echo "no rollback is accepted from here (scripts/staging.sh rollback says why): fix forward$(rel_serve_outgoing_advice)"
   elif ((${#ways[@]} == 1)); then
     echo "${ways[0]}"
   else
@@ -1637,6 +1693,9 @@ release() {  # release [--now [--minutes N] [--note T]] [--operator NAME] | --fi
   [[ -f "$DIR/.env" ]] || die "run: scripts/staging.sh init <suffix>"
   # This build runs the app as ihr_app and the owner's one-shots as ihr_owner (P1-T19b)
   db_need_split_secrets
+  # ...and refuses one storage key for both buckets (P1-T20b): checked before anything is held,
+  # never found by the migrate one-shot with every hospital held (S1)
+  s3_need_split_keys
   rel_lock
   t0=$SECONDS
   if ((finish)); then release_finish "$op"; return; fi
@@ -1823,6 +1882,27 @@ rel_target_presplit() {  # rel_target_presplit <target tag>: its kept stack pred
   text="$(tar -xzOf "$REL_DIR/stack-$1.tgz" deploy/staging/compose.yaml 2>/dev/null || true)"
   [[ "$text" != *"secrets/db-owner.env"* ]]
 }
+rel_s3_split_here() {  # this site's CARE storage keys are P1-T20b's two (never dies)
+  grep -q '^FILE_UPLOAD_KEY=.' "$SECRETS/app.env" 2>/dev/null \
+    || grep -q '^IHR_S3_FILES_KEY=' "$SECRETS/s3-gateway.env" 2>/dev/null
+}
+rel_target_pre_s3split() {  # rel_target_pre_s3split <target tag>: its kept stack predates CARE's
+  # split storage keys (P1-T20b: its deploy/s3/start.sh knows only the combined ihr-care key) and
+  # this site's keys are split. Its backend would sign patient files with the pictures key, its
+  # gateway would refuse both new keys (and exit on its next start), and its setup would make the
+  # pictures bucket public again (C1/S3). Never dies
+  local text
+  [[ -f "$REL_DIR/stack-$1.tgz" ]] || return 1
+  rel_s3_split_here || return 1
+  text="$(tar -xzOf "$REL_DIR/stack-$1.tgz" deploy/s3/start.sh 2>/dev/null || true)"
+  [[ "$text" == *IHR_S3_CARE_KEY* || "$text" != *IHR_S3_FILES_KEY* ]]
+}
+rel_outgoing_unmigrated() {  # a release is in progress whose migrations have not started, and the
+  # backend that runs is not this stack's build (the outgoing one, which held the hospitals): its
+  # holds are lifted by that build, never by the new build on the old schema (D10)
+  [[ -f "$REL_ATTEMPT" && "$(attempt_get migrations)" != started ]] || return 1
+  [[ "$(running_backend_id 2>/dev/null)" != "$(image_id "$(env_get IHR_BACKEND_IMAGE)")" ]]
+}
 rel_db_single() {  # the running database still has its single role ihr (the move has not run)
   [[ -n "$(compose ps -q db 2>/dev/null || true)" && "$(db_roles_state 2>/dev/null || true)" == single ]]
 }
@@ -1839,6 +1919,9 @@ rel_roles_guard() {  # rel_roles_guard <target tag>: never back to a release fro
   if rel_target_presplit "$1"; then
     die "refused: release $1 predates the split database roles (P1-T19b): its stack would run the app as the single role ihr, which no longer exists. Fix forward (deploy/staging/README.md, Moving to split roles); nothing was changed"
   fi
+  if rel_target_pre_s3split "$1"; then
+    die "refused: release $1 predates the split object-storage keys (P1-T20b): its backend would sign patient files with the pictures key, its gateway knows only the retired combined key, and its set-up would make the pictures bucket public again. Fix forward (deploy/staging/README.md, Releases); nothing was changed"
+  fi
 }
 rollback() {  # rollback [--restore] [--operator NAME]: back to the release before the running one
   local restore=0 op="" running plan answer project="${IHR_PROJECT:-indiehr-staging}" t0
@@ -1853,6 +1936,7 @@ rollback() {  # rollback [--restore] [--operator NAME]: back to the release befo
   done
   op="$(rel_operator "$op")"
   [[ -f "$DIR/.env" ]] || die "run: scripts/staging.sh init <suffix>"
+  s3_need_split_keys  # every rollback ends with up, which refuses them (after the tags moved)
   rel_lock
   # The typed confirmation comes from our own stdin: no docker command below may read it
   exec 8<&0 0</dev/null
@@ -2091,6 +2175,16 @@ mail_check() {  # mail_check <to>: Django sends a test e-mail; with the stand-in
 S3_ANCHOR_BUCKET_DEFAULT="ihr-audit-anchors"
 BUCKET_RE='^[a-z0-9][a-z0-9-]{1,61}[a-z0-9]$'
 
+# CARE's two identities (P1-T20b): ihr-care-files (patient files) and ihr-care-pictures (staff
+# photos, facility covers), one key each; they replace the combined ihr-care
+S3_CARE_IDS="FILES PICTURES"
+S3_APP_VARS='BUCKET_KEY|BUCKET_SECRET|BUCKET_ENDPOINT|BUCKET_EXTERNAL_ENDPOINT|FILE_UPLOAD_KEY|FILE_UPLOAD_SECRET|FACILITY_S3_KEY|FACILITY_S3_SECRET'
+
+s3_care_env() {  # s3_care_env <files key> <files secret> <pictures key> <pictures secret>
+  echo "# Patient files and pictures, one key each (P1-T20b; secure.py refuses one shared key)"
+  printf 'FILE_UPLOAD_KEY=%s\nFILE_UPLOAD_SECRET=%s\nFACILITY_S3_KEY=%s\nFACILITY_S3_SECRET=%s\n' "$@"
+}
+
 s3_init() {  # SeaweedFS keys into secrets/, CARE's and the fingerprint keys into their env files
   local envf="$OUT/.env" sec="$OUT/secrets" suffix patient facility k tmp
   [[ -f "$envf" && -d "$sec" ]] || die "no $envf / secrets: run scripts/staging.sh init <suffix> first"
@@ -2102,22 +2196,22 @@ s3_init() {  # SeaweedFS keys into secrets/, CARE's and the fingerprint keys int
     || die "FILE_UPLOAD_BUCKET / FACILITY_S3_BUCKET in secrets/app.env are not two bucket names"
   hex() { python3 -c "import secrets;print(secrets.token_hex($1))"; }
   declare -A key
-  for k in ADMIN CARE ANCHOR_WRITE ANCHOR_READ BACKUP LOGS_ARCHIVE; do key[${k}_KEY]="ihr$(hex 10)"; key[${k}_SECRET]="$(hex 20)"; done
+  for k in ADMIN $S3_CARE_IDS ANCHOR_WRITE ANCHOR_READ BACKUP LOGS_ARCHIVE; do key[${k}_KEY]="ihr$(hex 10)"; key[${k}_SECRET]="$(hex 20)"; done
   local SECRETS_TARGET="$sec"
   {
     echo "# SeaweedFS identities (P1-T8b3), written by scripts/staging.sh s3-init; the s3 container only."
-    for k in ADMIN CARE ANCHOR_WRITE ANCHOR_READ BACKUP LOGS_ARCHIVE; do
+    for k in ADMIN $S3_CARE_IDS ANCHOR_WRITE ANCHOR_READ BACKUP LOGS_ARCHIVE; do
       echo "IHR_S3_${k}_KEY=${key[${k}_KEY]}"
       echo "IHR_S3_${k}_SECRET=${key[${k}_SECRET]}"
     done
   } | write_secret s3-gateway.env
-  # CARE: its own key, the internal address, and the public one for presigned URLs
-  tmp="$(grep -Ev '^(BUCKET_KEY|BUCKET_SECRET|BUCKET_ENDPOINT|BUCKET_EXTERNAL_ENDPOINT)=' "$sec/app.env"
+  # CARE: one key for patient files, one for pictures (P1-T20b), the internal address, and the
+  # public one for signed links
+  tmp="$(grep -Ev "^($S3_APP_VARS)=" "$sec/app.env"
     echo "# Object storage on this server (P1-T8b3, scripts/staging.sh s3-init)"
     echo "BUCKET_ENDPOINT=http://s3:8333"
     echo "BUCKET_EXTERNAL_ENDPOINT=https://files.$suffix"
-    echo "BUCKET_KEY=${key[CARE_KEY]}"
-    echo "BUCKET_SECRET=${key[CARE_SECRET]}")"
+    s3_care_env "${key[FILES_KEY]}" "${key[FILES_SECRET]}" "${key[PICTURES_KEY]}" "${key[PICTURES_SECRET]}")"
   printf '%s\n' "$tmp" | write_secret app.env.new
   mv "$sec/app.env.new" "$sec/app.env"
   printf 'IHR_AUDIT_ANCHOR_ENDPOINT=http://s3:8333\nIHR_AUDIT_ANCHOR_LOCK_MODE=COMPLIANCE\nIHR_AUDIT_ANCHOR_BUCKET=%s\nIHR_AUDIT_ANCHOR_WRITE_KEY=%s\nIHR_AUDIT_ANCHOR_WRITE_SECRET=%s\n' \
@@ -2143,12 +2237,18 @@ s3_init() {  # SeaweedFS keys into secrets/, CARE's and the fingerprint keys int
 s3_tool() {  # s3_tool <script> <args>: a deploy/s3 script with the S3_* keys through the environment
   local script="$1" k v envs=()
   shift
-  for k in ADMIN CARE ANCHOR_WRITE ANCHOR_READ LOGS_ARCHIVE; do
+  for k in ADMIN $S3_CARE_IDS ANCHOR_WRITE ANCHOR_READ LOGS_ARCHIVE; do
     for v in KEY SECRET; do
       export "S3_${k}_${v}=$(sed -n "s/^IHR_S3_${k}_${v}=//p" "$SECRETS/s3-gateway.env")"
       envs+=(-e "S3_${k}_${v}")
     done
   done
+  if [[ -f "$SECRETS/s3-retired.env" ]]; then  # the retired combined key: s3-check proves it dead
+    for v in KEY SECRET; do
+      export "S3_RETIRED_CARE_${v}=$(sed -n "s/^IHR_S3_RETIRED_CARE_${v}=//p" "$SECRETS/s3-retired.env")"
+      envs+=(-e "S3_RETIRED_CARE_${v}")
+    done
+  fi
   compose --profile admin run --rm --no-deps -T "${envs[@]}" s3-tool "/ihr-s3/$script" \
     --endpoint http://s3:8333 --patient "$(env_get IHR_S3_PATIENT_BUCKET)" \
     --facility "$(env_get IHR_S3_FACILITY_BUCKET)" --anchor "$(env_get IHR_S3_ANCHOR_BUCKET)" "$@"
@@ -2164,8 +2264,124 @@ s3_archive_key() {  # the log archive's SeaweedFS key, for a stand-in set up bef
   mv "$SECRETS/s3-gateway.env.new" "$f"
 }
 
-s3_up() {  # SeaweedFS, then its buckets (idempotent)
+s3_split_care_key() {  # s3_split_care_key <secrets dir>: P1-T20b, once. A site set up before
+  # it has one CARE key for both buckets (identity ihr-care, BUCKET_KEY in app.env). Two new keys
+  # replace it; the old one leaves the gateway's file (the gateway forgets it when s3 is next
+  # recreated) and app.env, and is kept in s3-retired.env only so s3-check can prove it dead.
+  # Made where the secrets are kept: the deploying machine (s3-split-keys), or a local proof's
+  # own folder (up), never a server (S1/S2: deploy.sh would send the unsplit copy over it again).
+  # Idempotent, also after an interruption (each file is finished from the gateway's keys); prints
+  # file names only
+  local sec="$1" gw="$1/s3-gateway.env" app="$1/app.env" k fk pk changed=()
+  local SECRETS_TARGET="$sec"
+  [[ -f "$gw" && -f "$app" ]] || die "no $gw / $app: run scripts/staging.sh s3-init first"
+  hex() { python3 -c "import secrets;print(secrets.token_hex($1))"; }
+  if grep -q '^IHR_S3_CARE_KEY=' "$gw"; then
+    { echo "# The combined CARE key retired by P1-T20b (dead: s3-check proves it). Never commit."
+      sed -n 's/^IHR_S3_CARE_\(KEY\|SECRET\)=/IHR_S3_RETIRED_CARE_\1=/p' "$gw"; } | write_secret s3-retired.env.new
+    mv "$sec/s3-retired.env.new" "$sec/s3-retired.env"
+    changed+=(s3-retired.env)
+  fi
+  if grep -q '^IHR_S3_CARE_\(KEY\|SECRET\)=' "$gw" || ! grep -q '^IHR_S3_FILES_KEY=' "$gw" \
+      || ! grep -q '^IHR_S3_PICTURES_KEY=' "$gw"; then
+    { grep -v '^IHR_S3_CARE_\(KEY\|SECRET\)=' "$gw"
+      for k in $S3_CARE_IDS; do
+        grep -q "^IHR_S3_${k}_KEY=" "$gw" || printf 'IHR_S3_%s_KEY=ihr%s\nIHR_S3_%s_SECRET=%s\n' "$k" "$(hex 10)" "$k" "$(hex 20)"
+      done
+    } | write_secret s3-gateway.env.new
+    mv "$sec/s3-gateway.env.new" "$gw"
+    changed+=(s3-gateway.env)
+  fi
+  s3g() { sed -n "s/^IHR_S3_$1=//p" "$gw" | tail -1; }
+  fk="$(s3g FILES_KEY)" pk="$(s3g PICTURES_KEY)"
+  # app.env carries exactly the gateway's two keys (compared, never printed), and no BUCKET_KEY
+  if grep -Eq '^BUCKET_(KEY|SECRET)=' "$app" || ! grep -qxF "FILE_UPLOAD_KEY=$fk" "$app" \
+      || ! grep -qxF "FILE_UPLOAD_SECRET=$(s3g FILES_SECRET)" "$app" || ! grep -qxF "FACILITY_S3_KEY=$pk" "$app" \
+      || ! grep -qxF "FACILITY_S3_SECRET=$(s3g PICTURES_SECRET)" "$app"; then
+    { grep -Ev "^(BUCKET_KEY|BUCKET_SECRET|FILE_UPLOAD_KEY|FILE_UPLOAD_SECRET|FACILITY_S3_KEY|FACILITY_S3_SECRET)=" "$app" \
+        | grep -v '^# Patient files and pictures, one key each (P1-T20b' || true
+      s3_care_env "$fk" "$(s3g FILES_SECRET)" "$pk" "$(s3g PICTURES_SECRET)"
+    } | write_secret app.env.new
+    mv "$sec/app.env.new" "$app"
+    changed+=(app.env)
+  fi
+  if ((${#changed[@]})); then
+    echo "Object storage: CARE's key split into a patient files key and a pictures key (P1-T20b): wrote ${changed[*]} in $sec (mode 600)."
+  fi
+}
+
+s3_keys_problem() {  # s3_keys_problem <folder with .env and secrets/>: why CARE's storage keys are not
+  # P1-T20b's (one key for patient files, one for pictures; secure.py refuses anything else), or
+  # nothing. Role-based access (no keys) and a site without object storage have nothing to check
+  local d="$1" app="$1/secrets/app.env" gw="$1/secrets/s3-gateway.env"
+  if [[ "$(sed -n 's/^IHR_S3=//p' "$d/.env" 2>/dev/null | tail -1)" == local ]]; then
+    [[ -f "$gw" ]] || { echo "no secrets/s3-gateway.env (scripts/staging.sh s3-init)"; return 0; }
+    if grep -q '^IHR_S3_CARE_\(KEY\|SECRET\)=' "$gw"; then
+      echo "secrets/s3-gateway.env still holds the combined CARE key (IHR_S3_CARE_KEY)"; return 0
+    fi
+    if ! grep -q '^IHR_S3_FILES_KEY=' "$gw" || ! grep -q '^IHR_S3_PICTURES_KEY=' "$gw"; then
+      echo "secrets/s3-gateway.env lacks IHR_S3_FILES_KEY or IHR_S3_PICTURES_KEY"; return 0
+    fi
+  elif ! grep -q '^BUCKET_ENDPOINT=' "$app" 2>/dev/null; then
+    return 0
+  fi
+  grep -q '^BUCKET_PROVIDER=AWS_ROLE_BASED$' "$app" 2>/dev/null && return 0
+  if grep -Eq '^BUCKET_(KEY|SECRET)=' "$app" 2>/dev/null; then
+    echo "secrets/app.env still holds BUCKET_KEY / BUCKET_SECRET (one key for both buckets)"; return 0
+  fi
+  if ! grep -q '^FILE_UPLOAD_KEY=.' "$app" 2>/dev/null || ! grep -q '^FACILITY_S3_KEY=.' "$app" 2>/dev/null; then
+    echo "secrets/app.env lacks FILE_UPLOAD_KEY or FACILITY_S3_KEY"
+  fi
+}
+
+s3_need_split_keys() {  # s3_need_split_keys [folder]: refuses, before anything changes, CARE storage
+  # keys that are not P1-T20b's (S1: else the new build's migrate one-shot stops a release with
+  # every hospital held)
+  local d="${1:-$DIR}" why
+  why="$(s3_keys_problem "$d")"
+  [[ -n "$why" ]] || return 0
+  if [[ "$(sed -n 's/^IHR_S3=//p' "$d/.env" 2>/dev/null | tail -1)" == local ]]; then
+    die "$why: CARE needs one key for patient files and one for pictures (P1-T20b). On the deploying machine run IHR_STAGING_OUT=<the folder scripts/deploy.sh sends> scripts/staging.sh s3-split-keys, then deploy (scripts/deploy.sh sends them); deploy/staging/README.md, Object storage. Nothing was changed"
+  fi
+  die "$why: CARE needs FILE_UPLOAD_KEY/_SECRET (patient files bucket only) and FACILITY_S3_KEY/_SECRET (pictures bucket only), never BUCKET_KEY (P1-T20b; deploy/staging/README.md, Moving to a provider). Nothing was changed"
+}
+
+s3_split_keys_cmd() {  # s3-split-keys [--check]: CARE's split storage keys (P1-T20b) in $OUT, on the
+  # deploying machine like db-split-secrets (IHR_STAGING_OUT: elsewhere); --check only says
+  # whether they are split (scripts/deploy.sh runs it before sending anything)
+  [[ -f "$OUT/.env" && -d "$OUT/secrets" ]] || die "no $OUT/.env / secrets: run scripts/staging.sh init <suffix> first"
+  case "${1:-}" in
+    --check) s3_need_split_keys "$OUT"; return 0 ;;
+    "") ;;
+    *) die "usage: scripts/staging.sh s3-split-keys [--check]" ;;
+  esac
+  if [[ "$(sed -n 's/^IHR_S3=//p' "$OUT/.env" | tail -1)" != local ]]; then
+    s3_need_split_keys "$OUT"
+    echo "No SeaweedFS on this site (IHR_S3): nothing to split."
+    return 0
+  fi
+  local before after
+  before="$(cat "$OUT/secrets/s3-gateway.env" "$OUT/secrets/app.env" 2>/dev/null | sha256sum)"
+  s3_split_care_key "$OUT/secrets"
+  s3_need_split_keys "$OUT"
+  after="$(cat "$OUT/secrets/s3-gateway.env" "$OUT/secrets/app.env" | sha256sum)"
+  if [[ "$before" == "$after" ]]; then
+    echo "CARE's storage keys are split already: nothing changed."
+  else
+    echo "Next: scripts/deploy.sh --host ... (it sends them; the server's gateway forgets the old key when s3 is recreated, and scripts/staging.sh s3-check proves it dead)."
+  fi
+}
+
+s3_keys_current() {  # the gateway's key files as this start.sh needs them, before any start of s3
   s3_archive_key
+  # A local proof's folder is where its secrets are made: split there. A server never makes
+  # CARE's keys (S2): it refuses unsplit ones, which the deploying machine splits
+  [[ ! -f "$DIR/.local" ]] || s3_split_care_key "$SECRETS"
+  s3_need_split_keys
+}
+
+s3_up() {  # SeaweedFS, then its buckets (idempotent)
+  s3_keys_current
   compose up -d --wait s3
   s3_tool setup_buckets.py --lock-mode "$(env_get IHR_S3_LOCK_MODE)" --lock-days "$(env_get IHR_S3_LOCK_DAYS)" \
     --cors-origin "https://*.$(env_get IHR_TENANT_DOMAIN_SUFFIX)" \
@@ -3615,7 +3831,7 @@ case "${1:-}" in
   # exist yet): release and hold then run in the running backend too, as ihr (review C1)
   fleet)
     if [[ -n "$(compose ps -q backend 2>/dev/null || true)" ]] \
-      && { [[ "${2:-}" == window ]] || { [[ "${2:-}" =~ ^(release|hold)$ ]] && rel_db_single; }; }; then
+      && { [[ "${2:-}" == window ]] || { [[ "${2:-}" =~ ^(release|hold)$ ]] && { rel_db_single || rel_outgoing_unmigrated; }; }; }; then
       old_manage ihr_fleet_run "${@:2}"
     elif rel_db_single; then
       die "the database still has its single role ihr (the move has not run): only fleet window, release and hold run before it, in the running backend ($([[ -n "$(compose ps -q backend 2>/dev/null || true)" ]] && echo "it runs" || echo "none runs: $REL_SERVE_PREVIOUS <you> starts the build that ran"))"
@@ -3647,6 +3863,7 @@ case "${1:-}" in
   acme-proof) acme_proof "${@:2}" ;;
   acme-proof-run) acme_proof_run ;;
   s3-init) s3_init ;;
+  s3-split-keys) s3_split_keys_cmd "${@:2}" ;;
   backup-init) backup_init "${@:2}" ;;
   backup-status) backup_status ;;
   backup-now) compose exec -T backup pgbackrest --stanza=main --type="${2:-diff}" backup ;;
@@ -3692,5 +3909,5 @@ case "${1:-}" in
     admin_manage ihr_keycloak_sync --all >/dev/null
     smoke
     ;;
-  *) sed -n '5,77p' "$0"; exit 1 ;;
+  *) sed -n '5,82p' "$0"; exit 1 ;;
 esac

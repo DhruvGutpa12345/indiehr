@@ -31,6 +31,11 @@ GOOD_ENV = {
     "IHR_KEYCLOAK_SMTP_FROM": "no-reply@hospital-test.in",
     # Database roles (P1-T19b): IHR_DB_ROLES defaults to required in the deployment settings
     "IHR_DB_ROLE": "app",
+    # Each bucket its own key (P1-T20b)
+    "FILE_UPLOAD_KEY": "files-key",
+    "FILE_UPLOAD_SECRET": "files-pass",
+    "FACILITY_S3_KEY": "pics-key",
+    "FACILITY_S3_SECRET": "pics-pass",
 }
 GOOD_SETTINGS = {
     "DEBUG": False,
@@ -63,6 +68,16 @@ GOOD_SETTINGS = {
     },
     "IHR_DB_ROLES": "required",
     "IHR_DB_ROLE": "app",
+    "FACILITY_IMAGE_URL_FUNCTION": "ihr_platform.storage.facility_image_url",
+    "FACILITY_CDN": None,
+    "BUCKET_HAS_FINE_ACL": False,
+    "BUCKET_PROVIDER": "AWS",
+    "BUCKET_KEY": "",
+    "BUCKET_SECRET": "",
+    "FILE_UPLOAD_KEY": "files-key",
+    "FILE_UPLOAD_SECRET": "files-pass",
+    "FACILITY_S3_KEY": "pics-key",
+    "FACILITY_S3_SECRET": "pics-pass",
 }
 
 
@@ -150,6 +165,43 @@ class SecureRulesTests(SimpleTestCase):
         self.assertEqual(
             found, ["PATIENT_GLOBAL_EDIT_ACCESS_ENABLED must stay off (P1-T11a)."]
         )
+
+    def test_pictures_are_signed_and_each_bucket_has_its_own_key(self):
+        """P1-T20b (Q-T3): no unsigned picture address, no public-read upload, and the patient
+        files' key never doubles as the pictures key."""
+        cases = (
+            (
+                "FACILITY_CDN must stay unset",
+                {"FACILITY_CDN": "https://cdn.example.in"},
+            ),
+            ("BUCKET_HAS_FINE_ACL must stay off", {"BUCKET_HAS_FINE_ACL": True}),
+            (
+                "FACILITY_IMAGE_URL_FUNCTION must be",
+                {"FACILITY_IMAGE_URL_FUNCTION": None},
+            ),
+            ("must differ", {"FACILITY_S3_KEY": "files-key"}),
+            ("must differ", {"FACILITY_S3_SECRET": "files-pass"}),
+            ("must all be set", {"FILE_UPLOAD_KEY": ""}),
+            ("must all be set", {"FACILITY_S3_SECRET": None}),
+            ("BUCKET_KEY / BUCKET_SECRET must be unset", {"BUCKET_KEY": "old-key"}),
+        )
+        for expected, change in cases:
+            with self.subTest(change=change):
+                found = secure.problems(GOOD_SETTINGS | change, GOOD_ENV)
+                self.assertEqual(len(found), 1, found)
+                self.assertIn(expected, found[0])
+        # One key for both (CARE's default when only BUCKET_KEY is set) is refused
+        same = {"FILE_UPLOAD_KEY": "k1", "FACILITY_S3_KEY": "k1"}
+        self.assertTrue(secure.problems(GOOD_SETTINGS | same, GOOD_ENV))
+        # Role-based access: one role per process, separation by bucket and IAM policy
+        role = {
+            "BUCKET_PROVIDER": "AWS_ROLE_BASED",
+            "FILE_UPLOAD_KEY": "",
+            "FACILITY_S3_KEY": "",
+        }
+        self.assertEqual(secure.problems(GOOD_SETTINGS | role, GOOD_ENV), [])
+        found = secure.problems(GOOD_SETTINGS | role | {"FACILITY_CDN": "x"}, GOOD_ENV)
+        self.assertEqual(len(found), 1, found)
 
     def test_random_keys_are_never_called_placeholders(self):
         # Random keys contain words like "test" or "secret" by chance; only a key written

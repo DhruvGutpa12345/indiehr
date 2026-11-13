@@ -136,8 +136,52 @@ def problems(settings, environ):  # noqa: PLR0912 (one flat list of rules)
         found.append(
             "SENTRY_DSN must stay unset (no data leaves India; P1-T9 monitoring)."
         )
-    found += mail_problems(settings)
-    found += db_role_problems(settings)
+    found += (
+        mail_problems(settings)
+        + db_role_problems(settings)
+        + storage_problems(settings)
+    )
+    return found
+
+
+SIGNED_PICTURES_HOOK = "ihr_platform.storage.facility_image_url"
+
+
+def storage_problems(settings):
+    """Files and pictures (P1-T20b, owner answer Q-T3): no public pictures bucket, every picture
+    by a signed link, and each bucket its own key (a picture key cannot reach a patient file)."""
+    found = []
+    if settings.get("FACILITY_CDN"):
+        found.append(
+            "FACILITY_CDN must stay unset: picture links are signed (P1-T20b), a CDN's are not."
+        )
+    if settings.get("BUCKET_HAS_FINE_ACL"):
+        found.append(
+            "BUCKET_HAS_FINE_ACL must stay off: no picture is uploaded public-read (P1-T20b)."
+        )
+    if settings.get("FACILITY_IMAGE_URL_FUNCTION") != SIGNED_PICTURES_HOOK:
+        found.append(f"FACILITY_IMAGE_URL_FUNCTION must be {SIGNED_PICTURES_HOOK}.")
+    if settings.get("BUCKET_PROVIDER") == "AWS_ROLE_BASED":
+        # One role per process: the two buckets are kept apart by bucket and IAM policy (the
+        # provider module's job), not by two keys
+        return found
+    if settings.get("BUCKET_KEY") or settings.get("BUCKET_SECRET"):
+        found.append(
+            "BUCKET_KEY / BUCKET_SECRET must be unset: each bucket has its own key "
+            "(patient files: FILE_UPLOAD_KEY; pictures: FACILITY_S3_KEY; P1-T20b)."
+        )
+    files = (settings.get("FILE_UPLOAD_KEY"), settings.get("FILE_UPLOAD_SECRET"))
+    pictures = (settings.get("FACILITY_S3_KEY"), settings.get("FACILITY_S3_SECRET"))
+    if not all(files + pictures):
+        found.append(
+            "FILE_UPLOAD_KEY / _SECRET (patient files) and FACILITY_S3_KEY / _SECRET "
+            "(pictures) must all be set."
+        )
+    elif files[0] == pictures[0] or files[1] == pictures[1]:
+        found.append(
+            "FILE_UPLOAD_KEY and FACILITY_S3_KEY (and their secrets) must differ: the "
+            "pictures key must never reach patient files (P1-T20b)."
+        )
     return found
 
 

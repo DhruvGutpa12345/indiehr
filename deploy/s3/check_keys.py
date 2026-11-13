@@ -5,6 +5,10 @@ nothing more, and a locked fingerprint can be removed by nobody, the admin key i
         --patient patient-bucket --facility facility-bucket --anchor ihr-audit-anchors \
         [--public-endpoint https://files.app.example.in] [--origin https://alpha.app.example.in]
 
+Keys (environment): S3_ADMIN_*, S3_FILES_* (CARE's patient files), S3_PICTURES_* (CARE's staff
+photos and facility covers; P1-T20b), S3_ANCHOR_WRITE_*, S3_ANCHOR_READ_*, optional
+S3_LOGS_ARCHIVE_* and S3_RETIRED_CARE_* (the combined key P1-T20b retired: it must be dead).
+
 Writes small test objects: CARE's under ihr-key-check/ (removed again), one fingerprint-sized
 object under anchors/ihr-key-check/ in the anchor bucket, which stays until its retention ends
 (the fingerprint check reads only anchors/<platform suffix>/, so it never sees it).
@@ -64,6 +68,15 @@ def outcome(fn):
 REFUSALS = {"AccessDenied", "403", "418", "PreconditionFailed", "BucketNotEmpty", "SignatureDoesNotMatch"}
 
 
+def dead(name, got):
+    """A retired key: the gateway no longer knows it at all (not merely refuses one call)."""
+    global FAILS
+    good = got == "InvalidAccessKeyId"
+    print(f"{'PASS' if good else 'FAIL'}  {name} ({got})")
+    if not good:
+        FAILS += 1
+
+
 def check(name, want, got):
     global FAILS
     good = got == want if want == "ok" else got in REFUSALS
@@ -94,18 +107,43 @@ def main():
     global SSL
     if a.insecure:
         SSL = ssl._create_unverified_context()  # noqa: S323 (the certificate is checked elsewhere)
-    admin, care = client(a.endpoint, "ADMIN"), client(a.endpoint, "CARE")
+    admin = client(a.endpoint, "ADMIN")
+    files, pictures = client(a.endpoint, "FILES"), client(a.endpoint, "PICTURES")
     writer, reader = client(a.endpoint, "ANCHOR_WRITE"), client(a.endpoint, "ANCHOR_READ")
     run = uuid.uuid4().hex[:12]
 
-    print("== CARE's key: its two buckets only")
+    # One object in each of CARE's buckets, written by its own key, for the cross checks
     key = f"ihr-key-check/{run}.txt"
-    check("put in the patient bucket", "ok", outcome(lambda: care.put_object(Bucket=a.patient, Key=key, Body=b"x", ContentType="text/plain")))
-    check("read it back", "ok", outcome(lambda: care.get_object(Bucket=a.patient, Key=key)))
-    check("delete it", "ok", outcome(lambda: care.delete_object(Bucket=a.patient, Key=key)))
-    check("put in the fingerprint bucket", "denied", outcome(lambda: care.put_object(Bucket=a.anchor, Key=f"anchors/ihr-key-check/{run}", Body=b"x")))
-    check("list the fingerprint bucket", "denied", outcome(lambda: care.list_objects_v2(Bucket=a.anchor)))
-    check("create a bucket", "denied", outcome(lambda: care.create_bucket(Bucket=f"ihr-check-{run}")))
+    fkey = f"ihr-key-check/{run}.png"
+    print("== Patient files key (ihr-care-files): the patient bucket only")
+    check("put in the patient bucket", "ok", outcome(lambda: files.put_object(Bucket=a.patient, Key=key, Body=b"x", ContentType="text/plain")))
+    check("read it back", "ok", outcome(lambda: files.get_object(Bucket=a.patient, Key=key)))
+    print("== Pictures key (ihr-care-pictures): the pictures bucket only")
+    check("put in the pictures bucket", "ok", outcome(lambda: pictures.put_object(Bucket=a.facility, Key=fkey, Body=b"png", ContentType="image/png")))
+    check("read it back", "ok", outcome(lambda: pictures.get_object(Bucket=a.facility, Key=fkey)))
+    check("read a patient file", "denied", outcome(lambda: pictures.get_object(Bucket=a.patient, Key=key)))
+    check("put in the patient bucket", "denied", outcome(lambda: pictures.put_object(Bucket=a.patient, Key=f"ihr-key-check/{run}-evil", Body=b"x")))
+    check("delete a patient file", "denied", outcome(lambda: pictures.delete_object(Bucket=a.patient, Key=key)))
+    check("list the patient bucket", "denied", outcome(lambda: pictures.list_objects_v2(Bucket=a.patient)))
+    check("put in the fingerprint bucket", "denied", outcome(lambda: pictures.put_object(Bucket=a.anchor, Key=f"anchors/ihr-key-check/{run}-p", Body=b"x")))
+    check("create a bucket", "denied", outcome(lambda: pictures.create_bucket(Bucket=f"ihr-check-{run}-p")))
+    print("== Patient files key: never the pictures")
+    check("read a picture", "denied", outcome(lambda: files.get_object(Bucket=a.facility, Key=fkey)))
+    check("put in the pictures bucket", "denied", outcome(lambda: files.put_object(Bucket=a.facility, Key=f"ihr-key-check/{run}-evil.png", Body=b"x")))
+    check("delete a picture", "denied", outcome(lambda: files.delete_object(Bucket=a.facility, Key=fkey)))
+    check("list the pictures bucket", "denied", outcome(lambda: files.list_objects_v2(Bucket=a.facility)))
+    check("put in the fingerprint bucket", "denied", outcome(lambda: files.put_object(Bucket=a.anchor, Key=f"anchors/ihr-key-check/{run}", Body=b"x")))
+    check("list the fingerprint bucket", "denied", outcome(lambda: files.list_objects_v2(Bucket=a.anchor)))
+    check("create a bucket", "denied", outcome(lambda: files.create_bucket(Bucket=f"ihr-check-{run}")))
+    if os.environ.get("S3_RETIRED_CARE_KEY"):
+        print("== The retired combined key (ihr-care, before P1-T20b) is dead")
+        old = client(a.endpoint, "RETIRED_CARE")
+        dead("read a patient file", outcome(lambda: old.get_object(Bucket=a.patient, Key=key)))
+        dead("read a picture", outcome(lambda: old.get_object(Bucket=a.facility, Key=fkey)))
+        dead("put in the pictures bucket", outcome(lambda: old.put_object(Bucket=a.facility, Key=f"ihr-key-check/{run}-old.png", Body=b"x")))
+    else:
+        print("== No retired combined key on this machine (set up after P1-T20b): nothing to retire")
+    check("the patient files key deletes its file", "ok", outcome(lambda: files.delete_object(Bucket=a.patient, Key=key)))
 
     print("== Fingerprint writer: add only")
     akey = f"anchors/ihr-key-check/{run}.json"
@@ -171,19 +209,28 @@ def main():
     check("the fingerprint is still there", "ok", outcome(lambda: reader.get_object(Bucket=a.anchor, Key=akey, VersionId=vid)))
 
     pub = a.public_endpoint or a.endpoint
+
+    def signer(who):
+        """A client that signs links for the address browsers use"""
+        return boto3.client(
+            "s3", endpoint_url=pub, aws_access_key_id=os.environ[f"S3_{who}_KEY"],
+            aws_secret_access_key=os.environ[f"S3_{who}_SECRET"], region_name=os.environ.get("S3_REGION", "ap-south-1"),
+            config=Config(s3={"addressing_style": "path"}, signature_version="s3v4"),
+        )
+
     print(f"== Anonymous and browser access through {pub}")
-    fkey = f"ihr-key-check/{run}.png"
-    care.put_object(Bucket=a.facility, Key=fkey, Body=b"png", ContentType="image/png")
-    check("anyone reads a facility picture", "ok", outcome(lambda: http("GET", f"{pub}/{a.facility}/{fkey}")))
+    # Pictures (P1-T20b, Q-T3): a private bucket, read only with a signed link
+    check("anonymous cannot read a facility picture", "denied", outcome(lambda: http("GET", f"{pub}/{a.facility}/{fkey}")))
+    pic_url = signer("PICTURES").generate_presigned_url("get_object", Params={"Bucket": a.facility, "Key": fkey}, ExpiresIn=120)
+    check("a signed link reads it", "ok", outcome(lambda: http("GET", pic_url)))
+    check("a changed signed link is refused", "denied", outcome(lambda: http("GET", pic_url.replace(fkey, fkey + "x"))))
+    files_pic_url = signer("FILES").generate_presigned_url("get_object", Params={"Bucket": a.facility, "Key": fkey}, ExpiresIn=120)
+    check("a link signed with the patient files key is refused", "denied", outcome(lambda: http("GET", files_pic_url)))
     check("nobody lists the facility bucket", "denied", outcome(lambda: http("GET", f"{pub}/{a.facility}/")))
     check("nobody writes the facility bucket", "denied", outcome(lambda: http("PUT", f"{pub}/{a.facility}/{run}-evil", data=b"x")))
     check("nobody reads the fingerprint bucket", "denied", outcome(lambda: http("GET", f"{pub}/{a.anchor}/{akey}")))
-    care.delete_object(Bucket=a.facility, Key=fkey)
-    browser = boto3.client(
-        "s3", endpoint_url=pub, aws_access_key_id=os.environ["S3_CARE_KEY"],
-        aws_secret_access_key=os.environ["S3_CARE_SECRET"], region_name=os.environ.get("S3_REGION", "ap-south-1"),
-        config=Config(s3={"addressing_style": "path"}, signature_version="s3v4"),
-    )
+    check("the pictures key deletes its picture", "ok", outcome(lambda: pictures.delete_object(Bucket=a.facility, Key=fkey)))
+    browser = signer("FILES")
     pkey = f"ihr-key-check/{run}-upload.txt"
     put_url = browser.generate_presigned_url("put_object", Params={"Bucket": a.patient, "Key": pkey, "ContentType": "text/plain"}, ExpiresIn=120)
     check("upload with a presigned URL", "ok", outcome(lambda: http("PUT", put_url, data=b"hello", headers={"Content-Type": "text/plain"})))
@@ -191,11 +238,13 @@ def main():
     check("download with a presigned URL", "ok", outcome(lambda: http("GET", get_url)))
     check("a changed presigned URL is refused", "denied", outcome(lambda: http("GET", get_url.replace(pkey, pkey + "x"))))
     check("nobody reads that patient file without a signature", "denied", outcome(lambda: http("GET", f"{pub}/{a.patient}/{pkey}")))
+    pic_signed = signer("PICTURES").generate_presigned_url("get_object", Params={"Bucket": a.patient, "Key": pkey}, ExpiresIn=120)
+    check("a link signed with the pictures key cannot read it", "denied", outcome(lambda: http("GET", pic_signed)))
     if a.origin:
         pre = {"Origin": a.origin, "Access-Control-Request-Method": "PUT"}
         check(f"CORS allows {a.origin}", "ok", outcome(lambda: http("OPTIONS", f"{pub}/{a.patient}/{pkey}", headers=pre)))
         check("CORS refuses another site", "denied", outcome(lambda: http("OPTIONS", f"{pub}/{a.patient}/{pkey}", headers={**pre, "Origin": "https://evil.example.com"})))
-    care.delete_object(Bucket=a.patient, Key=pkey)
+    files.delete_object(Bucket=a.patient, Key=pkey)
     if a.size_limit:
         print("== Upload size limit (Traefik)")
         for mb, want in ((50, ("ok",)), (120, ("413", "reset"))):
@@ -205,7 +254,7 @@ def main():
             print(f"{'PASS' if got in want else 'FAIL'}  {mb} MB upload ({got}, want {' or '.join(want)})")
             if got not in want:
                 globals()["FAILS"] += 1
-            care.delete_object(Bucket=a.patient, Key=bkey)
+            files.delete_object(Bucket=a.patient, Key=bkey)
 
     print()
     print("All checks passed." if not FAILS else f"{FAILS} check(s) FAILED")

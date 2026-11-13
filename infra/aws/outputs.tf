@@ -24,13 +24,13 @@ output "buckets" {
   }
 }
 
-output "care_access_key_id" {
-  description = "BUCKET_KEY in secrets/app.env."
-  value       = aws_iam_access_key.care.id
+output "care_access_key_ids" {
+  description = "FILE_UPLOAD_KEY (files) and FACILITY_S3_KEY (facility) in secrets/app.env."
+  value       = { for k, key in aws_iam_access_key.care : k => key.id }
 }
 
-output "care_secret_access_key" {
-  description = "BUCKET_SECRET in secrets/app.env (tofu output -raw care_secret_access_key)."
-  value       = aws_iam_access_key.care.secret
+output "care_keys" {
+  description = "FILE_UPLOAD_KEY/_SECRET (files) and FACILITY_S3_KEY/_SECRET (facility) in secrets/app.env (tofu output -json care_keys)."
+  value       = { for k, key in aws_iam_access_key.care : k => { id = key.id, secret = key.secret } }
   sensitive   = true
 }

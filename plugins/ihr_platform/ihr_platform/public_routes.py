@@ -17,8 +17,8 @@ detail, DEBUG's format suffixes, and batch sub-requests.
 - Government organisations (anonymous address picker): government geography only; a team or
   role organisation answers 404.
 - The public facility finder (anonymous): without ``cover_image_url``, the duplicate field that
-  holds the cover's raw storage key. The key itself stays inside the unsigned
-  ``read_cover_image_url`` until P1-T20b signs it.
+  holds the cover's raw storage key; the cover is only ``read_cover_image_url``, a signed link
+  (P1-T20b, ``ihr_platform.storage.facility_image_url``), as is every doctor's photo here.
 """
 
 import datetime
@@ -322,7 +322,8 @@ class GovtOrganizationPublicViewSet(OrganizationPublicViewSet):
 class PublicFacilityReadSpec(FacilityMinimalReadSpec):
     def to_json(self):
         data = super().to_json()
-        # the cover's raw storage key (t/<hospital uuid>/...); read_cover_image_url stays
+        # the cover's raw storage key (t/<hospital uuid>/...); read_cover_image_url is the
+        # signed link (P1-T20b)
         data.pop("cover_image_url", None)
         return data
 

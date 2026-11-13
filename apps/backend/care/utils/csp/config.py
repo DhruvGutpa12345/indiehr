@@ -44,10 +44,10 @@ def get_facility_bucket_config(external) -> tuple[ClientConfig, BucketName]:
 
 
 def get_patient_bucket_config(external) -> tuple[ClientConfig, BucketName]:
-    params = {"region_name": settings.FACILITY_S3_REGION}
+    params = {"region_name": settings.FILE_UPLOAD_REGION}  # IndieHR: own key
     if CSProvider.AWS_ROLE_BASED.value != settings.BUCKET_PROVIDER:
-        params["aws_access_key_id"] = settings.FACILITY_S3_KEY
-        params["aws_secret_access_key"] = settings.FACILITY_S3_SECRET
+        params["aws_access_key_id"] = settings.FILE_UPLOAD_KEY
+        params["aws_secret_access_key"] = settings.FILE_UPLOAD_SECRET
         params["endpoint_url"] = (
             settings.FILE_UPLOAD_BUCKET_EXTERNAL_ENDPOINT
             if external
@@ -58,10 +58,10 @@ def get_patient_bucket_config(external) -> tuple[ClientConfig, BucketName]:
 
 def get_report_bucket_config(external) -> tuple[ClientConfig, BucketName]:
     """Get bucket configuration for reports - uses same bucket as patient files"""
-    params = {"region_name": settings.FACILITY_S3_REGION}
+    params = {"region_name": settings.FILE_UPLOAD_REGION}  # IndieHR: own key
     if CSProvider.AWS_ROLE_BASED.value != settings.BUCKET_PROVIDER:
-        params["aws_access_key_id"] = settings.FACILITY_S3_KEY
-        params["aws_secret_access_key"] = settings.FACILITY_S3_SECRET
+        params["aws_access_key_id"] = settings.FILE_UPLOAD_KEY
+        params["aws_secret_access_key"] = settings.FILE_UPLOAD_SECRET
         params["endpoint_url"] = (
             settings.FILE_UPLOAD_BUCKET_EXTERNAL_ENDPOINT
             if external

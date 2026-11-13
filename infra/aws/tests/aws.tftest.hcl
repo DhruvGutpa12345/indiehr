@@ -101,7 +101,7 @@ run "ubuntu_image_is_amd64_from_canonical" {
   }
 }
 
-run "care_buckets_private_except_facility_pictures" {
+run "care_buckets_private_pictures_too" {
   command = plan
 
   assert {
@@ -109,16 +109,12 @@ run "care_buckets_private_except_facility_pictures" {
     error_message = "no ACLs anywhere"
   }
   assert {
-    condition     = aws_s3_bucket_public_access_block.care["files"].block_public_policy && aws_s3_bucket_public_access_block.care["files"].restrict_public_buckets
-    error_message = "the patient files bucket can never be made public"
+    condition     = alltrue([for k, b in aws_s3_bucket_public_access_block.care : b.block_public_policy && b.restrict_public_buckets])
+    error_message = "neither CARE bucket can ever be made public, the pictures bucket included (P1-T20b)"
   }
   assert {
-    condition     = length(jsondecode(aws_s3_bucket_policy.care["files"].policy).Statement) == 1 && jsondecode(aws_s3_bucket_policy.care["files"].policy).Statement[0].Effect == "Deny"
-    error_message = "the files bucket policy only denies plain HTTP"
-  }
-  assert {
-    condition     = [for s in jsondecode(aws_s3_bucket_policy.care["facility"].policy).Statement : s.Action if s.Effect == "Allow"] == ["s3:GetObject"]
-    error_message = "the facility bucket allows anonymous GetObject only (no listing)"
+    condition     = alltrue([for k, p in aws_s3_bucket_policy.care : length(jsondecode(p.policy).Statement) == 1 && jsondecode(p.policy).Statement[0].Effect == "Deny"])
+    error_message = "each CARE bucket policy only denies plain HTTP (no public-read on the pictures)"
   }
   assert {
     condition     = alltrue([for k, p in aws_s3_bucket_policy.care : contains([for s in jsondecode(p.policy).Statement : s.Sid], "HttpsOnly")])
@@ -155,16 +151,24 @@ run "backups_in_hyderabad_and_private" {
   }
 }
 
-run "care_key_reaches_only_its_buckets_objects" {
+run "care_keys_one_per_bucket" {
   command = plan
 
   assert {
-    condition     = toset(flatten([for s in jsondecode(aws_iam_user_policy.care.policy).Statement : s.Action])) == toset(["s3:GetObject", "s3:PutObject", "s3:DeleteObject", "s3:ListBucket"])
-    error_message = "CARE's key: read, write, delete objects and list, nothing else"
+    condition     = toset(keys(aws_iam_user.care)) == toset(["files", "facility"]) && aws_iam_user.care["files"].name != aws_iam_user.care["facility"].name
+    error_message = "two keys: patient files and pictures (P1-T20b)"
   }
   assert {
-    condition     = alltrue([for r in flatten([for s in jsondecode(aws_iam_user_policy.care.policy).Statement : s.Resource]) : startswith(r, "arn:aws:s3:::indiehr-test-files") || startswith(r, "arn:aws:s3:::indiehr-test-facility")])
-    error_message = "only the two CARE buckets (never the backups)"
+    condition     = alltrue([for k, p in aws_iam_user_policy.care : toset(flatten([for s in jsondecode(p.policy).Statement : s.Action])) == toset(["s3:GetObject", "s3:PutObject", "s3:DeleteObject"])])
+    error_message = "each key: read, write and delete objects, nothing else (no listing)"
+  }
+  assert {
+    condition     = flatten([for s in jsondecode(aws_iam_user_policy.care["files"].policy).Statement : s.Resource]) == ["arn:aws:s3:::indiehr-test-files/*"]
+    error_message = "the files key reaches only the patient files bucket"
+  }
+  assert {
+    condition     = flatten([for s in jsondecode(aws_iam_user_policy.care["facility"].policy).Statement : s.Resource]) == ["arn:aws:s3:::indiehr-test-facility/*"]
+    error_message = "the pictures key reaches only the pictures bucket"
   }
 }
 

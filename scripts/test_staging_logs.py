@@ -470,8 +470,14 @@ class LogAlerts(unittest.TestCase):
         # the move also release and hold (review C1: ihr_owner does not exist yet, so the
         # migrate one-off cannot log in), in the running backend as release's own hold is
         self.assertEqual(case.count("ihr_fleet_run"), 2)
-        self.assertIn('&& { [[ "${2:-}" == window ]] || { [[ "${2:-}" =~ ^(release|hold)$ ]] && rel_db_single; }; }; then',
-                      case)
+        # ...and, after the move, while a release's migrations have not started and an outgoing
+        # build serves (its stage 1: the second fixer of P1-T20b): in a one-off of its image in
+        # the logged migrate container, as above
+        self.assertIn('&& { [[ "${2:-}" == window ]] || { [[ "${2:-}" =~ ^(release|hold)$ ]] '
+                      '&& { rel_db_single || rel_outgoing_unmigrated; }; }; }; then', case)
+        unmigrated = STAGING_SH.split("rel_outgoing_unmigrated() {", 1)[1].split("\n}\n", 1)[0]
+        self.assertIn('"$(attempt_get migrations)" != started', unmigrated)
+        self.assertIn('"$(running_backend_id 2>/dev/null)" != "$(image_id "$(env_get IHR_BACKEND_IMAGE)")"', unmigrated)
         self.assertIn('old_manage ihr_fleet_run "${@:2}"', case)
         self.assertIn('"$(db_roles_state 2>/dev/null || true)" == single', STAGING_SH.split("rel_db_single() {", 1)[1][:200])
         old = STAGING_SH.split("old_manage() {", 1)[1].split("\n}\n", 1)[0]

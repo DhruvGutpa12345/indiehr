@@ -10,15 +10,15 @@ staging: the backend image). Nothing here is IndieHR-specific Python: it needs n
 
 - patient bucket: private; CORS for the web app (uploads and downloads go straight from the
   browser with presigned URLs);
-- facility bucket: anyone may GET an object (hospital pictures, as upstream CARE expects),
-  nobody may list it anonymously; same CORS;
+- facility bucket (staff photos, facility covers): private too, no bucket policy (P1-T20b,
+  owner answer Q-T3): the web app gets 24-hour signed links (ihr_platform.storage); a public-read
+  policy left by an older setup is removed; same CORS;
 - anchor bucket: Object Lock (versioned), default retention <mode> for <days>. Created locked or
   refused: a bucket without a lock is never used. Weakening the retention of an existing bucket
   (mode or days) is refused; locks already on stored objects never change anyway.
 """
 
 import argparse
-import json
 import os
 import sys
 
@@ -83,21 +83,6 @@ def no_policy(s3, bucket):
     print(f"bucket {bucket}: private (no bucket policy)")
 
 
-def public_read(s3, bucket):
-    policy = {
-        "Version": "2012-10-17",
-        "Statement": [{
-            "Sid": "PublicReadObjectsOnly",
-            "Effect": "Allow",
-            "Principal": "*",
-            "Action": ["s3:GetObject"],
-            "Resource": [f"arn:aws:s3:::{bucket}/*"],
-        }],
-    }
-    s3.put_bucket_policy(Bucket=bucket, Policy=json.dumps(policy))
-    print(f"bucket {bucket}: objects readable by anyone, no anonymous listing")
-
-
 def anchor_bucket(s3, bucket, mode, days):
     if not exists(s3, bucket):
         s3.create_bucket(Bucket=bucket, ObjectLockEnabledForBucket=True)
@@ -150,7 +135,7 @@ def main():
         ensure_plain(s3, bucket)
         cors(s3, bucket, a.cors_origin)
     no_policy(s3, a.patient)
-    public_read(s3, a.facility)
+    no_policy(s3, a.facility)
     anchor_bucket(s3, a.anchor, a.lock_mode, a.lock_days)
     if a.backups:
         ensure_plain(s3, a.backups)

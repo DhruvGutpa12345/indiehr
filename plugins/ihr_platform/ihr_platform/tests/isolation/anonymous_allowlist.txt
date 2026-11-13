@@ -2,7 +2,7 @@
 # One route per line: "/" + the route regex exactly as Django lists it ("/" alone = site root).
 # Each needs a reason. The isolation suite fails on any anonymous 2xx not listed here
 # (fail-closed), so new upstream routes cannot become public unnoticed.
-# Reviewed 2026-11-06 (P1-T1b); the doctor list, organisations and facility finder again 2026-11-13 (P1-T20a). All are same-tenant only: none returns another tenant's data.
+# Reviewed 2026-11-06 (P1-T1b); the doctor list, organisations and facility finder again 2026-11-13 (P1-T20a); the finder's cover and the doctors' photos again 2026-11-14 (P1-T20b, signed links). All are same-tenant only: none returns another tenant's data.
 # FOLLOW-UP marks routes that stay public for now but need hardening (see TRACKER).
 
 /                                   # CARE's static landing template; no data
@@ -18,12 +18,12 @@
 /redoc/                             # as above, non-production only
 /api/v1/^plug_config/$              # frontend plugin list, needed before login. FOLLOW-UP: PlugConfig.meta must never hold secrets (admin-only writes)
 /api/v1/^plug_config/(?P<slug>[^/.]+)/$   # P1-T16a: one plugin's config, the detail of the list above; CARE gives GET no authentication (users/api/viewsets/plug_config.py). Same FOLLOW-UP: meta must never hold secrets. Open in every run since P1-T16b seeds a row (extras.py)
-/api/v1/^getallfacilities/$         # public facility finder (is_public=True only), used by the patient portal; P1-T20a: without the duplicate raw-key field cover_image_url (the key stays inside the unsigned read_cover_image_url until P1-T20b)
+/api/v1/^getallfacilities/$         # public facility finder (is_public=True only), used by the patient portal; P1-T20a: without the duplicate raw-key field cover_image_url; P1-T20b: read_cover_image_url is only a 24 h signed link to this hospital's own picture in the private pictures bucket, none for another hospital's key (test_picture_links_are_signed_for_this_hospital_only)
 /api/v1/^govt/organization/$        # geography picker for addresses: government organisations only since P1-T20a (public_routes.GovtOrganizationPublicViewSet; a team or role organisation is a 404)
 /api/v1/^govt/organization/(?P<external_id>[^/.]+)/$   # as above (P1-T20a: government only)
-/api/v1/^facility/(?P<facility_external_id>[^/.]+)/schedulable_users/$   # patient-portal doctor list, shown before any sign-in. P1-T20a: public facilities only, practitioners with a public schedule still valid, active staff, and only id, names, title and photo (public_routes.PublicSchedulableUsersViewSet)
+/api/v1/^facility/(?P<facility_external_id>[^/.]+)/schedulable_users/$   # patient-portal doctor list, shown before any sign-in. P1-T20a: public facilities only, practitioners with a public schedule still valid, active staff, and only id, names, title and photo (public_routes.PublicSchedulableUsersViewSet); P1-T20b: the photo is a 24 h signed link (this hospital's keys only)
 /api/v1/^facility/(?P<facility_external_id>[^/.]+)/schedulable_users/(?P<external_id>[^/.]+)/$   # P1-T20a: one doctor of the list above (same filter and fields; read by the booking page). Open in every run: extras.py gives the first user a public schedule
-/api/v1/^getallfacilities/(?P<external_id>[^/.]+)/$   # detail of a public facility (is_public=True only), patient portal; same fields as the list
+/api/v1/^getallfacilities/(?P<external_id>[^/.]+)/$   # detail of a public facility (is_public=True only), patient portal; same fields as the list (P1-T20b: the cover a signed link)
 /api/ihr/bootstrap/                 # P1-T2a: this hospital's branding for the login page (name, colour, logo URL); no GSTIN, address or staff data
 /api/ihr/bootstrap.js               # same branding as a same-origin script the web app loads before its own code
 /api/ihr/logo/                      # this hospital's logo (PNG/JPEG/WebP only, sniffed; CSP default-src 'none'); 404 when none is set

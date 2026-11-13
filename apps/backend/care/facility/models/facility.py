@@ -1,4 +1,3 @@
-from django.conf import settings
 from django.contrib.auth import get_user_model
 from django.contrib.postgres.fields import ArrayField
 from django.core.cache import cache
@@ -207,11 +206,10 @@ class Facility(BaseModel):
 
 
     def read_cover_image_url(self):
-        if self.cover_image_url:
-            if settings.FACILITY_CDN:
-                return f"{settings.FACILITY_CDN}/{self.cover_image_url}"
-            return f"{settings.FACILITY_S3_BUCKET_EXTERNAL_ENDPOINT}/{settings.FACILITY_S3_BUCKET}/{self.cover_image_url}"
-        return None
+        # IndieHR: the address from a settings hook (signed links)
+        from care.utils.file_uploads.cover_image import image_url
+
+        return image_url(self.cover_image_url)
 
     def __str__(self):
         return f"{self.name}"
