@@ -142,16 +142,18 @@ def problems(settings, environ):  # noqa: PLR0912 (one flat list of rules)
 
 
 def db_role_problems(settings):
-    """Separate database roles (P1-T19): never the tests' mode on a server; once required,
-    each container declares its role, a declared role is always checked (S10), and the web
-    app and the staff worker (they hold the backend's and the staff worker's client keys)
-    never declare the owner (S6, C9)."""
+    """Separate database roles (P1-T19): a server always runs them required (P1-T19b moved
+    staging's roles: off would leave the grants unmanaged and the role unchecked, test is
+    the tests' mode); each container declares its role, a declared role is always checked
+    (S10), and the web app and the staff worker (they hold the backend's and the staff
+    worker's client keys) never declare the owner (S6, C9)."""
     found = []
     roles = settings.get("IHR_DB_ROLES", "off")
     declared = settings.get("IHR_DB_ROLE", "")
-    if roles not in ("off", "required"):
+    if roles != "required":
         found.append(
-            "IHR_DB_ROLES must be off or required on a server (test is for tests)."
+            "IHR_DB_ROLES must be required on a server (P1-T19b: the database roles are "
+            "split; off and test are for development and tests)."
         )
     if roles == "required" and declared not in ("app", "owner"):
         found.append("IHR_DB_ROLE must be app or owner (the role this container uses).")

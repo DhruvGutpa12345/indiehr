@@ -29,6 +29,8 @@ GOOD_ENV = {
     "EMAIL_FROM": "IndieHR <no-reply@hospital-test.in>",
     "IHR_KEYCLOAK_SMTP_HOST": "smtp.mail-test.in",
     "IHR_KEYCLOAK_SMTP_FROM": "no-reply@hospital-test.in",
+    # Database roles (P1-T19b): IHR_DB_ROLES defaults to required in the deployment settings
+    "IHR_DB_ROLE": "app",
 }
 GOOD_SETTINGS = {
     "DEBUG": False,
@@ -59,6 +61,8 @@ GOOD_SETTINGS = {
         "from": "no-reply@hospital-test.in",
         "starttls": "true",
     },
+    "IHR_DB_ROLES": "required",
+    "IHR_DB_ROLE": "app",
 }
 
 
@@ -120,6 +124,9 @@ class SecureRulesTests(SimpleTestCase):
                 "DEFAULT_FROM_EMAIL": "Open Healthcare Network <ops@care.ohc.network>"
             },
             "IHR_KEYCLOAK_SMTP_HOST and _FROM": {"IHR_KEYCLOAK_SMTP": None},
+            # P1-T19b: the split database roles are always checked on a server
+            "IHR_DB_ROLES must be required on a server": {"IHR_DB_ROLES": "test"},
+            "IHR_DB_ROLE must be app or owner": {"IHR_DB_ROLE": ""},
             "Keycloak's mail server must use TLS": {
                 "IHR_KEYCLOAK_SMTP": {
                     "host": "smtp.mail-test.in",

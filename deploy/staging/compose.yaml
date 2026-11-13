@@ -2,6 +2,8 @@
 # Run through scripts/staging.sh, never directly. Files next to this one:
 #   .env                site settings for Compose itself (no secrets; staging.sh init writes it)
 #   secrets/*.env       one file per service, mode 600, git-ignored (staging.sh init writes them)
+#                       app.env holds the app role's database address (ihr_app), db-owner.env the
+#                       owner's (ihr_owner): only migrate, admin and the provisioner read it (P1-T19b)
 #   traefik/routes.yml  the public routes (a fixed file: Traefik never gets the Docker socket)
 #   compose.local.yaml  a proof run on this machine (self-signed certificate, 127.0.0.1)
 #   compose.acme.yaml   Let's Encrypt certificates on the VM (added in P1-T8b, with the DNS)
@@ -10,6 +12,10 @@
 # Each container gets only the secrets it uses: the web app never sees Keycloak's admin
 # credential, each worker only its own narrow Keycloak account (P1-T5f). They sign in to
 # Keycloak with a private key of their own (P1-T8d2), kept in a volume on this server only.
+# Database roles (P1-T19b): every app container declares the role it connects as (IHR_DB_ROLE)
+# and checks it before its process starts (manage.py ihr_db_role_check --for <process>): a
+# container given the wrong address or role exits with "ihr-db-role: refused ..." and
+# restart-loops visibly (the alert DatabaseRoleRefused).
 name: indiehr-staging
 
 x-logging: &logging
@@ -44,6 +50,10 @@ x-app: &app
     # No terminology server until P1-T10: never CARE's default third party over plain HTTP
     SNOWSTORM_DEPLOYMENT_URL: http://127.0.0.1:9/fhir
     GUNICORN_WORKERS: ${IHR_GUNICORN_WORKERS:-2}
+    # Separate database roles (P1-T19): always checked on a server; the app role unless a
+    # service below declares the owner (only migrate, admin and the provisioner may)
+    IHR_DB_ROLES: required
+    IHR_DB_ROLE: app
   # internal: database and Redis; edge: Keycloak, and the way out (S3, mail)
   networks: [internal, edge]
   depends_on:
@@ -210,14 +220,24 @@ services:
   # error; one hospital's failed role sync is held and alerted on (deploy/logs/alerts/
   # fleet.yml), and a failed pack apply recorded and alerted on (packs.yml), but neither stops
   # the start.
+  # It runs as the owner (secrets/db-owner.env), and checks the roles first (attributes,
+  # memberships, stored settings, the database's grants: review C6); its post_migrate converges
+  # the app role's grants on the platform's schema.
   migrate:
     <<: *app
     restart: "no"
+    env_file:
+      - secrets/app.env
+      - secrets/db-owner.env
+    environment:
+      <<: *app-env
+      IHR_DB_ROLE: owner
     command:
       - bash
       - -c
       - >-
-        python manage.py migrate_schemas --shared --noinput
+        python manage.py ihr_db_role_check --for migrate
+        && python manage.py migrate_schemas --shared --noinput
         && python manage.py ihr_create_tenant --public --domain localhost
         --domain console.${IHR_TENANT_DOMAIN_SUFFIX} --domain backend
         && python manage.py ihr_fleet_run check roles packs --record --startup
@@ -231,10 +251,18 @@ services:
 
   # One-off commands (scripts/staging.sh manage, and the Keycloak set-up). Never logged: the
   # Keycloak set-up holds the bootstrap credential, and logs are kept 180/400 days (P1-T9c).
+  # As the owner (the terminology loader, ihr_create_tenant, ihr_operator write what the app may
+  # only read).
   admin:
     <<: *app
     profiles: ["admin"]
     restart: "no"
+    env_file:
+      - secrets/app.env
+      - secrets/db-owner.env
+    environment:
+      <<: *app-env
+      IHR_DB_ROLE: owner
     logging:
       driver: none
     # The public keys the sync writes to Keycloak's clients (P1-T8d2); never a private key
@@ -302,6 +330,7 @@ services:
       - -c
       - >-
         printf api > /tmp/container-role
+        && python manage.py ihr_db_role_check --for backend
         && python manage.py collectstatic --noinput -v 0
         && python manage.py compilemessages -v 0
         && exec gunicorn --config python:config.gunicorn config.wsgi:application
@@ -320,7 +349,7 @@ services:
     command:
       - bash
       - -c
-      - printf celery-worker > /tmp/container-role && exec celery --app=config.celery_app worker --max-tasks-per-child=50 --loglevel=info --concurrency=${IHR_CELERY_CONCURRENCY:-2}
+      - printf celery-worker > /tmp/container-role && python manage.py ihr_db_role_check --for celery-worker && exec celery --app=config.celery_app worker --max-tasks-per-child=50 --loglevel=info --concurrency=${IHR_CELERY_CONCURRENCY:-2}
     mem_limit: ${IHR_CELERY_MEMORY:-768m}
 
   celery-beat:
@@ -328,21 +357,27 @@ services:
     command:
       - bash
       - -c
-      - printf celery-beat > /tmp/container-role && touch /tmp/healthy && exec celery --app=config.celery_app beat --loglevel=info --schedule=/tmp/celerybeat-schedule
+      - printf celery-beat > /tmp/container-role && python manage.py ihr_db_role_check --for celery-beat && touch /tmp/healthy && exec celery --app=config.celery_app beat --loglevel=info --schedule=/tmp/celerybeat-schedule
     mem_limit: 384m
 
   # The two Keycloak workers (P1-T5b/f), each with only its own narrow service account, which
-  # it signs in to with its own key (P1-T8d2): no Keycloak secret in any env file.
+  # it signs in to with its own key (P1-T8d2): no Keycloak secret in any env file. The
+  # provisioner makes and migrates hospital schemas: the owner (an internal worker with no
+  # route from the internet; the web app only queues its work, Q-K30).
   provisioner:
     <<: *app
+    env_file:
+      - secrets/app.env
+      - secrets/db-owner.env
     environment:
       <<: *app-env
       IHR_CLIENT_KEY_PURPOSE: onboarding
+      IHR_DB_ROLE: owner
     volumes:
       - clientkey-onboarding:/run/ihr-keys:ro
       # The web app's public keys, for the client of each new hospital it creates
       - ./generated/client-keys:/run/ihr-jwks:ro
-    command: ["python", "manage.py", "ihr_provision_worker", "--role", "onboarding"]
+    command: ["bash", "-c", "python manage.py ihr_db_role_check --for provisioner && exec python manage.py ihr_provision_worker --role onboarding"]
     healthcheck:
       disable: true
     mem_limit: 384m
@@ -354,7 +389,7 @@ services:
       IHR_CLIENT_KEY_PURPOSE: staff
     volumes:
       - clientkey-staff:/run/ihr-keys:ro
-    command: ["python", "manage.py", "ihr_provision_worker", "--role", "staff"]
+    command: ["bash", "-c", "python manage.py ihr_db_role_check --for staff-worker && exec python manage.py ihr_provision_worker --role staff"]
     healthcheck:
       disable: true
     mem_limit: 320m

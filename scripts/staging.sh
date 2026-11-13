@@ -19,6 +19,22 @@
 #                                                restore point of the one left; loses later writes)
 #   scripts/staging.sh releases                  the logged releases in force, newest last
 #   scripts/staging.sh ps | logs [service] | down
+#   scripts/staging.sh db-split-secrets          the split database roles' secrets (P1-T19b): a new
+#                                                owner password (secrets/db-owner.env) and an app one
+#                                                (secrets/app.env); on the deploying machine, once
+#   scripts/staging.sh db-roles --migrate [--operator NAME]
+#                                                move a restored database of the single role ihr to
+#                                                ihr_owner + ihr_app: stopped stack, build released
+#                                                last (on a running server, release moves them)
+#   scripts/staging.sh db-roles --serve-previous [--operator NAME]
+#                                                a release stopped before the move: start the build
+#                                                that ran again, lift the holds, clear the window
+#   scripts/staging.sh start-existing <service>...
+#                                                the existing (stopped) containers of app services
+#                                                started again as they were (never recreated)
+#   scripts/staging.sh db-roles --assert | --status
+#                                                re-assert both roles' passwords and settings as
+#                                                postgres (every up does) | where the roles stand
 #   scripts/staging.sh keys ensure | status      the signing keys Keycloak knows the backend and
 #                                                workers by (P1-T8d2; made here, never copied)
 #   scripts/staging.sh keys rotate <backend|onboarding|staff|all> [--compromised]
@@ -185,17 +201,23 @@ init() {
     fi
   } > "$work/.env"
 
-  local pg ihr kc redis_pw admin_pw admin_secret jwks
+  local pg owner app kc redis_pw admin_pw admin_secret jwks
   local SECRETS_TARGET="$work/secrets"
-  pg="$(rand 32)"; ihr="$(rand 32)"; kc="$(rand 32)"; redis_pw="$(rand 32)"
+  pg="$(rand 32)"; owner="$(rand 32)"; app="$(rand 32)"; kc="$(rand 32)"; redis_pw="$(rand 32)"
   admin_pw="$(rand 24)"; admin_secret="$(rand 32)"
   # --log-driver none: the private key must not reach the host's journal
   jwks="$(docker run --rm --log-driver none --network none --entrypoint python "$backend_image" -c \
     'from care.utils.jwks.generate_jwk import generate_encoded_jwks; print(generate_encoded_jwks())')"
+  # The database's two roles (P1-T19b): ihr_owner (schema changes: migrate, admin, the
+  # provisioner) and ihr_app (everything else). Their passwords live only in these addresses;
+  # staging.sh up gives them to Postgres (db_roles_apply), never through db.env
   write_secret db.env <<EOF
 POSTGRES_PASSWORD=$pg
-IHR_DB_PASSWORD=$ihr
 KC_DB_PASSWORD=$kc
+EOF
+  write_secret db-owner.env <<EOF
+# The owner's address (P1-T19b): only migrate, admin and the provisioner read this file
+DATABASE_URL=postgres://ihr_owner:$owner@db:5432/ihr
 EOF
   write_secret redis.env <<EOF
 REDIS_PASSWORD=$redis_pw
@@ -203,7 +225,7 @@ EOF
   write_secret app.env <<EOF
 DJANGO_SECRET_KEY=$(rand 64)
 JWKS_BASE64=$jwks
-DATABASE_URL=postgres://ihr:$ihr@db:5432/ihr
+DATABASE_URL=postgres://ihr_app:$app@db:5432/ihr
 REDIS_URL=redis://:$redis_pw@redis:6379/0
 # Object storage (S3 in ap-south-1; P1-T8b fills these in on the VM)
 FILE_UPLOAD_BUCKET=ihr-staging-files
@@ -263,17 +285,422 @@ key_log() {  # kid and time only; kept in the log store 180 days and the archive
   logger -t indiehr/keys -- "$* ($(date -Iseconds))" || echo "warning: could not write to the journal" >&2
 }
 
+# ---- Database roles (P1-T19b; docs/reviews/p1-t19/design.md, ihr_platform/db_roles.py) ---------
+# Two roles serve the database ihr: ihr_owner owns it and everything in it (the migrate one-shot,
+# admin one-offs, the provisioner: secrets/db-owner.env) and ihr_app serves every request and
+# worker (secrets/app.env), with no right to change a schema, an audit trigger or a grant. The
+# passwords live only in those two addresses, made on the deploying machine (db-split-secrets);
+# every up hands them to Postgres as postgres (db_roles_apply). A database of the previous
+# layout (one role, ihr, owning everything) is moved once, under a full stop: db-roles --migrate,
+# or inside `release`.
+DB_APP_URL_RE='^DATABASE_URL=postgres://ihr_app:([A-Za-z0-9_-]{32,})@db:5432/ihr$'
+DB_OWNER_URL_RE='^DATABASE_URL=postgres://ihr_owner:([A-Za-z0-9_-]{32,})@db:5432/ihr$'
+DB_APP_SERVICES=(backend frontend celery-worker celery-beat provisioner staff-worker)
+db_password() {  # db_password <app|owner> [secrets dir]: that role's password from its address; nothing if absent
+  local f re line
+  case "$1" in
+    app) f=app.env re="$DB_APP_URL_RE" ;;
+    owner) f=db-owner.env re="$DB_OWNER_URL_RE" ;;
+    *) die "db_password: app or owner" ;;
+  esac
+  line="$(grep '^DATABASE_URL=' "${2:-$SECRETS}/$f" 2>/dev/null | tail -1 || true)"
+  if [[ "$line" =~ $re ]]; then echo "${BASH_REMATCH[1]}"; fi
+}
+db_secrets_split() {  # db_secrets_split [secrets dir]: both addresses are the split roles'
+  [[ -n "$(db_password app "${1:-}")" && -n "$(db_password owner "${1:-}")" ]]
+}
+db_need_split_secrets() {
+  db_secrets_split || die "secrets/app.env and secrets/db-owner.env do not hold the split database roles' addresses (P1-T19b): run scripts/staging.sh db-split-secrets on the deploying machine and send them (scripts/deploy.sh); deploy/staging/README.md, Moving to split roles"
+}
+scram() {  # scram < password: its SCRAM-SHA-256 verifier, made here: the password itself never
+  # reaches Postgres, its logs or pg_stat_activity (password_encryption is scram-sha-256)
+  # shellcheck disable=SC2016 # Python: its f-string, not the shell's
+  python3 -c '
+import base64, hashlib, hmac, os, sys
+pw = sys.stdin.readline().rstrip("\n").encode()
+salt, rounds = os.urandom(16), 4096
+salted = hashlib.pbkdf2_hmac("sha256", pw, salt, rounds)
+client = hmac.new(salted, b"Client Key", "sha256").digest()
+server = hmac.new(salted, b"Server Key", "sha256").digest()
+b64 = lambda b: base64.b64encode(b).decode()
+print(f"SCRAM-SHA-256${rounds}:{b64(salt)}${b64(hashlib.sha256(client).digest())}:{b64(server)}")'
+}
+pg_su() {  # pg_su <psql args>: psql as postgres in this stack's database container, or in the
+  # container PG_TARGET names (the restore drill's copy); SQL on stdin, never a command line
+  if [[ -n "${PG_TARGET:-}" ]]; then
+    docker exec -i "$PG_TARGET" psql -U postgres -v ON_ERROR_STOP=1 "$@"
+  else
+    compose exec -T db psql -U postgres -v ON_ERROR_STOP=1 "$@"
+  fi
+}
+DB_STATE_SQL="SELECT CASE WHEN EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'ihr_owner') THEN 'split' WHEN EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'ihr') THEN 'single' ELSE 'none' END"
+db_roles_state() {  # split (ihr_owner exists), single (the previous layout: ihr), none; or fail
+  local out
+  out="$(pg_su -d postgres -Atc "$DB_STATE_SQL")" || return 1
+  [[ "$out" =~ ^(split|single|none)$ ]] || return 1
+  echo "$out"
+}
+# The move itself, as postgres: ihr becomes ihr_owner and keeps owning the database and every
+# object in it (an object's owner is the role's id; SCRAM verifiers survive a rename, and both
+# roles get new passwords below anyway). Anything still logged in as ihr is ended first.
+# shellcheck disable=SC2016 # SQL: $$ is PL/pgSQL's quoting, never the shell's
+DB_ROLES_MOVE_SQL='DO $$
+BEGIN
+  IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = '"'ihr_owner'"') THEN
+    RAISE EXCEPTION '"'role ihr_owner exists already: the roles were moved'"';
+  END IF;
+  IF NOT EXISTS (SELECT 1 FROM pg_database d JOIN pg_roles r ON r.oid = d.datdba
+                 WHERE d.datname = '"'ihr'"' AND r.rolname = '"'ihr'"') THEN
+    RAISE EXCEPTION '"'the database ihr is not owned by the role ihr: not the previous layout'"';
+  END IF;
+END $$;
+SELECT count(pg_terminate_backend(pid)) FROM pg_stat_activity WHERE usename = '"'ihr'"';
+ALTER ROLE ihr RENAME TO ihr_owner;'
+# Every role of the model as ihr_platform/db_roles.py has it (ROLES), re-asserted at every up:
+# made if missing; attributes (no SUPERUSER, CREATEDB, CREATEROLE, REPLICATION, BYPASSRLS; the app
+# NOINHERIT); the passwords (verifiers in :vo and :va); no stored settings anywhere, in any
+# database (a role may ALTER ROLE itself, also IN DATABASE another database: design.md, known
+# limit 1); no membership but the dump role's
+# pg_read_all_data, and nobody a member of ours; large objects closed to PUBLIC (known limit 3).
+# The watch and dump roles have no login until their services exist (P1-T21, P1-T22). Grants are
+# not here: ensure_grants (the migrate one-shot, as the owner) converges them.
+# shellcheck disable=SC2016
+DB_ROLES_SQL='DO $$
+BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = '"'ihr_owner'"') THEN
+    RAISE EXCEPTION '"'role ihr_owner does not exist: the database still has its single role (scripts/staging.sh db-roles --migrate)'"';
+  END IF;
+  IF NOT EXISTS (SELECT 1 FROM pg_database d JOIN pg_roles r ON r.oid = d.datdba
+                 WHERE d.datname = '"'ihr'"' AND r.rolname = '"'ihr_owner'"') THEN
+    RAISE EXCEPTION '"'the database ihr is not owned by ihr_owner'"';
+  END IF;
+  IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = '"'ihr_app'"') THEN CREATE ROLE ihr_app; END IF;
+  IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = '"'ihr_audit_watch'"') THEN CREATE ROLE ihr_audit_watch; END IF;
+  IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = '"'ihr_dump'"') THEN CREATE ROLE ihr_dump; END IF;
+END $$;
+ALTER ROLE ihr_owner WITH LOGIN INHERIT NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS PASSWORD :'"'vo'"';
+ALTER ROLE ihr_app WITH LOGIN NOINHERIT NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS PASSWORD :'"'va'"';
+ALTER ROLE ihr_audit_watch WITH NOLOGIN NOINHERIT NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS PASSWORD NULL;
+ALTER ROLE ihr_dump WITH NOLOGIN INHERIT NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS PASSWORD NULL;
+DO $$
+DECLARE s record;
+BEGIN
+  -- Every stored setting of our roles, in every database: a role may ALTER ROLE itself IN
+  -- DATABASE any database (postgres, template1, keycloak), even one it cannot connect to, and
+  -- the run-time check refuses a row in any of them (review S1/C3)
+  FOR s IN
+    SELECT r.rolname, d.datname
+    FROM pg_db_role_setting x
+    JOIN pg_roles r ON r.oid = x.setrole
+    LEFT JOIN pg_database d ON d.oid = x.setdatabase
+    WHERE r.rolname IN ('"'ihr_owner', 'ihr_app', 'ihr_audit_watch', 'ihr_dump'"')
+  LOOP
+    IF s.datname IS NULL THEN
+      EXECUTE format('"'ALTER ROLE %I RESET ALL'"', s.rolname);
+    ELSE
+      EXECUTE format('"'ALTER ROLE %I IN DATABASE %I RESET ALL'"', s.rolname, s.datname);
+    END IF;
+  END LOOP;
+  IF EXISTS (SELECT 1 FROM pg_db_role_setting x JOIN pg_roles r ON r.oid = x.setrole
+             WHERE r.rolname IN ('"'ihr_owner', 'ihr_app', 'ihr_audit_watch', 'ihr_dump'"')) THEN
+    RAISE EXCEPTION '"'stored settings of the database roles are left after the reset'"';
+  END IF;
+END $$;
+DO $$
+DECLARE m record;
+BEGIN
+  FOR m IN
+    SELECT g.rolname AS grp, r.rolname AS member, w.rolname AS grantor
+    FROM pg_auth_members a
+    JOIN pg_roles g ON g.oid = a.roleid
+    JOIN pg_roles r ON r.oid = a.member
+    JOIN pg_roles w ON w.oid = a.grantor
+    WHERE (r.rolname IN ('"'ihr_owner', 'ihr_app', 'ihr_audit_watch', 'ihr_dump'"')
+           AND NOT (r.rolname = '"'ihr_dump'"' AND g.rolname = '"'pg_read_all_data'"'))
+       OR g.rolname IN ('"'ihr_owner', 'ihr_app', 'ihr_audit_watch', 'ihr_dump'"')
+  LOOP
+    EXECUTE format('"'REVOKE %I FROM %I GRANTED BY %I CASCADE'"', m.grp, m.member, m.grantor);
+  END LOOP;
+  IF NOT pg_has_role('"'ihr_dump', 'pg_read_all_data', 'MEMBER'"') THEN
+    GRANT pg_read_all_data TO ihr_dump;
+  END IF;
+END $$;
+REVOKE EXECUTE ON FUNCTION lo_create(oid), lo_creat(integer), lo_from_bytea(oid, bytea),
+  lo_import(text), lo_import(text, oid) FROM PUBLIC;'
+db_roles_apply() {  # db_roles_apply [--move]: (the move, then) the roles re-asserted, as postgres,
+  # in one transaction; the passwords from the secrets as SCRAM verifiers, on stdin. In the
+  # database ihr: roles are the cluster's, but a function's privileges are each database's own
+  # (the large-object revoke must be ihr's)
+  local owner app vo va
+  owner="$(db_password owner)"; app="$(db_password app)"
+  [[ -n "$owner" && -n "$app" ]] || db_need_split_secrets
+  vo="$(scram <<< "$owner")"; va="$(scram <<< "$app")"
+  [[ "$vo" =~ ^SCRAM-SHA-256\$4096:[A-Za-z0-9+/=]+\$[A-Za-z0-9+/=]+:[A-Za-z0-9+/=]+$ && "$va" =~ ^SCRAM-SHA-256\$ ]] \
+    || die "could not make the password verifiers"
+  { printf '\\set vo %s\n\\set va %s\n' "'$vo'" "'$va'"
+    [[ "${1:-}" != --move ]] || printf '%s\n' "$DB_ROLES_MOVE_SQL"
+    printf '%s\n' "$DB_ROLES_SQL"
+  } | pg_su -1 -q -d ihr >/dev/null
+}
+db_split_secrets() {  # db-split-secrets: the split roles' secrets (P1-T19b), on the deploying
+  # machine as s3-init (IHR_STAGING_OUT: elsewhere): a NEW owner password, never the old shared
+  # one (secrets/db-owner.env: the owner's address, which only migrate, admin and the provisioner
+  # read), an app password (secrets/app.env's DATABASE_URL), and the old IHR_DB_PASSWORD out of
+  # secrets/db.env. Idempotent: a secret already made is kept, never replaced; after an
+  # interruption run it again. Nothing is printed but file names.
+  local sec="$OUT/secrets" owner app line tmp changed=()
+  [[ -f "$OUT/.env" && -d "$sec" ]] || die "no $OUT/.env / secrets: run scripts/staging.sh init <suffix> first"
+  local SECRETS_TARGET="$sec"
+  owner="$(db_password owner "$sec")"; app="$(db_password app "$sec")"
+  if [[ -z "$app" ]]; then
+    line="$(grep '^DATABASE_URL=' "$sec/app.env" 2>/dev/null | tail -1 || true)"
+    [[ "$line" =~ ^DATABASE_URL=postgres://ihr:[A-Za-z0-9_-]+@db:5432/ihr$ ]] \
+      || die "secrets/app.env's DATABASE_URL is neither the single role's address nor the app role's: nothing changed (look at it)"
+  fi
+  if [[ -z "$owner" && -e "$sec/db-owner.env" ]]; then
+    die "secrets/db-owner.env exists but holds no owner address: nothing changed (look at it; a secret is never replaced silently)"
+  fi
+  if [[ -z "$owner" ]]; then
+    owner="$(rand 32)"
+    printf '# The owner'"'"'s address (P1-T19b): only migrate, admin and the provisioner read this file\nDATABASE_URL=postgres://ihr_owner:%s@db:5432/ihr\n' "$owner" \
+      | write_secret db-owner.env.new
+    mv "$sec/db-owner.env.new" "$sec/db-owner.env"
+    changed+=(secrets/db-owner.env)
+  fi
+  if [[ -z "$app" ]]; then
+    app="$(rand 32)"
+    tmp="$(grep -v '^DATABASE_URL=' "$sec/app.env"
+      echo "DATABASE_URL=postgres://ihr_app:$app@db:5432/ihr")"
+    printf '%s\n' "$tmp" | write_secret app.env.new
+    mv "$sec/app.env.new" "$sec/app.env"
+    changed+=(secrets/app.env)
+  fi
+  if grep -q '^IHR_DB_PASSWORD=' "$sec/db.env" 2>/dev/null; then
+    tmp="$(grep -v '^IHR_DB_PASSWORD=' "$sec/db.env")"
+    printf '%s\n' "$tmp" | write_secret db.env.new
+    mv "$sec/db.env.new" "$sec/db.env"
+    changed+=("secrets/db.env (the old shared password removed)")
+  fi
+  if ((${#changed[@]} == 0)); then
+    echo "The database roles' secrets are split already: nothing changed."
+    return 0
+  fi
+  echo "Wrote ${changed[*]} in $OUT (mode 600)."
+  echo "Put the owner's password into your password manager: it is the password in secrets/db-owner.env's DATABASE_URL (not printed here)."
+  echo "Next: scripts/deploy.sh --host ... --release (the release moves the roles under a full stop)."
+}
+outgoing_database_url() {  # the running backend's own database address (its container's settings)
+  local cid
+  cid="$(compose ps -q backend 2>/dev/null || true)"
+  [[ -n "$cid" ]] || return 1
+  docker inspect -f '{{range .Config.Env}}{{println .}}{{end}}' "$cid" | sed -n 's/^DATABASE_URL=//p' | tail -1
+}
+backend_runs_as_app() {  # the running backend runs as ihr_app (a build after the move)
+  local cid
+  cid="$(compose ps -q backend 2>/dev/null || true)"
+  [[ -n "$cid" ]] && docker inspect -f '{{range .Config.Env}}{{println .}}{{end}}' "$cid" | grep -qx 'IHR_DB_ROLE=app'
+}
+db_roles_move_stopped() {  # the move with every app container stopped (release, db-roles --migrate):
+  # the database container recreated if its settings changed (db.env lost IHR_DB_PASSWORD), then
+  # the rename and the re-assertion in one transaction. Prints how long it took.
+  local t
+  echo "== Stopping every app container: ${DB_APP_SERVICES[*]}"
+  compose stop "${DB_APP_SERVICES[@]}"
+  compose up -d --wait db redis
+  t=$SECONDS
+  echo "== Moving the database roles: ihr -> ihr_owner (new password), ihr_app, ihr_audit_watch, ihr_dump; settings reset; large objects closed"
+  db_roles_apply --move
+  echo "moved in $((SECONDS - t)) s"
+}
+# The EXIT trap of db-roles --migrate (globals). It runs only on a stopped stack (review C2):
+# nothing is held by it, so before the move nothing is to undo; the move is one transaction
+DB_MOVE_STAGE="" DB_MOVE_OP=""
+db_move_exit() {
+  local rc="$1"
+  ((rc != 0)) || return 0
+  case "$DB_MOVE_STAGE" in
+    moved) echo "DB-ROLES --migrate STOPPED (exit $rc) AFTER THE MOVE: the roles are split; the app containers are stopped. Finish: scripts/staging.sh fleet migrate --operator $DB_MOVE_OP (the grants; it also lifts the holds of every hospital it finishes), then scripts/staging.sh up" >&2 ;;
+    *) echo "DB-ROLES --migrate STOPPED (exit $rc) BEFORE THE MOVE: the roles are unchanged (the move is one transaction). Fix the cause (above) and run scripts/staging.sh db-roles --migrate again" >&2 ;;
+  esac
+}
+rel_logged_backend() {  # rel_logged_backend <tag>: the backend image id of that tag's newest
+  # logged release line (releases.log), or nothing
+  [[ -f "$REL_LOG" ]] || return 0
+  awk -v t="tag=$1" '{ k = 0; g = 0; b = ""
+    for (i = 1; i <= NF; i++) { if ($i == "kind=release") k = 1; if ($i == t) g = 1; if ($i ~ /^backend=/) b = substr($i, 9) }
+    if (k && g) last = b } END { if (last != "") print last }' "$REL_LOG"
+}
+existing_containers() {  # existing_containers <service>: the ids of that service's own containers,
+  # running or stopped, one per line (never a one-off left by compose run); fails if Compose or
+  # Docker cannot say
+  local ids
+  ids="$(compose ps -a -q "$1")" || return 1
+  [[ -n "$ids" ]] || return 0
+  # shellcheck disable=SC2086 # one container id per line
+  docker inspect -f '{{.Id}} {{index .Config.Labels "com.docker.compose.oneoff"}}' $ids | awk '$2 == "False" { print $1 }'
+}
+start_existing() {  # start_existing <service>...: the existing containers of these services
+  # started again as they were (their image, settings and secrets), with `docker start`, never
+  # Compose. `docker compose start` also starts each service's dependencies (Compose v5.7.1), and
+  # every app service depends on the one-shot migrate (service_completed_successfully), which
+  # has no container on this stack (it runs with compose run --rm): it fails with "missing
+  # dependency migrate" and starts nothing (proven on a throwaway project, P1-T19b). Never `up`,
+  # which would recreate them with this stack's (new) images and secrets
+  local s got ids=()
+  (($#)) || die "usage: scripts/staging.sh start-existing <service>..."
+  for s in "$@"; do
+    [[ " ${DB_APP_SERVICES[*]} " == *" $s "* ]] || die "$s is not an app service (${DB_APP_SERVICES[*]}): nothing was started"
+    got="$(existing_containers "$s")" || die "could not list the containers of $s (above): nothing was started"
+    [[ -n "$got" ]] || die "no container of $s is left to start (scripts/staging.sh down removed it, or it never ran): nothing was started"
+    mapfile -t -O "${#ids[@]}" ids <<< "$got"
+  done
+  docker start "${ids[@]}" >/dev/null
+  echo "started $* (their own containers, as they were)"
+}
+db_serve_previous() {  # db-roles --serve-previous [--operator NAME]: a release (or the move) that
+  # stopped before the move of the roles (review C1). The database still has its single role, so
+  # neither `up` nor a rollback nor the owner's one-offs can start anything: the containers of the
+  # build that ran are started again as they were (start_existing: never `up`, which would
+  # recreate them with the new images and secrets, nor `compose start`, which fails on the
+  # migrate dependency), then that build lifts the holds and clears the window (old_manage: in
+  # its own backend, as ihr)
+  local op="$1" state svcs=() rest=() s got
+  rel_lock
+  [[ -n "$(compose ps -q db 2>/dev/null || true)" ]] || die "the database is not running: start it first (docker compose start db), then run this again"
+  state="$(db_roles_state)" || die "could not read the database's roles"
+  [[ "$state" == single ]] || die "the database's roles are $state: this is only for a database that still has its single role. Start the stack: scripts/staging.sh up"
+  # Every app service with a container of its own (the build that ran), read fail-closed
+  for s in "${DB_APP_SERVICES[@]}"; do
+    got="$(existing_containers "$s")" || die "could not list the containers of $s (above): nothing was started"
+    [[ -z "$got" ]] || svcs+=("$s")
+  done
+  [[ " ${svcs[*]} " == *" backend "* ]] || die "no backend container of the build that ran is left: fix the cause and run scripts/staging.sh release again"
+  for s in "${svcs[@]}"; do [[ "$s" == backend ]] || rest+=("$s"); done
+  echo "== Starting the backend of the build that ran (its own container, its own address)"
+  start_existing backend
+  echo "== Lifting the holds and clearing the window (that build)"
+  old_manage ihr_fleet_run release --operator "$op"
+  old_manage ihr_fleet_run window --clear --operator "$op"
+  if ((${#rest[@]})); then
+    echo "== Starting its other containers: ${rest[*]}"
+    start_existing "${rest[@]}"
+  fi
+  echo "Served by the build that ran; the database still has its single role. A release in progress stays unfinished (releases/attempt): fix the cause and run scripts/staging.sh release again (scripts/deploy.sh --release)."
+}
+running_app_services() {  # running_app_services <service>...: those of them that run, space
+  # separated; fails (never "none run") if Compose cannot say
+  local out
+  # -a with --status running also lists a running one-off ("compose run"), which plain ps leaves out
+  out="$(compose ps -a --status running --format '{{.Service}}' "$@")" || return 1
+  echo "$out" | sort -u | tr '\n' ' '
+}
+db_roles_cmd() {  # db-roles --migrate [--operator NAME] | --serve-previous [--operator NAME] | --assert | --status
+  local what="${1:-}" op="" state t0 t apps top logged
+  local usage="usage: scripts/staging.sh db-roles --migrate [--operator NAME] | --serve-previous [--operator NAME] | --assert | --status"
+  (($#)) && shift
+  while (($#)); do
+    case "$1" in
+      --operator) op="${2:?--operator NAME}"; shift ;;
+      *) die "$usage" ;;
+    esac
+    shift
+  done
+  [[ -f "$DIR/.env" ]] || die "run: scripts/staging.sh init <suffix>"
+  case "$what" in
+    --status)
+      if db_secrets_split; then echo "secrets: split (secrets/app.env: ihr_app, secrets/db-owner.env: ihr_owner)"
+      else echo "secrets: not split (scripts/staging.sh db-split-secrets)"; fi
+      if [[ -n "$(compose ps -q db 2>/dev/null || true)" ]]; then
+        echo "database: $(db_roles_state || echo unreadable)"
+      else
+        echo "database: not running"
+      fi ;;
+    --assert)
+      # The runbook of DatabaseRoleLoginFailed and of a refusal for stored settings: both roles'
+      # passwords set again from the secrets, every stored setting reset (as every up does)
+      db_need_split_secrets
+      [[ "$(db_roles_state)" == split ]] || die "the database's roles are not split: scripts/staging.sh db-roles --migrate"
+      db_roles_apply
+      echo "Re-asserted ihr_owner and ihr_app (passwords from the secrets, no stored settings in any database, no memberships) and the large-object revoke."
+      echo "Restart the app containers so each checks its role again: scripts/staging.sh up" ;;
+    --serve-previous) op="$(rel_operator "$op")"; db_serve_previous "$op" ;;
+    --migrate)
+      op="$(rel_operator "$op")"
+      db_need_split_secrets
+      rel_lock
+      [[ ! -f "$REL_ATTEMPT" ]] || die "a release is in progress (releases/attempt): finish it (or roll it back) first; a release moves the roles itself"
+      # Only a stopped stack, on the build released last (review C2): a database restored to a
+      # moment before the move. On a running server the move belongs to a release, which holds,
+      # seals and takes a restore point first, and logs the build it starts; this would migrate
+      # whatever build is tagged, outside the window, with neither
+      # Read fail-closed: a Compose that cannot say which run is never taken for "none run"
+      apps="$(running_app_services "${DB_APP_SERVICES[@]}")" \
+        || die "could not tell whether any app container runs (docker compose ps, above): nothing was changed"
+      [[ -z "${apps// /}" ]] || die "${apps% } still run(s): on a running server the roles move inside a release (scripts/deploy.sh --release, or scripts/staging.sh release), never with db-roles --migrate, which is for a stopped stack whose database was restored to a moment before the move. Nothing was changed"
+      top="$(rlog state "$REL_LOG" | tail -1)" || die "could not read releases/releases.log"
+      [[ -n "$top" ]] || die "no release is logged here: the roles move inside a release (scripts/deploy.sh --release). Nothing was changed"
+      logged="$(rel_logged_backend "$top")"
+      [[ -n "$logged" && "$(image_id "$(env_get IHR_BACKEND_IMAGE)" || true)" == "$logged" ]] \
+        || die "$(env_get IHR_BACKEND_IMAGE) is not the build of the release logged last ($top): the move would migrate a build that was never released, outside the window and with no restore point. Release it instead (scripts/deploy.sh --release, or scripts/staging.sh release), which moves the roles itself. Nothing was changed"
+      t0=$SECONDS
+      DB_MOVE_OP="$op"
+      trap 'db_move_exit $?' EXIT
+      if [[ -z "$(compose ps -q db 2>/dev/null || true)" ]]; then compose up -d --wait db redis; fi
+      state="$(db_roles_state)" || die "could not read the database's roles"
+      case "$state" in
+        split) echo "The roles are split already: nothing to move (scripts/staging.sh db-roles --assert re-asserts them)"; trap - EXIT; return 0 ;;
+        none) die "the database has neither ihr nor ihr_owner: not a database of this stack" ;;
+      esac
+      # Under a full stop (design item 10): nothing of the app runs (checked above). A database
+      # restored to a release's restore point has every hospital held (the point is taken after
+      # the hold): the fleet-wide migrate below lifts the hold of each hospital it finishes
+      echo "== [$((SECONDS - t0)) s] The move"
+      db_roles_move_stopped
+      DB_MOVE_STAGE=moved
+      # The grants, by the owner: the check of the roles first (C6), the platform's schema (its
+      # post_migrate converges public and the database), then every hospital schema
+      echo "== [$((SECONDS - t0)) s] Converging the grants (migrate one-shot, as ihr_owner)"
+      compose run --rm --no-deps -T migrate python manage.py ihr_db_role_check --for migrate
+      compose run --rm --no-deps -T migrate python manage.py migrate_schemas --shared --noinput
+      t=$SECONDS
+      compose run --rm --no-deps -T migrate python manage.py ihr_fleet_run migrate --operator "$op"
+      echo "grants of every hospital schema converged in $((SECONDS - t)) s"
+      echo "== [$((SECONDS - t0)) s] Starting"
+      up
+      trap - EXIT
+      t="$(rel_held_count)"
+      [[ "${t:-0}" == 0 ]] || echo "${t} hospital(s) are still held (the fleet run above says why): fix it, then scripts/staging.sh fleet release --operator $op" >&2
+      echo "== Roles moved in $((SECONDS - t0)) s. Next: scripts/staging.sh smoke; a window that came back with the restored database: scripts/staging.sh fleet window --clear --operator $op" ;;
+    *) die "$usage" ;;
+  esac
+}
+
 up() {  # up [--new-database]: the flag only where an empty database is really meant (db_guard)
   local new_db=0
   [[ "${1:-}" != --new-database ]] || new_db=1
   [[ $# -eq 0 || $new_db == 1 ]] || die "usage: scripts/staging.sh up [--new-database]"
   [[ -f "$DIR/.env" ]] || { echo "run: scripts/staging.sh init <suffix>" >&2; exit 1; }
+  db_need_split_secrets
   [[ -z "$(env_get IHR_BACKUP)" ]] || backup_config
   # Compose reads Fluent Bit's (and Grafana's) env files on every call: those secrets first
   if [[ -n "$(env_get IHR_MONITORING)" ]]; then logs_secrets; dashboards_secrets; fi
   db_guard "$new_db"
+  # A running database of the single role is refused before anything is recreated (the db
+  # container's settings changed with the split: recreating it would cut the old stack off)
+  if [[ -n "$(compose ps -q db 2>/dev/null || true)" && "$(db_roles_state 2>/dev/null || true)" == single ]]; then
+    die "the database still has its single role ihr: move it first, under a full stop (scripts/staging.sh db-roles --migrate, or scripts/staging.sh release; deploy/staging/README.md, Moving to split roles). Nothing was changed"
+  fi
   compose up -d --wait db redis
   touch "$DIR/.db-created"
+  # The database's two roles (P1-T19b), re-asserted as postgres at every start: passwords from
+  # the secrets, no stored settings in any database, no memberships, large objects closed (a
+  # role may ALTER ROLE itself: design.md, known limit 1). A database of the single role is
+  # moved only under a full stop, never by a plain start
+  case "$(db_roles_state || echo unreadable)" in
+    split) db_roles_apply ;;
+    single) die "the database still has its single role ihr: move it first, under a full stop (scripts/staging.sh db-roles --migrate, or scripts/staging.sh release; deploy/staging/README.md, Moving to split roles)" ;;
+    *) die "could not read the database's roles (or it has neither ihr nor ihr_owner)" ;;
+  esac
   # Signing keys (P1-T8d2): made here where a volume is still empty (a new server, after
   # down -v), and their public halves written for the sync below
   keys_ensure
@@ -654,10 +1081,18 @@ restore_drill() {  # a copy of the database from the backups, checked, then remo
   # The audit trail of every hospital, checked in the copy against the outside fingerprints
   # the storage had received by the copy's moment: a backup that restores a rewritten
   # history fails here
-  echo "== Audit trail and fingerprints, checked in the restored copy"
-  pw="$(sed -n 's#^DATABASE_URL=postgres://ihr:\([^@]*\)@db:5432/ihr$#\1#p' "$SECRETS/app.env")"
-  [[ -n "$pw" ]] || die "DATABASE_URL in secrets/app.env is not in the expected form"
-  dburl="postgres://ihr:$pw@$DRILL:5432/ihr"
+  # The roles in the copy as in the live database (P1-T19b): a copy from before the move is moved
+  # here too; both roles get the secrets' passwords. The check runs as the owner (secrets/db-owner.env)
+  echo "== The database roles in the restored copy"
+  case "$(PG_TARGET="$DRILL" db_roles_state || echo unreadable)" in
+    split) PG_TARGET="$DRILL" db_roles_apply; echo "split (re-asserted)" ;;
+    single) PG_TARGET="$DRILL" db_roles_apply --move; echo "single role ihr: moved in the copy (ihr_owner, ihr_app)" ;;
+    *) die "could not read the roles in the restored copy" ;;
+  esac
+  echo "== Audit trail and fingerprints, checked in the restored copy (as ihr_owner)"
+  pw="$(db_password owner)"
+  [[ -n "$pw" ]] || db_need_split_secrets
+  dburl="postgres://ihr_owner:$pw@$DRILL:5432/ihr"
   local envs=(-e DATABASE_URL) k v
   while IFS='=' read -r k v; do
     if [[ "$k" =~ ^IHR_AUDIT_ANCHOR_[A-Z_]+$ ]]; then export "$k=$v"; envs+=(-e "$k"); fi
@@ -843,7 +1278,19 @@ rel_unserved() {  # rel_unserved <tenant fingerprint>: live hospitals this build
       AND (s.hospital_id IS NULL OR s.upgrading_since IS NOT NULL OR s.schema_fingerprint <> '$1')
     ORDER BY h.slug"
 }
-old_manage() {  # a manage.py command in the running (outgoing) backend: the old build
+old_manage() {  # a manage.py command of the running (outgoing) build, never the new build on
+  # the old schema (D10). Before the move of the roles (P1-T19b) the running backend is the owner
+  # itself; after it, it runs as ihr_app, which may not write the release's records (the hold,
+  # the window: the owner's tables), so the command runs in a one-off of the running backend's
+  # image in the owner's (logged) migrate container
+  local repo rc=0
+  if backend_runs_as_app; then
+    repo="$(repo_of "$(env_get IHR_BACKEND_IMAGE)"):ihr-outgoing"
+    docker tag "$(running_backend_id)" "$repo"
+    IHR_BACKEND_IMAGE="$repo" compose run --rm --no-deps -T migrate python manage.py "$@" || rc=$?
+    docker rmi "$repo" >/dev/null 2>&1 || true
+    return "$rc"
+  fi
   compose exec -T backend python manage.py "$@"
 }
 window_open_now() {  # window_open_now "<ihr_fleet_run window's line>": the window holds this minute
@@ -922,14 +1369,22 @@ print("fingerprint written:", anchor.write())'
 rel_seal() {  # rel_seal <outgoing backend image id>: seal and fingerprint the audit trail with the
   # old build and the worker's add-only key (seal and one fingerprint only, capped:
   # IHR_RELEASE_SEAL_SECONDS). Prints ok, problems, timeout or skipped.
-  local repo rc=0
+  local repo rc=0 url="" envs=()
   if ! grep -q '^IHR_AUDIT_ANCHOR_WRITE_KEY=.' "$SECRETS/anchor-write.env" 2>/dev/null; then
     echo "audit: skipped, no fingerprint storage set up here (secrets/anchor-write.env)" >&2
     echo skipped; return 0
   fi
+  if [[ "${REL_MOVE:-0}" == 1 ]]; then
+    # Before the move of the roles (P1-T19b) the outgoing build runs as the single role: its
+    # one-off takes the running backend's own address (the split roles do not exist yet)
+    url="$(outgoing_database_url)" || true
+    [[ -n "$url" ]] || { echo "WARNING: the running backend's database address could not be read; not sealed" >&2; echo problems; return 0; }
+    envs=(-e DATABASE_URL -e IHR_DB_ROLES -e IHR_DB_ROLE)
+  fi
   repo="$(repo_of "$(env_get IHR_BACKEND_IMAGE)"):ihr-outgoing"
   docker tag "$1" "$repo"
-  IHR_BACKEND_IMAGE="$repo" compose run --rm --no-deps -T celery-worker \
+  DATABASE_URL="$url" IHR_DB_ROLES=off IHR_DB_ROLE="" \
+    IHR_BACKEND_IMAGE="$repo" compose run --rm --no-deps -T ${envs[@]+"${envs[@]}"} celery-worker \
     timeout "$REL_SEAL_SECONDS" python manage.py shell -c "$REL_SEAL_PY" >&2 || rc=$?
   docker rmi "$repo" >/dev/null 2>&1 || true
   case "$rc" in
@@ -1102,21 +1557,39 @@ rel_point_images() {  # rel_point_images <names> <plan file>: this stack's tags 
 }
 
 rel_rollback_advice() {  # rel_rollback_advice: the rollbacks `rollback` accepts now, found the way
-  # it finds them (release_log.py plan with the running build), so advice never names one it
-  # refuses (D3/O4)
-  local running out ways=()
+  # it finds them (release_log.py plan with the running build, then rel_roles_guard), so advice
+  # never names one it refuses (D3/O4; review C1)
+  local running out ways=() presplit=0 state
+  # Before the move of the roles no rollback is accepted (rel_roles_guard): the build that ran
+  # serves again on its own containers. The database's own answer first; unreadable, what this
+  # release knows (REL_MOVE: the move was still to come)
+  state="$(db_roles_state 2>/dev/null || echo unreadable)"
+  if [[ "$state" == single || ( "$state" == unreadable && "${REL_MOVE:-0}" == 1 ) ]]; then
+    out="$REL_SERVE_PREVIOUS ${REL_OP:-<you>} (the database still has its single role, so no rollback is accepted; this starts the build that ran on its own containers again, lifts the holds and clears the window)"
+    # Its backend still runs (the database answered single): the fleet steps run in it before the
+    # move (the fleet dispatch, through old_manage), so they lift the holds too
+    if [[ "$state" == single && -n "$(compose ps -q backend 2>/dev/null || true)" ]]; then
+      out+="; or, as its backend still runs, scripts/staging.sh fleet release --operator ${REL_OP:-<you>} then scripts/staging.sh fleet window --clear --operator ${REL_OP:-<you>} (in that backend; a worker this release stopped stays stopped until scripts/staging.sh start-existing <it>, of ${REL_WORKERS[*]})"
+    fi
+    echo "$out"
+    return 0
+  fi
   running="$( (release_tag_of "$(running_backend_id)") 2>/dev/null)" || running=""
   if [[ -z "$running" ]]; then
     echo "the running build could not be read: scripts/staging.sh rollback [--restore] says whether it can"
     return 0
   fi
-  if rlog plan "$REL_LOG" "$REL_ATTEMPT" "$running" >/dev/null 2>&1; then
-    ways+=("scripts/staging.sh rollback (no --restore: it lifts the holds and clears the window; nothing is lost)")
+  if out="$(rlog plan "$REL_LOG" "$REL_ATTEMPT" "$running" 2>/dev/null)"; then
+    if rel_target_presplit "$(sed -n 's/^target=//p' <<< "$out")"; then presplit=1
+    else ways+=("scripts/staging.sh rollback (no --restore: it lifts the holds and clears the window; nothing is lost)"); fi
   fi
   if out="$(rlog plan "$REL_LOG" "$REL_ATTEMPT" "$running" --restore 2>/dev/null)"; then
-    ways+=("scripts/staging.sh rollback --restore (back to the window's restore point $(sed -n 's/^restore_point=//p' <<< "$out"); what was written since is lost)")
+    if rel_target_presplit "$(sed -n 's/^target=//p' <<< "$out")"; then presplit=1
+    else ways+=("scripts/staging.sh rollback --restore (back to the window's restore point $(sed -n 's/^restore_point=//p' <<< "$out"); what was written since is lost)"); fi
   fi
-  if ((${#ways[@]} == 0)); then
+  if ((${#ways[@]} == 0 && presplit)); then
+    echo "no rollback is accepted from here: the release before this one predates the split database roles (P1-T19b). Fix forward"
+  elif ((${#ways[@]} == 0)); then
     echo "no rollback is accepted from here (scripts/staging.sh rollback says why): fix forward"
   elif ((${#ways[@]} == 1)); then
     echo "${ways[0]}"
@@ -1162,6 +1635,8 @@ release() {  # release [--now [--minutes N] [--note T]] [--operator NAME] | --fi
   [[ "$minutes" =~ ^[0-9]+$ ]] || die "--minutes N"
   op="$(rel_operator "$op")"
   [[ -f "$DIR/.env" ]] || die "run: scripts/staging.sh init <suffix>"
+  # This build runs the app as ihr_app and the owner's one-shots as ihr_owner (P1-T19b)
+  db_need_split_secrets
   rel_lock
   t0=$SECONDS
   if ((finish)); then release_finish "$op"; return; fi
@@ -1177,8 +1652,9 @@ release() {  # release [--now [--minutes N] [--note T]] [--operator NAME] | --fi
   fi
   if [[ -z "$cid" ]]; then
     # Without a backend nothing is held: then no other service of the app may run either (D8)
-    apps="$(compose ps --format '{{.Service}}' "${REL_WORKERS[@]}" frontend 2>/dev/null | tr '\n' ' ' || true)"
-    [[ -z "${apps// /}" ]] || die "the backend is not running, but ${apps% } still run(s) and would write during the migrations. Stop the stack first (scripts/staging.sh down), or start the old backend again (docker compose start backend) so the release holds every hospital: nothing changed"
+    apps="$(running_app_services "${REL_WORKERS[@]}" frontend)" \
+      || die "could not tell whether any app container runs (docker compose ps, above): nothing changed"
+    [[ -z "${apps// /}" ]] || die "the backend is not running, but ${apps% } still run(s) and would write during the migrations. Stop the stack first (scripts/staging.sh down), or start the old backend again (scripts/staging.sh start-existing backend: its own container, as it was) so the release holds every hospital: nothing changed"
   fi
   release_tag_images "$tag"
   echo "== Release $tag (hospitals' schema ${fps[0]:0:12}, platform's ${fps[1]:0:12}) by $op"
@@ -1230,6 +1706,7 @@ release() {  # release [--now [--minutes N] [--note T]] [--operator NAME] | --fi
     fi
     REL_STAGE=1
     hold_at="$(rel_sql "SELECT now()")"
+    rel_move_pending
     # 3. No worker writes into a hospital from here (and none is paged as down until the window's end)
     echo "== [$((SECONDS - t0)) s] Stopping the workers: ${REL_WORKERS[*]}"
     compose stop "${REL_WORKERS[@]}"
@@ -1248,6 +1725,7 @@ release() {  # release [--now [--minutes N] [--note T]] [--operator NAME] | --fi
     REL_STAGE=2  # the database starts on this stack's (possibly new) Postgres image
     release_note --release via=release migrations=started ${carry[@]+"${carry[@]}"} >/dev/null
     compose up -d --wait db redis
+    rel_move_pending
   fi
   # 6. The restore point: the window's own (carried from an unfinished release), or a new one
   if ((${#carry[@]})); then
@@ -1262,8 +1740,23 @@ release() {  # release [--now [--minutes N] [--note T]] [--operator NAME] | --fi
   fi
   REL_STAGE=2
   release_note --release via=release migrations=started "${carry[@]}" "audit=$audit" "seal=$seal" "seal_s=$seal_s" >/dev/null
-  # 7. The new build: the platform's schema, then each hospital (2 at a time, logged for its alerts)
+  # 6a. The move of the database roles (P1-T19b), once, under a full stop: every hospital is held,
+  # the workers are stopped and drained, the trail sealed and the restore point taken (the
+  # database as it was); then every app container stops, ihr becomes ihr_owner, ihr_app is made,
+  # and the migrations below converge the grants as the owner
+  if ((REL_MOVE)); then
+    echo "== [$((SECONDS - t0)) s] Moving the database roles to ihr_owner and ihr_app (P1-T19b)"
+    db_roles_move_stopped
+    REL_MOVE=0
+  else
+    # The roles as the model has them before the check below, as every up does (also when a
+    # release that moved them stopped before its migrations and runs again)
+    db_roles_apply
+  fi
+  # 7. The new build: the roles checked (C6), the platform's schema, then each hospital (2 at a
+  # time, logged for its alerts; the grants of every hospital schema converged as the owner)
   echo "== [$((SECONDS - t0)) s] Platform (public) migrations"
+  compose run --rm --no-deps -T migrate python manage.py ihr_db_role_check --for migrate
   compose run --rm --no-deps -T migrate python manage.py migrate_schemas --shared --noinput
   echo "== [$((SECONDS - t0)) s] Hospital migrations (ihr_fleet_run, as scripts/staging.sh fleet)"
   compose run --rm --no-deps -T migrate python manage.py ihr_fleet_run migrate check roles packs --operator "$op" || fleet_rc=$?
@@ -1286,6 +1779,16 @@ release() {  # release [--now [--minutes N] [--note T]] [--operator NAME] | --fi
   trap - EXIT
   rel_release_exit 0
   echo "== Release $tag finished in $((SECONDS - t0)) s"
+}
+REL_MOVE=0
+rel_move_pending() {  # sets REL_MOVE: the database still has its single role, so this release
+  # moves it (P1-T19b; the secrets are split already: release checked)
+  REL_MOVE=0
+  case "$(db_roles_state || echo unreadable)" in
+    split) ;;
+    single) REL_MOVE=1; echo "== The database still has its single role ihr: this release moves it to ihr_owner and ihr_app (P1-T19b)" ;;
+    *) die "could not read the database's roles" ;;
+  esac
 }
 release_finish() {  # release_finish <operator> [--checked]: close the window and log the release
   local op="$1" tag
@@ -1312,6 +1815,30 @@ rel_rollback_exit() {  # rel_rollback_exit <exit status>: where a rollback stopp
     4) echo "ROLLBACK DID NOT FINISH (exit $rc): the database is restored to $REL_RB_RP and the rollback to $REL_RB_TARGET is logged; do not run rollback again. Finish by hand: scripts/staging.sh up, fleet release --operator <you>, fleet window --clear --operator <you>, smoke, backup-now full${REL_RB_ASIDE:+ (the database as it was: volume $REL_RB_ASIDE)}" >&2 ;;
     *) echo "ROLLBACK STOPPED (exit $rc): nothing was changed" >&2 ;;
   esac
+}
+rel_target_presplit() {  # rel_target_presplit <target tag>: its kept stack predates the split
+  # database roles (P1-T19b: no secrets/db-owner.env in its compose.yaml). Never dies
+  local text
+  [[ -f "$REL_DIR/stack-$1.tgz" ]] || return 1
+  text="$(tar -xzOf "$REL_DIR/stack-$1.tgz" deploy/staging/compose.yaml 2>/dev/null || true)"
+  [[ "$text" != *"secrets/db-owner.env"* ]]
+}
+rel_db_single() {  # the running database still has its single role ihr (the move has not run)
+  [[ -n "$(compose ps -q db 2>/dev/null || true)" && "$(db_roles_state 2>/dev/null || true)" == single ]]
+}
+REL_SERVE_PREVIOUS="scripts/staging.sh db-roles --serve-previous --operator"
+rel_roles_guard() {  # rel_roles_guard <target tag>: never back to a release from before the split
+  # database roles (P1-T19b). Its kept stack would start the app as the single role ihr, which the
+  # move renamed (and a restore to a point before the move brings back a database whose roles the
+  # current secrets do not match): refused before anything changes; fix forward. Nor any rollback
+  # while the database still has its single role (review C1): every rollback ends with `up`,
+  # which refuses that database, after the image tags were moved
+  if rel_db_single; then
+    die "refused: the database still has its single role ihr (the move of the roles has not run), and a rollback starts the stack with up, which needs the split roles. Serve the build that ran: $REL_SERVE_PREVIOUS ${REL_OP:-<you>}; or fix the cause and run scripts/staging.sh release again. Nothing was changed"
+  fi
+  if rel_target_presplit "$1"; then
+    die "refused: release $1 predates the split database roles (P1-T19b): its stack would run the app as the single role ihr, which no longer exists. Fix forward (deploy/staging/README.md, Moving to split roles); nothing was changed"
+  fi
 }
 rollback() {  # rollback [--restore] [--operator NAME]: back to the release before the running one
   local restore=0 op="" running plan answer project="${IHR_PROJECT:-indiehr-staging}" t0
@@ -1345,6 +1872,7 @@ rollback() {  # rollback [--restore] [--operator NAME]: back to the release befo
   leave="$(sed -n 's/^leave=//p' "$plan")"; target="$(sed -n 's/^target=//p' "$plan")"
   REL_RB_TARGET="$target"
   [[ -n "$target" && "$leave" != "$target" ]] || die "refused: $leave would be rolled back to itself"
+  rel_roles_guard "$target"
   echo "== Rolling back from $leave ($(sed -n 's/^leave_note=//p' "$plan")) to $target"
   # Every image of the target is here before anything changes, never found missing half-way (D5).
   # All of them, Postgres and Keycloak too, with or without a restore: deploy.sh already moved this
@@ -3079,11 +3607,18 @@ case "${1:-}" in
   manage) compose --profile admin run --rm --no-deps -T admin python manage.py "${@:2}" ;;
   # The fleet runner in the one-shot's (logged) container, never the unlogged admin one: its
   # "ihr-fleet:" lines must reach the HospitalNotServed alert (deploy/logs/alerts/fleet.yml, S3).
-  # `fleet window` runs in the running backend when one runs: the build the database's schema is
-  # (after deploy.sh moved the image tags, a one-off would be the new build on the old schema; D10)
+  # `fleet window` runs as the running backend's build when one runs: the build the database's
+  # schema is (after deploy.sh moved the image tags, a one-off of the tag would be the new build on
+  # the old schema; D10), as the owner (old_manage: after the move of the roles, P1-T19b, a
+  # one-off of the running backend's image in this container)
+  # Before the move of the roles (P1-T19b) the owner's one-off cannot log in (ihr_owner does not
+  # exist yet): release and hold then run in the running backend too, as ihr (review C1)
   fleet)
-    if [[ "${2:-}" == window && -n "$(compose ps -q backend 2>/dev/null || true)" ]]; then
-      compose exec -T backend python manage.py ihr_fleet_run "${@:2}"
+    if [[ -n "$(compose ps -q backend 2>/dev/null || true)" ]] \
+      && { [[ "${2:-}" == window ]] || { [[ "${2:-}" =~ ^(release|hold)$ ]] && rel_db_single; }; }; then
+      old_manage ihr_fleet_run "${@:2}"
+    elif rel_db_single; then
+      die "the database still has its single role ihr (the move has not run): only fleet window, release and hold run before it, in the running backend ($([[ -n "$(compose ps -q backend 2>/dev/null || true)" ]] && echo "it runs" || echo "none runs: $REL_SERVE_PREVIOUS <you> starts the build that ran"))"
     else
       compose run --rm --no-deps -T migrate python manage.py ihr_fleet_run "${@:2}"
     fi ;;
@@ -3093,6 +3628,11 @@ case "${1:-}" in
   # Internal steps of scripts/deploy.sh (a plain start of a release without migrations)
   release-note) rel_lock; release_note ;;
   release-record) rel_lock; release_record ;;
+  db-split-secrets) db_split_secrets ;;
+  db-roles) db_roles_cmd "${@:2}" ;;
+  # The existing containers of app services started again as they were (docker start: Compose's
+  # start would start the migrate dependency, which has no container here, and fail)
+  start-existing) rel_lock; start_existing "${@:2}" ;;  # never during a release or rollback
   ps) compose ps ;;
   logs) compose logs --tail=200 "${@:2}" ;;
   keys) keys_cmd "${@:2}" ;;
@@ -3152,5 +3692,5 @@ case "${1:-}" in
     admin_manage ihr_keycloak_sync --all >/dev/null
     smoke
     ;;
-  *) sed -n '5,63p' "$0"; exit 1 ;;
+  *) sed -n '5,77p' "$0"; exit 1 ;;
 esac

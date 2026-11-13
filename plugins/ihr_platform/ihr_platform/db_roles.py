@@ -860,6 +860,20 @@ def large_object_problems(cursor):
     ]
 
 
+# The databases in which a role (``r``) has stored settings: "every database" for ALTER ROLE
+# ... SET, else the database's name. A role may store them for itself IN DATABASE any
+# database, also one it cannot connect to; every one counts (review S1/C3)
+_STORED_IN = (
+    "ARRAY(SELECT COALESCE(d.datname::text, 'every database') "
+    "FROM pg_db_role_setting s LEFT JOIN pg_database d ON d.oid = s.setdatabase "
+    "WHERE s.setrole = r.oid ORDER BY 1)"
+)
+
+
+def _stored_text(where):
+    return f"stored settings in {', '.join(where)}"
+
+
 def role_problems(cursor, current_mode):
     """Each role of the model: it exists, with exactly its attributes and memberships, and
     no stored settings (S9: a role may set its own defaults, e.g. a forged audit actor).
@@ -872,7 +886,7 @@ def role_problems(cursor, current_mode):
         "r.rolcanlogin, r.rolreplication, r.rolbypassrls, "
         "ARRAY(SELECT g.rolname::text FROM pg_auth_members m "
         "      JOIN pg_roles g ON g.oid = m.roleid WHERE m.member = r.oid ORDER BY 1), "
-        "(SELECT count(*) FROM pg_db_role_setting s WHERE s.setrole = r.oid) "
+        f"{_STORED_IN} "
         "FROM pg_roles r WHERE r.rolname = ANY(%s)",
         [sorted(expected)],
     )
@@ -924,7 +938,8 @@ def role_problems(cursor, current_mode):
             problems.append(
                 (
                     "problem",
-                    f"role {name} has stored settings (ALTER ROLE ... RESET ALL)",
+                    f"role {name} has {_stored_text(stored)} (ALTER ROLE ... RESET ALL, "
+                    "in each: scripts/staging.sh db-roles --assert)",
                 )
             )
     return problems
@@ -1193,7 +1208,22 @@ def create_test_roles(cursor):
                 "NOBYPASSRLS {} PASSWORD NULL"
             ).format(ident, sql.SQL("INHERIT" if role.inherit else "NOINHERIT"))
         )
-        cursor.execute(sql.SQL("ALTER ROLE {} RESET ALL").format(ident))
+        # Its stored settings in every database, not only role-wide (review S1/C3)
+        cursor.execute(
+            "SELECT d.datname FROM pg_db_role_setting s "
+            "LEFT JOIN pg_database d ON d.oid = s.setdatabase "
+            "JOIN pg_roles r ON r.oid = s.setrole WHERE r.rolname = %s",
+            [name],
+        )
+        for (database,) in cursor.fetchall():
+            if database is None:
+                cursor.execute(sql.SQL("ALTER ROLE {} RESET ALL").format(ident))
+            else:
+                cursor.execute(
+                    sql.SQL("ALTER ROLE {} IN DATABASE {} RESET ALL").format(
+                        ident, sql.Identifier(database)
+                    )
+                )
         cursor.execute(
             "SELECT g.rolname FROM pg_auth_members m JOIN pg_roles g ON g.oid = m.roleid "
             "JOIN pg_roles r ON r.oid = m.member WHERE r.rolname = %s",
@@ -1336,8 +1366,7 @@ def owner_process_allowed(argv=None, process=None):
 _IDENTITY = (
     "SELECT current_user::text, session_user::text, r.rolsuper, "
     "r.rolcreaterole OR r.rolcreatedb OR r.rolreplication OR r.rolbypassrls, "
-    "EXISTS (SELECT 1 FROM pg_auth_members m WHERE m.member = r.oid), "
-    "EXISTS (SELECT 1 FROM pg_db_role_setting s WHERE s.setrole = r.oid)"
+    "EXISTS (SELECT 1 FROM pg_auth_members m WHERE m.member = r.oid), " + _STORED_IN
 )
 
 
@@ -1355,7 +1384,7 @@ def _identity_problems(user, session, superuser, attributes, member, stored):
         found.append(("membership", f"{user} is a member of another role"))
     if stored:
         found.append(
-            ("role_settings", f"{user} has stored settings (ALTER ROLE ... SET)")
+            ("role_settings", f"{user} has {_stored_text(stored)} (ALTER ROLE ... SET)")
         )
     return found
 
@@ -1519,6 +1548,10 @@ def check_connection(
     ]
     other = 0
     for item in findings:
+        if item.kind == "notice":
+            # Reported only (a missing LOGIN on a role no service uses yet: P1-T19b makes
+            # the watch and dump roles without one); nothing for migrate to repair
+            continue
         if item.kind == "extra" and item.grantee in (APP, PUBLIC):
             reason = "extra_privileges"
         elif item.kind == "problem" and item.control:

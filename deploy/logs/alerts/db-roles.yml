@@ -20,7 +20,8 @@
 # log (the lines before it name every problem), then run manage.py ihr_db_role_check --report in
 # that container; repair grants with the migrate one-shot (ihr_fleet_run migrate), and anything
 # about the roles themselves (a membership, an attribute, stored settings, a password) as
-# postgres (the roles' runbook comes with their move, P1-T19b).
+# postgres: scripts/staging.sh db-roles --assert (P1-T19b; deploy/staging/README.md, Moving to
+# split roles).
 # DatabaseRoleLoginFailed: Postgres's own line for a failed login of one of our roles. A role can
 # change its own password (ALTER ROLE ... PASSWORD), which no check short of the superuser can see
 # (design.md, known limit 1); the first sign is every new connection of that role failing. Only
@@ -64,4 +65,4 @@ groups:
           service: database
         annotations:
           summary: 'Postgres refused the password of {{ $labels.role }} ({{ $value }} times in 10 minutes): its password may have been changed by whoever can log in as it'
-          action: 'As postgres, set the role password again from the secrets (the roles runbook, P1-T19b: staging.sh up re-asserts both roles), check its stored settings (ALTER ROLE ... RESET ALL) and treat it as a sign the app role was used by someone else; then restart the app containers'
+          action: 'Set both roles again from the secrets as postgres with scripts/staging.sh db-roles --assert (passwords, stored settings in every database, memberships; every up does it too; the refusal names the databases), treat it as a sign the role was used by someone else, then restart the app containers (scripts/staging.sh up)'

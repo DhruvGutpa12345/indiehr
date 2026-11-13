@@ -379,13 +379,18 @@ class ReleaseScript(unittest.TestCase):
         advice = func("rel_rollback_advice")
         self.assertIn('release_tag_of "$(running_backend_id)"', advice)
         self.assertIn('running="$(release_tag_of "$(running_backend_id)")"', func("rollback"))
-        self.assertIn('rlog plan "$REL_LOG" "$REL_ATTEMPT" "$running" >/dev/null', advice)
+        self.assertIn('out="$(rlog plan "$REL_LOG" "$REL_ATTEMPT" "$running" 2>/dev/null)"', advice)
         self.assertIn('rlog plan "$REL_LOG" "$REL_ATTEMPT" "$running" --restore', advice)
         self.assertIn("no --restore", advice)
-        # the "no window" advice runs in the running backend (the old build): the fleet dispatch
+        # the "no window" advice runs as the running backend's build (the old build): the fleet
+        # dispatch, through old_manage (in it, or after the move of the roles a one-off of its
+        # image in the owner's migrate container, P1-T19b)
         dispatch = STAGING_SH[STAGING_SH.index("  fleet)\n"):STAGING_SH.index("  release) release")]
         self.assertIn('"${2:-}" == window', dispatch)
-        self.assertIn("compose exec -T backend python manage.py ihr_fleet_run", dispatch)
+        self.assertIn('old_manage ihr_fleet_run "${@:2}"', dispatch)
+        old = func("old_manage")
+        self.assertIn('docker tag "$(running_backend_id)" "$repo"', old)
+        self.assertIn("compose exec -T backend python manage.py", old)
 
     def test_seal_only_inside_the_window(self):
         """O7: inside the window only a seal and one fingerprint (capped), by the outgoing build
@@ -538,6 +543,17 @@ class RollbackScript(unittest.TestCase):
             check_modes(self, d / "root")
 
 
+def make_stack_archive(path, compose_text):
+    """A release's kept stack archive (deploy.sh's stack-<tag>.tgz) with this compose.yaml."""
+    import io
+    import tarfile
+    with tarfile.open(path, "w:gz") as tar:
+        data = compose_text.encode()
+        info = tarfile.TarInfo("deploy/staging/compose.yaml")
+        info.size = len(data)
+        tar.addfile(info, io.BytesIO(data))
+
+
 def make_stack(path):
     """A stack archive as deploy.sh makes it: settings files 644, scripts 755."""
     import io
@@ -630,7 +646,12 @@ class DeployScript(unittest.TestCase):
 
 
 # A stand-in for docker (python3): the images in FAKE_IMAGES exist (a name:tag always is the
-# current build, FAKE_STAGING_ID), the services in FAKE_RUNNING run; anything else unexpected
+# current build, FAKE_STAGING_ID), the services in FAKE_RUNNING run, those in FAKE_STOPPED have a
+# stopped container (`docker start` runs it: FAKE_STARTED), those in FAKE_ONEOFF a stopped
+# one-off of compose run; FAKE_PS_FAILS makes compose ps fail; anything else unexpected.
+# `compose start` resolves dependencies as Compose v5.7.1 does (proven on a throwaway project):
+# every app service depends on the one-shot migrate (compose.yaml's x-app), which never has a
+# container on this stack, so it fails with "missing dependency migrate" and starts nothing
 FAKE_DOCKER = textwrap.dedent("""\
     #!/usr/bin/env python3
     import os, sys
@@ -638,22 +659,52 @@ FAKE_DOCKER = textwrap.dedent("""\
     env = os.environ.get
     with open(env("FAKE_LOG"), "a") as f:
         f.write(" ".join(a) + "\\n")
-    running = env("FAKE_RUNNING", "").split()
+    started_file = env("FAKE_STARTED")
+    started = open(started_file).read().split() if started_file and os.path.exists(started_file) else []
+    running = env("FAKE_RUNNING", "").split() + started
+    stopped = [x for x in env("FAKE_STOPPED", "").split() if x not in started]
+    oneoff = env("FAKE_ONEOFF", "").split()
     images = env("FAKE_IMAGES", "").split()
     staging = env("FAKE_STAGING_ID")
+    APP = ("backend", "celery-worker", "celery-beat", "provisioner", "staff-worker")
+    DEPS = {**{x: ["migrate"] for x in APP}, "frontend": ["backend"], "migrate": ["db", "redis"]}
     def ref_id(ref):
         if ref.startswith("sha256:"):
             return ref if ref in images or ref == staging else None
         return staging
     if a[:1] == ["compose"]:
         if "ps" in a:
+            if env("FAKE_PS_FAILS"):
+                sys.stderr.write("cannot connect to the Docker daemon\\n")
+                sys.exit(1)
             svcs = a[a.index("ps") + 1:]
             fmt = "--format" in svcs
+            every = "-a" in svcs
             svcs = [x for x in svcs if not x.startswith("-") and "{" not in x]
             for x in svcs:
-                if x in running:
+                if x in running or (every and x in stopped):
                     print(x if fmt else "cid-" + x)
+                if every and x in oneoff:
+                    print(x if fmt else "cid-run-" + x)
             sys.exit(0)
+        if "start" in a and "exec" not in a:
+            svcs = a[a.index("start") + 1:]
+            have = set(running) | set(stopped)
+            todo, seen = list(svcs), set()
+            while todo:
+                x = todo.pop()
+                if x in seen:
+                    continue
+                seen.add(x)
+                for dep in DEPS.get(x, []):
+                    if dep not in have:
+                        sys.stderr.write("missing dependency " + dep + "\\n")
+                        sys.exit(1)
+                    todo.append(dep)
+            sys.exit(0)  # never reached for an app service on this stack
+        if "exec" in a and "backend" in a and "backend" not in running:
+            sys.stderr.write("service backend is not running\\n")
+            sys.exit(1)
         if "exec" in a and "ihr_fleet_run" in a and "window" in a:
             snap = env("FAKE_ATTEMPT")
             if snap and os.path.exists(snap):
@@ -661,11 +712,28 @@ FAKE_DOCKER = textwrap.dedent("""\
                     f.write("ATTEMPT " + open(snap).read())
             print(env("FAKE_WINDOW", "no window announced"))
             sys.exit(0)
+        if "exec" in a and "ihr_fleet_run" in a and env("FAKE_EXEC_OK"):
+            sys.exit(0)  # the running build's hold or release succeeds
+        if "exec" in a and "psql" in a and "ihr_owner" in " ".join(a) and env("FAKE_ROLES"):
+            print(env("FAKE_ROLES"))  # db_roles_state: split, single or none (P1-T19b)
+            sys.exit(0)
         if "exec" in a and "psql" in a:
             if env("FAKE_SQL"):
                 print(env("FAKE_SQL"))
             sys.exit(0)
     elif a[:1] == ["tag"]:
+        sys.exit(0)
+    elif a[:1] == ["inspect"] and "com.docker.compose.oneoff" in " ".join(a):
+        for c in a[3:]:
+            print(c, "True" if c.startswith("cid-run-") else "False")
+        sys.exit(0)
+    elif a[:1] == ["start"]:
+        cids = a[1:]
+        if not cids or any(c.removeprefix("cid-") not in stopped + running for c in cids):
+            sys.exit(1)
+        with open(started_file, "a") as f:
+            f.write(" ".join(c.removeprefix("cid-") for c in cids) + "\\n")
+        print("\\n".join(cids))
         sys.exit(0)
     elif a[:1] == ["inspect"] and a[-1].startswith("cid-"):
         print(env("FAKE_RUNNING_IMAGE"))
@@ -697,7 +765,7 @@ class EndToEnd(unittest.TestCase):
     """staging.sh with a fake docker: refusals with the reason before anything changes (no tag,
     no compose up/down/run/stop), and the release's own record."""
 
-    def run_staging(self, entries, *args, attempt_line=None, running="", fake=None):
+    def run_staging(self, entries, *args, attempt_line=None, running="", fake=None, split=True, stacks=None):
         with tempfile.TemporaryDirectory() as d:
             d = Path(d)
             (d / "releases").mkdir()
@@ -707,6 +775,11 @@ class EndToEnd(unittest.TestCase):
             (d / ".env").write_text("IHR_BACKEND_IMAGE=indiehr-backend:staging\nIHR_FRONTEND_IMAGE=indiehr-frontend:staging\n"
                                     "IHR_POSTGRES_IMAGE=indiehr-postgres:staging\nIHR_KEYCLOAK_IMAGE=indiehr-keycloak:staging\n")
             (d / "secrets").mkdir()
+            if split:  # the split database roles' addresses (P1-T19b; made by db-split-secrets)
+                (d / "secrets" / "app.env").write_text(f"DATABASE_URL=postgres://ihr_app:{'a' * 43}@db:5432/ihr\n")
+                (d / "secrets" / "db-owner.env").write_text(f"DATABASE_URL=postgres://ihr_owner:{'o' * 43}@db:5432/ihr\n")
+            for tag, compose_text in (stacks or {}).items():  # releases' kept stack files
+                make_stack_archive(d / "releases" / f"stack-{tag}.tgz", compose_text)
             bindir = d / "bin"
             bindir.mkdir()
             dk = bindir / "docker"
@@ -715,7 +788,8 @@ class EndToEnd(unittest.TestCase):
             env = {**os.environ, "PATH": f"{bindir}:{os.environ['PATH']}", "IHR_STAGING_DIR": str(d),
                    "FAKE_LOG": str(d / "calls"), "FAKE_SHA": SHA, "FAKE_STAGING_ID": CURRENT,
                    "FAKE_RUNNING": running, "FAKE_RUNNING_IMAGE": OLD, "FAKE_FPS": f"{fp(1)} {fp(2)}",
-                   "FAKE_ATTEMPT": str(d / "releases" / "attempt"), **(fake or {})}
+                   "FAKE_ATTEMPT": str(d / "releases" / "attempt"), "FAKE_STARTED": str(d / "started"),
+                   **(fake or {})}
             out = subprocess.run(["bash", str(ROOT / "scripts" / "staging.sh"), *args], env=env,
                                  capture_output=True, text=True, timeout=60, stdin=subprocess.DEVNULL)
             calls = (d / "calls").read_text() if (d / "calls").exists() else ""
@@ -834,6 +908,246 @@ class EndToEnd(unittest.TestCase):
         self.assertIn("Roll back with --restore", out.stderr)
         self.assertNothingChanged(calls)
 
+    # --- the split database roles (P1-T19b review: C1, C2, S2) -------------------------------
+
+    def test_db_roles_migrate_refuses_a_running_stack(self):
+        """C2: on a running server the move belongs to release (hold, seal, restore point, log):
+        db-roles --migrate refuses while any app container runs, before anything changes."""
+        out, calls = self.run_staging([release(A), release(RUNNING, backend=2)], "db-roles", "--migrate",
+                                      "--operator", "tester", running="db backend frontend",
+                                      fake={"FAKE_ROLES": "single", "FAKE_EXEC_OK": "1"})
+        self.assertEqual(out.returncode, 1, out.stderr)
+        self.assertIn("backend frontend still run(s): on a running server the roles move inside a release", out.stderr)
+        self.assertNothingChanged(calls)
+        self.assertNotIn("ihr_fleet_run hold", calls)
+        self.assertNotIn("DB-ROLES --migrate STOPPED", out.stderr)  # refused before its trap
+
+    def test_running_app_containers_are_read_fail_closed(self):
+        """P1-T19b verifier, item 3: when compose ps fails, db-roles --migrate (and release's
+        "no backend, but a worker runs" check, D8) refuse, never take it for "none run"."""
+        out, calls = self.run_staging([release(A), release(RUNNING, backend=2)], "db-roles", "--migrate",
+                                      "--operator", "tester", fake={"FAKE_ROLES": "single", "FAKE_PS_FAILS": "1"})
+        self.assertEqual(out.returncode, 1, out.stderr)
+        self.assertIn("could not tell whether any app container runs (docker compose ps, above): nothing was changed",
+                      out.stderr)
+        self.assertNothingChanged(calls)
+        self.assertNotIn("pg_roles", calls)
+        self.assertNotIn("DB-ROLES --migrate STOPPED", out.stderr)
+        out, calls = self.run_staging([release(A)], "release", "--operator", "tester", fake={"FAKE_PS_FAILS": "1"})
+        self.assertEqual(out.returncode, 1, out.stderr)
+        self.assertIn("could not tell whether any app container runs (docker compose ps, above): nothing changed",
+                      out.stderr)
+        self.assertNothingChanged(calls)
+        self.assertIsNone(self.after["attempt"])
+
+    def test_db_roles_migrate_moves_only_the_build_released_last(self):
+        """C2: a stack whose backend image is not the last logged release's build (deploy.sh
+        --no-start moved the tags) is refused: it would migrate a build never released, outside
+        the window, with no restore point. No release logged: refused too. The released build
+        goes on (here: the roles are split already)."""
+        for entries, why in (([release(A), release(RUNNING, backend=40)], f"is not the build of the release logged last ({RUNNING})"),
+                             ([], "no release is logged here")):
+            with self.subTest(why=why):
+                out, calls = self.run_staging(entries, "db-roles", "--migrate", "--operator", "tester", running="db",
+                                              fake={"FAKE_ROLES": "single"})
+                self.assertEqual(out.returncode, 1, out.stderr)
+                self.assertIn(why, out.stderr)
+                self.assertNothingChanged(calls)
+                self.assertNotIn("pg_roles", calls)  # the database not even read
+        out, calls = self.run_staging([release(A), release(RUNNING, backend=2)], "db-roles", "--migrate",
+                                      "--operator", "tester", running="db", fake={"FAKE_ROLES": "split"})
+        self.assertEqual(out.returncode, 0, out.stderr)
+        self.assertIn("The roles are split already: nothing to move", out.stdout)
+
+    def test_no_rollback_while_the_database_has_its_single_role(self):
+        """C1: every rollback ends with `up`, which refuses a single-role database (after the
+        image tags were moved): refused before any change, naming the way that works."""
+        out, calls = self.run_staging([release(A), release(RUNNING)], "rollback", "--operator", "tester",
+                                      running="db", fake={"FAKE_ROLES": "single", "FAKE_SQL": "0"})
+        self.assertEqual(out.returncode, 1, out.stderr)
+        self.assertIn("refused: the database still has its single role ihr", out.stderr)
+        self.assertIn("scripts/staging.sh db-roles --serve-previous --operator", out.stderr)
+        self.assertNothingChanged(calls)
+
+    def test_a_release_stopped_before_the_move_names_no_rollback(self):
+        """C1/S2: the first release with the move holds every hospital, then stops before the
+        move (here `compose stop` of the workers fails). The database still has its single role:
+        its advice names db-roles --serve-previous, never a rollback, `up` or a fleet step in
+        the owner's container (all refused or unable to log in before the move). Its backend
+        still runs, so fleet release and fleet window --clear (which run in it before the move)
+        are named too (P1-T19b verifier, item 2)."""
+        from datetime import datetime, timedelta, timezone
+        ist = timezone(timedelta(hours=5, minutes=30))
+        start = (datetime.now(ist) - timedelta(minutes=5)).strftime("%d-%m-%Y %H:%M")
+        fake = {"FAKE_WINDOW": f"window: {start} IST for 120 min", "FAKE_IMAGES": OLD, "FAKE_SQL": "0",
+                "FAKE_EXEC_OK": "1", "FAKE_ROLES": "single"}
+        out, calls = self.run_staging([release(A)], "release", "--operator", "tester", running="backend db", fake=fake)
+        self.assertNotEqual(out.returncode, 0, out.stderr)  # the fake's `compose stop` fails (9)
+        self.assertIn("this release moves it to ihr_owner and ihr_app", out.stdout)
+        self.assertRegex(calls, r"exec -T backend python manage.py ihr_fleet_run hold --operator tester")
+        stop = out.stderr[out.stderr.index("RELEASE STOPPED BEFORE ANY MIGRATION"):]
+        self.assertIn("Serve them again: scripts/staging.sh db-roles --serve-previous --operator tester", stop)
+        self.assertIn("or, as its backend still runs, scripts/staging.sh fleet release --operator tester then "
+                      "scripts/staging.sh fleet window --clear --operator tester", stop)
+        for wrong in ("staging.sh rollback", "staging.sh up", "fleet migrate", "run --rm"):
+            self.assertNotIn(wrong, stop)
+
+    def test_rollback_advice_is_what_rollback_accepts_across_the_move(self):
+        """C1: stage 2 before the move (single) names only db-roles --serve-previous; after the
+        move, a rollback whose target predates the split (rel_roles_guard refuses it) is never
+        named; one that does not predate it still is."""
+        base = (f'set -euo pipefail\nREL_SERVE_PREVIOUS="scripts/staging.sh db-roles --serve-previous --operator"\n'
+                f'rel_rollback_advice() {{{func("rel_rollback_advice")}}}\nrel_release_exit() {{{func("rel_release_exit")}}}\n'
+                'rel_workers_marker() { :; }\nrunning_backend_id() { :; }\nrelease_tag_of() { echo R1; }\n'
+                'rlog() { echo target=R0; echo restore_point=release-r0-1763000000; }\n'
+                'compose() { [[ -z "${BACKEND_RUNS:-}" ]] || echo cid-backend; }\n'
+                'REL_WORKERS=(celery-worker celery-beat provisioner staff-worker)\n'
+                'REL_LOG=x REL_ATTEMPT=y REL_PREV="" REL_OP=tester REL_MOVE=0\n')
+        # (the target R0 predates the split in every case: rel_target_presplit succeeds)
+        cases = (("single", ["db-roles --serve-previous --operator tester"], ["staging.sh rollback"]),
+                 ("unreadable", ["db-roles --serve-previous --operator tester"], ["staging.sh rollback"]),
+                 ("split", ["predates the split database roles", "Fix forward"], ["staging.sh rollback", "serve-previous"]))
+        for state, want, never in cases:
+            with self.subTest(state=state):
+                # unreadable: the database did not answer, and this release still had the move to do
+                state_fn = "db_roles_state() { return 1; }\nREL_MOVE=1\n" if state == "unreadable" \
+                    else f"db_roles_state() {{ echo {state}; }}\n"
+                script = base + state_fn + "rel_target_presplit() { return 0; }\nREL_STAGE=2\nrel_release_exit 1\n"
+                out = subprocess.run(["bash", "-c", script], capture_output=True, text=True)
+                self.assertIn("RELEASE DID NOT FINISH (exit 1)", out.stderr)
+                for text in want:
+                    self.assertIn(text, out.stderr)
+                for text in never:
+                    self.assertNotIn(text, out.stderr)
+        # a target from after the split is still named (the filter is not blanket)
+        # single, the backend still runs: the fleet steps (in it, before the move) are named too;
+        # not when it does not run, nor when the database did not answer (the fleet dispatch
+        # would then send them to the owner's container, which cannot log in before the move)
+        for state_fn, backend, named in (("db_roles_state() { echo single; }\n", "1", True),
+                                         ("db_roles_state() { echo single; }\n", "", False),
+                                         ("db_roles_state() { return 1; }\nREL_MOVE=1\n", "1", False)):
+            with self.subTest(state=state_fn, backend=backend):
+                out = subprocess.run(["bash", "-c", base + state_fn + f"BACKEND_RUNS={backend}\nrel_rollback_advice\n"],
+                                     capture_output=True, text=True)
+                self.assertEqual(out.returncode, 0, out.stderr)
+                self.assertIn("db-roles --serve-previous --operator tester", out.stdout)
+                fleet = ("scripts/staging.sh fleet release --operator tester then "
+                         "scripts/staging.sh fleet window --clear --operator tester")
+                (self.assertIn if named else self.assertNotIn)(fleet, out.stdout)
+                self.assertNotIn("staging.sh rollback", out.stdout)
+        out = subprocess.run(["bash", "-c", base + "db_roles_state() { echo split; }\nrel_target_presplit() { return 1; }\n"
+                              "rlog() { [[ \"${*: -1}\" == --restore ]] || return 1; echo target=R0; echo restore_point=release-r0-1763000000; }\n"
+                              "rel_rollback_advice\n"], capture_output=True, text=True)
+        self.assertIn("scripts/staging.sh rollback --restore (back to the window's restore point release-r0-1763000000", out.stdout)
+
+    def test_serve_previous_starts_the_build_that_ran(self):
+        """C1: a release stopped before the move: the build that ran starts on its own
+        containers, lifts the holds and clears the window in its backend (as ihr). Never `up`
+        (that would recreate them with the new images and secrets) and never `compose start`:
+        every app service depends on the one-shot migrate, which has no container here, so
+        Compose v5.7.1 fails with "missing dependency migrate" before the holds are lifted (the
+        fake docker fails the same way; P1-T19b verifier, item 1). `docker start` of their own
+        containers, never a one-off left by compose run. Refused once the roles are split."""
+        apps = "backend frontend celery-worker celery-beat provisioner staff-worker"
+        out, calls = self.run_staging([release(A)], "db-roles", "--serve-previous", "--operator", "tester",
+                                      running="db", fake={"FAKE_ROLES": "single", "FAKE_EXEC_OK": "1",
+                                                          "FAKE_STOPPED": apps, "FAKE_ONEOFF": "celery-worker"})
+        self.assertEqual(out.returncode, 0, out.stderr)
+        lines = calls.splitlines()
+        at = [next(i for i, ln in enumerate(lines) if re.search(pat, ln)) for pat in (
+            r"^start cid-backend$",
+            r"exec -T backend python manage.py ihr_fleet_run release --operator tester",
+            r"exec -T backend python manage.py ihr_fleet_run window --clear --operator tester",
+            r"^start cid-frontend cid-celery-worker cid-celery-beat cid-provisioner cid-staff-worker$")]
+        self.assertEqual(at, sorted(at), calls)
+        self.assertNotRegex(calls, r"compose .* (up|down|run|stop|start) ")
+        self.assertNotRegex(calls, r"^start .*cid-run-", )
+        self.assertIn("Served by the build that ran", out.stdout)
+        # Only the services with a container of their own are started (here: no workers left)
+        out, calls = self.run_staging([release(A)], "db-roles", "--serve-previous", "--operator", "tester",
+                                      running="db", fake={"FAKE_ROLES": "single", "FAKE_EXEC_OK": "1",
+                                                          "FAKE_STOPPED": "backend frontend"})
+        self.assertEqual(out.returncode, 0, out.stderr)
+        self.assertRegex(calls, r"(^|\n)start cid-frontend\n")
+        # No backend container left: refused before anything starts
+        out, calls = self.run_staging([release(A)], "db-roles", "--serve-previous", "--operator", "tester",
+                                      running="db", fake={"FAKE_ROLES": "single", "FAKE_STOPPED": "frontend"})
+        self.assertEqual(out.returncode, 1, out.stderr)
+        self.assertIn("no backend container of the build that ran is left", out.stderr)
+        self.assertNotRegex(calls, r"(^|\n)start |compose .* start ")
+        out, calls = self.run_staging([release(A)], "db-roles", "--serve-previous", "--operator", "tester",
+                                      running="db backend", fake={"FAKE_ROLES": "split"})
+        self.assertEqual(out.returncode, 1, out.stderr)
+        self.assertIn("only for a database that still has its single role", out.stderr)
+        self.assertNotIn("start", calls)
+
+    def test_compose_start_is_never_used_for_an_app_service(self):
+        """P1-T19b verifier, item 1: what the fake docker models is this stack's compose.yaml
+        (every app service depends on the one-shot migrate, which only ever runs with compose run
+        --rm), and staging.sh never runs `compose start` (only the database's own advice names
+        `docker compose start db`, which has no dependency)."""
+        compose = (ROOT / "deploy" / "staging" / "compose.yaml").read_text()
+        anchor = compose[compose.index("x-app") if "x-app" in compose else 0:compose.index("\nservices:")]
+        self.assertRegex(anchor, r"depends_on:\n\s+migrate:\n\s+condition: service_completed_successfully")
+        db = compose[compose.index("\n  db:\n"):compose.index("\n  redis:\n")]
+        self.assertNotIn("depends_on", db)
+        code = "\n".join(ln for ln in STAGING_SH.splitlines() if not ln.lstrip().startswith("#"))
+        self.assertNotRegex(code.replace("(docker compose start db)", ""), r"(^|[;&|(]\s*|\s)compose start ")
+        self.assertNotIn("docker compose start backend", STAGING_SH)
+        self.assertEqual(re.findall(r"docker compose start \w+", STAGING_SH), ["docker compose start db"])
+        with tempfile.TemporaryDirectory() as d:  # the fake itself refuses as Compose does
+            dk = Path(d) / "docker"
+            dk.write_text(FAKE_DOCKER)
+            env = {**os.environ, "FAKE_LOG": str(Path(d) / "calls"), "FAKE_RUNNING": "db redis",
+                   "FAKE_STOPPED": "backend frontend celery-worker"}
+            for svc in ("backend", "frontend", "celery-worker"):
+                out = subprocess.run([sys.executable, str(dk), "compose", "-f", "x", "start", svc], env=env,
+                                     capture_output=True, text=True)
+                self.assertEqual((out.returncode, out.stderr), (1, "missing dependency migrate\n"), svc)
+            out = subprocess.run([sys.executable, str(dk), "compose", "-f", "x", "start", "db"], env=env,
+                                 capture_output=True, text=True)
+            self.assertEqual(out.returncode, 0, out.stderr)
+
+    def test_start_existing(self):
+        """The release's advice "start the old backend again" (and the advice after a release
+        stopped before the move): scripts/staging.sh start-existing, docker start of the
+        service's own containers, never Compose; app services only; refused with none left."""
+        out, calls = self.run_staging([], "start-existing", "backend", running="db",
+                                      fake={"FAKE_STOPPED": "backend", "FAKE_ONEOFF": "backend"})
+        self.assertEqual(out.returncode, 0, out.stderr)
+        self.assertEqual([ln for ln in calls.splitlines() if ln.startswith("start ")], ["start cid-backend"], calls)
+        self.assertNotRegex(calls, r"compose .* (up|start) ")
+        for args, why in ((("traefik",), "traefik is not an app service"),
+                          (("backend", "celery-beat"), "no container of celery-beat is left to start"),
+                          ((), "usage: scripts/staging.sh start-existing")):
+            with self.subTest(args=args):
+                out, calls = self.run_staging([], "start-existing", *args, running="db", fake={"FAKE_STOPPED": "backend"})
+                self.assertEqual(out.returncode, 1, out.stderr)
+                self.assertIn(why, out.stderr)
+                self.assertNotRegex(calls, r"(^|\n)start ")
+        out, calls = self.run_staging([], "start-existing", "backend", running="db",
+                                      fake={"FAKE_STOPPED": "backend", "FAKE_PS_FAILS": "1"})
+        self.assertEqual(out.returncode, 1, out.stderr)
+        self.assertIn("could not list the containers of backend", out.stderr)
+        self.assertNotRegex(calls, r"(^|\n)start ")
+
+    def test_fleet_before_the_move_runs_in_the_running_backend(self):
+        """C1: before the move ihr_owner does not exist, so the owner's migrate one-off cannot
+        log in: fleet release and hold run in the running backend (as ihr), other steps refuse;
+        after the move they run in the owner's container as before."""
+        fake = {"FAKE_ROLES": "single", "FAKE_EXEC_OK": "1"}
+        out, calls = self.run_staging([release(A)], "fleet", "release", "--operator", "tester", running="db backend", fake=fake)
+        self.assertEqual(out.returncode, 0, out.stderr)
+        self.assertIn("exec -T backend python manage.py ihr_fleet_run release --operator tester", calls)
+        self.assertNotIn(" run ", calls)
+        out, calls = self.run_staging([release(A)], "fleet", "migrate", "--operator", "tester", running="db backend", fake=fake)
+        self.assertEqual(out.returncode, 1, out.stderr)
+        self.assertIn("only fleet window, release and hold run before it", out.stderr)
+        self.assertNotIn(" run ", calls)
+        out, calls = self.run_staging([release(A)], "fleet", "release", "--operator", "tester", running="db backend",
+                                      fake={**fake, "FAKE_ROLES": "split"})
+        self.assertIn("run --rm --no-deps -T migrate python manage.py ihr_fleet_run release --operator tester", calls)
+
     def test_releases_lists_the_stack(self):
         out, _ = self.run_staging([release(A), release(B), rollback(A, B)], "releases")
         self.assertEqual(out.stdout.split(), [A])
@@ -885,6 +1199,33 @@ class EndToEnd(unittest.TestCase):
         self.assertIn("the backend is not running, but celery-worker still run(s)", out.stderr)
         self.assertNothingChanged(calls)
         self.assertIsNone(self.after["attempt"])
+
+    def test_a_release_needs_the_split_roles_secrets(self):
+        """P1-T19b: this build runs as ihr_app and ihr_owner; without their addresses the release
+        refuses before its record or any change."""
+        out, calls = self.run_staging([release(A)], "release", "--operator", "tester", running="backend", split=False)
+        self.assertEqual(out.returncode, 1, out.stderr)
+        self.assertIn("scripts/staging.sh db-split-secrets", out.stderr)
+        self.assertNothingChanged(calls)
+        self.assertIsNone(self.after["attempt"])
+
+    def test_no_rollback_across_the_move_of_the_roles(self):
+        """P1-T19b: a target release whose kept stack predates the split roles would start the
+        app as the renamed single role: refused before anything changes (both kinds)."""
+        old_stack = {A: "services:\n  backend:\n    env_file:\n      - secrets/app.env\n"}
+        restorable = release(RUNNING, tenant=7, rp=point(RUNNING), rp_time="1763000000")
+        for extra, running_release in (((), release(RUNNING)), (("--restore",), restorable)):
+            with self.subTest(extra=extra):
+                out, calls = self.run_staging([release(A), running_release], "rollback", *extra, stacks=old_stack,
+                                              fake={"FAKE_IMAGES": " ".join(img(n) for n in (10, 11, 20, 30))})
+                self.assertEqual(out.returncode, 1, out.stderr)
+                self.assertIn(f"release {A} predates the split database roles", out.stderr)
+                self.assertNothingChanged(calls)
+        # a target whose stack has the owner's address is not refused for it
+        new_stack = {A: "    env_file:\n      - secrets/app.env\n      - secrets/db-owner.env\n"}
+        out, _ = self.run_staging([release(A), release(RUNNING)], "rollback", stacks=new_stack,
+                                  fake={"FAKE_IMAGES": " ".join(img(n) for n in (10, 11, 20, 30))})
+        self.assertNotIn("predates the split database roles", out.stderr)
 
     def test_fleet_window_runs_in_the_running_backend(self):
         """D10: never the new build (a one-off of the moved tag) on the old schema."""

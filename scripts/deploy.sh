@@ -183,6 +183,10 @@ fi
 [[ -f "$ENV_DIR/.env" && -d "$ENV_DIR/secrets" ]] \
   || die "no $ENV_DIR/.env and secrets/: run scripts/staging.sh init <suffix> first"
 [[ -f "$ENV_DIR/.local" ]] && die "$ENV_DIR was made for a proof on this machine (init --local); use init without --local, or --local-proof"
+# The split database roles (P1-T19b): their secrets are made here, on the deploying machine, never
+# on the server; this build's stack runs nothing without them
+[[ -f "$ENV_DIR/secrets/db-owner.env" ]] \
+  || die "no $ENV_DIR/secrets/db-owner.env: make the split database roles' secrets first (IHR_STAGING_OUT=$ENV_DIR scripts/staging.sh db-split-secrets; deploy/staging/README.md, Moving to split roles)"
 for img in "$BACKEND" "$FRONTEND" "$POSTGRES" "$KEYCLOAK" ${ACMEDNS:+"$ACMEDNS"}; do
   docker image inspect "$img" >/dev/null 2>&1 || die "image $img not found here (drop --no-build)"
   # With --no-build the images may come from another commit: DEPLOYED must not claim HEAD
@@ -234,6 +238,12 @@ if ! ((NO_START || LOCAL_PROOF || RELEASE)); then
   remote "cat $REL_REMOTE/attempt 2>/dev/null || true" > "$CM_DIR/attempt"
   [[ -s "$CM_DIR/attempt" ]] || rm -f "$CM_DIR/attempt"
   db_created="$(remote "test -f $REMOTE_ROOT/deploy/staging/.db-created && echo 1 || echo 0")"
+  # A server whose database still has its single role (its secrets not split yet): the move runs
+  # only under a full stop, inside the release (P1-T19b)
+  roles_split="$(remote "test -f $REMOTE_ROOT/deploy/staging/secrets/db-owner.env && echo 1 || echo 0")"
+  if [[ "$db_created" == 1 && "$roles_split" != 1 ]]; then
+    die "the server's database still has its single role: the first deploy with the split database roles moves them under a full stop, so deploy with --release (in the announced window: deploy/staging/README.md, Moving to split roles), never a plain start"
+  fi
   rc=0
   python3 scripts/release_log.py needs-release "$CM_DIR/releases.log" "$CM_DIR/attempt" "$TENANT_FP" "$PUBLIC_FP" \
     "$db_created" > "$CM_DIR/why" || rc=$?

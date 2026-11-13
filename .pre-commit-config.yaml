@@ -211,6 +211,16 @@ repos:
         language: python
         files: ^(scripts/(staging|deploy)\.sh$|scripts/release_log\.py$|scripts/test_release_scripts\.py$|\.gitignore$)
         pass_filenames: false
+      # Split database roles on staging (P1-T19b): the secrets, who holds the owner's address, each
+      # container's pre-start role check, the re-assertion at every up, the move under a full stop,
+      # the restore drill as the owner, deploy.sh's refusals, required as the deployment default
+      - id: staging-db-roles-static
+        name: the split database roles keep their rules
+        entry: python -m unittest scripts/test_staging_db_roles.py
+        language: python
+        additional_dependencies: ["pyyaml==6.0.3"]
+        files: ^(deploy/staging/|deploy/logs/alerts/db-roles\.yml$|scripts/(staging|deploy)\.sh$|scripts/test_staging_db_roles\.py$|plugins/ihr_platform/ihr_platform/(db_roles\.py|settings/(deployment|secure)\.py)$|\.gitignore$)
+        pass_filenames: false
       # Dashboards (P1-T9d): Grafana alone with Prometheus and the read-only log door, hardened,
       # one host name, nothing called out; dashboards current with their generator
       - id: staging-dashboards-static

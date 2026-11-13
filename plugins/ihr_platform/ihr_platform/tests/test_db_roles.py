@@ -511,6 +511,38 @@ class AppRoleTests(AppRoleCase):
         self.assertIn("role_settings", found)
         self.assertIn("role_settings", again)
 
+    def test_a_setting_the_app_stores_in_another_database_counts_and_is_named(self):
+        """Review S1/C3: Postgres lets a role store its own default IN DATABASE any database,
+        one it cannot connect to included. The run-time check and migrate's role check count
+        it and name the database, so the runbook (db-roles --assert, which resets every
+        database) and the operator know where it is."""
+        with connection.cursor() as cursor:
+            cursor.execute(
+                "ALTER ROLE ihr_app IN DATABASE postgres SET statement_timeout = '1h'"
+            )
+            try:
+                found = dict(db_roles.app_problems(cursor))
+                again = dict(db_roles.reconnect_problems(cursor))
+                roles = db_roles.role_problems(cursor, "test")
+            finally:
+                cursor.execute("ALTER ROLE ihr_app IN DATABASE postgres RESET ALL")
+            self.assertNotIn(
+                "role_settings", [r for r, _ in db_roles.app_problems(cursor)]
+            )
+        self.assertEqual(
+            found["role_settings"],
+            "ihr_app has stored settings in postgres (ALTER ROLE ... SET)",
+        )
+        self.assertEqual(again["role_settings"], found["role_settings"])
+        self.assertIn(
+            (
+                "problem",
+                "role ihr_app has stored settings in postgres (ALTER ROLE ... RESET ALL, "
+                "in each: scripts/staging.sh db-roles --assert)",
+            ),
+            roles,
+        )
+
 
 class GrantsTests(AppRoleCase):
     def test_the_model_holds_after_set_up(self):
@@ -804,12 +836,16 @@ class GrantsTests(AppRoleCase):
                     )
                     self.assertEqual(cursor.fetchone(), (False,))  # nobody's now
                 db_roles.ensure_grants(connection, [TEST_SCHEMA])  # post_migrate
-            patient = baker.make(Patient)  # as ihr_app from here on
-            identifier = baker.make(
-                PatientIdentifier, patient=patient, value="12345678901234"
-            )
-            identifier.value = "12345678909999"
-            identifier.save()
+            try:
+                patient = baker.make(Patient)  # as ihr_app from here on
+                identifier = baker.make(
+                    PatientIdentifier, patient=patient, value="12345678901234"
+                )
+                identifier.value = "12345678909999"
+                identifier.save()
+            except DatabaseError as exc:
+                # An assertion failure, not an error: the mutation row expects a FAIL.
+                self.fail(f"the app cannot write a masked identifier: {exc}")
             row = fetch(
                 "SELECT data->'value' FROM ihr_audit_entry WHERE tbl = "
                 "'emr_patientidentifier' AND op = 'U' ORDER BY id DESC LIMIT 1"
@@ -1078,6 +1114,32 @@ class RefusalTests(SimpleTestCase):
             self.lines, ["ihr-db-role: refused role=app reason=membership"]
         )
 
+    def test_a_notice_is_not_a_difference(self):
+        """P1-T19b: the watch and dump roles have no login until their services exist (a
+        notice): an app process does not warn about them as drift that migrate repairs; a
+        missing right still is counted."""
+        notice = db_roles.Findings()
+        notice.add("notice", "role ihr_audit_watch must be able to log in (LOGIN)")
+        missing = db_roles.Findings()
+        missing.add("missing", "public.x: ihr_app lacks SELECT", grantee=db_roles.APP)
+        quiet = (
+            mock.patch.object(db_roles, "app_problems", return_value=[]),
+            mock.patch.object(db_roles, "effective_public_problems", return_value=[]),
+            mock.patch("ihr_audit.seal.sealing_problems_by_schema", return_value={}),
+        )
+        with quiet[0], quiet[1], quiet[2]:
+            with (
+                mock.patch.object(db_roles, "report", return_value=notice),
+                self.assertNoLogs(db_roles.logger, "WARNING"),
+            ):
+                self.assertEqual(db_roles.check_connection(connection, "app"), [])
+            with (
+                mock.patch.object(db_roles, "report", return_value=missing),
+                self.assertLogs(db_roles.logger, "WARNING") as logs,
+            ):
+                self.assertEqual(db_roles.check_connection(connection, "app"), [])
+        self.assertIn("1 difference(s) from the model", logs.output[0])
+
     def test_two_requests_both_fail(self):
         """C1: the same gunicorn worker's next request is refused too."""
         check, emit = self._refusing([("superuser", "a superuser")])
@@ -1287,7 +1349,10 @@ class RefusalTests(SimpleTestCase):
         db_roles.raise_deferred()  # nothing to raise
 
     def test_settings_rules(self):
-        self.assertEqual(secure.db_role_problems({"IHR_DB_ROLES": "off"}), [])
+        # P1-T19b: a server runs the split roles required; off (unmanaged, unchecked) and the
+        # tests' mode are refused there
+        self.assertTrue(secure.db_role_problems({"IHR_DB_ROLES": "off"}))
+        self.assertTrue(secure.db_role_problems({}))
         # S10: a declared role is always checked
         self.assertTrue(secure.db_role_problems({"IHR_DB_ROLE": "app"}))
         self.assertTrue(

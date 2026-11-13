@@ -331,8 +331,10 @@ each control alone:
      fleet-wide outage. Accepted: availability against a compromised app role is not a goal of
      P1-T19 (the app can already delete hospital data), and refusing beats serving with a
      forged default (an audit actor, a statement time-out). Runbook (P1-T19b): as postgres,
-     `ALTER ROLE ihr_app RESET ALL` and `ALTER ROLE ihr_app IN DATABASE ihr RESET ALL`, treat it
-     as an incident, then restart the app containers.
+     `ALTER ROLE ihr_app RESET ALL` and `ALTER ROLE ihr_app IN DATABASE <each> RESET ALL` for every
+     database `pg_db_role_setting` names (a role may store a default for itself in any database,
+     one it cannot connect to included, and the check counts them all: `staging.sh db-roles
+     --assert` does this), treat it as an incident, then restart the app containers.
 2. **Availability against a compromised app role (S6).** Holding the sealing key now makes
    sealing skip, never wait. The app can still delay sealing by keeping a transaction open
    (the horizon) or exhaust connections; nothing can be forged, and SealerLate catches a stall.
@@ -398,3 +400,109 @@ each control alone:
     `ihr_audit_watch` or `ihr_dump` fails the migrate one-shot in required mode even before
     their services exist (only a missing LOGIN is a notice): they are LOGIN roles, and such a
     state is a privilege path. Deliberate.
+
+### P1-T19b as built (2026-11-13)
+
+Built as items 9-12 and the known limits' P1-T19b parts say: `staging.sh db-split-secrets`
+(deploying machine; new owner password; `app.env` the app's address, `db-owner.env` the owner's,
+mounted only into migrate, admin and the provisioner; `IHR_DB_PASSWORD` gone; idempotent, never
+replaces a secret), the move under a full stop inside `staging.sh release` or `staging.sh db-roles
+--migrate`, every `up` re-asserting both passwords and `RESET ALL` (in every database) and
+the large-object revoke as postgres, `IHR_DB_ROLES=required` as the deployment default, the
+pre-start `ihr_db_role_check --for <process>` in every runtime container and `--for migrate`
+first in the migrate one-shot, the restore drill as the owner, and the README runbooks ("Moving
+to split roles"; the alert runbooks name `db-roles --assert`). Static tests:
+`scripts/test_staging_db_roles.py` (pre-commit hook `staging-db-roles-static`) and new cases in
+`scripts/test_release_scripts.py`.
+
+**Deviations and additions:**
+
+1. **Passwords never in `db.env`, never as text to Postgres:** `staging.sh` turns each password
+   into a SCRAM-SHA-256 verifier and sends `ALTER ROLE ... PASSWORD '<verifier>'` on psql's stdin,
+   so the password is in no log, `pg_stat_activity` or command line. A new cluster's
+   `initdb/10-roles.sh` makes `ihr_owner` without a password; `up` sets it before anything logs in.
+2. **`ihr_audit_watch` and `ihr_dump` are NOLOGIN with no password** until their services exist,
+   and every `up` re-asserts that: P1-T21 and P1-T22 must change `DB_ROLES_SQL`. Their missing
+   LOGIN is a notice; `db_roles.check_connection` now skips notices in its drift count (it logged
+   "2 differences ... migrate repairs them" on every app start; test
+   `RefusalTests.test_a_notice_is_not_a_difference`).
+3. **The role SQL runs in the database `ihr`** (one transaction, rename included): a function's
+   privileges are each database's own. Run in `postgres` first, it left `ihr`'s large-object
+   creators open, and the release's `ihr_db_role_check --for migrate` refused, as designed (found
+   by the proof). Every `release` now re-asserts the roles before that check, so a release that
+   stopped after the move finishes when run again.
+4. **After the move the running backend is `ihr_app`,** which may not write the release's own
+   records (hold, window, fleet runs: the owner's tables). `old_manage` (and `staging.sh fleet
+   window`) then run the running build's command as a one-off of its image in the owner's logged
+   migrate container; before the move they run in the backend as before. Without this every
+   release after the move would have failed at its hold.
+5. **The seal inside the move's window** runs the outgoing build with its own address (read from
+   the running backend container) and `IHR_DB_ROLES=off` for that one-off: the split roles do not
+   exist yet.
+6. **No way back across the move:** `rollback` (both kinds) refuses, before any change, a target
+   whose kept stack has no `db-owner.env` (fix forward; README). A restore to a moment before the
+   move brings back the single role; `up` refuses it and `db-roles --migrate` moves it again
+   (proven).
+7. **`up` refuses a running single-role database before recreating anything** (the db container's
+   settings changed with the split; recreating it would cut the old stack off).
+8. **The settings refuse `IHR_DB_ROLES` other than `required` on a server** (not only a default).
+9. **`deploy.sh`** refuses without `secrets/db-owner.env` on the deploying machine, and a plain
+   start to a server with a database whose secrets are not split yet (`--release` moves it).
+10. **Memberships** are revoked whoever granted them (`GRANTED BY ... CASCADE`), including any
+    role's membership in ours. `db-roles --migrate` runs only on a stopped stack whose backend
+    image is the last logged release's (the restore case), refuses while a release is
+    unfinished, and says where it stopped (review fixes below).
+
+**Measured** (local staging proof, Postgres 18.6, 3 hospitals; record: the run's scratchpad
+`t19b/proof.md`): the move's transaction 1 s; stopping every app container plus the move 13 s;
+grants converged as the owner: public 25 granted, each hospital 213 (7 s for the platform step
+and 7 s for the three hospitals, one-shot start included; 3 s fleet-wide in `db-roles --migrate`);
+the move release 241 s end to end (`up` 146 s); `db-roles --migrate` on a stopped stack 120 s
+(`up` ~107 s); `ensure_grants` with nothing to change over public and 3 hospitals (3,390
+catalogue relations) 0.04 s, report 0.02 s, an app process's first-connection check 0.0-0.1 s;
+`db-roles --assert` 1 s; restore drill 13 s. Smoke 0 FAIL after both moves; every isolation spot
+check refused; each mis-set container exited non-zero with the refusal line.
+
+**Review fixes (2026-11-13):**
+
+- **S1/C3, stored settings in another database.** A role may `ALTER ROLE` itself `IN DATABASE`
+  any database (also `postgres`, `template1`, `keycloak`, which it cannot connect to); the run-time
+  and migrate checks count every row, but `up` and `db-roles --assert` reset only role-wide and in
+  `ihr`, so the runbook could not end that refusal. `DB_ROLES_SQL` now resets every row of the
+  four roles in `pg_db_role_setting` (a loop, `%I`-quoted) and raises if any is left; the test
+  runner's `create_test_roles` does the same; the refusal and the migrate check name the
+  databases. Proven on a throwaway Postgres 18.6 with `db_roles_apply` itself.
+- **C2, `db-roles --migrate` outside a release.** It now refuses while any app container runs
+  and unless this stack's backend image is the last logged release's build: on a running server
+  the move belongs to `release` (hold, seal, restore point, log). Its own hold is gone (dead), as
+  is `db-split-secrets`' hint to use it on a server.
+- **C1/S2, recovery before the move.** A release that stops before the move (stage 1 or 2, the
+  database still single) no longer advises a rollback (`rel_roles_guard` refuses every rollback
+  while the database is single; `rel_rollback_advice` drops a rollback whose target predates the
+  split), nor `up` / a migrate-container fleet step. It names `db-roles --serve-previous`, which
+  starts the build that ran on its own containers (`docker start`; see the verifier fixes), lifts the holds and
+  clears the window with it. Before the move `fleet release|hold|window` run in the running
+  backend; other fleet steps refuse. `db-roles --migrate`'s stopped-before-the-move message says
+  to run it again.
+- **Verifier fixes (2026-11-13).** (1) `--serve-previous` ran `docker compose start backend`, which
+  in Compose v5.7.1 also starts the service's dependencies: every app service depends on the
+  one-shot `migrate` (`service_completed_successfully`), which has no container on this stack
+  (`compose run --rm`), so it failed with `missing dependency migrate` and, under `set -e`, died
+  before the holds were lifted (proven on a throwaway busybox project shaped like the stack; the
+  release's old "start the old backend again (docker compose start backend)" advice had the same
+  cause). It now starts each app service's own containers with `docker start` (`start_existing`;
+  one-offs of `compose run` skipped by their `oneoff` label; the backend first, the others after
+  the holds are lifted), also as `scripts/staging.sh start-existing <service>...`, which the
+  release's advice names; the same throwaway project proved `start-existing` starts them all and
+  their names resolve again. The fake docker now resolves `compose start` dependencies as Compose
+  does, so the test would fail on the old code. (2) With the database still single and its
+  backend running, the advice also names `fleet release` then `fleet window --clear` (routed into
+  that backend before the move); not when the backend is down or the database did not answer.
+  (3) `db-roles --migrate`'s "no app container runs" check (and `release`'s D8 check) read
+  `compose ps` fail-closed: an error refuses, never counts as "none run".
+
+**Open:** the restore drill to a moment before the move failed only the first-hour fingerprint
+rule (no moment existed after the first fingerprint and before the move in a fresh proof); the
+deploy over SSH (`deploy.sh --release`, `--local-proof` on the VM) is covered by static tests only;
+Postgres's own `trust` for the db container's socket and loopback (any process in that container
+may log in as any role) is unchanged, as before (that container is the superuser's anyway).

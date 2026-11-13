@@ -430,9 +430,20 @@ class LogAlerts(unittest.TestCase):
         [case] = re.findall(r"^  fleet\)(.*?);;$", STAGING_SH, re.M | re.S)
         self.assertIn("run --rm --no-deps -T migrate python manage.py ihr_fleet_run", case)
         self.assertNotIn("admin", case)
-        # only `fleet window` (no "ihr-fleet:" line) runs in the running backend (P1-T18b review D10)
-        self.assertEqual(case.count("python manage.py ihr_fleet_run"), 2)
-        self.assertIn('if [[ "${2:-}" == window && ', case)
+        # only `fleet window` (no "ihr-fleet:" line) runs as the running backend's build (P1-T18b
+        # review D10): in it before the move of the roles, after it (P1-T19b: the backend runs as
+        # the app role) in a one-off of its image in the same logged migrate container. Before
+        # the move also release and hold (review C1: ihr_owner does not exist yet, so the
+        # migrate one-off cannot log in), in the running backend as release's own hold is
+        self.assertEqual(case.count("ihr_fleet_run"), 2)
+        self.assertIn('&& { [[ "${2:-}" == window ]] || { [[ "${2:-}" =~ ^(release|hold)$ ]] && rel_db_single; }; }; then',
+                      case)
+        self.assertIn('old_manage ihr_fleet_run "${@:2}"', case)
+        self.assertIn('"$(db_roles_state 2>/dev/null || true)" == single', STAGING_SH.split("rel_db_single() {", 1)[1][:200])
+        old = STAGING_SH.split("old_manage() {", 1)[1].split("\n}\n", 1)[0]
+        self.assertIn('compose run --rm --no-deps -T migrate python manage.py "$@"', old)
+        self.assertIn("compose exec -T backend python manage.py", old)
+        self.assertNotIn("admin", old.split("\n  local", 1)[1])
         tasks = (ROOT / "plugins" / "ihr_platform" / "ihr_platform" / "tasks.py").read_text()
         self.assertIn('os.write(2, f"{line}\\n".encode())', tasks)
         self.assertIn('fleet.log_line(slug, "held")', tasks)

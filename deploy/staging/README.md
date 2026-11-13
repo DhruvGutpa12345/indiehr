@@ -10,7 +10,9 @@ One VM in an Indian region (provider-neutral, ADR-011), Docker Compose, Traefik 
 | `scripts/staging.sh up` | Database, Redis, the platform's (public) migrations, web app, Celery, Keycloak, Traefik; then the Keycloak realms and the two workers' narrow accounts. Never migrates a hospital (P1-T18a): if a live hospital's schema is not the new build's, the `migrate` one-shot refuses and nothing starts; migrate hospitals in the announced window (`staging.sh release`, P1-T18b: see "Releases" below). A hospital this build's release already tried and left held (its migration failed) stays at 503 and the others start |
 | `scripts/staging.sh release` / `rollback` / `releases` | The new images in the announced window, rolling back, the releases in force (P1-T18b): see "Releases" below |
 | `scripts/staging.sh smoke` | 20 checks through Traefik: what is public and what is not, TLS redirect, HSTS, token issuer, production mode, no query strings in logs; and every active hospital served (a held one, 503 "upgrading", fails it: P1-T18b) |
-| `scripts/staging.sh manage <args>` | One-off `manage.py` (never logged; no Keycloak admin credential) |
+| `scripts/staging.sh manage <args>` | One-off `manage.py` as the database owner `ihr_owner` (never logged; no Keycloak admin credential) |
+| `scripts/staging.sh db-split-secrets` / `db-roles --migrate \| --serve-previous \| --assert \| --status` | The split database roles (P1-T19b): their secrets, moving a restored database, serving the build that ran after a release stopped before the move, re-asserting them: see "Moving to split roles" below |
+| `scripts/staging.sh start-existing <service>…` | Starts the existing (stopped) containers of app services again as they were: their own image, settings and secrets, with `docker start`. Never `up` (it would recreate them with this stack's new images and secrets) and never `docker compose start`: Compose also starts each service's dependencies, and every app service depends on the one-shot `migrate`, which has no container on this stack (it runs with `compose run --rm`), so it fails with `missing dependency migrate` and starts nothing. Refuses a service that is not an app service or has no container left, and starts no one-off left by `compose run` |
 | `scripts/staging.sh local-proof` | All of the above on this machine (127.0.0.1, self-signed certificate) |
 | `scripts/staging.sh acme-init …` etc. | The wildcard certificate: see below |
 | `scripts/deploy.sh --host ihr@<address>` | From this machine to a bootstrapped server: builds our two images (web app from the CI bundle), sends them with `docker save \| ssh docker load` (skipped when the server has that build), sends the tracked stack files and, as a tar stream over SSH, `.env` + `secrets/` (mode 600), then runs `staging.sh up` and `smoke` there (or, with `--release`, `staging.sh release`: required when the build changes a schema, decided before anything is sent; see "Releases"), logs the release once smoke passes, removes release images beyond the last 3 logged releases and untagged ones, and writes `/srv/indiehr/DEPLOYED` (commit and dirty flag as labelled on the images, image IDs, web bundle id). `/srv/indiehr/DEPLOYING` is written first and removed only on success: if it is still there, the last deploy failed part-way. The backend image is built from the committed files (`git archive`), never from git-ignored ones. Refuses a dirty git tree without `--allow-dirty`, images built from another commit with `--no-build` unless `--allow-dirty`, and a server whose host key is not yet in `known_hosts` |
@@ -31,14 +33,18 @@ nobody with no capabilities):
   admin console and master realm stay internal (admin console: SSH tunnel to `127.0.0.1:8081`).
 
 **Secrets per container:** the web app and Celery get `app.env` (Django key, signing keys,
-database and Redis addresses); the web app also the audit bucket's read-only key, the Celery
-worker its add-only key; each Keycloak worker only its own narrow account; Keycloak its database
-password and first-start admin, which `staging.sh` passes only to one-off commands.
+the app role's database address (`ihr_app`), Redis); the web app also the audit bucket's
+read-only key, the Celery worker its add-only key; each Keycloak worker only its own narrow
+account; Keycloak its database password and first-start admin, which `staging.sh` passes only to
+one-off commands. Only `migrate`, `admin` and the provisioner also get `db-owner.env`, the
+database owner's address (`ihr_owner`; P1-T19b).
 
 **Settings** (`ihr_platform.settings.deployment`): the server refuses to start, naming every
 problem, without its own secret key, signing keys, hosts, https addresses, secure cookies, HSTS,
 production mode, or with CARE's terminology default or Sentry (`settings/secure.py`). It also
-refuses any `TIME_ZONE` other than `Asia/Kolkata`, or `USE_TZ` off (P1-T7b).
+refuses any `TIME_ZONE` other than `Asia/Kolkata`, or `USE_TZ` off (P1-T7b), and
+`IHR_DB_ROLES` other than `required` or a container that does not declare its database role
+(`IHR_DB_ROLE`: app or owner; P1-T19b).
 
 ## Staff computers must use India Standard Time (P1-T7b)
 
@@ -258,7 +264,7 @@ Everything is **encrypted on the server** before it leaves (aes-256-cbc).
 | `scripts/staging.sh backup-init https://in-south1-objectstore.e2enetworks.net <bucket> Chennai --uri-style path` | Once: asks for the backup bucket's key (typed or piped, never an argument), makes the encryption passphrase, turns archiving on. AWS: `https://s3.ap-south-2.amazonaws.com <bucket> ap-south-2`. `--local`: a proof into this stack's SeaweedFS (automatic in `local-proof`; same disk, so not a real backup) |
 | `scripts/staging.sh backup-status` | Backups in the repository, the service's last backup / push / check, WAL files still waiting. The service is **unhealthy** (Docker, and `smoke`) when a WAL file waits over 10 minutes, the hourly check fails, or no backup succeeded for 26 hours |
 | `scripts/staging.sh backup-now [full\|diff]` | A backup now (e.g. before an upgrade) |
-| `scripts/staging.sh restore-drill [--target "2026-11-09 14:00:55+05:30"]` | Restores into a throwaway copy beside the live database (refused without room for it), then checks every hospital's audit trail **in the copy** against the outside fingerprints the storage had by the copy's last transaction, and removes it. `--keep` leaves the copy for a look (`--clean` removes it). The target always carries its offset (+05:30): without one Postgres would read UTC |
+| `scripts/staging.sh restore-drill [--target "2026-11-09 14:00:55+05:30"]` | Restores into a throwaway copy beside the live database (refused without room for it), gives the copy's roles the secrets' passwords (and moves them there too if the copy predates the move of the roles, P1-T19b), then checks every hospital's audit trail **in the copy**, as `ihr_owner`, against the outside fingerprints the storage had by the copy's last transaction, and removes it. `--keep` leaves the copy for a look (`--clean` removes it). The target always carries its offset (+05:30): without one Postgres would read UTC |
 | `scripts/staging.sh restore [--target …]` | **A lost database:** restores into this stack's own, empty database volume (never over an existing one, never while the stack runs), recovers with archiving on so the new timeline reaches the repository. Before recovery it sweeps the WAL spool: our database's surviving WAL is pushed and replayed (less is lost); another database's WAL (e.g. an empty database started by mistake) is set aside in the backup state volume's `rejected-wal/` (`backup-status` lists it), since it would block every later push |
 
 **The passphrase:** `PGBACKREST_REPO1_CIPHER_PASS` in `secrets/backup.env`. Without it no backup
@@ -534,8 +540,8 @@ Fix the cause, then `scripts/staging.sh manage ihr_pack_apply --slug <slug> --op
 A busy hospital (another job holds its lock) is tried again after 5, 15 and 30 seconds; still
 busy after that, it is recorded (`outcome=deferred`) and alerted on like a failure.
 
-**Database roles** (P1-T19a, `deploy/logs/alerts/db-roles.yml`; they fire only once
-`IHR_DB_ROLES=required`, which comes with the move of the roles, P1-T19b):
+**Database roles** (P1-T19a, `deploy/logs/alerts/db-roles.yml`; `IHR_DB_ROLES=required` on
+every app container since P1-T19b, see "Moving to split roles"):
 
 | Alert | When | Severity |
 |---|---|---|
@@ -543,14 +549,20 @@ busy after that, it is recorded (`outcome=deferred`) and alerted on like a failu
 | DatabaseSchemaGated | `ihr-db-role: gated schema=<schema> reason=<extra_privileges\|controls>` from an app service (the worker repeats it every minute), in the last 15 minutes: that hospital schema is not served, and the shared app role may still hold the right | critical |
 | DatabaseRoleLoginFailed | Postgres's own `password authentication failed for user "<ihr_app\|ihr_owner\|...>"`, from the `db` container, in the last 10 minutes: a split role's password may have been changed by whoever could log in as it | critical |
 
-Runbook: `manage.py ihr_db_role_check --report` in the container names every finding. Grants
-and controls: a fleet-wide `scripts/staging.sh fleet migrate --operator <you>` (no `--slug`:
-it repairs every hospital schema, archived ones too), then restart the app containers.
-Stored settings on a role (`reason=role_settings`, which anyone holding the app role can
-cause): as postgres, `ALTER ROLE ihr_app RESET ALL` and `ALTER ROLE ihr_app IN DATABASE ihr
-RESET ALL`. A large object the app owns (`reason=owns_objects`): as postgres, keep a copy for
-the incident, then `SELECT lo_unlink(oid) FROM pg_largeobject_metadata WHERE lomowner =
-'ihr_app'::regrole`. A password: set it again from the secrets. Treat each of these as a sign
+Runbook: `manage.py ihr_db_role_check --report` in the container names every finding (a
+refused container exits before its process starts and restart-loops: `docker compose logs
+<service>` shows the lines before the refusal). Grants and controls: a fleet-wide
+`scripts/staging.sh fleet migrate --operator <you>` (no `--slug`: it repairs every hospital
+schema, archived ones too), then restart the app containers (`scripts/staging.sh up`). The roles
+themselves (a password: DatabaseRoleLoginFailed; stored settings, `reason=role_settings`, which
+anyone holding the app role can cause; a membership or an attribute): `scripts/staging.sh
+db-roles --assert`, which as postgres sets both passwords again from the secrets, resets every
+stored setting of every role of the model **in every database** (`ALTER ROLE ... RESET ALL` and
+`ALTER ROLE ... IN DATABASE <each> RESET ALL`: a role may store a default for itself in
+`postgres`, `template1` or `keycloak` too, and the refusal counts every one; its text names the
+databases) and revokes any membership; then `scripts/staging.sh up`. A large object the app owns
+(`reason=owns_objects`): as postgres, keep a copy for the incident, then `SELECT lo_unlink(oid)
+FROM pg_largeobject_metadata WHERE lomowner = 'ihr_app'::regrole`. Treat each of these as a sign
 the app role was used by someone else.
 
 **The pipeline itself** (Prometheus, `rules/logs.yml`):
@@ -804,6 +816,80 @@ hand, once per release:
    hand.
 5. **Prune** the retired version later with `--prune`, also off-hours.
 
+## Moving to split roles (P1-T19b)
+
+The database `ihr` has two roles (TENANCY_DESIGN §6.10; design: `docs/reviews/p1-t19/design.md`):
+
+- **`ihr_owner`** owns the database and everything in it: the `migrate` one-shot, `admin`
+  one-offs (`staging.sh manage`, the terminology loader, `ihr_create_tenant`) and the
+  provisioner (it makes and migrates hospital schemas). Address in `secrets/db-owner.env`,
+  mounted into those three only.
+- **`ihr_app`** serves every request and runs every other worker (backend, celery-worker,
+  celery-beat, staff-worker): data only, with no right to change a schema, an audit trigger, a
+  grant or the terminology tables. Address in `secrets/app.env`.
+- `ihr_audit_watch` and `ihr_dump` exist with no login until their services do (P1-T21, P1-T22).
+
+Every app container runs with `IHR_DB_ROLES=required` (the deployment default; the settings refuse
+anything else on a server), declares its role (`IHR_DB_ROLE`), and runs `manage.py
+ihr_db_role_check --for <its process>` before its process starts: a container given the wrong
+address or role exits with `ihr-db-role: refused role=<app|owner> reason=<code>` and
+restart-loops (DatabaseRoleRefused). `migrate` checks the roles themselves first (`--for migrate`:
+attributes, memberships, stored settings, the database's grants, large objects), and its
+post_migrate converges the app role's grants (`ensure_grants`, as the owner).
+
+| Command | What it does |
+|---|---|
+| `scripts/staging.sh db-split-secrets` | **On the deploying machine** (as `s3-init`; `IHR_STAGING_OUT=<dir>` for another folder): a **new** owner password (never the old shared one) into `secrets/db-owner.env`, an app password into `secrets/app.env`'s `DATABASE_URL`, and the old `IHR_DB_PASSWORD` out of `secrets/db.env`. Prints file names only. Idempotent: a secret already made is kept, never replaced (after an interruption, run it again); anything it does not recognise is refused untouched. **Copy the owner password into your password manager** (it is in `secrets/db-owner.env`) |
+| `scripts/deploy.sh --host … --release` | The first deploy after the split: refused without `--release` (and refused if the deploying machine has no `db-owner.env`). `staging.sh release` sees the database still has its single role and moves it inside the window: hold every hospital, stop the workers, drain, seal (the outgoing build with its own address), restore point, **then stop every app container, rename `ihr` to `ihr_owner`, set both passwords, make `ihr_app` (and the watch and dump roles), reset every stored setting (in every database), revoke the large-object creators from PUBLIC** (one transaction, as postgres), then `ihr_db_role_check --for migrate`, the migrations (converging every schema's grants as the owner), `up`, smoke |
+| `scripts/staging.sh db-roles --migrate [--operator <you>]` | The same move without a release, **only on a stopped stack whose backend image is the build of the release logged last**: after a restore of a moment before the move. Refused (nothing changed) while any app container runs, or when `docker compose ps` cannot say whether one does (on a running server the roles move inside `release`), while a release is unfinished, with no release logged, or when this stack's backend image is not the last logged release's (it would migrate a build that was never released, outside the window, with no restore point). Starts only the database, moves, converges the grants (`ihr_db_role_check --for migrate`, `migrate_schemas --shared`, a fleet-wide `ihr_fleet_run migrate`, which also lifts the restored holds of every hospital it finishes), `up`. A move that stops part-way says where and how to finish. Then `scripts/staging.sh smoke`, and `fleet window --clear` if the restored database brought a window back |
+| `scripts/staging.sh db-roles --serve-previous [--operator <you>]` | A release that stopped **before** the move (its backup, restore point or the stop failed): the database still has its single role, so `up`, every rollback and the owner's one-offs refuse or cannot log in. This starts the existing containers of the build that ran again as they were (`docker start`, as `start-existing`: the backend first, its other containers after the holds are lifted; never `up`, which would recreate them with the new images and secrets, nor `docker compose start`, which fails on the `migrate` dependency), lifts the holds and clears the window with that build (in its backend, as `ihr`). The release stays unfinished: fix the cause and run `release` again. The release's own failure message names it; before the move, `fleet release`, `fleet hold` and `fleet window` also run in the running backend, so while its backend still runs the message also names `fleet release` then `fleet window --clear` (they leave stopped workers stopped: `start-existing` them) |
+| `scripts/staging.sh db-roles --assert` | As postgres, both roles again as the model has them: passwords from the secrets, every stored setting reset in every database (`RESET ALL`, and `IN DATABASE <each> RESET ALL` for every row `pg_db_role_setting` holds; it fails if any is left), no memberships, the large-object revoke. **Every `up` does this**; this is the runbook of DatabaseRoleLoginFailed and of a `role_settings` refusal. Then `scripts/staging.sh up` |
+| `scripts/staging.sh db-roles --status` | Whether the secrets and the database are split |
+
+**How the passwords reach Postgres:** `staging.sh` makes a SCRAM-SHA-256 verifier from each
+password and sends `ALTER ROLE … PASSWORD '<verifier>'` to `psql` as postgres on stdin: the
+password itself never reaches Postgres, its logs, `pg_stat_activity` or a command line, and
+`db.env` holds neither. A new server's first start (`initdb/10-roles.sh`) makes `ihr_owner` with
+no password; `up` sets it before anything connects.
+
+**A plain `up` never moves:** on a database that still has its single role it refuses and names
+the move. `up` with secrets that are not split refuses too (`db-split-secrets`).
+
+**Going back:** a rollback to a release from before the split is refused before anything changes
+(its kept stack would start the app as `ihr`, which no longer exists): fix forward. So is any
+rollback while the database still has its single role (a release that stopped before the move):
+its `up` would refuse that database after the image tags moved. Then `db-roles --serve-previous`
+serves the build that ran, and a release's failure message names it instead of a rollback. The move's
+release takes its restore point before the move, so the database as it was is in the backups;
+going back to it by hand means restoring that point and the old secrets (kept only if you saved
+them) and the old stack: not scripted.
+
+**Backups and restores:** pgBackRest restores the whole cluster (physical), roles, passwords and
+grants included. A restore of a moment after the move needs nothing more (`up` re-asserts the
+passwords from the secrets). A restore of a moment before it brings back the single role: `up`
+then refuses, and `scripts/staging.sh db-roles --migrate` moves it again (on the stopped stack).
+The restore drill moves the roles on its copy when the copy predates the move, gives them the
+secrets' passwords and checks the audit trail as `ihr_owner`.
+
+**Proof** (local staging proof on this machine, 13-11-2026, Postgres 18.6; 3 hospitals, a few
+hundred audit entries each, so these are lower bounds):
+
+| Step | Result | Time |
+|---|---|---|
+| Previous release (one role `ihr`, `IHR_DB_ROLES` off) made, logged; `release` / `up` with unsplit secrets | both refused, nothing changed | 0 s |
+| `db-split-secrets`, twice | three files written (600), file names only printed; the second run changed nothing | < 1 s |
+| Plain `up` on the single-role database | refused before the database container was touched | ~5 s |
+| `release --now` with the move | hold, seal (old build, its own address), restore point, every app container stopped, the move (one transaction: 1 s), `--for migrate` check, grants converged (public 25, each hospital 213), `up`, smoke 0 FAIL, logged. The first try found a bug (the large-object revoke ran in the wrong database; `--for migrate` refused, as designed); fixed, then the release run again kept the window's restore point and finished | 241 s (`up` 146 s; grants 14 s) |
+| The app role tries: disable the audit triggers, change or delete or truncate the trail, forge a seal, create a table or schema, drop another hospital's schema, a temporary table, write terminology, write a hospital row, fake a migration, a large object, `SET ROLE ihr_owner` | every one refused by Postgres | — |
+| The app role stores a setting on itself | its next process refuses (`role_settings`); `db-roles --assert` (1 s) clears it | 1 s |
+| Review fix (S1/C3), on a throwaway Postgres 18.6 with `staging.sh`'s own `db_roles_apply`: `ihr` stores defaults for itself in `postgres` and `template1`, then the move; `ihr_app` stores them in `postgres`, `template1`, `keycloak`, `ihr` and role-wide, `ihr_owner` in `postgres` | the move left 0 rows; the run-time check saw all five of `ihr_app`'s (`every database, ihr, keycloak, postgres, template1`); the old reset (role-wide and `IN DATABASE ihr`) would have left 4; `db_roles_apply` (every `up`, `db-roles --assert`) left 0, and again 0 | < 1 s |
+| Web app given the owner's address; celery declaring the owner; `IHR_DB_ROLES=off`; web app declaring the owner | each exits non-zero before its process starts (`refused role=app reason=wrong_role`, `role=owner reason=process`, two settings refusals) | 2-4 s |
+| `ensure_grants` over public and 3 hospitals, nothing to change | 0.04 s (the app's first-connection check 0.0-0.1 s) | — |
+| `restore-drill` (newest; and to a moment before the move) | newest passed as `ihr_owner`; the earlier copy's roles were moved in the copy and its chains read, failing only on the documented first-hour fingerprint rule | 13 s each |
+| `rollback` to the release before the split | refused, nothing changed | 0 s |
+| Live database restored to the pre-move point, `up` refused, then `db-roles --migrate` | moved (1 s), grants converged (3 s fleet-wide), `up`; holds lifted with `fleet release` / `fleet window --clear` (as the owner); smoke 0 FAIL | 120 s |
+| A hospital made after the move (owner), written by the web app (app) | grants converged at its migration; write and audit entry fine; report clean | 78 s |
+
 ## Releases (P1-T18b)
 
 A **release** replaces the backend, web app, Postgres and Keycloak images. Hospital schemas
@@ -815,7 +901,7 @@ migrates. Design: `docs/reviews/p1-t18/design.md`.
 |---|---|
 | `scripts/staging.sh fleet window --start "DD-MM-YYYY HH:MM" --minutes 90 --note "…" --operator <you>` | Announce the window ahead (IST; public: `/api/ihr/bootstrap/` carries it for the web app's notice). Runs in the running backend when one runs (after deploy.sh has loaded a new build too: never the new build on the old schema). E-mailing hospital admins is yours: it is not built |
 | `scripts/deploy.sh --host … --release [--now]` | Build, send, then `staging.sh release` on the server, **detached there** (`setsid nohup`: a dropped SSH connection never stops it half-way); deploy.sh follows its output (`deploy/staging/releases/release-<tag>-<time>.out`, its exit status in `….out.rc`) until it ends. A build that changes the hospitals' or the platform's schema (its migration fingerprints differ from the release logged on the server; the first P1-T18 release on a server with a database), and any build while a release is unfinished on the server (`releases/attempt`), is **refused without `--release`, before anything is sent**. A build without migrations deploys with a plain start as before |
-| `scripts/staging.sh release [--now [--minutes N] [--note T]] [--operator <you>]` | On the server, with the new images already loaded (deploy.sh did it), the old ones still running. Refused if the backend is not running while another app service (a worker, the web app) is: stop the stack first (`down`) or start the old backend again. First it writes the release's record (`releases/attempt`), before any change. In order: **(1)** refuses unless an announced window is open now (`--now`: announce one from this minute); **(2a)** the full audit check (`ihr_audit_verify --all`: every hash chain and stored fingerprint) by the outgoing build while it still serves, capped (`IHR_RELEASE_AUDIT_SECONDS`, 1800 s; its result is the release's `audit=`); **(2)** holds every hospital in one transaction (`ihr_fleet_run hold`, by the outgoing build); **(3)** stops `celery-worker`, `celery-beat`, `provisioner`, `staff-worker` (not paged as down until the window's end, below); **(4)** waits until no transaction that began before the hold is open (60 s cap, `IHR_RELEASE_DRAIN_SECONDS`); **(5)** seals the audit trail and writes one fingerprint, with the outgoing build and the worker's add-only key: no chain recomputed, no fingerprint read (capped: `IHR_RELEASE_SEAL_SECONDS`, 300 s; `seal=` and `seal_s=` in the log; skipped, and said, without the fingerprint bucket); **(6)** `pg_create_restore_point('release-<tag>-<epoch>')`, a name never used before, its LSN and time recorded (a full backup first if the repository has none); **(7)** the platform's migrations, then `ihr_fleet_run migrate check roles packs` (2 hospitals at a time, in the logged `migrate` container); **(8)** `up` with the new images; **(9)** smoke, which checks every active hospital. Logged in `releases/releases.log` only when every live hospital is served and smoke passes; then the window is cleared. The same build deployed again (a plain start for a changed setting) is logged once |
+| `scripts/staging.sh release [--now [--minutes N] [--note T]] [--operator <you>]` | On the server, with the new images already loaded (deploy.sh did it), the old ones still running. Refused if the backend is not running while another app service (a worker, the web app) is: stop the stack first (`down`) or start the old backend again (`scripts/staging.sh start-existing backend`); refused too if `docker compose ps` cannot say which run. First it writes the release's record (`releases/attempt`), before any change. In order: **(1)** refuses unless an announced window is open now (`--now`: announce one from this minute); **(2a)** the full audit check (`ihr_audit_verify --all`: every hash chain and stored fingerprint) by the outgoing build while it still serves, capped (`IHR_RELEASE_AUDIT_SECONDS`, 1800 s; its result is the release's `audit=`); **(2)** holds every hospital in one transaction (`ihr_fleet_run hold`, by the outgoing build); **(3)** stops `celery-worker`, `celery-beat`, `provisioner`, `staff-worker` (not paged as down until the window's end, below); **(4)** waits until no transaction that began before the hold is open (60 s cap, `IHR_RELEASE_DRAIN_SECONDS`); **(5)** seals the audit trail and writes one fingerprint, with the outgoing build and the worker's add-only key: no chain recomputed, no fingerprint read (capped: `IHR_RELEASE_SEAL_SECONDS`, 300 s; `seal=` and `seal_s=` in the log; skipped, and said, without the fingerprint bucket); **(6)** `pg_create_restore_point('release-<tag>-<epoch>')`, a name never used before, its LSN and time recorded (a full backup first if the repository has none); **(7)** the platform's migrations, then `ihr_fleet_run migrate check roles packs` (2 hospitals at a time, in the logged `migrate` container); **(8)** `up` with the new images; **(9)** smoke, which checks every active hospital. Logged in `releases/releases.log` only when every live hospital is served and smoke passes; then the window is cleared. The same build deployed again (a plain start for a changed setting) is logged once |
 | `scripts/staging.sh release --finish` | After a failed hospital was fixed and resumed: checks again (every hospital served, smoke), logs the release, clears the window |
 | `scripts/staging.sh rollback [--operator <you>]` | Back to the release before the running one, or, while a release is unfinished, back to the release logged last (whether the unfinished one had started or still stopped before its start), **only when nothing changed in the database or Keycloak**: the hospitals' and the platform's fingerprints equal, and the same Keycloak and Postgres images; or the unfinished release stopped before its restore point (nothing migrated). Checks first that every image of the target is still here (nothing changes otherwise), and refuses while hospitals are held for a window with no release in progress (nothing says what held them). Then it re-points the backend and web app images, restores that release's stack files (server), runs `up`, lifts the window's holds, syncs the roles again (holding any hospital whose sync this build refuses), clears the window and runs smoke; the rollback is logged after smoke (a rollback that stopped is run again as it was). Otherwise it refuses and says why |
 | `scripts/staging.sh rollback --restore [--operator <you>]` | Back across migrations. Before anything changes: every image of the target is here, a backup from before the restore point exists, the repository holds the WAL up to the point (else, with no room for a copy, refused), and the disk has room for a copy of the whole database volume (`pg_wal` included) plus the 20 GB floor (`IHR_DEPLOY_MIN_FREE_GB`). Asks you to type the target release's tag, stops the stack (`down`, **never `down -v`**: that also deletes the log store, the signing keys and the WAL spool), keeps the current database in a new volume `indiehr-staging_pgdata-pre-rollback-<tag>-<time>` when the disk has room (marked `.ihr-rollback-copy-complete` when whole; a copy that fails is removed and nothing is restored; else the database is replaced: the prompt says which), points Postgres at the target's image, restores with pgBackRest to the window's restore point (`restore --target-name release-<tag>-<epoch> --set <the backup before it>`), logs the rollback, starts the previous release's images, serves the hospitals again, runs smoke and then a full backup of the new timeline |
