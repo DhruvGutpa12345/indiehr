@@ -19,9 +19,13 @@
 #                                                restore point of the one left; loses later writes)
 #   scripts/staging.sh releases                  the logged releases in force, newest last
 #   scripts/staging.sh ps | logs [service] | down
-#   scripts/staging.sh db-split-secrets          the split database roles' secrets (P1-T19b): a new
-#                                                owner password (secrets/db-owner.env) and an app one
-#                                                (secrets/app.env); on the deploying machine, once
+#   scripts/staging.sh db-split-secrets [--check] the split database roles' secrets (P1-T19b): a new
+#                                                owner password (secrets/db-owner.env), an app one
+#                                                (secrets/app.env) and the audit watch's (P1-T21,
+#                                                secrets/audit-watch.env); on the deploying machine,
+#                                                once (run again: makes only what is missing)
+#   scripts/staging.sh watch-reader --check      whether the audit watch's fingerprint reader key is
+#                                                set where monitoring is on (P1-T21; deploy.sh asks)
 #   scripts/staging.sh db-roles --migrate [--operator NAME]
 #                                                move a restored database of the single role ihr to
 #                                                ihr_owner + ihr_app: stopped stack, build released
@@ -119,6 +123,9 @@ compose() {  # the file list is worked out on each call: init may have just made
     # ...and the operator's dashboards on both (P1-T9d)
     files+=(-f "$DIR/compose.dashboards.yaml")
     [[ "$mon" == test ]] && files+=(-f "$DIR/compose.monitoring.test.yaml")
+    # A proof's fingerprint bucket is this stack's own SeaweedFS: the audit watch reaches it
+    # over its own way out (auditout), as it reaches the real bucket on a server (P1-T21 A1)
+    [[ "$(env_get IHR_S3)" == local ]] && files+=(-f "$DIR/compose.audit-watch.local.yaml")
     # The daily locked log archive (P1-T9c), and in a proof its way to the local stand-in
     case "$(env_get IHR_LOGS_ARCHIVE)" in
       s3) files+=(-f "$DIR/compose.logs-archive.yaml") ;;
@@ -204,9 +211,10 @@ init() {
     fi
   } > "$work/.env"
 
-  local pg owner app kc redis_pw admin_pw admin_secret jwks
+  local pg owner app watch kc redis_pw admin_pw admin_secret jwks
   local SECRETS_TARGET="$work/secrets"
   pg="$(rand 32)"; owner="$(rand 32)"; app="$(rand 32)"; kc="$(rand 32)"; redis_pw="$(rand 32)"
+  watch="$(rand 32)"
   admin_pw="$(rand 24)"; admin_secret="$(rand 32)"
   # --log-driver none: the private key must not reach the host's journal
   jwks="$(docker run --rm --log-driver none --network none --entrypoint python "$backend_image" -c \
@@ -222,6 +230,7 @@ EOF
 # The owner's address (P1-T19b): only migrate, admin and the provisioner read this file
 DATABASE_URL=postgres://ihr_owner:$owner@db:5432/ihr
 EOF
+  audit_watch_env "$watch" | write_secret audit-watch.env
   write_secret redis.env <<EOF
 REDIS_PASSWORD=$redis_pw
 EOF
@@ -298,22 +307,43 @@ key_log() {  # kid and time only; kept in the log store 180 days and the archive
 # or inside `release`.
 DB_APP_URL_RE='^DATABASE_URL=postgres://ihr_app:([A-Za-z0-9_-]{32,})@db:5432/ihr$'
 DB_OWNER_URL_RE='^DATABASE_URL=postgres://ihr_owner:([A-Za-z0-9_-]{32,})@db:5432/ihr$'
+# The audit watch's own read-only role (P1-T21): its address alone, in its own file
+DB_WATCH_URL_RE='^DATABASE_URL=postgres://ihr_audit_watch:([A-Za-z0-9_-]{32,})@db:5432/ihr$'
+audit_watch_env() {  # audit_watch_env <password>: secrets/audit-watch.env's text (to write_secret)
+  printf '# The audit watch'"'"'s address (P1-T21): ihr_audit_watch, read-only; the audit-watch container only\nDATABASE_URL=postgres://ihr_audit_watch:%s@db:5432/ihr\n' "$1"
+}
 DB_APP_SERVICES=(backend frontend celery-worker celery-beat provisioner staff-worker)
-db_password() {  # db_password <app|owner> [secrets dir]: that role's password from its address; nothing if absent
+db_password() {  # db_password <app|owner|watch> [secrets dir]: that role's password from its address; nothing if absent
   local f re line
   case "$1" in
     app) f=app.env re="$DB_APP_URL_RE" ;;
     owner) f=db-owner.env re="$DB_OWNER_URL_RE" ;;
-    *) die "db_password: app or owner" ;;
+    watch) f=audit-watch.env re="$DB_WATCH_URL_RE" ;;
+    *) die "db_password: app, owner or watch" ;;
   esac
   line="$(grep '^DATABASE_URL=' "${2:-$SECRETS}/$f" 2>/dev/null | tail -1 || true)"
   if [[ "$line" =~ $re ]]; then echo "${BASH_REMATCH[1]}"; fi
 }
-db_secrets_split() {  # db_secrets_split [secrets dir]: both addresses are the split roles'
-  [[ -n "$(db_password app "${1:-}")" && -n "$(db_password owner "${1:-}")" ]]
+db_secrets_split() {  # db_secrets_split [secrets dir]: the three addresses are the split roles'
+  [[ -n "$(db_password app "${1:-}")" && -n "$(db_password owner "${1:-}")" && -n "$(db_password watch "${1:-}")" ]]
 }
 db_need_split_secrets() {
-  db_secrets_split || die "secrets/app.env and secrets/db-owner.env do not hold the split database roles' addresses (P1-T19b): run scripts/staging.sh db-split-secrets on the deploying machine and send them (scripts/deploy.sh); deploy/staging/README.md, Moving to split roles"
+  db_secrets_split || die "secrets/app.env, secrets/db-owner.env and secrets/audit-watch.env do not hold the split database roles' addresses (P1-T19b, P1-T21): run scripts/staging.sh db-split-secrets on the deploying machine and send them (scripts/deploy.sh); deploy/staging/README.md, Moving to split roles"
+}
+# The audit watch (P1-T21) starts with the monitoring and refuses to run without the fingerprint
+# bucket's reader key: a stack with monitoring needs its fingerprint storage. Checked by up and
+# release before anything changes, never found by `up`'s last step (review C4); and by deploy.sh
+# on the deploying machine before it sends anything (watch-reader --check, IHR_STAGING_OUT)
+watch_need_reader() {  # watch_need_reader [folder]: that folder's .env and secrets/ (default this stack's)
+  local on sec="$SECRETS"
+  if [[ -n "${1:-}" ]]; then
+    on="$(sed -n 's/^IHR_MONITORING=//p' "$1/.env" 2>/dev/null | tail -1)"; sec="$1/secrets"
+  else
+    on="$(env_get IHR_MONITORING)"
+  fi
+  [[ -n "$on" ]] || return 0
+  grep -q '^IHR_AUDIT_ANCHOR_READ_KEY=.' "$sec/anchor-read.env" 2>/dev/null \
+    || die "monitoring is on, but secrets/anchor-read.env holds no fingerprint reader key: the audit watch would refuse to start and up fail at its last step. Set up the fingerprint storage first (scripts/staging.sh s3-init, or fill secrets/anchor-read.env for a provider bucket; deploy/staging/README.md, Audit watch). Nothing was changed"
 }
 scram() {  # scram < password: its SCRAM-SHA-256 verifier, made here: the password itself never
   # reaches Postgres, its logs or pg_stat_activity (password_encryption is scram-sha-256)
@@ -365,8 +395,9 @@ ALTER ROLE ihr RENAME TO ihr_owner;'
 # database (a role may ALTER ROLE itself, also IN DATABASE another database: design.md, known
 # limit 1); no membership but the dump role's
 # pg_read_all_data, and nobody a member of ours; large objects closed to PUBLIC (known limit 3).
-# The watch and dump roles have no login until their services exist (P1-T21, P1-T22). Grants are
-# not here: ensure_grants (the migrate one-shot, as the owner) converges them.
+# The audit watch logs in (P1-T21; its verifier in :vw, at most 4 connections); the dump role has
+# no login until its service exists (P1-T22). Grants are not here: ensure_grants (the migrate
+# one-shot, as the owner) converges them.
 # shellcheck disable=SC2016
 DB_ROLES_SQL='DO $$
 BEGIN
@@ -383,7 +414,7 @@ BEGIN
 END $$;
 ALTER ROLE ihr_owner WITH LOGIN INHERIT NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS PASSWORD :'"'vo'"';
 ALTER ROLE ihr_app WITH LOGIN NOINHERIT NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS PASSWORD :'"'va'"';
-ALTER ROLE ihr_audit_watch WITH NOLOGIN NOINHERIT NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS PASSWORD NULL;
+ALTER ROLE ihr_audit_watch WITH LOGIN NOINHERIT NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS CONNECTION LIMIT 4 PASSWORD :'"'vw'"';
 ALTER ROLE ihr_dump WITH NOLOGIN INHERIT NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS PASSWORD NULL;
 DO $$
 DECLARE s record;
@@ -434,13 +465,13 @@ db_roles_apply() {  # db_roles_apply [--move]: (the move, then) the roles re-ass
   # in one transaction; the passwords from the secrets as SCRAM verifiers, on stdin. In the
   # database ihr: roles are the cluster's, but a function's privileges are each database's own
   # (the large-object revoke must be ihr's)
-  local owner app vo va
-  owner="$(db_password owner)"; app="$(db_password app)"
-  [[ -n "$owner" && -n "$app" ]] || db_need_split_secrets
-  vo="$(scram <<< "$owner")"; va="$(scram <<< "$app")"
-  [[ "$vo" =~ ^SCRAM-SHA-256\$4096:[A-Za-z0-9+/=]+\$[A-Za-z0-9+/=]+:[A-Za-z0-9+/=]+$ && "$va" =~ ^SCRAM-SHA-256\$ ]] \
+  local owner app watch vo va vw
+  owner="$(db_password owner)"; app="$(db_password app)"; watch="$(db_password watch)"
+  [[ -n "$owner" && -n "$app" && -n "$watch" ]] || db_need_split_secrets
+  vo="$(scram <<< "$owner")"; va="$(scram <<< "$app")"; vw="$(scram <<< "$watch")"
+  [[ "$vo" =~ ^SCRAM-SHA-256\$4096:[A-Za-z0-9+/=]+\$[A-Za-z0-9+/=]+:[A-Za-z0-9+/=]+$ && "$va" =~ ^SCRAM-SHA-256\$ && "$vw" =~ ^SCRAM-SHA-256\$ ]] \
     || die "could not make the password verifiers"
-  { printf '\\set vo %s\n\\set va %s\n' "'$vo'" "'$va'"
+  { printf '\\set vo %s\n\\set va %s\n\\set vw %s\n' "'$vo'" "'$va'" "'$vw'"
     [[ "${1:-}" != --move ]] || printf '%s\n' "$DB_ROLES_MOVE_SQL"
     printf '%s\n' "$DB_ROLES_SQL"
   } | pg_su -1 -q -d ihr >/dev/null
@@ -452,6 +483,16 @@ db_split_secrets() {  # db-split-secrets: the split roles' secrets (P1-T19b), on
   # secrets/db.env. Idempotent: a secret already made is kept, never replaced; after an
   # interruption run it again. Nothing is printed but file names.
   local sec="$OUT/secrets" owner app line tmp changed=()
+  # --check: only whether the three addresses are the split roles' (what up and release need,
+  # db_need_split_secrets; deploy.sh asks before it sends anything, review C13). File names only
+  case "${1:-}" in
+    "") ;;
+    --check)
+      if db_secrets_split "$sec"; then echo "The database roles' secrets are split (app.env, db-owner.env, audit-watch.env)."; return 0; fi
+      echo "$sec: the database roles' secrets are not all split (app.env, db-owner.env, audit-watch.env)" >&2
+      return 1 ;;
+    *) die "usage: scripts/staging.sh db-split-secrets [--check]" ;;
+  esac
   [[ -f "$OUT/.env" && -d "$sec" ]] || die "no $OUT/.env / secrets: run scripts/staging.sh init <suffix> first"
   local SECRETS_TARGET="$sec"
   owner="$(db_password owner "$sec")"; app="$(db_password app "$sec")"
@@ -477,6 +518,13 @@ db_split_secrets() {  # db-split-secrets: the split roles' secrets (P1-T19b), on
     printf '%s\n' "$tmp" | write_secret app.env.new
     mv "$sec/app.env.new" "$sec/app.env"
     changed+=(secrets/app.env)
+  fi
+  # The audit watch's read-only role (P1-T21): its own file, made once like the others
+  if [[ -z "$(db_password watch "$sec")" ]]; then
+    [[ ! -e "$sec/audit-watch.env" ]] || die "secrets/audit-watch.env exists but holds no audit watch address: nothing more changed (look at it; a secret is never replaced silently)"
+    audit_watch_env "$(rand 32)" | write_secret audit-watch.env.new
+    mv "$sec/audit-watch.env.new" "$sec/audit-watch.env"
+    changed+=(secrets/audit-watch.env)
   fi
   if grep -q '^IHR_DB_PASSWORD=' "$sec/db.env" 2>/dev/null; then
     tmp="$(grep -v '^IHR_DB_PASSWORD=' "$sec/db.env")"
@@ -611,7 +659,7 @@ db_roles_cmd() {  # db-roles --migrate [--operator NAME] | --serve-previous [--o
   [[ -f "$DIR/.env" ]] || die "run: scripts/staging.sh init <suffix>"
   case "$what" in
     --status)
-      if db_secrets_split; then echo "secrets: split (secrets/app.env: ihr_app, secrets/db-owner.env: ihr_owner)"
+      if db_secrets_split; then echo "secrets: split (secrets/app.env: ihr_app, secrets/db-owner.env: ihr_owner, secrets/audit-watch.env: ihr_audit_watch)"
       else echo "secrets: not split (scripts/staging.sh db-split-secrets)"; fi
       if [[ -n "$(compose ps -q db 2>/dev/null || true)" ]]; then
         echo "database: $(db_roles_state || echo unreadable)"
@@ -685,6 +733,7 @@ up() {  # up [--new-database]: the flag only where an empty database is really m
   [[ $# -eq 0 || $new_db == 1 ]] || die "usage: scripts/staging.sh up [--new-database]"
   [[ -f "$DIR/.env" ]] || { echo "run: scripts/staging.sh init <suffix>" >&2; exit 1; }
   db_need_split_secrets
+  watch_need_reader
   # CARE's storage keys (P1-T20b) before anything starts: a local proof splits its own (its
   # folder is where its secrets are made); a server refuses unsplit ones (S1/S2)
   if [[ "$(env_get IHR_S3)" == local && -f "$DIR/.local" ]]; then s3_split_care_key "$SECRETS"; fi
@@ -1405,6 +1454,22 @@ rel_seal() {  # rel_seal <outgoing backend image id>: seal and fingerprint the a
     *) echo "WARNING: sealing with the outgoing build failed (above); going on" >&2; echo problems ;;
   esac
 }
+rel_seal_new() {  # rel_seal_new: the same seal and one fingerprint with THIS build's worker (its
+  # add-only key), after the migrations and before up (capped: IHR_RELEASE_SEAL_SECONDS). Prints
+  # ok, problems, timeout or skipped; never stops the release (the watch alerts what stays)
+  local rc=0
+  if ! grep -q '^IHR_AUDIT_ANCHOR_WRITE_KEY=.' "$SECRETS/anchor-write.env" 2>/dev/null; then
+    echo "audit: skipped, no fingerprint storage set up here (secrets/anchor-write.env)" >&2
+    echo skipped; return 0
+  fi
+  compose run --rm --no-deps -T celery-worker \
+    timeout "$REL_SEAL_SECONDS" python manage.py shell -c "$REL_SEAL_PY" >&2 || rc=$?
+  case "$rc" in
+    0) echo ok ;;
+    124) echo "WARNING: sealing did not end within $REL_SEAL_SECONDS s (IHR_RELEASE_SEAL_SECONDS); going on" >&2; echo timeout ;;
+    *) echo "WARNING: sealing with the new build failed (above); going on" >&2; echo problems ;;
+  esac
+}
 rel_repo_info() {  # the repository's info as JSON: through the running backup service when it runs;
   # else a one-off that recreates nothing (a plain repo_info's `up` would re-create a running db
   # whose image tag deploy.sh moved, and the gateway with the split keys mid-release, which kills
@@ -1696,6 +1761,9 @@ release() {  # release [--now [--minutes N] [--note T]] [--operator NAME] | --fi
   # ...and refuses one storage key for both buckets (P1-T20b): checked before anything is held,
   # never found by the migrate one-shot with every hospital held (S1)
   s3_need_split_keys
+  # ...and the audit watch's reader key where the monitoring is on (P1-T21 C4): else step 8's
+  # up would fail after the migrations
+  watch_need_reader
   rel_lock
   t0=$SECONDS
   if ((finish)); then release_finish "$op"; return; fi
@@ -1819,6 +1887,11 @@ release() {  # release [--now [--minutes N] [--note T]] [--operator NAME] | --fi
   compose run --rm --no-deps -T migrate python manage.py migrate_schemas --shared --noinput
   echo "== [$((SECONDS - t0)) s] Hospital migrations (ihr_fleet_run, as scripts/staging.sh fleet)"
   compose run --rm --no-deps -T migrate python manage.py ihr_fleet_run migrate check roles packs --operator "$op" || fleet_rc=$?
+  # 7a. What the migrations, roles and packs wrote into the trails (suspended and offboarding
+  # hospitals too) sealed and fingerprinted by the new build before anything starts: the audit
+  # watch, recreated by up, never finds it waiting for seal_inactive's next run (P1-T21 C3)
+  echo "== [$((SECONDS - t0)) s] Sealing what the migrations wrote (new build)"
+  rel_seal_new >/dev/null
   # 8. Start (a hospital this release left held stays at 503; the others start)
   echo "== [$((SECONDS - t0)) s] Starting release $tag"
   up
@@ -2020,7 +2093,10 @@ rollback() {  # rollback [--restore] [--operator NAME]: back to the release befo
   echo "  everything written after it is lost (nothing, if no hospital was served since);"
   echo "- Keycloak's changes since then are lost too: invitations, password and authenticator resets,"
   echo "  accounts disabled or removed (re-do them; the realm sync runs at the start);"
-  echo "- audit fingerprints stored after it will not match the restored trail (expected: note it in the incident record);"
+  echo "- the audit trail goes back too: fingerprints stored after it no longer match it, and the audit watch"
+  echo "  reports every hospital sealed since as cut or rewritten (AuditChainBroken, AuditFingerprintMismatch,"
+  echo "  critical) until restore events for this rollback exist (P1-T22b; nothing writes them yet). Record it as"
+  echo "  an incident, never a silence; a checkpoint is never reset by hand;"
   if ((keep_copy)); then echo "- the current database is kept beside it (volume $aside, about $need MB)."
   else echo "- the current database is REPLACED: not enough disk to keep a copy ($free MB free; $need MB plus a ${floor} MB floor needed)."; fi
   echo "Type the release tag to roll back to ($target) to go on:"
@@ -2851,7 +2927,7 @@ MON_TEST_DEADMAN="http://heartbeat-stub:8080/ping"
 DEADMAN_RE='^https://[a-z0-9.-]+(:[0-9]+)?(/[A-Za-z0-9._~-]+)+$'
 
 # Set-up services that run once and exit; never reported as "not running" (host-metrics.sh)
-MON_ONESHOTS='migrate|admin|keytool|s3-tool|traefik-data|alertmanager-data|logs-data|grafana-data'
+MON_ONESHOTS='migrate|admin|keytool|s3-tool|traefik-data|alertmanager-data|logs-data|grafana-data|audit-watch-data'
 
 monitoring_init() {  # monitoring_init <alert-recipient> [--from A] [--host H] [--port P] [--user U] | --test
   local envf="$OUT/.env" sec="$OUT/secrets" to="" from="" host="smtp.zeptomail.in" port=587
@@ -2934,6 +3010,9 @@ monitoring_init() {  # monitoring_init <alert-recipient> [--from A] [--host H] [
     fi
   } >> "$envf"
   echo "Monitoring settings added (alerts to $to from $from via $host:$port); secrets in $sec (mode 600)."
+  # The audit watch starts with the monitoring and needs the fingerprint bucket's reader key (C4)
+  grep -q '^IHR_AUDIT_ANCHOR_READ_KEY=.' "$sec/anchor-read.env" 2>/dev/null \
+    || echo "WARNING: no fingerprint storage yet (secrets/anchor-read.env is empty): up refuses to start the monitoring without it. Run scripts/staging.sh s3-init, or fill secrets/anchor-read.env for a provider bucket." >&2
   [[ -n "$deadman" ]] || echo "No dead-man switch yet: once it exists, add its URL with scripts/staging.sh monitoring-deadman."
 }
 
@@ -3078,6 +3157,8 @@ monitoring_config() {  # generated/monitoring/: Prometheus's targets and alertma
   else json_targets "$d/targets/logs-archive.json"; fi
   if [[ "$(env_get IHR_S3)" == local ]]; then json_targets "$d/targets/s3.json" "s3:9327" "service=s3"
   else json_targets "$d/targets/s3.json"; fi
+  # The audit watch (P1-T21): always with the monitoring
+  json_targets "$d/targets/audit-watch.json" "audit-watch:9108" "service=audit-watch"
   hello="${suffix#*.}"
   if [[ "$(env_get IHR_MONITORING)" == test ]]; then
     tls="        tls_config: {min_version: TLS12, server_name: \"$host\", ca_file: /proof/ca.pem}"
@@ -3220,7 +3301,7 @@ monitoring_settings_sum() {  # one hash over a service's settings files (names a
 
 monitoring_up() {  # after the stack: settings, the database role, the host's files, then the services
   local svc=(prometheus alertmanager node-exporter blackbox-exporter postgres-exporter redis-exporter
-             victorialogs fluent-bit vmalert logs-reader grafana) out s
+             victorialogs fluent-bit vmalert logs-reader grafana audit-watch) out s
   local stale=() stamp restamp=(prometheus alertmanager blackbox-exporter fluent-bit vmalert logs-reader grafana)
   # Monitoring set up before P1-T9b has no log-store secrets yet (the targets need one), and
   # before P1-T9d none of Grafana's
@@ -3844,7 +3925,11 @@ case "${1:-}" in
   # Internal steps of scripts/deploy.sh (a plain start of a release without migrations)
   release-note) rel_lock; release_note ;;
   release-record) rel_lock; release_record ;;
-  db-split-secrets) db_split_secrets ;;
+  db-split-secrets) db_split_secrets "${@:2}" ;;
+  watch-reader)  # --check: the audit watch's reader key where monitoring is on ($OUT; deploy.sh, C4)
+    [[ "${2:-}" == --check ]] || die "usage: scripts/staging.sh watch-reader --check"
+    watch_need_reader "$OUT"
+    echo "The audit watch can start: monitoring is off, or secrets/anchor-read.env holds its reader key." ;;
   db-roles) db_roles_cmd "${@:2}" ;;
   # The existing containers of app services started again as they were (docker start: Compose's
   # start would start the migrate dependency, which has no container here, and fail)

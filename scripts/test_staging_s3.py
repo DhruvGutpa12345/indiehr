@@ -262,7 +262,8 @@ OLD_CARE_SECRET = "care" + "-secret-" + "0123456789"
 GATEWAY_OLD = "".join(f"IHR_S3_{k}_KEY=ihr{k.lower()}keyid\nIHR_S3_{k}_SECRET={k.lower()}-secret-0123456789\n"
                       for k in OLD_KEYS)
 DB_URLS = (f"DATABASE_URL=postgres://ihr_app:{'a' * 43}@db:5432/ihr\n",
-           f"DATABASE_URL=postgres://ihr_owner:{'o' * 43}@db:5432/ihr\n")
+           f"DATABASE_URL=postgres://ihr_owner:{'o' * 43}@db:5432/ihr\n",
+           f"DATABASE_URL=postgres://ihr_audit_watch:{'w' * 43}@db:5432/ihr\n")
 APP_OLD = (DB_URLS[0] + "FILE_UPLOAD_BUCKET=ihr-staging-files\nFACILITY_S3_BUCKET=ihr-staging-facility\n"
            "BUCKET_ENDPOINT=http://s3:8333\nBUCKET_EXTERNAL_ENDPOINT=https://files.app.example.in\n"
            "BUCKET_KEY=ihrcarekeyid\nBUCKET_SECRET=" + OLD_CARE_SECRET + "\n")
@@ -270,7 +271,8 @@ FAKE_DOCKER = "#!/bin/sh\necho \"$*\" >> \"$FAKE_LOG\"\necho \"docker must not r
 
 
 def make_site(d, *, s3="local", gateway=GATEWAY_OLD, app=APP_OLD, local=False):
-    """A staging folder (.env, secrets/) as init and s3-init made it; P1-T19b's roles split."""
+    """A staging folder (.env, secrets/) as init and s3-init made it; P1-T19b's roles split
+    (and P1-T21's audit watch role)."""
     d.mkdir(parents=True, exist_ok=True)
     (d / ".env").write_text("IHR_TENANT_DOMAIN_SUFFIX=app.example.in\nIHR_BACKEND_IMAGE=indiehr-backend:staging\n"
                             + (f"IHR_S3={s3}\n" if s3 else ""))
@@ -278,6 +280,7 @@ def make_site(d, *, s3="local", gateway=GATEWAY_OLD, app=APP_OLD, local=False):
     sec.mkdir(mode=0o700)
     (sec / "app.env").write_text(app)
     (sec / "db-owner.env").write_text(DB_URLS[1])
+    (sec / "audit-watch.env").write_text(DB_URLS[2])
     if gateway is not None:
         (sec / "s3-gateway.env").write_text(gateway)
     if local:

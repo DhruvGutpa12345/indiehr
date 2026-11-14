@@ -140,7 +140,7 @@ groups:
       # removed when it ends, so a release that stops with them down is paged).
       - alert: ContainerNotRunning
         expr: >-
-          ihr_container_running{service!~"celery-worker|celery-beat|provisioner|staff-worker|prometheus|alertmanager|node-exporter|blackbox-exporter|postgres-exporter|redis-exporter|fluent-bit|victorialogs|vmalert|logs-archive|heartbeat-stub|smtp-test"} == 0
+          ihr_container_running{service!~"celery-worker|celery-beat|provisioner|staff-worker|prometheus|alertmanager|node-exporter|blackbox-exporter|postgres-exporter|redis-exporter|fluent-bit|victorialogs|vmalert|logs-archive|audit-watch|heartbeat-stub|smtp-test"} == 0
           or (ihr_container_running{service=~"celery-worker|celery-beat"} == 0
               unless on() (ihr_release_workers_stopped_until_seconds > time()))
         for: 5m
@@ -151,7 +151,7 @@ groups:
 
       - alert: ContainerNotRunning
         expr: >-
-          ihr_container_running{service=~"prometheus|alertmanager|node-exporter|blackbox-exporter|postgres-exporter|redis-exporter|fluent-bit|victorialogs|vmalert|logs-archive|heartbeat-stub|smtp-test"} == 0
+          ihr_container_running{service=~"prometheus|alertmanager|node-exporter|blackbox-exporter|postgres-exporter|redis-exporter|fluent-bit|victorialogs|vmalert|logs-archive|audit-watch|heartbeat-stub|smtp-test"} == 0
           or (ihr_container_running{service=~"provisioner|staff-worker"} == 0
               unless on() (ihr_release_workers_stopped_until_seconds > time()))
         for: 5m

@@ -260,7 +260,7 @@ Task IDs are `P<phase>-T<n>`. Each task is sized for **one sitting (≈1–3 hou
 | P1-T19 | Database roles `ihr_owner` / `ihr_app` (TENANCY §6.10): the runtime role cannot change schemas, disable triggers or write terminology | Start-up refuses an owner runtime role; isolation suite green | Opus / xhigh |
 | P1-T20 | Anonymous routes and the §6.5/§6.8 patches: `schedulable_users`, government-only organisations, presigned avatar/cover URLs and no public-read bucket (Q-T3), batch path allow-list, separate bucket credentials | Isolation suite + allow-list reviewed | Opus / high |
 | P1-T21 | Audit watch: scheduled verify, metrics, alerts for a broken chain, a late fingerprint, unsealed entries | Alert rules tested | Sonnet / high |
-| P1-T22 | Nightly per-hospital dumps, single-hospital restore command and runbook, monthly drill (TENANCY §7.5) | Drill restores one hospital, others unchanged | Opus / high |
+| P1-T22 | Nightly per-hospital dumps, single-hospital restore command and runbook, monthly drill (TENANCY §7.5); audit restore events (P1-T21 `events.write_restore`) for single-hospital and whole-database restores (`rollback --restore`) | Drill restores one hospital, others unchanged | Opus / high |
 | P1-T23 | Postgres operating rules (`statement_timeout`, `max_locks_per_transaction`) + full-stack load test on an 8 GB target; back-channel pool decision | Numbers recorded | Sonnet / high |
 | P1-T24 | Web screens: audit viewer, invitation resend/cancel, reset sign-in, access status | Clicked through by you | Opus / medium |
 

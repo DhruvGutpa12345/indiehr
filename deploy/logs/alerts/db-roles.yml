@@ -2,7 +2,7 @@
 # process checks its database role on its first connection (and each runtime container runs
 # manage.py ihr_db_role_check before it starts). A process whose role is not what it declares
 # (IHR_DB_ROLE: app or owner), or whose app role has a right beyond the reviewed lists, writes
-# one fixed line, "ihr-db-role: refused role=<app|owner|none> reason=<code>", closes its
+# one fixed line, "ihr-db-role: refused role=<app|owner|watch|none> reason=<code>", closes its
 # connection and refuses every later one: the container serves nothing (every request 500s, every
 # task fails) or exits and restart-loops. This rule fires on that line at once.
 # A right beyond the model, or a broken control, in one hospital's schema does not refuse the
@@ -40,7 +40,7 @@ groups:
       # Thirty minutes: a refused container restart-loops and repeats the line; the alert
       # resolves soon after it starts cleanly
       - alert: DatabaseRoleRefused
-        expr: '_time:30m source:=container service:in(backend, celery, celery-worker, celery-beat, staff-worker, provisioner, migrate) "ihr-db-role: refused" | extract_regexp "^ihr-db-role: refused role=(?P<role>app|owner|none) reason=(?P<reason>[a-z_]{3,24})$" | filter reason:~"^[a-z_]{3,24}$" | stats by (reason) count() as refusals'
+        expr: '_time:30m source:=container service:in(backend, celery, celery-worker, celery-beat, staff-worker, provisioner, migrate, audit-watch) "ihr-db-role: refused" | extract_regexp "^ihr-db-role: refused role=(?P<role>app|owner|watch|none) reason=(?P<reason>[a-z_]{3,24})$" | filter reason:~"^[a-z_]{3,24}$" | stats by (reason) count() as refusals'
         labels:
           severity: critical
           service: database

@@ -392,6 +392,7 @@ alert can still arrive a few minutes first (it fires sooner); its repeats are th
 | Availability | PublicEndpointDown (auth, status; 3 min), TargetDown (5 min; critical for traefik, keycloak, postgres, redis, s3, node), PostgresDown / RedisDown (the exporter answers but cannot reach its server or log in; 5 min), BackendHealth, KeycloakNotReady, ContainerNotRunning (critical for the hospitals' services and `celery-worker`/`celery-beat`, warning for `provisioner`, `staff-worker` and monitoring; the four workers not until the window's end while a release has them stopped, see "Releases"), ContainerUnhealthy, ContainerRestarting (more than 2 in 15 min) |
 | Capacity | DiskFreeLow (20 GB warning, 12 GB critical on `/`; other data mounts also below 25 % / 15 %; `/boot` never), DiskFillingUp (below 12 GB within 7 days), MemoryLow (10 % / 5 %), OomKill, SwapInUse, ContainerMemoryNearLimit (90 %), CpuLoadHigh, JournalNearCap, JournalSuppressed, PgConnectionsHigh (80 of 100), PgLongTransaction (1 h), RedisMemoryHigh (80 % / 90 %), RedisPersistenceFailing, CeleryBacklog (200 for 10 min) |
 | Backups | BackupUnhealthy, BackupTooOld (26 h), BackupCheckStale (2 h), WalSpoolStuck (10 min), WalSpoolNearCap (75 %), WalArchiveFailing |
+| Audit trail (P1-T21) | AuditChainBroken, AuditFingerprintMismatch, AuditTriggerDisabled (all at once), AuditTriggersMissing (30 min), AuditFingerprintLate (2 h 15 min / 6 h), AuditSealLag (15 min / 1 h), AuditSealHeldBack, the fingerprint store's problems by class, and the watch's own staleness: see "Audit watch" |
 | Time, certificates, keys | NtpUnsynced, NtpOffset (chrony's own offset; 100 ms / 1 s), NtpSourceNotIndian, NtpReadingFailed, TlsCertExpiry (21 / 7 days), AcmeDnsDown, ClientKeyAge (150 / 365 days), ClientKeyMissing, ClientKeyCheckStale (also when never checked) |
 
 Alert text is built from label values only (service, endpoint, job, key purpose): never a log
@@ -541,6 +542,8 @@ killed half-way is closed as interrupted by its `--resume`.
 |---|---|---|
 | PackApplyFailed | exactly that whole line, from the `migrate` one-shot (dev: `celery`), in the last 24 hours (the mail names the hospital; request paths in the web backend's log can never raise it) | warning |
 | HospitalNotServed | exactly the `ihr-fleet:` line above (outcome failed, deferred or held), from the `migrate` container (the one-shot and `staging.sh fleet`) or the worker's per-minute report (`celery-worker`; dev: `celery`), in the last 24 hours | critical |
+| AuditHospitalCheckFailed / AuditHospitalSealLate | exactly the audit watch's `ihr-audit:` line (chain, fingerprint, triggers or unchecked / seal), from the `audit-watch` service alone, in the last 30 / 10 minutes (see "Audit watch") | critical / warning |
+| AuditEventRecorded | exactly the audit watch's `ihr-audit: hospital=<slug> event=<restore\|offboarding> outcome=recorded` line, once per new event, in the last hour | warning |
 
 Fix the cause, then `scripts/staging.sh manage ihr_pack_apply --slug <slug> --operator <you>`
 (`<you>`: 1-64 letters, digits or `. _ @ -`; recorded as `packs:<you>`).
@@ -741,6 +744,147 @@ So:
   LogArchiveFailing, not as a sick container.
 - **In a proof,** erasing a day the store still holds makes the archiver archive it again. On a
   server, erased days (400 days) are long gone from the store (180).
+
+## Audit watch (P1-T21, ADR-010)
+
+The `audit-watch` container (`compose.monitoring.yaml`, on with the monitoring) checks every
+hospital's audit trail and tells Prometheus what it found (design and numbers:
+`docs/reviews/p1-t21/design.md`, "As built"). It runs `manage.py ihr_audit_watch serve` from the
+backend image with its own settings (`ihr_platform.settings.watch`: no app secret, read-only
+database sessions), its own read-only database role `ihr_audit_watch` (`secrets/audit-watch.env`),
+the fingerprint bucket's **reader** key only, and its own way out to the bucket (`auditout`).
+Its checkpoints and state are in its own volume (`auditwatch`), never in the database.
+
+| Pass | When | What |
+|---|---|---|
+| fast | every 60 s | per hospital: finished entries waiting unsealed, entries held back by a running transaction; every hospital schema: any of the trail's triggers switched off |
+| incremental | every 15 min | restore and offboarding events; fingerprints since yesterday; per hospital the header walk of every seal, the chain from its checkpoint (the entries of every newer seal recomputed) and the fingerprints' claims; trigger coverage for servable hospitals |
+| nightly | 04:00 IST (an hour later again after a failure) | the entries of every seal of the last 30 days recomputed (budget `IHR_AUDIT_WATCH_REHASH_BUDGET`, time limit `IHR_AUDIT_WATCH_REHASH_MAX_SECONDS`, 45 minutes; horizon `IHR_AUDIT_WATCH_REHASH_DAYS`). Where the 30 days start is the watch's own daily record of each hospital's head, never only the database's `sealed_at`, which the owner could back-date |
+| sweep | in the nightly pass, once a week (at the next nightly again after a failure) | every fingerprint ever written |
+
+It names a hospital only in one fixed line on its log,
+`ihr-audit: hospital=<slug> check=<chain|fingerprint|triggers|seal|unchecked> outcome=failed`
+(`invalid-slug` for a slug off its pattern), which the log alerts below take from the
+`audit-watch` service alone; the metrics count hospitals. Each hospital is checked on its own:
+one it cannot read (a lock held past its 10 s lock timeout, a statement over 5 minutes, a
+revoked grant) is **unchecked**, which pages, never clean, and the others are still checked. A
+hospital a release holds (`ihr_fleet_run`: the workers are stopped and its migration may lock the
+trail) is the exception for two hours from when the watch first saw the hold: its seal lag is not
+judged and a check it cannot finish is deferred (`ihr_audit_hospitals_held`); after that it is
+judged as any other. A pass counts as run only when it ends without an error
+(`ihr_audit_watch_last_success_timestamp_seconds`).
+Its metrics answer only Prometheus and itself, a few requests at a time.
+
+It needs the fingerprint storage: with monitoring on and an empty `secrets/anchor-read.env`, `up`
+and `release` refuse before they change anything (run `s3-init`, or fill it for a provider
+bucket), and `scripts/deploy.sh` before it sends anything (`staging.sh watch-reader --check` on
+the folder it sends).
+
+Look at a hospital yourself: `scripts/staging.sh manage ihr_audit_verify --slug <slug>` (from seal
+1), or in the watch's container `python manage.py ihr_audit_watch once --pass incremental
+--metrics`: it reads the serving watch's state and never writes it, and counts the nightly and
+sweep findings that stand until the next nightly apart (`standing_findings`). `ihr_audit_watch
+measure` is bounded (the last 7 days, 200,000 entries a hospital); `--full` runs only on a
+`bench_*` database or the drill's copy.
+
+| Alert | When | Severity |
+|---|---|---|
+| AuditChainBroken | a hospital's chain fails (a changed, missing or added entry; a cut, rewritten or moved seal; its checkpoint gone) | critical, at once |
+| AuditFingerprintMismatch | a hospital no longer matches its outside fingerprints | critical, at once |
+| AuditTriggerDisabled | one of the trail's triggers is switched off in a hospital schema | critical, at once |
+| AuditTriggersMissing | a servable hospital lacks triggers or has changed audit functions, for 30 min | critical |
+| AuditFingerprintLate / AuditFingerprintNeverRead | the newest fingerprint is over 2 h 15 min old (warning) or 6 h (critical); none read for 3 h | warning / critical |
+| AuditFingerprintsUnreadable / AuditFingerprintBucketWeak | the reader fails for 1 h / the bucket's lock is weaker than required for 30 min | warning / critical |
+| AuditFingerprintObjectUnreadable, ClockSkew, ObjectRewritten, UnknownHospital, AuditEventInvalid | an object in the bucket that is not ours, says a wrong time, was written twice or hidden, names a hospital the database has lost with no offboarding event, or a bad event | critical |
+| AuditSealLag | finished entries waited over 15 min (warning) / 1 h (critical) with no new seal, for 5 min | warning / critical |
+| AuditSealHeldBack | entries held back over 1 h by a long transaction (see PgLongTransaction) | warning |
+| AuditCheckpointLost | a checkpoint was seeded again (once on a first start; otherwise its volume was lost); a hospital made after the volume is not counted | warning |
+| AuditCheckpointUnseeded | no checkpoint, and none can be seeded because the fingerprints are unreadable, for 1 h | warning |
+| AuditHospitalsUnchecked | the watch could not read a hospital: seal lag for 5 min, the chain two passes in a row (critical); the nightly (warning) | critical / warning |
+| AuditHospitalsRestoring | a hospital held for a restore (its chain is not checked) for 6 h / a day | warning / critical |
+| AuditHospitalsNotComparable | live hospitals held or not on this build's schema for a day (their triggers are not judged) | warning |
+| AuditWatchFailing (fast, incremental) | the every-minute pass fails for 5 min; the chain pass twice in a row | critical |
+| AuditWatchStale / Absent, FullCheckStale / Absent, Failing (nightly, sweep), AuditRehashOverdue | a pass has not ended without an error (fast 5 min, incremental 45 min, nightly 26 h, sweep 8 days, or never), the nightly or sweep fails for 30 min, or the 30-day recompute did not complete for two nights (the alert names the limit that ended it) | warning |
+| AuditHospitalCheckFailed (log) | the watch's line for chain, fingerprint, triggers or unchecked, in 30 min; the mail names the hospital | critical |
+| AuditHospitalSealLate (log) | the watch's line for seal, in 10 min; the mail names the hospital | warning |
+| AuditEventRecorded (log) | a new restore or offboarding event in the bucket, once; the mail names the hospital | warning |
+
+**Runbooks.**
+
+- **AuditChainBroken / AuditFingerprintMismatch / AuditHospitalCheckFailed.** Treat it as a
+  possible incident (CERT-In: report within 6 hours). Run
+  `scripts/staging.sh manage ihr_audit_verify --slug <the hospital named>`: it names the seal,
+  the entry window or the fingerprint. Do not "fix" the trail: it is evidence. A checkpoint is
+  never reset by hand. After a genuine restore the restore's event clears it (P1-T22); a restore
+  without one stays a cut. **`staging.sh rollback --restore`** (or `restore --target`) puts the
+  whole database back: every hospital sealed since the restore point reads as cut until P1-T22b
+  writes restore events for it (nothing does yet). Run it only for a real incident, record it as
+  one, and never silence the alerts.
+- **AuditHospitalsUnchecked / a `check=unchecked` line.** The watch cannot read that hospital's
+  trail: `scripts/staging.sh logs audit-watch` names the error. A lock held past 10 s (a
+  migration, or someone holding the trail's tables), a statement over 5 minutes (a very long
+  chain), or a grant of `ihr_audit_watch` taken away (`up` puts them back). Treat a hospital that
+  stays unchecked as failing its check.
+- **AuditHospitalsRestoring.** A hospital held for a restore (P1-T22) is not chain-checked until
+  the hold ends (its earlier findings still show). Finish the restore or lift the hold; a hold
+  nobody runs a restore for is a way to hide a trail.
+- **AuditCheckpointUnseeded.** The fingerprints cannot be read (AuditFingerprintsUnreadable) and
+  the watch has no checkpoint for some hospitals: it never seeds them from seal 1 blindly. Fix the
+  reader; the next pass seeds them from the newest fingerprint.
+- **AuditEventRecorded.** Confirm the restore or offboarding was yours. If not, the add-only
+  writer key (`secrets/anchor-write.env`, which Celery holds) was used: an incident. An
+  offboarding event closes a hospital only if the watch saw it offboarding or archived and its
+  final seal is the newest fingerprint's; otherwise it is a bad event (AuditEventInvalid) until
+  you review it and list its object key in `acknowledged_objects.txt`.
+- **AuditTriggerDisabled / AuditTriggersMissing.** Writes there leave no trace while it lasts. A
+  migrate puts every trigger back (`scripts/staging.sh fleet migrate --slug <slug> --operator <you>`);
+  find who switched it off (the database's own log has no DDL: look at who held the owner's
+  secret).
+- **AuditSealLag / AuditHospitalSealLate.** An active hospital: celery-beat and celery-worker
+  (ContainerNotRunning, CeleryBacklog). A suspended, offboarding or archived one: the
+  `ihr_audit.seal_inactive` job in celery-worker's log. `ihr_audit_verify --slug <slug> --seal`
+  seals it by hand.
+- **AuditSealHeldBack.** A transaction has been open for over an hour somewhere in the cluster
+  (PgLongTransaction names it); sealing resumes when it ends.
+- **AuditFingerprintLate.** The hourly job runs in celery-worker (`ihr_audit.anchor`); its log
+  says why it fails (the writer key, the bucket). Everything sealed since the newest fingerprint
+  is unprotected against the database owner until a new one is written.
+- **AuditFingerprintsUnreadable.** The reader key (`secrets/anchor-read.env`), the network
+  `auditout`, or the storage. **AuditFingerprintBucketWeak:** the bucket's Object Lock or
+  versioning was changed (`scripts/staging.sh s3-check`).
+- **A store problem** (an unreadable, skewed, doubled or hidden object). The bucket is
+  write-once for years: the object can never be removed. Find it in the watch's log
+  (`fingerprint <key>: ...`), decide what it is, and once reviewed add the object key to
+  `plugins/ihr_platform/ihr_audit/acknowledged_objects.txt` with the date and the reason (one
+  whole key per line, never a pattern); it then no longer counts, and the next one alerts again.
+- **AuditCheckpointLost.** Expected once after the first start. Otherwise the watch's volume was
+  wiped or replaced, or a checkpoint file removed: the checkpoints were seeded from the newest
+  fingerprint (never the database), so a rewrite since then is still caught; find out who removed
+  it. A hospital made after the volume is not counted; each hospital is counted once per start.
+- **AuditWatchStale / Absent / Failing.** `scripts/staging.sh logs audit-watch`. A stuck pass does
+  not stop the others (each has its own thread). **AuditRehashOverdue:** the 30-day horizon no
+  longer fits a night; the alert's `limit` label says which limit ended it
+  (`ihr_audit_rehash_stopped_by`; `ihr_audit_rehash_rate_entries_per_second` is the rate it
+  measured). `budget`: raise `IHR_AUDIT_WATCH_REHASH_BUDGET` in `.env`. `time`: raise
+  `IHR_AUDIT_WATCH_REHASH_MAX_SECONDS` (well under 26 hours), or shorten
+  `IHR_AUDIT_WATCH_REHASH_DAYS`, which narrows the promise (an edit older than that is found only
+  by the monthly drill).
+
+**Restores and offboarding.** P1-T22's restore and an offboarding write one event each into the
+fingerprint bucket (`ihr_audit/events.py`, with the add-only key: `write_restore` after keeping the
+superseded segment, `write_offboarding` with the deletion certificate before the schema goes).
+Without one, the watch reports the rollback as a cut and the deleted hospital as unknown, as it
+must. Order for an offboarding (TENANCY §7.7): seal, let the hourly fingerprint name the final
+seal, write the event with that seal, then drop the schema and delete the hospital's row in one
+transaction. Each new event is mailed once (AuditEventRecorded); a hospital held for a restore
+counts in AuditHospitalsRestoring until the hold ends.
+
+**Proven on the local staging stack (P1-T21):** a seal rewritten by the database owner raised
+AuditChainBroken, AuditFingerprintMismatch and AuditHospitalCheckFailed (naming the hospital) by
+mail within two minutes; a switched-off trigger raised AuditTriggerDisabled within a minute; the
+watch used 130 MiB. A nightly finding stands until the next nightly re-checks it, also after the
+trail was put back. **Owner decisions pending (Q-K32):** the thresholds, the extra memory, and
+whether the alert mail may name the hospital.
 
 ## Dashboards (P1-T9d, ADR-015)
 

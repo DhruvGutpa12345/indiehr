@@ -209,6 +209,77 @@ services:
         condition: service_healthy
     mem_limit: 48m
 
+  # The audit watch (P1-T21, ADR-010 amendment; ihr_audit/watch.py): checks every hospital's
+  # audit trail (seal lag every minute; the chains, their checkpoints and the fingerprints every
+  # 15 minutes; a rolling recompute every night) and serves what it found on :9108 (GET /metrics
+  # only; counts and ages, never a hospital: the hospital is named by its fixed log line,
+  # deploy/logs/alerts/audit.yml). Least privilege (review A1, A11):
+  # - the database as ihr_audit_watch (secrets/audit-watch.env): SELECT on the trail, the hospital
+  #   list and its schema state, nothing else; read-only sessions; never the app's app.env;
+  # - the fingerprint bucket's reader key only (anchor-read.env), never the writer's;
+  # - internal (the database), monitoring (Prometheus scrapes it) and auditout, its own way out
+  #   to the bucket that no other container shares; never edge;
+  # - read-only root, its checkpoints in its own volume (the database owner cannot move them);
+  # - its metrics answer only Prometheus (IHR_AUDIT_WATCH_SCRAPERS, resolved again as it moves)
+  #   and itself, a few requests at a time, each cut off after 10 s (review S7), and a bounded
+  #   number of threads (pids_limit).
+  audit-watch:
+    <<: *monitoring
+    image: ${IHR_BACKEND_IMAGE:?set IHR_BACKEND_IMAGE}
+    # The user that owns secrets/ (as the log archiver): it owns the checkpoint volume
+    user: "${IHR_SECRETS_UID:?}:${IHR_SECRETS_GID:?}"
+    entrypoint: ["python", "manage.py", "ihr_audit_watch", "serve"]
+    env_file:
+      - secrets/audit-watch.env
+      - secrets/anchor-read.env
+    environment:
+      DJANGO_SETTINGS_MODULE: ihr_platform.settings.watch
+      IHR_ENVIRONMENT: ${IHR_ENVIRONMENT:-staging}
+      IHR_TENANT_DOMAIN_SUFFIX: ${IHR_TENANT_DOMAIN_SUFFIX:?}
+      IHR_DB_ROLES: required
+      IHR_DB_ROLE: watch
+      IHR_AUDIT_WATCH_DIR: /var/lib/ihr-audit-watch
+      # The nightly recompute's limits (README, Audit watch; AuditRehashOverdue names which
+      # one ended the night)
+      IHR_AUDIT_WATCH_REHASH_BUDGET: ${IHR_AUDIT_WATCH_REHASH_BUDGET:-160000000}
+      IHR_AUDIT_WATCH_REHASH_MAX_SECONDS: ${IHR_AUDIT_WATCH_REHASH_MAX_SECONDS:-2700}
+      IHR_AUDIT_WATCH_REHASH_DAYS: ${IHR_AUDIT_WATCH_REHASH_DAYS:-30}
+      IHR_AUDIT_WATCH_SCRAPERS: prometheus
+      HOME: /tmp
+    tmpfs:
+      - /tmp:size=16m,mode=1777
+    volumes:
+      - auditwatch:/var/lib/ihr-audit-watch
+    networks: [internal, monitoring, auditout]
+    depends_on:
+      audit-watch-data:
+        condition: service_completed_successfully
+      db:
+        condition: service_healthy
+    # Alive only: the metrics answer. A failing pass is not a sick container (AuditWatchFailing)
+    healthcheck:
+      test: ["CMD", "python", "-I", "-c", "import urllib.request as u; u.urlopen('http://127.0.0.1:9108/metrics', timeout=5).read()"]
+      interval: 60s
+      timeout: 10s
+      retries: 3
+      start_period: 120s
+    mem_limit: ${IHR_AUDIT_WATCH_MEMORY:-256m}
+    pids_limit: 64
+
+  # Its volume belongs to the user it runs as (as alertmanager-data); a no-op once done
+  audit-watch-data:
+    image: prom/alertmanager:v0.35.0@sha256:e638797febd034838eca8b98cdbd46f951e9bf7f178777aa8669167406a9946c
+    user: "0:0"
+    security_opt: ["no-new-privileges:true"]
+    cap_drop: ["ALL"]
+    cap_add: ["CHOWN", "FOWNER"]
+    network_mode: none
+    entrypoint: ["/bin/sh", "-c", "[ \"$$(stat -c %u:%a /watch)\" = \"${IHR_SECRETS_UID:?}:700\" ] || { chown ${IHR_SECRETS_UID:?}:${IHR_SECRETS_GID:?} /watch && chmod 700 /watch; }"]
+    volumes:
+      - auditwatch:/watch
+    logging: *logging
+    restart: "no"
+
 networks:
   # Prometheus -> Alertmanager (and the dead-man stand-in in a proof); no way out. A fixed range
   # outside the other two (kcproxy .0/28, monitoring .64/26): Alertmanager's address (.20) is
@@ -223,7 +294,11 @@ networks:
   # Alertmanager's way out (SMTP, the dead-man switch). No other container joins it (in a proof:
   # the mail stand-in, compose.monitoring.test.yaml).
   alertmail:
+  # The audit watch's way out to the fingerprint bucket (P1-T21 A1). No other container joins it
+  # (in a proof: this stack's own SeaweedFS, compose.audit-watch.local.yaml).
+  auditout:
 
 volumes:
   promdata:
   amdata:
+  auditwatch:

@@ -8,8 +8,11 @@ Four roles, one model (``ROLES``):
   TEMPORARY on the database.
 - ``ihr_app`` serves every request and runs every worker (backend, celery-worker, celery-beat,
   staff-worker): data only. CONNECT, never CREATE or TEMPORARY, no memberships, NOINHERIT.
-- ``ihr_audit_watch`` (P1-T21 item 10): reads the audit trail only. Made and asserted here
-  before its service exists.
+- ``ihr_audit_watch`` (P1-T21 item 10): the audit watch's own login (compose.monitoring.yaml,
+  secrets/audit-watch.env). SELECT on the two audit tables of every hospital schema and on the
+  hospital list and its schema state in public, USAGE on the schemas, CONNECT; nothing else (it
+  writes nothing, executes no sealing function). Its process declares ``IHR_DB_ROLE=watch``
+  and is checked like the app's (``watch_problems``).
 - ``ihr_dump`` (P1-T22 item 2): the nightly dumper, a member of ``pg_read_all_data`` only.
 
 What ``ihr_app`` (and the watch role) may do on each table comes from two reviewed lists next
@@ -73,7 +76,7 @@ logger = logging.getLogger(__name__)
 OWNER, APP, WATCH, DUMP = "ihr_owner", "ihr_app", "ihr_audit_watch", "ihr_dump"
 PUBLIC = "PUBLIC"
 MODES = ("off", "test", "required")
-DECLARED = ("app", "owner")
+DECLARED = ("app", "owner", "watch")
 HOSPITAL_SCHEMA_RE = re.compile(r"^h_[a-z0-9]{10}$")
 HERE = Path(__file__).resolve().parent
 PUBLIC_LIST = HERE / "public_tables.txt"
@@ -94,7 +97,7 @@ class Role:
 ROLES = {
     OWNER: Role(OWNER, inherit=True, database=frozenset({"CONNECT", "TEMPORARY"})),
     APP: Role(APP, inherit=False),
-    WATCH: Role(WATCH, inherit=False, in_use=False),
+    WATCH: Role(WATCH, inherit=False),
     DUMP: Role(DUMP, inherit=True, memberships=("pg_read_all_data",), in_use=False),
 }
 # The roles the test runner makes (the owner there is the tests' own superuser)
@@ -134,10 +137,11 @@ CLASSES = {
     "queue": Grant(frozenset({"SELECT", "INSERT"}), (("UPDATE", QUEUE_COLUMNS),)),
     "append": Grant(frozenset({"SELECT"}), (("INSERT", AUDIT_DATA_COLUMNS),)),
 }
-# The read-only watch role (P1-T21): the audit trail, and the hospital list it walks
+# The read-only watch role (P1-T21): the audit trail, the hospital list it walks and each
+# hospital's schema state (whether it is servable: trigger coverage is judged only then, A7)
 WATCH_TABLES = {
     "hospital": {"ihr_audit_entry", "ihr_audit_seal"},
-    "public": {"ihr_platform_hospital"},
+    "public": {"ihr_platform_hospital", "ihr_platform_hospitalschemastate"},
 }
 # Hospital-schema functions whose ACL is ours: who may EXECUTE each. Sealing runs as the owner
 # through the first (SECURITY DEFINER, no arguments); the second is the owner's own (tests,
@@ -1370,10 +1374,10 @@ _IDENTITY = (
 )
 
 
-def _identity_problems(user, session, superuser, attributes, member, stored):
+def _identity_problems(user, session, superuser, attributes, member, stored, role=APP):
     found = []
-    if user != APP or session != APP:
-        found.append(("wrong_role", f"connected as {session} ({user}), not {APP}"))
+    if user != role or session != role:
+        found.append(("wrong_role", f"connected as {session} ({user}), not {role}"))
     if superuser:
         found.append(("superuser", f"{user} is a superuser"))
     if attributes:
@@ -1389,12 +1393,66 @@ def _identity_problems(user, session, superuser, attributes, member, stored):
     return found
 
 
-def reconnect_problems(cursor):
+def reconnect_problems(cursor, role=APP):
     """Every new connection after the first (S2): an ordinary role can ALTER ROLE itself (SET
     a default, a password), so its identity, attributes, memberships and stored settings are
     read again at each login. One small catalogue query."""
     cursor.execute(_IDENTITY + " FROM pg_roles r WHERE r.rolname = current_user")
-    return _identity_problems(*cursor.fetchone())
+    return _identity_problems(*cursor.fetchone(), role=role)
+
+
+# What the watch role may never hold anywhere (P1-T21 A11): it only reads
+WATCH_NEVER = ("INSERT", "UPDATE", "DELETE", "TRUNCATE", "REFERENCES", "TRIGGER")
+
+
+def watch_problems(cursor):
+    """Why this connection must not serve as the audit watch's role: its identity (as the
+    app's), no CREATE or TEMPORARY anywhere, nothing owned, and no right to change any table
+    or to execute a sealing function, whatever its source (has_*_privilege)."""
+    cursor.execute(
+        _IDENTITY + ", "
+        "has_database_privilege(current_database(), 'CREATE'), "
+        "has_database_privilege(current_database(), 'TEMPORARY'), "
+        "(SELECT count(*) FROM pg_namespace n WHERE has_schema_privilege(n.oid, 'CREATE') "
+        " AND n.nspname !~ '^pg_(toast_)?temp_'), "
+        "EXISTS (SELECT 1 FROM pg_class c WHERE c.relowner = r.oid) "
+        "OR EXISTS (SELECT 1 FROM pg_namespace n WHERE n.nspowner = r.oid) "
+        "OR EXISTS (SELECT 1 FROM pg_proc p WHERE p.proowner = r.oid), "
+        "(SELECT count(*) FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace "
+        " CROSS JOIN unnest(%s::text[]) w(privilege) "
+        " WHERE (n.nspname = 'public' OR n.nspname ~ %s) AND c.relkind = ANY(%s) "
+        " AND has_table_privilege(c.oid, w.privilege)), "
+        "(SELECT count(*) FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace "
+        " WHERE n.nspname ~ %s AND p.proname IN ('ihr_audit_seal_next', 'ihr_audit_seal_run') "
+        " AND has_function_privilege(p.oid, 'EXECUTE')) "
+        "FROM pg_roles r WHERE r.rolname = current_user",
+        [
+            list(WATCH_NEVER),
+            HOSPITAL_SCHEMA_RE.pattern,
+            list(RELKINDS),
+            HOSPITAL_SCHEMA_RE.pattern,
+        ],
+    )
+    row = cursor.fetchone()
+    found = _identity_problems(*row[:6], role=WATCH)
+    db_create, db_temp, schema_create, owns, writes, seals = row[6:]
+    if db_create:
+        found.append(("database_create", "CREATE on the database"))
+    if db_temp:
+        found.append(("database_temporary", "TEMPORARY on the database"))
+    if schema_create:
+        found.append(("schema_create", f"CREATE on {schema_create} schema(s)"))
+    if owns:
+        found.append(("owns_objects", f"{row[0]} owns objects in the database"))
+    if writes or seals:
+        found.append(
+            (
+                "extra_privileges",
+                f"{row[0]} may change {writes} table(s) or seal {seals} schema(s): it only "
+                "reads (ihr_fleet_run migrate repairs the grants)",
+            )
+        )
+    return found
 
 
 def app_problems(cursor):
@@ -1469,7 +1527,7 @@ def off_problems(cursor):
     )
     user, session, superuser = cursor.fetchone()
     found = []
-    if {user, session} & {OWNER, APP}:
+    if {user, session} & {OWNER, APP, WATCH}:
         found.append(
             (
                 "roles_off",
@@ -1509,7 +1567,7 @@ def effective_public_problems(cursor):
     ]
 
 
-def check_connection(
+def check_connection(  # noqa: PLR0912 (one flat list of verdicts)
     connection, declared_role=None, argv=None, gated=None, process=None
 ):
     """[(reason, text)] for this connection and the role it declares; empty when fine.
@@ -1527,10 +1585,12 @@ def check_connection(
 
     declared_role = declared_role or declared()
     if declared_role not in DECLARED:
-        return [("undeclared", "IHR_DB_ROLE must be app or owner")]
+        return [("undeclared", "IHR_DB_ROLE must be app, owner or watch")]
     with connection.cursor() as cursor:
         if declared_role == "owner":
             return owner_problems(cursor, argv, process)
+        if declared_role == "watch":
+            return watch_problems(cursor)
         found = app_problems(cursor)
         if found:
             return found
@@ -1618,16 +1678,17 @@ def on_connection_created(sender=None, connection=None, **kwargs):
         )
         raise RoleRefused(msg)
     if _STATE["checked"]:
-        if _STATE["declared"] == "app":
+        if _STATE["declared"] in ("app", "watch"):
+            role = APP if _STATE["declared"] == "app" else WATCH
             try:
                 with connection.cursor() as cursor:
-                    found = reconnect_problems(cursor)
+                    found = reconnect_problems(cursor, role)
             except Exception as exc:
                 found = [
                     ("check_failed", f"the role check failed: {type(exc).__name__}")
                 ]
             if found:
-                _refuse(connection, "app", found)
+                _refuse(connection, _STATE["declared"], found)
         return
     with _LOCK:
         if _STATE["checked"]:

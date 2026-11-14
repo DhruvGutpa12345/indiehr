@@ -609,12 +609,14 @@ class CrossTenantIsolationTests(SimpleTestCase):
             for name, fields in entries.items()
             if fields.get("options", {}).get("headers", {}).get(PLATFORM_ONCE)
         }
-        # The audit fingerprint, and the per-minute report of hospitals not served (P1-T18a)
+        # The audit fingerprint, the per-minute report of hospitals not served (P1-T18a), and
+        # the sealing of suspended, offboarding and archived hospitals (P1-T21)
         self.assertEqual(
             once,
             {
                 "ihr_audit_anchor@__all_tenants_only__",
                 "ihr_fleet_unserved@__all_tenants_only__",
+                "ihr_audit_seal_inactive@__all_tenants_only__",
             },
         )
         self.assertEqual(

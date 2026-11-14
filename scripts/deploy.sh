@@ -183,16 +183,27 @@ fi
 [[ -f "$ENV_DIR/.env" && -d "$ENV_DIR/secrets" ]] \
   || die "no $ENV_DIR/.env and secrets/: run scripts/staging.sh init <suffix> first"
 [[ -f "$ENV_DIR/.local" ]] && die "$ENV_DIR was made for a proof on this machine (init --local); use init without --local, or --local-proof"
-# The split database roles (P1-T19b): their secrets are made here, on the deploying machine, never
-# on the server; this build's stack runs nothing without them
-[[ -f "$ENV_DIR/secrets/db-owner.env" ]] \
-  || die "no $ENV_DIR/secrets/db-owner.env: make the split database roles' secrets first (IHR_STAGING_OUT=$ENV_DIR scripts/staging.sh db-split-secrets; deploy/staging/README.md, Moving to split roles)"
+# The split database roles (P1-T19b; the audit watch's own since P1-T21): their secrets are made
+# here, on the deploying machine, never on the server; this build's stack runs nothing without
+# them. Checked the way the server checks them (db-split-secrets --check: the app's, the
+# owner's and the watch's addresses), before anything is written or sent (review C13); the
+# throwaway VM's own folder gets what it lacks here
+if ((LOCAL_PROOF)); then IHR_STAGING_OUT="$ENV_DIR" scripts/staging.sh db-split-secrets >/dev/null; fi
+IHR_STAGING_OUT="$ENV_DIR" scripts/staging.sh db-split-secrets --check >/dev/null \
+  || die "$ENV_DIR: the split database roles' secrets are missing (above): IHR_STAGING_OUT=$ENV_DIR scripts/staging.sh db-split-secrets (deploy/staging/README.md, Moving to split roles)"
 # CARE's storage keys (P1-T20b): one for patient files, one for pictures, made here like the roles'
 # secrets, never on the server (each deploy sends this copy over the server's). The throwaway VM's
 # own folder is split here; anything else unsplit is refused before anything is sent (S1/S2)
 if ((LOCAL_PROOF)); then IHR_STAGING_OUT="$ENV_DIR" scripts/staging.sh s3-split-keys >/dev/null; fi
 IHR_STAGING_OUT="$ENV_DIR" scripts/staging.sh s3-split-keys --check \
   || die "$ENV_DIR: CARE's storage keys are not split (above): IHR_STAGING_OUT=$ENV_DIR scripts/staging.sh s3-split-keys (deploy/staging/README.md, Object storage)"
+# The audit watch's fingerprint reader key where monitoring is on (P1-T21 C4): the server's up and
+# release refuse without it, so it is asked here, before DEPLOYING is written or anything sent. A
+# VM proof's own init sets its storage up there (local-proof)
+if ! ((LOCAL_PROOF)); then
+  IHR_STAGING_OUT="$ENV_DIR" scripts/staging.sh watch-reader --check >/dev/null \
+    || die "$ENV_DIR: monitoring is on but secrets/anchor-read.env holds no fingerprint reader key (above): set up the fingerprint storage in that folder first (deploy/staging/README.md, Audit watch)"
+fi
 for img in "$BACKEND" "$FRONTEND" "$POSTGRES" "$KEYCLOAK" ${ACMEDNS:+"$ACMEDNS"}; do
   docker image inspect "$img" >/dev/null 2>&1 || die "image $img not found here (drop --no-build)"
   # With --no-build the images may come from another commit: DEPLOYED must not claim HEAD

@@ -114,10 +114,13 @@ class Hardening(unittest.TestCase):
 
     def test_every_service_pinned_and_hardened(self):
         for name, svc in self.services():
-            self.assertRegex(svc["image"], PINNED, name)
+            if name == "audit-watch":  # our backend image (P1-T21), pinned by its release tag
+                self.assertEqual(svc["image"], "${IHR_BACKEND_IMAGE:?set IHR_BACKEND_IMAGE}")
+            else:
+                self.assertRegex(svc["image"], PINNED, name)
             self.assertEqual(svc["cap_drop"], ["ALL"], name)
             self.assertIn("no-new-privileges:true", svc["security_opt"], name)
-            if name == "alertmanager-data":  # one-off owner fix, no network
+            if name in ("alertmanager-data", "audit-watch-data"):  # one-off owner fix, no network
                 self.assertEqual(sorted(svc["cap_add"]), ["CHOWN", "FOWNER"])
                 self.assertEqual(svc["network_mode"], "none")
                 continue
@@ -261,6 +264,203 @@ class Hardening(unittest.TestCase):
         self.assertIn("sha256sum", init)
 
 
+class AuditWatch(unittest.TestCase):
+    """The audit watch (P1-T21; design "After the attack"): least privilege, its own way out,
+    its target, the container-down alert, and its alerts."""
+
+    SVC = OVERLAY["services"]["audit-watch"]
+
+    def test_reader_key_and_its_own_role_only(self):
+        self.assertEqual(self.SVC["env_file"], ["secrets/audit-watch.env", "secrets/anchor-read.env"])
+        text = (STAGING / "compose.monitoring.yaml").read_text()
+        block = text.split("\n  audit-watch:\n", 1)[1].split("\n  audit-watch-data:\n", 1)[0]
+        for never in ("anchor-write.env", "app.env", "db-owner.env", "redis.env", "keycloak.env"):
+            self.assertNotIn(never, block)
+        env = self.SVC["environment"]
+        self.assertEqual(env["DJANGO_SETTINGS_MODULE"], "ihr_platform.settings.watch")
+        self.assertEqual((env["IHR_DB_ROLES"], env["IHR_DB_ROLE"]), ("required", "watch"))
+        # its secret: made on the deploying machine, re-asserted as a login at every up
+        self.assertIn("audit_watch_env \"$watch\" | write_secret audit-watch.env", func("init"))
+        self.assertIn("write_secret audit-watch.env.new", func("db_split_secrets"))
+        self.assertIn("ALTER ROLE ihr_audit_watch WITH LOGIN NOINHERIT", STAGING_SH)
+        self.assertIn("CONNECTION LIMIT 4 PASSWORD :'\"'vw'\"'", STAGING_SH)
+        self.assertIn('vw="$(scram <<< "$watch")"', func("db_roles_apply"))
+
+    def test_hardened(self):
+        svc = self.SVC
+        self.assertTrue(svc["read_only"])
+        self.assertIn("mem_limit", svc)
+        # a flood of connections cannot spawn threads without end (S7); its metrics answer only
+        # Prometheus by name
+        self.assertEqual(svc["pids_limit"], 64)
+        self.assertEqual(svc["environment"]["IHR_AUDIT_WATCH_SCRAPERS"], "prometheus")
+        self.assertEqual(svc["volumes"], ["auditwatch:/var/lib/ihr-audit-watch"])
+        self.assertEqual(svc["entrypoint"], ["python", "manage.py", "ihr_audit_watch", "serve"])
+        self.assertIn("http://127.0.0.1:9108/metrics", " ".join(svc["healthcheck"]["test"]))
+        self.assertEqual(svc["depends_on"]["audit-watch-data"]["condition"], "service_completed_successfully")
+
+    def test_its_own_way_out(self):
+        """A1: internal (the database), monitoring (Prometheus) and auditout, which it shares with
+        no one (a proof: this stack's SeaweedFS, by a name only there); never edge."""
+        self.assertEqual(sorted(self.SVC["networks"]), ["auditout", "internal", "monitoring"])
+        self.assertNotIn("internal", OVERLAY["networks"]["auditout"] or {})
+        self.assertEqual(members("auditout"), {("compose.monitoring.yaml", "audit-watch"),
+                                               ("compose.audit-watch.local.yaml", "s3")})
+        local = ALL_COMPOSE["compose.audit-watch.local.yaml"]["services"]
+        self.assertEqual(local["s3"]["networks"], {"auditout": {"aliases": ["s3-auditout"]}})
+        self.assertEqual(local["audit-watch"]["environment"]["IHR_AUDIT_ANCHOR_ENDPOINT"], "http://s3-auditout:8333")
+        self.assertIn('[[ "$(env_get IHR_S3)" == local ]] && files+=(-f "$DIR/compose.audit-watch.local.yaml")',
+                      func("compose"))
+
+    def test_target_and_container_down(self):
+        self.assertIn('json_targets "$d/targets/audit-watch.json" "audit-watch:9108" "service=audit-watch"',
+                      func("monitoring_config"))
+        self.assertIn(" grafana audit-watch) out s", func("monitoring_up"))
+        down = [r for _, r in rules() if r["alert"] == "ContainerNotRunning"]
+        self.assertTrue(all("|audit-watch|" in r["expr"] for r in down))
+        self.assertIn("audit-watch-data", re.search(r"MON_ONESHOTS='([^']*)'", STAGING_SH).group(1).split("|"))
+
+    def test_alerts(self):
+        names = {rule["alert"] for _, rule in rules()}
+        for want in ("AuditChainBroken", "AuditFingerprintMismatch", "AuditTriggerDisabled", "AuditTriggersMissing",
+                     "AuditFingerprintLate", "AuditFingerprintNeverRead", "AuditFingerprintsUnreadable",
+                     "AuditFingerprintBucketWeak", "AuditFingerprintObjectUnreadable", "AuditFingerprintClockSkew",
+                     "AuditFingerprintObjectRewritten", "AuditFingerprintUnknownHospital", "AuditEventInvalid",
+                     "AuditSealLag", "AuditSealHeldBack", "AuditWatchStale", "AuditWatchAbsent",
+                     "AuditWatchFullCheckStale", "AuditWatchFullCheckAbsent", "AuditWatchFailing",
+                     "AuditRehashOverdue", "AuditCheckpointLost", "AuditHospitalsNotComparable"):
+            self.assertIn(want, names)
+        for want in ("AuditHospitalsUnchecked", "AuditHospitalsRestoring", "AuditCheckpointUnseeded"):
+            self.assertIn(want, names)
+        audit = [r for f, r in rules() if f == "audit.yml"]
+        # every pass has a staleness rule and an absent() rule (A9), on the time it last ENDED
+        # WITHOUT AN ERROR: a pass that fails every time goes stale (review C8)
+        exprs = " ".join(r["expr"] for r in audit)
+        for name in ("fast", "incremental", "nightly", "sweep"):
+            self.assertIn(f'ihr_audit_watch_last_success_timestamp_seconds{{pass="{name}"}} >', exprs)
+            self.assertIn(f'absent(ihr_audit_watch_last_success_timestamp_seconds{{pass="{name}"}})', exprs)
+        self.assertNotIn("time() - ihr_audit_watch_last_run_timestamp_seconds", exprs)
+        self.assertNotIn("absent(ihr_audit_watch_last_run_timestamp_seconds", exprs)
+        self.assertIn("absent(ihr_audit_fingerprint_newest_timestamp_seconds)", exprs)  # C11
+        # a hospital the watch cannot read pages (S1/C2), and so does a failing integrity pass
+        for r in audit:
+            if r["alert"] == "AuditHospitalsUnchecked" and r["labels"].get("pass") in ("fast", "incremental"):
+                self.assertEqual(r["labels"]["severity"], "critical")
+            if r["alert"] == "AuditWatchFailing" and r["labels"].get("pass") in ("fast", "incremental"):
+                self.assertEqual(r["labels"]["severity"], "critical")
+        # every metric a rule reads is one the watch exports (a typo would fail open or fire for
+        # good; C11)
+        watch = (ROOT / "plugins" / "ihr_platform" / "ihr_audit" / "watch.py").read_text()
+        for metric in sorted(set(re.findall(r"\b(ihr_audit_[a-z_]+)", exprs))):
+            self.assertIn(f'"{metric}"', watch, metric)
+        # the integrity alerts page at once
+        for r in audit:
+            if r["alert"] in ("AuditChainBroken", "AuditFingerprintMismatch", "AuditTriggerDisabled"):
+                self.assertNotIn("for", r)
+                self.assertEqual(r["labels"]["severity"], "critical")
+
+
+class AuditWatchOperations(unittest.TestCase):
+    """P1-T21 review: what the stack does around the watch."""
+
+    def test_every_knob_the_runbook_names_reaches_the_watch(self):
+        """C5: every IHR_AUDIT_WATCH_* setting the README or an alert tells the operator to
+        change in .env is passed through compose, and the watch reads it."""
+        readme = (STAGING / "README.md").read_text()
+        rule_text = (MON / "prometheus" / "rules" / "audit.yml").read_text()
+        env = OVERLAY["services"]["audit-watch"]["environment"]
+        watch = (ROOT / "plugins" / "ihr_platform" / "ihr_audit" / "watch.py").read_text()
+        named = set(re.findall(r"IHR_AUDIT_WATCH_[A-Z_]+[A-Z]", readme + rule_text))
+        self.assertTrue({"IHR_AUDIT_WATCH_REHASH_BUDGET", "IHR_AUDIT_WATCH_REHASH_MAX_SECONDS"} <= named, named)
+        for knob in sorted(named - {"IHR_AUDIT_WATCH_DIR"}):
+            self.assertIn(knob, env, knob)
+            self.assertIn(f'"{knob}"', watch, knob)
+
+    def test_monitoring_needs_the_fingerprint_reader_before_anything_changes(self):
+        """C4: up and release refuse a stack with monitoring and no reader key before they
+        start or hold anything; monitoring-init warns."""
+        need = func("watch_need_reader")
+        self.assertIn("IHR_MONITORING", need)
+        self.assertIn("^IHR_AUDIT_ANCHOR_READ_KEY=.", need)
+        up = func("up")
+        self.assertLess(up.index("watch_need_reader"), up.index("compose up -d --wait db redis"))
+        release = func("release")
+        self.assertLess(release.index("watch_need_reader"), release.index("rel_lock"))
+        self.assertIn("anchor-read.env", func("monitoring_init"))
+        # run for real: monitoring on, the reader file empty, then filled
+        with tempfile.TemporaryDirectory() as d:
+            sec = Path(d) / "secrets"
+            sec.mkdir()
+            (Path(d) / ".env").write_text("IHR_MONITORING=on\n")
+            (sec / "anchor-read.env").write_text("")
+            script = (f'DIR="{d}"; SECRETS="{sec}"\n'
+                      + 'env_get() { sed -n "s/^$1=//p" "$DIR/.env" | tail -1; }\n'
+                      + 'die() { echo "$*" >&2; exit 1; }\n'
+                      + f"watch_need_reader() {{{need}\n}}\nwatch_need_reader && echo passed\n")
+            out = subprocess.run(["bash", "-c", script], capture_output=True, text=True, timeout=10)
+            self.assertEqual(out.returncode, 1)
+            self.assertIn("s3-init", out.stderr)
+            (sec / "anchor-read.env").write_text("IHR_AUDIT_ANCHOR_READ_KEY=reader\n")
+            out = subprocess.run(["bash", "-c", script], capture_output=True, text=True, timeout=10)
+            self.assertEqual(out.stdout.strip(), "passed", out.stderr)
+
+    def test_deploy_asks_for_the_reader_key_before_it_sends_anything(self):
+        """C4 follow-up: deploy.sh checks the folder it sends the way the server's up and
+        release will (watch-reader --check), before DEPLOYING is written: a missing reader
+        key never leaves a half-done deploy."""
+        deploy = (ROOT / "scripts" / "deploy.sh").read_text()
+        check = 'IHR_STAGING_OUT="$ENV_DIR" scripts/staging.sh watch-reader --check'
+        self.assertIn(check, deploy)
+        self.assertLess(deploy.index(check), deploy.index("/DEPLOYING\""))
+        self.assertLess(deploy.index(check), deploy.index("  docker save "))
+        dispatch = STAGING_SH[STAGING_SH.index('case "${1:-}" in\n  init)'):]
+        self.assertIn('watch_need_reader "$OUT"', dispatch)
+        self.assertIn("scripts/staging.sh watch-reader --check", STAGING_SH.split("\nset ", 1)[0])
+        need = func("watch_need_reader")
+        with tempfile.TemporaryDirectory() as d, tempfile.TemporaryDirectory() as other:
+            out = Path(other)
+            (out / "secrets").mkdir()
+            (out / ".env").write_text("IHR_MONITORING=on\n")
+            (out / "secrets" / "anchor-read.env").write_text("")
+            # this stack (DIR) has no monitoring: the folder given is what is checked
+            script = (f'DIR="{d}"; SECRETS="{d}/secrets"\n'
+                      + 'env_get() { sed -n "s/^$1=//p" "$DIR/.env" | tail -1; }\n'
+                      + 'die() { echo "$*" >&2; exit 1; }\n'
+                      + f'watch_need_reader() {{{need}\n}}\nwatch_need_reader "{out}" && echo passed\n')
+            run = subprocess.run(["bash", "-c", script], capture_output=True, text=True, timeout=10)
+            self.assertEqual(run.returncode, 1, run.stdout)
+            (out / "secrets" / "anchor-read.env").write_text("IHR_AUDIT_ANCHOR_READ_KEY=reader\n")
+            run = subprocess.run(["bash", "-c", script], capture_output=True, text=True, timeout=10)
+            self.assertEqual(run.stdout.strip(), "passed", run.stderr)
+            (out / ".env").write_text("IHR_MONITORING=\n")
+            (out / "secrets" / "anchor-read.env").write_text("")
+            run = subprocess.run(["bash", "-c", script], capture_output=True, text=True, timeout=10)
+            self.assertEqual(run.stdout.strip(), "passed", run.stderr)
+
+    def test_a_release_seals_what_its_migrations_wrote_before_up(self):
+        """C3: the new build seals and fingerprints after the fleet run, before up recreates
+        the watch, so a long release never reads as seal lag."""
+        release = func("release")
+        fleet = release.index("ihr_fleet_run migrate check roles packs")
+        self.assertLess(fleet, release.index("rel_seal_new"))
+        self.assertLess(release.index("rel_seal_new"), release.index("\n  up\n"))
+        new = func("rel_seal_new")
+        self.assertIn('python manage.py shell -c "$REL_SEAL_PY"', new)
+        self.assertIn("compose run --rm --no-deps -T celery-worker", new)
+        self.assertNotIn("IHR_BACKEND_IMAGE=", new)  # this build, not the outgoing one
+
+    def test_a_restoring_rollback_says_what_the_watch_will_report(self):
+        """C1: a whole-database restore leaves cut chains no event excuses yet: the rollback
+        says so before it is confirmed, and P1-T22b carries the restore events for it."""
+        rollback = func("rollback")
+        said = rollback[rollback.index("What this rollback does and loses"):rollback.index("Type the release tag")]
+        for want in ("AuditChainBroken", "AuditFingerprintMismatch", "P1-T22b", "never a silence"):
+            self.assertIn(want, said)
+        tracker = (ROOT / "docs" / "TRACKER.md").read_text()
+        line = next(ln for ln in tracker.splitlines() if "P1-T22b" in ln and "⬜" in ln)
+        self.assertIn("rollback --restore", line)
+
+
 class TraefikMetricsAndStatus(unittest.TestCase):
     METRICS = ["--entrypoints.metrics.address=:8083", "--metrics.prometheus=true",
                "--metrics.prometheus.manualrouting=true", "--metrics.prometheus.addRoutersLabels=true"]
@@ -326,7 +526,7 @@ class PrometheusSettings(unittest.TestCase):
         jobs = {j["job_name"]: j for j in PROMETHEUS["scrape_configs"]}
         self.assertEqual(set(jobs), {"prometheus", "alertmanager", "node", "blackbox", "postgres", "redis",
                                      "traefik", "keycloak", "s3", "probe-public", "probe-internal", "probe-dns",
-                                     "fluent-bit", "victorialogs", "vmalert", "logs-archive"})
+                                     "fluent-bit", "victorialogs", "vmalert", "logs-archive", "audit-watch"})
         self.assertEqual(jobs["traefik"]["static_configs"][0]["targets"], ["traefik:8083"])
         self.assertEqual(jobs["keycloak"]["static_configs"][0]["targets"], ["keycloak:9000"])
         for j in jobs.values():

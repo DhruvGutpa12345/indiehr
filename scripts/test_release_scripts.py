@@ -782,6 +782,9 @@ class EndToEnd(unittest.TestCase):
                 (d / "secrets" / "app.env").write_text(f"DATABASE_URL=postgres://ihr_app:{'a' * 43}@db:5432/ihr\n"
                                                        + app_extra)
                 (d / "secrets" / "db-owner.env").write_text(f"DATABASE_URL=postgres://ihr_owner:{'o' * 43}@db:5432/ihr\n")
+                # and the audit watch's read-only role (P1-T21)
+                (d / "secrets" / "audit-watch.env").write_text(
+                    f"DATABASE_URL=postgres://ihr_audit_watch:{'w' * 43}@db:5432/ihr\n")
             for tag, stack in (stacks or {}).items():  # releases' kept stack files
                 compose_text, extra = stack if isinstance(stack, tuple) else (stack, None)
                 make_stack_archive(d / "releases" / f"stack-{tag}.tgz", compose_text, extra)

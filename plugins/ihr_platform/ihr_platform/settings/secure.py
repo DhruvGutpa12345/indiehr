@@ -279,3 +279,61 @@ def mail_problems(settings):
     elif "true" not in {str(smtp.get(k, "")).lower() for k in ("starttls", "ssl")}:
         found.append("Keycloak's mail server must use TLS (starttls or ssl).")
     return found
+
+
+# The audit watch (P1-T21, settings/watch.py): what it must never hold. It reads the audit
+# trail and the fingerprint bucket; the web app's and the workers' secrets are not its own.
+WATCH_FORBIDDEN_ENV = (
+    "DJANGO_SECRET_KEY",
+    "REDIS_URL",
+    "JWKS_BASE64",
+    "IHR_AUDIT_ANCHOR_WRITE_KEY",
+    "IHR_AUDIT_ANCHOR_WRITE_SECRET",
+    "BUCKET_KEY",
+    "BUCKET_SECRET",
+    "KC_BOOTSTRAP_ADMIN_PASSWORD",
+    "KC_BOOTSTRAP_ADMIN_CLIENT_SECRET",
+)
+WATCH_ALLOWED_SECRETS = ("IHR_AUDIT_ANCHOR_READ_SECRET",)
+WATCH_DB_USER_RE = re.compile(r"^postgres://ihr_audit_watch:[^@]+@")
+
+
+def watch_problems(settings, environ):
+    """Everything unsafe about the audit watch's settings, as sentences; empty when safe."""
+    found = []
+    if settings.get("DEBUG"):
+        found.append("DEBUG must be off.")
+    suffix = str(settings.get("IHR_TENANT_DOMAIN_SUFFIX", "")).strip(".").lower()
+    if not suffix or suffix.rsplit(".", 1)[-1] in LOCAL_SUFFIXES:
+        found.append(
+            "IHR_TENANT_DOMAIN_SUFFIX must be a real domain (the fingerprints' prefix)."
+        )
+    if (
+        settings.get("IHR_DB_ROLES") != "required"
+        or settings.get("IHR_DB_ROLE") != "watch"
+    ):
+        found.append("IHR_DB_ROLES must be required and IHR_DB_ROLE watch (P1-T21).")
+    if not WATCH_DB_USER_RE.match(environ.get("DATABASE_URL", "")):
+        found.append("DATABASE_URL must be the ihr_audit_watch role's address.")
+    if not environ.get("IHR_AUDIT_ANCHOR_READ_KEY", "").strip():
+        found.append(
+            "IHR_AUDIT_ANCHOR_READ_KEY is not set: the watch checks the fingerprints."
+        )
+    held = sorted(
+        name
+        for name, value in environ.items()
+        if value
+        and name not in WATCH_ALLOWED_SECRETS
+        and (
+            name in WATCH_FORBIDDEN_ENV
+            or re.search(r"(_SECRET|PASSWORD)$", name)
+            or name.startswith(("FILE_UPLOAD_", "FACILITY_S3_"))
+        )
+    )
+    if held:
+        found.append(
+            f"The watch must not hold {', '.join(held)} (the web app's and workers' secrets)."
+        )
+    if settings.get("SENTRY_DSN"):
+        found.append("SENTRY_DSN must stay unset (no data leaves India).")
+    return found

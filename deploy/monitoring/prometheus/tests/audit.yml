@@ -1,0 +1,584 @@
+# promtool unit tests for ../rules/audit.yml (scripts/check-monitoring.sh runs them with the pinned
+# Prometheus image). Both sides of every threshold, and the absent() rules.
+rule_files:
+  - ../rules/audit.yml
+evaluation_interval: 30s
+
+tests:
+  - name: integrity counts fire at once, triggers missing after 30 minutes
+    interval: 1m
+    input_series:
+      - series: 'ihr_audit_chain_broken_hospitals{job="audit-watch"}'
+        values: '0x10 1x20'
+      - series: 'ihr_audit_fingerprint_mismatch_hospitals{job="audit-watch"}'
+        values: '0x10 2x20'
+      - series: 'ihr_audit_disabled_trigger_hospitals{job="audit-watch"}'
+        values: '0x10 1x20'
+      - series: 'ihr_audit_trigger_problem_hospitals{job="audit-watch"}'
+        values: '0x5 1x60'
+      - series: 'ihr_audit_checkpoints_reseeded_hospitals{job="audit-watch"}'
+        values: '0x10 3 0x20'
+    alert_rule_test:
+      - eval_time: 9m
+        alertname: AuditChainBroken
+        exp_alerts: []
+      - eval_time: 11m
+        alertname: AuditChainBroken
+        exp_alerts:
+          - exp_labels: {severity: critical, service: audit-watch, job: audit-watch}
+            exp_annotations:
+              summary: "The audit chain of 1 hospital(s) fails its check (changed, cut or rewritten): run scripts/staging.sh manage ihr_audit_verify --all"
+      - eval_time: 9m
+        alertname: AuditFingerprintMismatch
+        exp_alerts: []
+      - eval_time: 11m
+        alertname: AuditFingerprintMismatch
+        exp_alerts:
+          - exp_labels: {severity: critical, service: audit-watch, job: audit-watch}
+            exp_annotations:
+              summary: "2 hospital(s) no longer match their outside fingerprints (the trail was rewritten or cut)"
+      - eval_time: 9m
+        alertname: AuditTriggerDisabled
+        exp_alerts: []
+      - eval_time: 11m
+        alertname: AuditTriggerDisabled
+        exp_alerts:
+          - exp_labels: {severity: critical, service: audit-watch, job: audit-watch}
+            exp_annotations:
+              summary: "An audit trigger is switched off in 1 hospital schema(s): writes there leave no trace"
+      # problems from minute 5: pending, firing after 30 minutes
+      - eval_time: 34m
+        alertname: AuditTriggersMissing
+        exp_alerts: []
+      - eval_time: 37m
+        alertname: AuditTriggersMissing
+        exp_alerts:
+          - exp_labels: {severity: critical, service: audit-watch, job: audit-watch}
+            exp_annotations:
+              summary: "1 servable hospital(s) have tables without their audit triggers, or changed audit functions"
+      - eval_time: 9m
+        alertname: AuditCheckpointLost
+        exp_alerts: []
+      - eval_time: 11m
+        alertname: AuditCheckpointLost
+        exp_alerts:
+          - exp_labels: {severity: warning, service: audit-watch, job: audit-watch}
+            exp_annotations:
+              summary: "The audit watch had no checkpoint for 3 hospital(s) and seeded them from the fingerprints (a first start, or its volume was lost)"
+      - eval_time: 12m
+        alertname: AuditCheckpointLost
+        exp_alerts: []
+
+  - name: hospitals not comparable for a day
+    interval: 5m
+    input_series:
+      # one hour of 0, then 1
+      - series: 'ihr_audit_hospitals_not_comparable{job="audit-watch"}'
+        values: '0x11 1x330'
+    alert_rule_test:
+      - eval_time: 24h
+        alertname: AuditHospitalsNotComparable
+        exp_alerts: []
+      - eval_time: 26h
+        alertname: AuditHospitalsNotComparable
+        exp_alerts:
+          - exp_labels: {severity: warning, service: audit-watch, job: audit-watch}
+            exp_annotations:
+              summary: "1 live hospital(s) are held or not on this build's schema for a day: their triggers are not checked"
+
+  - name: a late fingerprint, both thresholds
+    interval: 10m
+    input_series:
+      # the newest fingerprint stays at time 0
+      - series: 'ihr_audit_fingerprint_newest_timestamp_seconds{job="audit-watch"}'
+        values: '0x40'
+    alert_rule_test:
+      - eval_time: 2h10m
+        alertname: AuditFingerprintLate
+        exp_alerts: []
+      - eval_time: 2h20m
+        alertname: AuditFingerprintLate
+        exp_alerts:
+          - exp_labels: {severity: warning, service: audit-watch, job: audit-watch}
+            exp_annotations:
+              summary: "The newest audit fingerprint is 8400 seconds old (the hourly job in celery-worker)"
+      - eval_time: 6h10m
+        alertname: AuditFingerprintLate
+        exp_alerts:
+          - exp_labels: {severity: warning, service: audit-watch, job: audit-watch}
+            exp_annotations:
+              summary: "The newest audit fingerprint is 22200 seconds old (the hourly job in celery-worker)"
+          - exp_labels: {severity: critical, service: audit-watch, job: audit-watch}
+            exp_annotations:
+              summary: "The newest audit fingerprint is 22200 seconds old: a rewrite of the trail since then would go unseen"
+      # the series is there: the absent() rule stays silent past its 3 hours (C11)
+      - eval_time: 4h
+        alertname: AuditFingerprintNeverRead
+        exp_alerts: []
+
+  - name: never a fingerprint, unreadable bucket, weak lock
+    interval: 5m
+    input_series:
+      - series: 'ihr_audit_fingerprints_readable{job="audit-watch"}'
+        values: '1x7 0x40'
+      - series: 'ihr_audit_fingerprint_bucket_ok{job="audit-watch"}'
+        values: '1x7 0x40'
+    alert_rule_test:
+      - eval_time: 2h50m
+        alertname: AuditFingerprintNeverRead
+        exp_alerts: []
+      - eval_time: 3h10m
+        alertname: AuditFingerprintNeverRead
+        exp_alerts:
+          - exp_labels: {severity: warning, service: audit-watch}
+            exp_annotations:
+              summary: "The audit watch has never read an audit fingerprint"
+      # unreadable from 30m: firing an hour later
+      - eval_time: 1h20m
+        alertname: AuditFingerprintsUnreadable
+        exp_alerts: []
+      - eval_time: 1h50m
+        alertname: AuditFingerprintsUnreadable
+        exp_alerts:
+          - exp_labels: {severity: warning, service: audit-watch, job: audit-watch}
+            exp_annotations:
+              summary: "The audit watch cannot read the fingerprint bucket for an hour (its reader key, the network auditout, or the storage)"
+      - eval_time: 50m
+        alertname: AuditFingerprintBucketWeak
+        exp_alerts: []
+      - eval_time: 1h20m
+        alertname: AuditFingerprintBucketWeak
+        exp_alerts:
+          - exp_labels: {severity: critical, service: audit-watch, job: audit-watch}
+            exp_annotations:
+              summary: "The fingerprint bucket's Object Lock or versioning is weaker than this platform requires"
+
+  - name: store problems by class
+    interval: 1m
+    input_series:
+      - series: 'ihr_audit_fingerprint_store_problems{class="unreadable", job="audit-watch"}'
+        values: '0x5 1x10'
+      - series: 'ihr_audit_fingerprint_store_problems{class="skew", job="audit-watch"}'
+        values: '0x5 1x10'
+      - series: 'ihr_audit_fingerprint_store_problems{class="rewritten", job="audit-watch"}'
+        values: '0x5 1x10'
+      - series: 'ihr_audit_fingerprint_store_problems{class="hidden", job="audit-watch"}'
+        values: '0x15'
+      - series: 'ihr_audit_fingerprint_store_problems{class="unknown_hospital", job="audit-watch"}'
+        values: '0x5 2x10'
+      - series: 'ihr_audit_fingerprint_store_problems{class="events", job="audit-watch"}'
+        values: '0x5 1x10'
+      # never alerted by class: AuditFingerprintBucketWeak covers it
+      - series: 'ihr_audit_fingerprint_store_problems{class="lock", job="audit-watch"}'
+        values: '1x15'
+    alert_rule_test:
+      - eval_time: 4m
+        alertname: AuditFingerprintObjectUnreadable
+        exp_alerts: []
+      - eval_time: 6m
+        alertname: AuditFingerprintObjectUnreadable
+        exp_alerts:
+          - exp_labels: {severity: critical, service: audit-watch, job: audit-watch, class: unreadable}
+            exp_annotations:
+              summary: "1 object(s) in the fingerprint bucket are not fingerprints of ours (forged or broken)"
+      - eval_time: 4m
+        alertname: AuditFingerprintClockSkew
+        exp_alerts: []
+      - eval_time: 6m
+        alertname: AuditFingerprintClockSkew
+        exp_alerts:
+          - exp_labels: {severity: critical, service: audit-watch, job: audit-watch, class: skew}
+            exp_annotations:
+              summary: "1 fingerprint(s) say a time far from when the storage received them"
+      - eval_time: 4m
+        alertname: AuditFingerprintObjectRewritten
+        exp_alerts: []
+      - eval_time: 6m
+        alertname: AuditFingerprintObjectRewritten
+        exp_alerts:
+          - exp_labels: {severity: critical, service: audit-watch, job: audit-watch, class: rewritten}
+            exp_annotations:
+              summary: "1 fingerprint(s) were written twice or hidden by a delete marker"
+      - eval_time: 4m
+        alertname: AuditFingerprintUnknownHospital
+        exp_alerts: []
+      - eval_time: 6m
+        alertname: AuditFingerprintUnknownHospital
+        exp_alerts:
+          - exp_labels: {severity: critical, service: audit-watch, job: audit-watch, class: unknown_hospital}
+            exp_annotations:
+              summary: "2 fingerprinted hospital(s) are no longer in the database, with no offboarding event"
+      - eval_time: 4m
+        alertname: AuditEventInvalid
+        exp_alerts: []
+      - eval_time: 6m
+        alertname: AuditEventInvalid
+        exp_alerts:
+          - exp_labels: {severity: critical, service: audit-watch, job: audit-watch, class: events}
+            exp_annotations:
+              summary: "1 restore or offboarding event object(s) in the bucket are not ours or were written twice"
+
+  - name: seal lag on both sides of both thresholds, held back
+    interval: 1m
+    input_series:
+      # 0, then 14 minutes of lag for a while, then 16 minutes, then over an hour
+      - series: 'ihr_audit_seal_lag_seconds{job="audit-watch"}'
+        values: '0x5 840x10 960x10 3700x10'
+      - series: 'ihr_audit_seal_held_back_seconds{job="audit-watch"}'
+        values: '0x5 3500x10 3700x10'
+    alert_rule_test:
+      - eval_time: 14m
+        alertname: AuditSealLag
+        exp_alerts: []
+      # 960 from minute 17: pending, firing 5 minutes later
+      - eval_time: 19m
+        alertname: AuditSealLag
+        exp_alerts: []
+      - eval_time: 22m
+        alertname: AuditSealLag
+        exp_alerts:
+          - exp_labels: {severity: warning, service: audit-watch, job: audit-watch}
+            exp_annotations:
+              summary: "Finished audit entries have waited 960 seconds with no new seal (celery-beat, celery-worker, ihr_audit.seal_inactive)"
+      # 3700 from minute 28: the critical after 5 minutes too
+      - eval_time: 29m
+        alertname: AuditSealLag
+        exp_alerts:
+          - exp_labels: {severity: warning, service: audit-watch, job: audit-watch}
+            exp_annotations:
+              summary: "Finished audit entries have waited 3700 seconds with no new seal (celery-beat, celery-worker, ihr_audit.seal_inactive)"
+      - eval_time: 34m
+        alertname: AuditSealLag
+        exp_alerts:
+          - exp_labels: {severity: warning, service: audit-watch, job: audit-watch}
+            exp_annotations:
+              summary: "Finished audit entries have waited 3700 seconds with no new seal (celery-beat, celery-worker, ihr_audit.seal_inactive)"
+          - exp_labels: {severity: critical, service: audit-watch, job: audit-watch}
+            exp_annotations:
+              summary: "Finished audit entries have waited 3700 seconds unsealed: outside the hourly fingerprints"
+      - eval_time: 14m
+        alertname: AuditSealHeldBack
+        exp_alerts: []
+      - eval_time: 22m
+        alertname: AuditSealHeldBack
+        exp_alerts:
+          - exp_labels: {severity: warning, service: audit-watch, job: audit-watch}
+            exp_annotations:
+              summary: "Audit entries are held back from sealing for 3700 seconds by a long transaction (see PgLongTransaction)"
+
+  - name: a long transaction that ends, then a seal within a minute, never alerts
+    interval: 1m
+    input_series:
+      # the watch's lag resets with each seal: a minute of waiting at most
+      - series: 'ihr_audit_seal_lag_seconds{job="audit-watch"}'
+        values: '0x60 60 0x10'
+      - series: 'ihr_audit_seal_held_back_seconds{job="audit-watch"}'
+        values: '0+70x60 0x10'
+    alert_rule_test:
+      - eval_time: 62m
+        alertname: AuditSealLag
+        exp_alerts: []
+      - eval_time: 60m
+        alertname: AuditSealHeldBack
+        exp_alerts:
+          - exp_labels: {severity: warning, service: audit-watch, job: audit-watch}
+            exp_annotations:
+              summary: "Audit entries are held back from sealing for 4200 seconds by a long transaction (see PgLongTransaction)"
+      - eval_time: 66m
+        alertname: AuditSealHeldBack
+        exp_alerts: []
+
+  - name: the watch itself, each pass on its own threshold
+    interval: 1m
+    input_series:
+      # fast stops succeeding at minute 10 (it still runs, and fails); incremental every 15
+      # minutes, then stops at 45
+      - series: 'ihr_audit_watch_last_success_timestamp_seconds{pass="fast", job="audit-watch"}'
+        values: '0+60x10 600x80'
+      - series: 'ihr_audit_watch_last_run_timestamp_seconds{pass="fast", job="audit-watch"}'
+        values: '0+60x90'
+      - series: 'ihr_audit_watch_last_success_timestamp_seconds{pass="incremental", job="audit-watch"}'
+        values: '0x14 900x15 1800x15 2700x45'
+      - series: 'ihr_audit_watch_last_run_ok{pass="fast", job="audit-watch"}'
+        values: '1x10 0x40'
+      - series: 'ihr_audit_watch_last_run_ok{pass="incremental", job="audit-watch"}'
+        values: '1x90'
+    alert_rule_test:
+      - eval_time: 14m
+        alertname: AuditWatchStale
+        exp_alerts: []
+      - eval_time: 16m
+        alertname: AuditWatchStale
+        exp_alerts:
+          - exp_labels: {severity: warning, service: audit-watch, job: audit-watch, pass: fast}
+            exp_annotations:
+              summary: "The audit watch's every-minute pass (seal lag, switched-off triggers) has not ended without an error for 360 seconds"
+      - eval_time: 91m
+        alertname: AuditWatchStale
+        exp_alerts:
+          - exp_labels: {severity: warning, service: audit-watch, job: audit-watch, pass: fast}
+            exp_annotations:
+              summary: "The audit watch's every-minute pass (seal lag, switched-off triggers) has not ended without an error for 4860 seconds"
+          - exp_labels: {severity: warning, service: audit-watch, job: audit-watch, pass: incremental}
+            exp_annotations:
+              summary: "The audit watch's chain and fingerprint pass has not ended without an error for 2760 seconds"
+      # failing from minute 11: pending, critical 5 minutes later (C8/S1)
+      - eval_time: 14m
+        alertname: AuditWatchFailing
+        exp_alerts: []
+      - eval_time: 17m
+        alertname: AuditWatchFailing
+        exp_alerts:
+          - exp_labels: {severity: critical, service: audit-watch, job: audit-watch, pass: fast}
+            exp_annotations:
+              summary: "The audit watch's every-minute pass fails for 5 minutes: seal lag and switched-off triggers are not checked (its log says why)"
+      # both passes report: the absent() rule stays silent past its 45 minutes (C11)
+      - eval_time: 50m
+        alertname: AuditWatchAbsent
+        exp_alerts: []
+
+  - name: the incremental pass just inside its threshold
+    interval: 1m
+    input_series:
+      - series: 'ihr_audit_watch_last_success_timestamp_seconds{pass="fast", job="audit-watch"}'
+        values: '0+60x60'
+      - series: 'ihr_audit_watch_last_success_timestamp_seconds{pass="incremental", job="audit-watch"}'
+        values: '0x60'
+    alert_rule_test:
+      - eval_time: 44m
+        alertname: AuditWatchStale
+        exp_alerts: []
+      - eval_time: 46m
+        alertname: AuditWatchStale
+        exp_alerts:
+          - exp_labels: {severity: warning, service: audit-watch, job: audit-watch, pass: incremental}
+            exp_annotations:
+              summary: "The audit watch's chain and fingerprint pass has not ended without an error for 2760 seconds"
+
+  - name: no watch at all
+    interval: 5m
+    input_series:
+      - series: 'up{job="audit-watch"}'
+        values: '0x20'
+    alert_rule_test:
+      - eval_time: 40m
+        alertname: AuditWatchAbsent
+        exp_alerts: []
+      - eval_time: 50m
+        alertname: AuditWatchAbsent
+        exp_alerts:
+          - exp_labels: {severity: warning, service: audit-watch, pass: fast}
+            exp_annotations:
+              summary: "The audit watch reports no pass that ended without an error (not running, Prometheus cannot reach it, or every pass fails)"
+          - exp_labels: {severity: warning, service: audit-watch, pass: incremental}
+            exp_annotations:
+              summary: "The audit watch reports no pass that ended without an error (not running, Prometheus cannot reach it, or every pass fails)"
+
+  - name: nightly and weekly passes, and their absence
+    interval: 1h
+    input_series:
+      - series: 'ihr_audit_watch_last_success_timestamp_seconds{pass="nightly", job="audit-watch"}'
+        values: '0x40'
+      - series: 'ihr_audit_watch_last_success_timestamp_seconds{pass="sweep", job="audit-watch"}'
+        values: '0x220'
+      - series: 'ihr_audit_rehash_cycle_complete_timestamp_seconds{job="audit-watch"}'
+        values: '0x60'
+      # the time limit ended each night (C5)
+      - series: 'ihr_audit_rehash_stopped_by{job="audit-watch"}'
+        values: '2x60'
+    alert_rule_test:
+      # both passes report: the absent() rule stays silent past its 26 hours (C11)
+      - eval_time: 27h
+        alertname: AuditWatchFullCheckAbsent
+        exp_alerts: []
+      - eval_time: 25h
+        alertname: AuditWatchFullCheckStale
+        exp_alerts: []
+      - eval_time: 27h
+        alertname: AuditWatchFullCheckStale
+        exp_alerts:
+          - exp_labels: {severity: warning, service: audit-watch, job: audit-watch, pass: nightly}
+            exp_annotations:
+              summary: "The audit watch's nightly recompute has not ended without an error for 97200 seconds"
+      - eval_time: 49h
+        alertname: AuditRehashOverdue
+        exp_alerts: []
+      - eval_time: 51h
+        alertname: AuditRehashOverdue
+        exp_alerts:
+          - exp_labels: {severity: warning, service: audit-watch, job: audit-watch, limit: time}
+            exp_annotations:
+              summary: "The nightly recompute of the last 30 days has not completed for 183600 seconds: its time limit ends the night (raise IHR_AUDIT_WATCH_REHASH_MAX_SECONDS, well under 26 h, or shorten IHR_AUDIT_WATCH_REHASH_DAYS, which narrows the promise)"
+
+  - name: an overdue recompute that its budget ended names the budget
+    interval: 1h
+    input_series:
+      - series: 'ihr_audit_rehash_cycle_complete_timestamp_seconds{job="audit-watch"}'
+        values: '0x60'
+      - series: 'ihr_audit_rehash_stopped_by{job="audit-watch"}'
+        values: '1x60'
+    alert_rule_test:
+      - eval_time: 49h
+        alertname: AuditRehashOverdue
+        exp_alerts: []
+      - eval_time: 51h
+        alertname: AuditRehashOverdue
+        exp_alerts:
+          - exp_labels: {severity: warning, service: audit-watch, job: audit-watch, limit: budget}
+            exp_annotations:
+              summary: "The nightly recompute of the last 30 days has not completed for 183600 seconds: its entry budget ends the night (raise IHR_AUDIT_WATCH_REHASH_BUDGET; it stays within IHR_AUDIT_WATCH_REHASH_MAX_SECONDS)"
+
+  - name: an overdue recompute with no record of its limit still alerts
+    interval: 1h
+    input_series:
+      - series: 'ihr_audit_rehash_cycle_complete_timestamp_seconds{job="audit-watch"}'
+        values: '0x60'
+    alert_rule_test:
+      - eval_time: 51h
+        alertname: AuditRehashOverdue
+        exp_alerts:
+          - exp_labels: {severity: warning, service: audit-watch, job: audit-watch, limit: time}
+            exp_annotations:
+              summary: "The nightly recompute of the last 30 days has not completed for 183600 seconds: its time limit ends the night (raise IHR_AUDIT_WATCH_REHASH_MAX_SECONDS, well under 26 h, or shorten IHR_AUDIT_WATCH_REHASH_DAYS, which narrows the promise)"
+
+  - name: the weekly sweep on both sides of eight days
+    interval: 1h
+    input_series:
+      - series: 'ihr_audit_watch_last_success_timestamp_seconds{pass="nightly", job="audit-watch"}'
+        values: '0+3600x220'
+      # it runs every night but fails: the attempt moves, the success does not (C8)
+      - series: 'ihr_audit_watch_last_run_timestamp_seconds{pass="sweep", job="audit-watch"}'
+        values: '0+3600x220'
+      - series: 'ihr_audit_watch_last_success_timestamp_seconds{pass="sweep", job="audit-watch"}'
+        values: '0x220'
+    alert_rule_test:
+      - eval_time: 191h
+        alertname: AuditWatchFullCheckStale
+        exp_alerts: []
+      - eval_time: 193h
+        alertname: AuditWatchFullCheckStale
+        exp_alerts:
+          - exp_labels: {severity: warning, service: audit-watch, job: audit-watch, pass: sweep}
+            exp_annotations:
+              summary: "The audit watch's weekly sweep of every fingerprint has not ended without an error for 694800 seconds"
+
+  - name: never a nightly pass or a sweep
+    interval: 1h
+    input_series:
+      - series: 'up{job="audit-watch"}'
+        values: '1x30'
+    alert_rule_test:
+      - eval_time: 25h
+        alertname: AuditWatchFullCheckAbsent
+        exp_alerts: []
+      - eval_time: 27h
+        alertname: AuditWatchFullCheckAbsent
+        exp_alerts:
+          - exp_labels: {severity: warning, service: audit-watch, pass: nightly}
+            exp_annotations:
+              summary: "The audit watch has never finished a nightly recompute or a fingerprint sweep"
+          - exp_labels: {severity: warning, service: audit-watch, pass: sweep}
+            exp_annotations:
+              summary: "The audit watch has never finished a nightly recompute or a fingerprint sweep"
+
+  - name: hospitals the watch cannot check, each pass on its own delay
+    interval: 1m
+    input_series:
+      - series: 'ihr_audit_hospitals_unchecked{pass="fast", job="audit-watch"}'
+        values: '0x10 1x30'
+      - series: 'ihr_audit_hospitals_unchecked{pass="incremental", job="audit-watch"}'
+        values: '0x10 2x40'
+      - series: 'ihr_audit_hospitals_unchecked{pass="nightly", job="audit-watch"}'
+        values: '0x10 1x30'
+      - series: 'ihr_audit_watch_last_run_ok{pass="incremental", job="audit-watch"}'
+        values: '1x10 0x40'
+      - series: 'ihr_audit_watch_last_run_ok{pass="sweep", job="audit-watch"}'
+        values: '1x10 0x40'
+    alert_rule_test:
+      - eval_time: 9m
+        alertname: AuditHospitalsUnchecked
+        exp_alerts: []
+      # from minute 11: the nightly's warning at once, the fast pass's critical 5 minutes later
+      - eval_time: 12m
+        alertname: AuditHospitalsUnchecked
+        exp_alerts:
+          - exp_labels: {severity: warning, service: audit-watch, job: audit-watch, pass: nightly}
+            exp_annotations:
+              summary: "The nightly recompute could not check 1 hospital(s) (they stay in the cycle for the next night)"
+      - eval_time: 17m
+        alertname: AuditHospitalsUnchecked
+        exp_alerts:
+          - exp_labels: {severity: critical, service: audit-watch, job: audit-watch, pass: fast}
+            exp_annotations:
+              summary: "The audit watch could not check 1 hospital(s) for seal lag for 5 minutes (a lock, a timeout or a revoked grant): their trail is not watched"
+          - exp_labels: {severity: warning, service: audit-watch, job: audit-watch, pass: nightly}
+            exp_annotations:
+              summary: "The nightly recompute could not check 1 hospital(s) (they stay in the cycle for the next night)"
+      - eval_time: 32m
+        alertname: AuditHospitalsUnchecked
+        exp_alerts:
+          - exp_labels: {severity: critical, service: audit-watch, job: audit-watch, pass: fast}
+            exp_annotations:
+              summary: "The audit watch could not check 1 hospital(s) for seal lag for 5 minutes (a lock, a timeout or a revoked grant): their trail is not watched"
+          - exp_labels: {severity: critical, service: audit-watch, job: audit-watch, pass: incremental}
+            exp_annotations:
+              summary: "The audit watch could not check the chain of 2 hospital(s) in two passes in a row (a lock, a timeout or a revoked grant): treat it as failing"
+          - exp_labels: {severity: warning, service: audit-watch, job: audit-watch, pass: nightly}
+            exp_annotations:
+              summary: "The nightly recompute could not check 1 hospital(s) (they stay in the cycle for the next night)"
+      # a failing incremental pass: critical after 20 minutes; the sweep: a warning after 30
+      - eval_time: 30m
+        alertname: AuditWatchFailing
+        exp_alerts: []
+      - eval_time: 32m
+        alertname: AuditWatchFailing
+        exp_alerts:
+          - exp_labels: {severity: critical, service: audit-watch, job: audit-watch, pass: incremental}
+            exp_annotations:
+              summary: "The audit watch's chain and fingerprint pass fails twice in a row: no chain is checked (its log says why)"
+      - eval_time: 42m
+        alertname: AuditWatchFailing
+        exp_alerts:
+          - exp_labels: {severity: critical, service: audit-watch, job: audit-watch, pass: incremental}
+            exp_annotations:
+              summary: "The audit watch's chain and fingerprint pass fails twice in a row: no chain is checked (its log says why)"
+          - exp_labels: {severity: warning, service: audit-watch, job: audit-watch, pass: sweep}
+            exp_annotations:
+              summary: "An audit watch pass fails for 30 minutes (its log says why)"
+
+  - name: a restore hold, both thresholds, and checkpoints that cannot be seeded
+    interval: 5m
+    input_series:
+      # held from 1 h
+      - series: 'ihr_audit_hospitals_restoring{job="audit-watch"}'
+        values: '0x11 1x400'
+      - series: 'ihr_audit_checkpoints_unseeded_hospitals{job="audit-watch"}'
+        values: '0x11 2x400'
+    alert_rule_test:
+      - eval_time: 6h30m
+        alertname: AuditHospitalsRestoring
+        exp_alerts: []
+      - eval_time: 7h30m
+        alertname: AuditHospitalsRestoring
+        exp_alerts:
+          - exp_labels: {severity: warning, service: audit-watch, job: audit-watch}
+            exp_annotations:
+              summary: "1 hospital(s) have been held for a restore for 6 hours: their chain is not checked until the hold ends"
+      - eval_time: 25h30m
+        alertname: AuditHospitalsRestoring
+        exp_alerts:
+          - exp_labels: {severity: warning, service: audit-watch, job: audit-watch}
+            exp_annotations:
+              summary: "1 hospital(s) have been held for a restore for 6 hours: their chain is not checked until the hold ends"
+          - exp_labels: {severity: critical, service: audit-watch, job: audit-watch}
+            exp_annotations:
+              summary: "1 hospital(s) have been held for a restore for a day: finish the restore or lift the hold (their chain is not checked)"
+      - eval_time: 1h30m
+        alertname: AuditCheckpointUnseeded
+        exp_alerts: []
+      - eval_time: 2h30m
+        alertname: AuditCheckpointUnseeded
+        exp_alerts:
+          - exp_labels: {severity: warning, service: audit-watch, job: audit-watch}
+            exp_annotations:
+              summary: "The audit watch has no checkpoint for 2 hospital(s) and cannot seed one while the fingerprints are unreadable"

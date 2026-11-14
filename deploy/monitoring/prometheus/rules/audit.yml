@@ -1,0 +1,363 @@
+# The audit trail's integrity (P1-T21; docs/reviews/p1-t21/design.md, "After the attack"; ADR-010).
+# From the audit watch (compose.monitoring.yaml, ihr_audit/watch.py): counts and ages only, never a
+# hospital (privacy). Which hospital: the log alerts AuditHospitalCheckFailed / AuditHospitalSealLate
+# (deploy/logs/alerts/audit.yml) name it from the watch's fixed line, and
+# `scripts/staging.sh manage ihr_audit_verify --all` says what is wrong.
+# Runbooks: deploy/staging/README.md, "Audit watch". Tests: ../tests/audit.yml.
+# Fail closed (A9): every gauge is always exported (0 means none), and each pass has its own
+# staleness rule and an absent() rule on the time it last ended WITHOUT an error
+# (ihr_audit_watch_last_success_timestamp_seconds; review C8). A hospital the watch cannot read
+# counts as unchecked (critical), never as clean (review S1/C2).
+groups:
+  - name: audit-integrity
+    rules:
+      - alert: AuditChainBroken
+        expr: ihr_audit_chain_broken_hospitals > 0
+        labels:
+          severity: critical
+          service: audit-watch
+        annotations:
+          summary: "The audit chain of {{ $value | printf \"%.0f\" }} hospital(s) fails its check (changed, cut or rewritten): run scripts/staging.sh manage ihr_audit_verify --all"
+
+      - alert: AuditFingerprintMismatch
+        expr: ihr_audit_fingerprint_mismatch_hospitals > 0
+        labels:
+          severity: critical
+          service: audit-watch
+        annotations:
+          summary: "{{ $value | printf \"%.0f\" }} hospital(s) no longer match their outside fingerprints (the trail was rewritten or cut)"
+
+      # A switched-off trigger of the trail, seen by the every-minute catalogue query (A10):
+      # never legitimate, so at once
+      - alert: AuditTriggerDisabled
+        expr: ihr_audit_disabled_trigger_hospitals > 0
+        labels:
+          severity: critical
+          service: audit-watch
+        annotations:
+          summary: "An audit trigger is switched off in {{ $value | printf \"%.0f\" }} hospital schema(s): writes there leave no trace"
+
+      # Missing or out-of-date triggers or functions on a servable hospital (A7): 30 minutes
+      # covers a migrate and its post_migrate
+      - alert: AuditTriggersMissing
+        expr: ihr_audit_trigger_problem_hospitals > 0
+        for: 30m
+        labels:
+          severity: critical
+          service: audit-watch
+        annotations:
+          summary: "{{ $value | printf \"%.0f\" }} servable hospital(s) have tables without their audit triggers, or changed audit functions"
+
+      # Live hospitals the watch cannot judge for trigger coverage (held, or not on this build's
+      # schema) for a day: a release that did not finish for them
+      - alert: AuditHospitalsNotComparable
+        expr: ihr_audit_hospitals_not_comparable > 0
+        for: 24h
+        labels:
+          severity: warning
+          service: audit-watch
+        annotations:
+          summary: "{{ $value | printf \"%.0f\" }} live hospital(s) are held or not on this build's schema for a day: their triggers are not checked"
+
+      # A hospital's checkpoint was lost (or the volume is new) and was seeded again from its
+      # newest fingerprint (A8). Expected once on a first start
+      - alert: AuditCheckpointLost
+        expr: ihr_audit_checkpoints_reseeded_hospitals > 0
+        labels:
+          severity: warning
+          service: audit-watch
+        annotations:
+          summary: "The audit watch had no checkpoint for {{ $value | printf \"%.0f\" }} hospital(s) and seeded them from the fingerprints (a first start, or its volume was lost)"
+
+      # A hospital whose check raised (a lock held past the watch's lock_timeout, a statement
+      # timeout, a revoked grant): not checked is failing, never clean (S1/C2). The log alert
+      # AuditHospitalCheckFailed names it (check=unchecked) from its second pass in a row
+      - alert: AuditHospitalsUnchecked
+        expr: ihr_audit_hospitals_unchecked{pass="fast"} > 0
+        for: 5m
+        labels:
+          severity: critical
+          service: audit-watch
+          pass: fast
+        annotations:
+          summary: "The audit watch could not check {{ $value | printf \"%.0f\" }} hospital(s) for seal lag for 5 minutes (a lock, a timeout or a revoked grant): their trail is not watched"
+
+      - alert: AuditHospitalsUnchecked
+        expr: ihr_audit_hospitals_unchecked{pass="incremental"} > 0
+        for: 20m
+        labels:
+          severity: critical
+          service: audit-watch
+          pass: incremental
+        annotations:
+          summary: "The audit watch could not check the chain of {{ $value | printf \"%.0f\" }} hospital(s) in two passes in a row (a lock, a timeout or a revoked grant): treat it as failing"
+
+      - alert: AuditHospitalsUnchecked
+        expr: ihr_audit_hospitals_unchecked{pass="nightly"} > 0
+        labels:
+          severity: warning
+          service: audit-watch
+          pass: nightly
+        annotations:
+          summary: "The nightly recompute could not check {{ $value | printf \"%.0f\" }} hospital(s) (they stay in the cycle for the next night)"
+
+      # A hospital held for a restore is skipped by the chain check while its schema is
+      # replaced (S2): a hold that lasts is a blind spot, so it is bounded
+      - alert: AuditHospitalsRestoring
+        expr: ihr_audit_hospitals_restoring > 0
+        for: 6h
+        labels:
+          severity: warning
+          service: audit-watch
+        annotations:
+          summary: "{{ $value | printf \"%.0f\" }} hospital(s) have been held for a restore for 6 hours: their chain is not checked until the hold ends"
+
+      - alert: AuditHospitalsRestoring
+        expr: ihr_audit_hospitals_restoring > 0
+        for: 24h
+        labels:
+          severity: critical
+          service: audit-watch
+        annotations:
+          summary: "{{ $value | printf \"%.0f\" }} hospital(s) have been held for a restore for a day: finish the restore or lift the hold (their chain is not checked)"
+
+      # No checkpoint, and none can be seeded because the fingerprints cannot be read (A8;
+      # S5/C6): such a hospital is never seeded from seal 1 blindly
+      - alert: AuditCheckpointUnseeded
+        expr: ihr_audit_checkpoints_unseeded_hospitals > 0
+        for: 1h
+        labels:
+          severity: warning
+          service: audit-watch
+        annotations:
+          summary: "The audit watch has no checkpoint for {{ $value | printf \"%.0f\" }} hospital(s) and cannot seed one while the fingerprints are unreadable"
+
+  - name: audit-fingerprints
+    rules:
+      # 2 h (anchor.STALE_AFTER) and one watch pass
+      - alert: AuditFingerprintLate
+        expr: time() - ihr_audit_fingerprint_newest_timestamp_seconds > 2.25 * 3600
+        labels:
+          severity: warning
+          service: audit-watch
+        annotations:
+          summary: "The newest audit fingerprint is {{ $value | printf \"%.0f\" }} seconds old (the hourly job in celery-worker)"
+
+      - alert: AuditFingerprintLate
+        expr: time() - ihr_audit_fingerprint_newest_timestamp_seconds > 6 * 3600
+        labels:
+          severity: critical
+          service: audit-watch
+        annotations:
+          summary: "The newest audit fingerprint is {{ $value | printf \"%.0f\" }} seconds old: a rewrite of the trail since then would go unseen"
+
+      - alert: AuditFingerprintNeverRead
+        expr: absent(ihr_audit_fingerprint_newest_timestamp_seconds)
+        for: 3h
+        labels:
+          severity: warning
+          service: audit-watch
+        annotations:
+          summary: "The audit watch has never read an audit fingerprint"
+
+      - alert: AuditFingerprintsUnreadable
+        expr: ihr_audit_fingerprints_readable == 0
+        for: 1h
+        labels:
+          severity: warning
+          service: audit-watch
+        annotations:
+          summary: "The audit watch cannot read the fingerprint bucket for an hour (its reader key, the network auditout, or the storage)"
+
+      - alert: AuditFingerprintBucketWeak
+        expr: ihr_audit_fingerprint_bucket_ok == 0
+        for: 30m
+        labels:
+          severity: critical
+          service: audit-watch
+        annotations:
+          summary: "The fingerprint bucket's Object Lock or versioning is weaker than this platform requires"
+
+      # The store's problems by class (A5), each its own alert. An object reviewed and accepted
+      # is listed in ihr_audit/acknowledged_objects.txt and no longer counted
+      - alert: AuditFingerprintObjectUnreadable
+        expr: ihr_audit_fingerprint_store_problems{class="unreadable"} > 0
+        labels:
+          severity: critical
+          service: audit-watch
+        annotations:
+          summary: "{{ $value | printf \"%.0f\" }} object(s) in the fingerprint bucket are not fingerprints of ours (forged or broken)"
+
+      - alert: AuditFingerprintClockSkew
+        expr: ihr_audit_fingerprint_store_problems{class="skew"} > 0
+        labels:
+          severity: critical
+          service: audit-watch
+        annotations:
+          summary: "{{ $value | printf \"%.0f\" }} fingerprint(s) say a time far from when the storage received them"
+
+      - alert: AuditFingerprintObjectRewritten
+        expr: ihr_audit_fingerprint_store_problems{class=~"rewritten|hidden"} > 0
+        labels:
+          severity: critical
+          service: audit-watch
+        annotations:
+          summary: "{{ $value | printf \"%.0f\" }} fingerprint(s) were written twice or hidden by a delete marker"
+
+      - alert: AuditFingerprintUnknownHospital
+        expr: ihr_audit_fingerprint_store_problems{class="unknown_hospital"} > 0
+        labels:
+          severity: critical
+          service: audit-watch
+        annotations:
+          summary: "{{ $value | printf \"%.0f\" }} fingerprinted hospital(s) are no longer in the database, with no offboarding event"
+
+      - alert: AuditEventInvalid
+        expr: ihr_audit_fingerprint_store_problems{class="events"} > 0
+        labels:
+          severity: critical
+          service: audit-watch
+        annotations:
+          summary: "{{ $value | printf \"%.0f\" }} restore or offboarding event object(s) in the bucket are not ours or were written twice"
+
+  - name: audit-sealing
+    rules:
+      # Finished entries waiting with no new seal (A6): a seal resets it, a long transaction
+      # never inflates it (that is AuditSealHeldBack)
+      - alert: AuditSealLag
+        expr: ihr_audit_seal_lag_seconds > 900
+        for: 5m
+        labels:
+          severity: warning
+          service: audit-watch
+        annotations:
+          summary: "Finished audit entries have waited {{ $value | printf \"%.0f\" }} seconds with no new seal (celery-beat, celery-worker, ihr_audit.seal_inactive)"
+
+      - alert: AuditSealLag
+        expr: ihr_audit_seal_lag_seconds > 3600
+        for: 5m
+        labels:
+          severity: critical
+          service: audit-watch
+        annotations:
+          summary: "Finished audit entries have waited {{ $value | printf \"%.0f\" }} seconds unsealed: outside the hourly fingerprints"
+
+      - alert: AuditSealHeldBack
+        expr: ihr_audit_seal_held_back_seconds > 3600
+        for: 5m
+        labels:
+          severity: warning
+          service: audit-watch
+        annotations:
+          summary: "Audit entries are held back from sealing for {{ $value | printf \"%.0f\" }} seconds by a long transaction (see PgLongTransaction)"
+
+  - name: audit-watch
+    rules:
+      # Each pass has its own threshold (A9): fast every minute, incremental every 15 minutes,
+      # nightly once a day, the full fingerprint sweep once a week
+      - alert: AuditWatchStale
+        expr: time() - ihr_audit_watch_last_success_timestamp_seconds{pass="fast"} > 300
+        labels:
+          severity: warning
+          service: audit-watch
+          pass: fast
+        annotations:
+          summary: "The audit watch's every-minute pass (seal lag, switched-off triggers) has not ended without an error for {{ $value | printf \"%.0f\" }} seconds"
+
+      - alert: AuditWatchStale
+        expr: time() - ihr_audit_watch_last_success_timestamp_seconds{pass="incremental"} > 2700
+        labels:
+          severity: warning
+          service: audit-watch
+          pass: incremental
+        annotations:
+          summary: "The audit watch's chain and fingerprint pass has not ended without an error for {{ $value | printf \"%.0f\" }} seconds"
+
+      - alert: AuditWatchAbsent
+        expr: absent(ihr_audit_watch_last_success_timestamp_seconds{pass="fast"}) or absent(ihr_audit_watch_last_success_timestamp_seconds{pass="incremental"})
+        for: 45m
+        labels:
+          severity: warning
+          service: audit-watch
+        annotations:
+          summary: "The audit watch reports no pass that ended without an error (not running, Prometheus cannot reach it, or every pass fails)"
+
+      - alert: AuditWatchFullCheckStale
+        expr: time() - ihr_audit_watch_last_success_timestamp_seconds{pass="nightly"} > 26 * 3600
+        labels:
+          severity: warning
+          service: audit-watch
+          pass: nightly
+        annotations:
+          summary: "The audit watch's nightly recompute has not ended without an error for {{ $value | printf \"%.0f\" }} seconds"
+
+      - alert: AuditWatchFullCheckStale
+        expr: time() - ihr_audit_watch_last_success_timestamp_seconds{pass="sweep"} > 8 * 86400
+        labels:
+          severity: warning
+          service: audit-watch
+          pass: sweep
+        annotations:
+          summary: "The audit watch's weekly sweep of every fingerprint has not ended without an error for {{ $value | printf \"%.0f\" }} seconds"
+
+      - alert: AuditWatchFullCheckAbsent
+        expr: absent(ihr_audit_watch_last_success_timestamp_seconds{pass="nightly"}) or absent(ihr_audit_watch_last_success_timestamp_seconds{pass="sweep"})
+        for: 26h
+        labels:
+          severity: warning
+          service: audit-watch
+        annotations:
+          summary: "The audit watch has never finished a nightly recompute or a fingerprint sweep"
+
+      # The integrity passes fail closed (C8/S1): a failing fast or incremental pass pages
+      # within about one of its intervals; the nightly and the sweep warn
+      - alert: AuditWatchFailing
+        expr: ihr_audit_watch_last_run_ok{pass="fast"} == 0
+        for: 5m
+        labels:
+          severity: critical
+          service: audit-watch
+          pass: fast
+        annotations:
+          summary: "The audit watch's every-minute pass fails for 5 minutes: seal lag and switched-off triggers are not checked (its log says why)"
+
+      - alert: AuditWatchFailing
+        expr: ihr_audit_watch_last_run_ok{pass="incremental"} == 0
+        for: 20m
+        labels:
+          severity: critical
+          service: audit-watch
+          pass: incremental
+        annotations:
+          summary: "The audit watch's chain and fingerprint pass fails twice in a row: no chain is checked (its log says why)"
+
+      - alert: AuditWatchFailing
+        expr: ihr_audit_watch_last_run_ok{pass=~"nightly|sweep"} == 0
+        for: 30m
+        labels:
+          severity: warning
+          service: audit-watch
+        annotations:
+          summary: "An audit watch pass fails for 30 minutes (its log says why)"
+
+      # The nightly recompute covers every seal of the last 30 days within a night (A2): two
+      # nights without a complete cycle mean a limit no longer covers the horizon. Which one
+      # ended the night (C5): ihr_audit_rehash_stopped_by 1 is the entry budget, else the time
+      # limit (2), or a hospital that could not be read (AuditHospitalsUnchecked)
+      - alert: AuditRehashOverdue
+        expr: (time() - ihr_audit_rehash_cycle_complete_timestamp_seconds > 50 * 3600) and on() (ihr_audit_rehash_stopped_by == 1)
+        labels:
+          severity: warning
+          service: audit-watch
+          limit: budget
+        annotations:
+          summary: "The nightly recompute of the last 30 days has not completed for {{ $value | printf \"%.0f\" }} seconds: its entry budget ends the night (raise IHR_AUDIT_WATCH_REHASH_BUDGET; it stays within IHR_AUDIT_WATCH_REHASH_MAX_SECONDS)"
+
+      - alert: AuditRehashOverdue
+        expr: (time() - ihr_audit_rehash_cycle_complete_timestamp_seconds > 50 * 3600) unless on() (ihr_audit_rehash_stopped_by == 1)
+        labels:
+          severity: warning
+          service: audit-watch
+          limit: time
+        annotations:
+          summary: "The nightly recompute of the last 30 days has not completed for {{ $value | printf \"%.0f\" }} seconds: its time limit ends the night (raise IHR_AUDIT_WATCH_REHASH_MAX_SECONDS, well under 26 h, or shorten IHR_AUDIT_WATCH_REHASH_DAYS, which narrows the promise)"

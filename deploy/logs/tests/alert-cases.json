@@ -1,5 +1,5 @@
 {
- "_comment": "scripts/check-logs.py: these journal entries go through the real redaction steps into a throwaway VictoriaLogs, then vmalert runs deploy/logs/alerts/ on them. 'expect' lists, per alert, the values of its key label it must fire (or wait to fire) for, and no others: client_ip, hospital for PackApplyFailed, HospitalNotServed and ReleaseWindowOverrun, or reason for DatabaseRoleRefused (hospital for BatchRequestRefused).",
+ "_comment": "scripts/check-logs.py: these journal entries go through the real redaction steps into a throwaway VictoriaLogs, then vmalert runs deploy/logs/alerts/ on them. 'expect' lists, per alert, the values of its key label it must fire (or wait to fire) for, and no others: client_ip, hospital for PackApplyFailed, HospitalNotServed, ReleaseWindowOverrun, AuditHospitalCheckFailed and AuditHospitalSealLate, or reason for DatabaseRoleRefused (hospital for BatchRequestRefused).",
  "fixtures": [
   {
    "count": 1,
@@ -1280,6 +1280,273 @@
     "CONTAINER_NAME": "indiehr-staging-backend-1",
     "COM_DOCKER_COMPOSE_SERVICE": "backend"
    }
+  },
+  {
+   "count": 1,
+   "record": {
+    "MESSAGE": "ihr-audit: hospital=alpha check=chain outcome=failed",
+    "_HOSTNAME": "srv1",
+    "PRIORITY": "3",
+    "CONTAINER_NAME": "indiehr-staging-audit-watch-1",
+    "COM_DOCKER_COMPOSE_SERVICE": "audit-watch",
+    "_TRANSPORT": "journal",
+    "_COMM": "dockerd",
+    "_UID": "0",
+    "_SYSTEMD_UNIT": "docker.service"
+   }
+  },
+  {
+   "count": 1,
+   "record": {
+    "MESSAGE": "ihr-audit: hospital=beta check=fingerprint outcome=failed",
+    "_HOSTNAME": "srv1",
+    "PRIORITY": "3",
+    "CONTAINER_NAME": "indiehr-staging-audit-watch-1",
+    "COM_DOCKER_COMPOSE_SERVICE": "audit-watch",
+    "_TRANSPORT": "journal",
+    "_COMM": "dockerd",
+    "_UID": "0",
+    "_SYSTEMD_UNIT": "docker.service"
+   }
+  },
+  {
+   "count": 1,
+   "record": {
+    "MESSAGE": "ihr-audit: hospital=gamma check=triggers outcome=failed",
+    "_HOSTNAME": "srv1",
+    "PRIORITY": "3",
+    "CONTAINER_NAME": "indiehr-staging-audit-watch-1",
+    "COM_DOCKER_COMPOSE_SERVICE": "audit-watch",
+    "_TRANSPORT": "journal",
+    "_COMM": "dockerd",
+    "_UID": "0",
+    "_SYSTEMD_UNIT": "docker.service"
+   }
+  },
+  {
+   "count": 1,
+   "record": {
+    "MESSAGE": "ihr-audit: hospital=delta check=seal outcome=failed",
+    "_HOSTNAME": "srv1",
+    "PRIORITY": "3",
+    "CONTAINER_NAME": "indiehr-staging-audit-watch-1",
+    "COM_DOCKER_COMPOSE_SERVICE": "audit-watch",
+    "_TRANSPORT": "journal",
+    "_COMM": "dockerd",
+    "_UID": "0",
+    "_SYSTEMD_UNIT": "docker.service"
+   }
+  },
+  {
+   "count": 1,
+   "record": {
+    "MESSAGE": "10.203.0.9 - - [14/Nov/2026:10:00:00 +0530] \"GET /api/ihr-audit: hospital=forged check=chain outcome=failed\" 404 179",
+    "_HOSTNAME": "srv1",
+    "PRIORITY": "6",
+    "CONTAINER_NAME": "indiehr-staging-backend-1",
+    "COM_DOCKER_COMPOSE_SERVICE": "backend",
+    "_TRANSPORT": "journal",
+    "_COMM": "dockerd",
+    "_UID": "0",
+    "_SYSTEMD_UNIT": "docker.service"
+   }
+  },
+  {
+   "count": 1,
+   "record": {
+    "MESSAGE": "ihr-audit: hospital=other check=chain outcome=failed",
+    "_HOSTNAME": "srv1",
+    "PRIORITY": "3",
+    "CONTAINER_NAME": "indiehr-staging-backend-1",
+    "COM_DOCKER_COMPOSE_SERVICE": "backend",
+    "_TRANSPORT": "journal",
+    "_COMM": "dockerd",
+    "_UID": "0",
+    "_SYSTEMD_UNIT": "docker.service"
+   }
+  },
+  {
+   "count": 1,
+   "record": {
+    "MESSAGE": "ihr-audit: hospital=shell check=chain outcome=failed",
+    "_HOSTNAME": "srv1",
+    "PRIORITY": "3",
+    "CONTAINER_NAME": "indiehr-staging-audit-watch-1",
+    "COM_DOCKER_COMPOSE_SERVICE": "audit-watch",
+    "_TRANSPORT": "journal",
+    "_COMM": "bash",
+    "_UID": "1000",
+    "_SYSTEMD_UNIT": "session-1.scope",
+    "SYSLOG_IDENTIFIER": "bash"
+   }
+  },
+  {
+   "count": 1,
+   "record": {
+    "MESSAGE": "ihr-audit: hospital=extra check=chain outcome=failed (and more)",
+    "_HOSTNAME": "srv1",
+    "PRIORITY": "3",
+    "CONTAINER_NAME": "indiehr-staging-audit-watch-1",
+    "COM_DOCKER_COMPOSE_SERVICE": "audit-watch",
+    "_TRANSPORT": "journal",
+    "_COMM": "dockerd",
+    "_UID": "0",
+    "_SYSTEMD_UNIT": "docker.service"
+   }
+  },
+  {
+   "count": 1,
+   "record": {
+    "MESSAGE": "ihr-audit: hospital=Bad check=chain outcome=failed",
+    "_HOSTNAME": "srv1",
+    "PRIORITY": "3",
+    "CONTAINER_NAME": "indiehr-staging-audit-watch-1",
+    "COM_DOCKER_COMPOSE_SERVICE": "audit-watch",
+    "_TRANSPORT": "journal",
+    "_COMM": "dockerd",
+    "_UID": "0",
+    "_SYSTEMD_UNIT": "docker.service"
+   }
+  },
+  {
+   "count": 1,
+   "record": {
+    "MESSAGE": "ihr-audit: hospital=ab check=chain outcome=failed",
+    "_HOSTNAME": "srv1",
+    "PRIORITY": "3",
+    "CONTAINER_NAME": "indiehr-staging-audit-watch-1",
+    "COM_DOCKER_COMPOSE_SERVICE": "audit-watch",
+    "_TRANSPORT": "journal",
+    "_COMM": "dockerd",
+    "_UID": "0",
+    "_SYSTEMD_UNIT": "docker.service"
+   }
+  },
+  {
+   "count": 1,
+   "record": {
+    "MESSAGE": "ihr-audit: hospital=epsilon check=everything outcome=failed",
+    "_HOSTNAME": "srv1",
+    "PRIORITY": "3",
+    "CONTAINER_NAME": "indiehr-staging-audit-watch-1",
+    "COM_DOCKER_COMPOSE_SERVICE": "audit-watch",
+    "_TRANSPORT": "journal",
+    "_COMM": "dockerd",
+    "_UID": "0",
+    "_SYSTEMD_UNIT": "docker.service"
+   }
+  },
+  {
+   "count": 1,
+   "record": {
+    "MESSAGE": "ihr-audit: hospital=zeta check=chain outcome=ok",
+    "_HOSTNAME": "srv1",
+    "PRIORITY": "3",
+    "CONTAINER_NAME": "indiehr-staging-audit-watch-1",
+    "COM_DOCKER_COMPOSE_SERVICE": "audit-watch",
+    "_TRANSPORT": "journal",
+    "_COMM": "dockerd",
+    "_UID": "0",
+    "_SYSTEMD_UNIT": "docker.service"
+   }
+  },
+  {
+   "count": 1,
+   "record": {
+    "MESSAGE": "ihr-audit: hospital=eta check=unchecked outcome=failed",
+    "_HOSTNAME": "srv1",
+    "PRIORITY": "3",
+    "CONTAINER_NAME": "indiehr-staging-audit-watch-1",
+    "COM_DOCKER_COMPOSE_SERVICE": "audit-watch",
+    "_TRANSPORT": "journal",
+    "_COMM": "dockerd",
+    "_UID": "0",
+    "_SYSTEMD_UNIT": "docker.service"
+   }
+  },
+  {
+   "count": 1,
+   "record": {
+    "MESSAGE": "ihr-audit: hospital=invalid-slug check=chain outcome=failed",
+    "_HOSTNAME": "srv1",
+    "PRIORITY": "3",
+    "CONTAINER_NAME": "indiehr-staging-audit-watch-1",
+    "COM_DOCKER_COMPOSE_SERVICE": "audit-watch",
+    "_TRANSPORT": "journal",
+    "_COMM": "dockerd",
+    "_UID": "0",
+    "_SYSTEMD_UNIT": "docker.service"
+   }
+  },
+  {
+   "count": 1,
+   "record": {
+    "MESSAGE": "ihr-audit: hospital=theta event=offboarding outcome=recorded",
+    "_HOSTNAME": "srv1",
+    "PRIORITY": "3",
+    "CONTAINER_NAME": "indiehr-staging-audit-watch-1",
+    "COM_DOCKER_COMPOSE_SERVICE": "audit-watch",
+    "_TRANSPORT": "journal",
+    "_COMM": "dockerd",
+    "_UID": "0",
+    "_SYSTEMD_UNIT": "docker.service"
+   }
+  },
+  {
+   "count": 1,
+   "record": {
+    "MESSAGE": "ihr-audit: hospital=iota event=restore outcome=recorded",
+    "_HOSTNAME": "srv1",
+    "PRIORITY": "3",
+    "CONTAINER_NAME": "indiehr-staging-audit-watch-1",
+    "COM_DOCKER_COMPOSE_SERVICE": "audit-watch",
+    "_TRANSPORT": "journal",
+    "_COMM": "dockerd",
+    "_UID": "0",
+    "_SYSTEMD_UNIT": "docker.service"
+   }
+  },
+  {
+   "count": 1,
+   "record": {
+    "MESSAGE": "ihr-audit: hospital=kappa event=deletion outcome=recorded",
+    "_HOSTNAME": "srv1",
+    "PRIORITY": "3",
+    "CONTAINER_NAME": "indiehr-staging-audit-watch-1",
+    "COM_DOCKER_COMPOSE_SERVICE": "audit-watch",
+    "_TRANSPORT": "journal",
+    "_COMM": "dockerd",
+    "_UID": "0",
+    "_SYSTEMD_UNIT": "docker.service"
+   }
+  },
+  {
+   "count": 1,
+   "record": {
+    "MESSAGE": "ihr-audit: hospital=lambda event=restore outcome=recorded (forged)",
+    "_HOSTNAME": "srv1",
+    "PRIORITY": "3",
+    "CONTAINER_NAME": "indiehr-staging-audit-watch-1",
+    "COM_DOCKER_COMPOSE_SERVICE": "audit-watch",
+    "_TRANSPORT": "journal",
+    "_COMM": "dockerd",
+    "_UID": "0",
+    "_SYSTEMD_UNIT": "docker.service"
+   }
+  },
+  {
+   "count": 1,
+   "record": {
+    "MESSAGE": "ihr-audit: hospital=mu event=restore outcome=recorded",
+    "_HOSTNAME": "srv1",
+    "PRIORITY": "3",
+    "CONTAINER_NAME": "indiehr-staging-celery-worker-1",
+    "COM_DOCKER_COMPOSE_SERVICE": "celery-worker",
+    "_TRANSPORT": "journal",
+    "_COMM": "dockerd",
+    "_UID": "0",
+    "_SYSTEMD_UNIT": "docker.service"
+   }
   }
  ],
  "expect": {
@@ -1328,6 +1595,20 @@
   "BatchRequestRefused": [
    "alpha",
    "kappa"
+  ],
+  "AuditHospitalCheckFailed": [
+   "alpha",
+   "beta",
+   "eta",
+   "gamma",
+   "invalid-slug"
+  ],
+  "AuditHospitalSealLate": [
+   "delta"
+  ],
+  "AuditEventRecorded": [
+   "iota",
+   "theta"
   ]
  },
  "expect_state": {
@@ -1341,6 +1622,9 @@
   "DatabaseRoleRefused": "firing",
   "DatabaseSchemaGated": "firing",
   "DatabaseRoleLoginFailed": "firing",
-  "BatchRequestRefused": "firing"
+  "BatchRequestRefused": "firing",
+  "AuditHospitalCheckFailed": "firing",
+  "AuditHospitalSealLate": "firing",
+  "AuditEventRecorded": "firing"
  }
 }

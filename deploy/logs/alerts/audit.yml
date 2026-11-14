@@ -1,0 +1,58 @@
+# The audit watch (P1-T21; ihr_audit/watch.py, compose.monitoring.yaml). Its metrics count hospitals
+# only (no hospital label: privacy, deploy/monitoring/prometheus/rules/audit.yml); the hospital is
+# named here, from the watch's own fixed line
+#   "ihr-audit: hospital=<slug> check=<chain|fingerprint|triggers|seal|unchecked> outcome=failed"
+# which it writes for each failing hospital on every pass: every 15 minutes for chain,
+# fingerprint and triggers (a switched-off trigger also every minute), every minute for seal
+# lag over 15 minutes, and "unchecked" for a hospital it could not read in two passes in a row
+# (a lock, a timeout, a revoked grant: failing, never clean; review S1/C2). A slug that does not
+# match its pattern is named "invalid-slug" (S6). Once per new restore or offboarding event in
+# the fingerprint bucket it writes
+#   "ihr-audit: hospital=<slug> event=<restore|offboarding> outcome=recorded"
+# (AuditEventRecorded: a human confirms each one was theirs; review S4). So an alert holds while the problem lasts, each hospital is its own alert
+# (a second hospital breaking is mailed even while the first is silenced; review A5), and it can
+# be silenced one hospital at a time. What to do: deploy/staging/README.md, "Audit watch":
+# scripts/staging.sh manage ihr_audit_verify --slug <the hospital named> says what is wrong.
+# Forgery (as packs.yml, S1): only container lines (source:=container) of the audit-watch service
+# (never the web backend, whose access log prints request paths anyone can choose), and only a
+# whole line that is exactly ours, with a slug-shaped hospital. The watch prints slugs from the
+# database's hospital rows only, never text from the fingerprint bucket (A5). A forged line can at
+# most raise a false alert naming a slug: the label is never put into the action's command.
+# Tests: scripts/check-logs.py (cases in deploy/logs/tests/alert-cases.json) and
+# scripts/test_staging_logs.py.
+groups:
+  - name: audit-watch
+    type: vlogs
+    interval: 1m
+    rules:
+      # Thirty minutes: two of the watch's 15-minute passes
+      - alert: AuditHospitalCheckFailed
+        expr: '_time:30m source:=container service:in(audit-watch) "ihr-audit: hospital=" | extract_regexp "^ihr-audit: hospital=(?P<hospital>[a-z][a-z0-9-]{2,30}) check=(?:chain|fingerprint|triggers|unchecked) outcome=failed$" | filter hospital:~"^[a-z][a-z0-9-]{2,30}$" | stats by (hospital) count() as failures'
+        labels:
+          severity: critical
+          service: audit-watch
+        annotations:
+          summary: 'The audit trail of hospital {{ $labels.hospital }} fails an integrity check, or cannot be checked (chain, fingerprints, triggers or unchecked; {{ $value }} times in 30 minutes)'
+          action: 'Run scripts/staging.sh manage ihr_audit_verify --slug <the hospital named above> (it names the seal, fingerprint or table); treat a changed or cut chain as an incident (CERT-In: 6 hours), see deploy/staging/README.md, Audit watch'
+      # The watch repeats it every minute while that hospital's finished entries wait unsealed
+      - alert: AuditHospitalSealLate
+        expr: '_time:10m source:=container service:in(audit-watch) "ihr-audit: hospital=" | extract_regexp "^ihr-audit: hospital=(?P<hospital>[a-z][a-z0-9-]{2,30}) check=seal outcome=failed$" | filter hospital:~"^[a-z][a-z0-9-]{2,30}$" | stats by (hospital) count() as failures'
+        labels:
+          severity: warning
+          service: audit-watch
+        annotations:
+          summary: 'Hospital {{ $labels.hospital }} has finished audit entries waiting over 15 minutes unsealed ({{ $value }} times in 10 minutes)'
+          action: 'Check celery-beat and celery-worker (an active hospital) or the ihr_audit.seal_inactive job (a suspended, offboarding or archived one); then scripts/staging.sh manage ihr_audit_verify --slug <the hospital named above>'
+      # A restore or an offboarding event was added to the fingerprint bucket (with the add-only
+      # writer key, which Celery also holds): each one is mailed once, so a human confirms it
+      # was theirs. An offboarding event closes a hospital only when the watch also saw it
+      # offboarding or archived and its final seal is the newest fingerprint's; else it is a
+      # bad event (AuditEventInvalid)
+      - alert: AuditEventRecorded
+        expr: '_time:1h source:=container service:in(audit-watch) "ihr-audit: hospital=" | extract_regexp "^ihr-audit: hospital=(?P<hospital>[a-z][a-z0-9-]{2,30}) event=(?P<event>restore|offboarding) outcome=recorded$" | filter hospital:~"^[a-z][a-z0-9-]{2,30}$" | stats by (hospital, event) count() as events'
+        labels:
+          severity: warning
+          service: audit-watch
+        annotations:
+          summary: 'A {{ $labels.event }} event of hospital {{ $labels.hospital }} was written to the fingerprint bucket'
+          action: 'Confirm it was a restore or an offboarding you ran (deploy/staging/README.md, Audit watch, Restores and offboarding); if not, treat it as an incident: the add-only writer key (secrets/anchor-write.env, Celery) was used by someone else'

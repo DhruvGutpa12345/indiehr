@@ -1,0 +1,8 @@
+# Objects in the fingerprint bucket whose store problem was reviewed and accepted (P1-T21 review A5).
+# The bucket is write-once for years: an unreadable, skewed or doubly written object can never be
+# removed, and its problem would stand for good, hiding the next one. Each line acknowledges one
+# object key (its whole key, as the watch's log names it), with the date and the reason of the review:
+#   <object key> <YYYY-MM-DD> <reason>
+# The watch (ihr_audit/watch.py) then counts that object's store problems as acknowledged, not as
+# problems; ihr_audit_verify still prints them. Never a pattern, never a whole folder; a restore or an
+# offboarding is never acknowledged here (it is an event, ihr_audit/events.py).

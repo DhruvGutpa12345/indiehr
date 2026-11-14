@@ -76,6 +76,11 @@ scrape_configs:
     file_sd_configs:
       - files: ["/etc/prometheus/targets/logs-archive.json"]
 
+  # The audit watch (P1-T21): the audit trail's integrity, counts and ages only (no hospital)
+  - job_name: audit-watch
+    file_sd_configs:
+      - files: ["/etc/prometheus/targets/audit-watch.json"]
+
   # SeaweedFS's gateway, when files are kept on this server (IHR_S3=local); empty otherwise
   - job_name: s3
     file_sd_configs:

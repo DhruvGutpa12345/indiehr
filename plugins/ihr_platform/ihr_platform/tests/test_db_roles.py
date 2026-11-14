@@ -991,15 +991,18 @@ class GrantsTests(AppRoleCase):
         self.assertEqual(after, [])
 
     def test_a_role_no_service_uses_yet_may_lack_login(self):
-        """C6: a missing LOGIN on the watch or dump role (no service logs in as them yet) is
-        a notice, never a problem that stops migrate; on the app role it is a problem."""
+        """C6: a missing LOGIN on the dump role (no service logs in as it yet) is a notice,
+        never a problem that stops migrate; on the app role, and on the audit watch's since
+        its service exists (P1-T21), it is a problem."""
         with as_owner(), transaction.atomic(), connection.cursor() as cursor:
             cursor.execute("ALTER ROLE ihr_audit_watch NOLOGIN")
+            cursor.execute("ALTER ROLE ihr_dump NOLOGIN")
             cursor.execute("ALTER ROLE ihr_app NOLOGIN")
             found = db_roles.role_problems(cursor, "test")
             transaction.set_rollback(True)
+        self.assertIn(("notice", "role ihr_dump must be able to log in (LOGIN)"), found)
         self.assertIn(
-            ("notice", "role ihr_audit_watch must be able to log in (LOGIN)"), found
+            ("problem", "role ihr_audit_watch must be able to log in (LOGIN)"), found
         )
         self.assertIn(("problem", "role ihr_app must be able to log in (LOGIN)"), found)
 
@@ -1119,7 +1122,7 @@ class RefusalTests(SimpleTestCase):
         notice): an app process does not warn about them as drift that migrate repairs; a
         missing right still is counted."""
         notice = db_roles.Findings()
-        notice.add("notice", "role ihr_audit_watch must be able to log in (LOGIN)")
+        notice.add("notice", "role ihr_dump must be able to log in (LOGIN)")
         missing = db_roles.Findings()
         missing.add("missing", "public.x: ihr_app lacks SELECT", grantee=db_roles.APP)
         quiet = (
@@ -1399,7 +1402,7 @@ class RefusalTests(SimpleTestCase):
         import re
 
         pattern = re.compile(
-            r"^ihr-db-role: refused role=(?P<role>app|owner|none) "
+            r"^ihr-db-role: refused role=(?P<role>app|owner|watch|none) "
             r"reason=(?P<reason>[a-z_]{3,24})$"
         )
         for reason in db_roles.REASONS:

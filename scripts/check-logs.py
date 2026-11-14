@@ -45,7 +45,8 @@ VMA = image("victoriametrics/vmalert")
 # The label each alert names (the rest name client_ip): compared, not just counted
 KEY_LABEL = {"PackApplyFailed": "hospital", "HospitalNotServed": "hospital", "ReleaseWindowOverrun": "hospital",
              "DatabaseRoleRefused": "reason", "DatabaseSchemaGated": "schema", "DatabaseRoleLoginFailed": "role",
-             "BatchRequestRefused": "hospital"}
+             "BatchRequestRefused": "hospital", "AuditHospitalCheckFailed": "hospital",
+             "AuditHospitalSealLate": "hospital", "AuditEventRecorded": "hospital"}
 
 
 def check(ok, what):

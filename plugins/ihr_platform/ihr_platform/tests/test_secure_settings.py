@@ -226,7 +226,20 @@ class DeploymentSettingsImportTests(SimpleTestCase):
         base = {
             k: v
             for k, v in os.environ.items()
-            if not k.startswith(("DJANGO_", "IHR_", "JWKS", "SENTRY", "SNOWSTORM"))
+            # storage settings come from GOOD_ENV only: CI's test container sets CARE's own
+            # BUCKET_KEY, which a server must never have (P1-T20b)
+            if not k.startswith(
+                (
+                    "DJANGO_",
+                    "IHR_",
+                    "JWKS",
+                    "SENTRY",
+                    "SNOWSTORM",
+                    "BUCKET_",
+                    "FILE_UPLOAD_",
+                    "FACILITY_S3_",
+                )
+            )
         }
         return subprocess.run(  # noqa: S603 (our own interpreter and a fixed module)
             [

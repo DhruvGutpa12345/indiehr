@@ -1,0 +1,12 @@
+# A proof's fingerprint bucket is this stack's own SeaweedFS (IHR_S3=local; scripts/staging.sh adds
+# this file then). The audit watch reaches it over auditout, its own way out, by a name that exists
+# only there (s3-auditout): the path a server's watch takes to the real bucket (P1-T21 review A1),
+# never `internal`, where `s3` is the web app's.
+services:
+  s3:
+    networks:
+      auditout:
+        aliases: [s3-auditout]
+  audit-watch:
+    environment:
+      IHR_AUDIT_ANCHOR_ENDPOINT: http://s3-auditout:8333
