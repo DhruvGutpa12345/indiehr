@@ -67,6 +67,6 @@ The schema-per-tenant decision stands. The P1-T0 code review changes **what live
 
 Questions Q-T0 to Q-T11 were answered with the recommended defaults (QUESTIONS.md). In particular **a tenant is a legal entity (GSTIN holder) that may run several facilities**.
 
-## Amendment 2 (2026-11-14, P1-T22b) — status: **Proposed** (Q-K33, awaiting the owner)
+## Amendment 2 (2026-11-14, P1-T22b) — status: **Accepted** (Q-K33, confirmed by the owner 2026-11-14)
 
 A single hospital is restored **in place by parking**, never under a side name: the live schema is renamed `ihr_parked_<schema>_<time>` (owner-only, dropped after 7 days) and the dump, after a quarantine that turns it into a checked package, is loaded under the real name in the same transaction; `Hospital.schema_name` never changes. A **restore hold** of its own (`HospitalSchemaState.restore_operation`) keeps every server, worker, release and fleet run away from the hospital until the restore lifts it. TENANCY_DESIGN §7.5 and §7.7 carry the amended runbook; deploy/staging/README.md, "Restoring one hospital (P1-T22b)", the commands.

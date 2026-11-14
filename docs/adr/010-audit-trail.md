@@ -176,7 +176,7 @@ What is recorded:
 
 ## Amendment (P1-T19a, 2026-11-13): who may write what the chain relies on
 
-- **Status:** Proposed (Q-K30, awaiting the owner). It changes how the chain is written, not what it guarantees.
+- **Status:** Accepted (Q-K30, confirmed by the owner 2026-11-14). It changes how the chain is written, not what it guarantees.
 - **Why:** with separate database roles (P1-T19, `ihr_platform/db_roles.py`) the web app and the workers run as `ihr_app`, which must still insert entries (the row triggers run as the caller, and the request middleware inserts directly). A plain INSERT right would let code running as the app choose an entry's `txid`, `at`, `salt` or `id`, and insert seals: backdate a forged entry, poison a sealed window, pre-claim ids, or forge a seal that stops sealing for good (P1-T19 attack, S2 and S3).
 - **Entries:**
   - `ihr_app` may insert only the data columns (`kind`, `actor`, `context`, `tbl`, `op`, `row_pk`, `patients`, `data`); an explicit `id`, `txid`, `at` or `salt` is refused by privilege. It may read entries, never update, delete or truncate them (the append-only triggers become a second line).
@@ -192,7 +192,7 @@ What is recorded:
 
 ## Amendment (P1-T21, 2026-11-14): somebody watches the chain
 
-- **Status:** Proposed (Q-K32, awaiting the owner). It adds checking; how the chain is written and what it guarantees do not change. Design: `docs/reviews/p1-t21/design.md` ("After the attack" wins; "As built").
+- **Status:** Accepted (Q-K32, confirmed by the owner 2026-11-14). It adds checking; how the chain is written and what it guarantees do not change. Design: `docs/reviews/p1-t21/design.md` ("After the attack" wins; "As built").
 - **Why:** sealing and the hourly fingerprints ran, but `ihr_audit_verify` ran only by hand, and no alert covered a broken chain, seal lag, a late fingerprint or a switched-off trigger (Phase 1 review R1-11). A full `verify --all` recomputes every chain from seal 1: hours of a core at 100 hospitals after a year, so it cannot simply be scheduled.
 - **The audit watch** (`ihr_audit/watch.py`, `manage.py ihr_audit_watch serve`, the `audit-watch` container of `compose.monitoring.yaml`):
   - its own read-only database role `ihr_audit_watch` (SELECT on the two audit tables, the hospital list and its schema state; read-only sessions; secret `secrets/audit-watch.env` made on the deploying machine, LOGIN re-asserted at every `up`), the fingerprint **reader** key only, its own way out (`auditout`) to the bucket, a read-only root and its own volume;
@@ -209,7 +209,7 @@ What is recorded:
 
 ## Amendment (P1-T22b, 2026-11-14): the chain across a single-hospital restore
 
-- **Status:** Proposed (Q-K33, awaiting the owner). Design: `docs/reviews/p1-t22/design.md` ("After the attack" 6-8; "P1-T22b as built").
+- **Status:** Accepted (Q-K33, confirmed by the owner 2026-11-14). Design: `docs/reviews/p1-t22/design.md` ("After the attack" 6-8; "P1-T22b as built").
 - **Superseded segments are archived outside the hospital schema:** `public.ihr_restore_record`, `ihr_restore_superseded_seal` and `ihr_restore_superseded_entry` (migration ihr_platform 0012), one generation per restore of a hospital. Append-only (a trigger refuses UPDATE, DELETE and TRUNCATE); written only by the owner-run restore, copied from the parked schema; the app role has **no right** on them (their entries hold values of every hospital); the audit watch's role reads them. `ihr_audit/archive.py` is `events.SEGMENTS.source`: a restore event excuses a fingerprint claim only when its segment is here and verifies, each seal's entries recomputed from the archived entries with the chain's own canonical texts. A role that may not read the archive (the app) sees the event as unverifiable, so `ihr_audit_verify` after a restore runs as the owner or the watch.
 - **A `restore` entry kind** (ihr_audit 0006): one entry in the restored trail names the operation, the restore generation, the restored seal, the superseded range, the parked schema, the dump and the reason.
 - **A restored trail never takes a dump's functions or triggers:** the append-only guard, the row triggers, the sealing functions and the stamp trigger come from this build's code inside the restore's own transaction (the quarantine refuses any other function or trigger; ours are compared with this build's by definition hash and re-installed either way).

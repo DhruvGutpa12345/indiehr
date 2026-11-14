@@ -330,7 +330,9 @@ Before merging, also do these (found by the trial):
 - add Hindi for `file_too_large`;
 - re-translate `pin_page_limit_reached` (its English changed).
 
-### Q-K29 — How releases and rollbacks work (P1-T18; auto-accepted by Claude, 2026-11-13, awaiting owner confirmation)
+### Q-K29 — How releases and rollbacks work (P1-T18; auto-accepted by Claude, 2026-11-13; **confirmed by owner, 2026-11-14**)
+
+**Owner answer (2026-11-14):** accepted as taken (option A ⭐), in chat: "Accept all five" (Q-K29…Q-K33).
 
 This builds TENANCY §7.2 and your Q-T1 answer (a short announced window around 02:00 IST).
 
@@ -352,7 +354,9 @@ This builds TENANCY §7.2 and your Q-T1 answer (a short announced window around 
 - B. Keep migrating at every `up` (simpler, but migrations would run at any hour, under live
   traffic, with no way back).
 
-### Q-K30 — Separate database roles (P1-T19; auto-accepted by Claude, 2026-11-13, awaiting owner confirmation)
+### Q-K30 — Separate database roles (P1-T19; auto-accepted by Claude, 2026-11-13; **confirmed by owner, 2026-11-14**)
+
+**Owner answer (2026-11-14):** accepted as taken (option A ⭐), in chat: "Accept all five" (Q-K29…Q-K33).
 
 This builds TENANCY §6.10. The Phase 1 review rated it High.
 
@@ -374,7 +378,9 @@ This builds TENANCY §6.10. The Phase 1 review rated it High.
     password goes into your password manager.
 - B. Keep one role and rely on detection (verify plus fingerprints) alone.
 
-### Q-K31 — Public routes and pictures (P1-T20; auto-accepted by Claude, 2026-11-13, awaiting owner confirmation)
+### Q-K31 — Public routes and pictures (P1-T20; auto-accepted by Claude, 2026-11-13; **confirmed by owner, 2026-11-14**)
+
+**Owner answer (2026-11-14):** accepted as taken (option A ⭐), in chat: "Accept all five" (Q-K29…Q-K33).
 
 This builds your Q-T3 answer (presigned, no public bucket) and the Phase 1 review's R1-02 and
 R1-03.
@@ -393,7 +399,9 @@ R1-03.
 - B. Require the patient's OTP sign-in before showing any doctor (more private, but it changes
   how booking works).
 
-### Q-K32 — Watching the audit trail (P1-T21; auto-accepted by Claude, 2026-11-13, awaiting owner confirmation)
+### Q-K32 — Watching the audit trail (P1-T21; auto-accepted by Claude, 2026-11-13; **confirmed by owner, 2026-11-14**)
+
+**Owner answer (2026-11-14):** accepted as taken (option A ⭐), in chat: "Accept all five" (Q-K29…Q-K33).
 
 - **A ⭐ (taken).**
   - **A small `audit-watch` service** (about 192 MB) holds only the fingerprint *reader* key. It
@@ -411,7 +419,9 @@ R1-03.
 - B. A host timer instead of a resident service (no resident memory, but it needs your sudo for
   a new timer).
 
-### Q-K33 — Per-hospital dumps and single-hospital restore (P1-T22; auto-accepted by Claude, 2026-11-13, awaiting owner confirmation)
+### Q-K33 — Per-hospital dumps and single-hospital restore (P1-T22; auto-accepted by Claude, 2026-11-13; **confirmed by owner, 2026-11-14**)
+
+**Owner answer (2026-11-14):** accepted as taken (option A ⭐), in chat: "Accept all five" (Q-K29…Q-K33).
 
 - **A ⭐ (taken).**
   - **Split:** P1-T22a (nightly dumps), then P1-T22b (single-hospital restore and the drill).
