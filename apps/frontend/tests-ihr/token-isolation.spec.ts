@@ -75,27 +75,32 @@ test("a member of both hospitals holds two independent host-only cookies (dr.mee
   // never settles is counted as unread instead of stalling the test.
   type Seen = {
     host: string;
+    path: string;
+    request: Request;
     cookies?: string;
     unread?: string;
     aborted?: boolean;
   };
   const seen: Promise<Seen>[] = [];
   const read = (request: Request, failure?: string) => {
-    const host = new URL(request.url()).host;
+    const { host, pathname: path } = new URL(request.url());
     const aborted = !!failure && failure.includes("ERR_ABORTED");
     const why = failure ?? "unread";
     seen.push(
       Promise.race([
-        request
-          .allHeaders()
-          .then((headers): Seen => ({
-            host,
-            cookies: headers["cookie"] ?? "",
-          })),
+        request.allHeaders().then((headers): Seen => ({
+          host,
+          path,
+          request,
+          cookies: headers["cookie"] ?? "",
+        })),
         new Promise<Seen>((resolve) =>
-          setTimeout(() => resolve({ host, unread: why, aborted }), 5_000),
+          setTimeout(
+            () => resolve({ host, path, request, unread: why, aborted }),
+            5_000,
+          ),
         ),
-      ]).catch((): Seen => ({ host, unread: why, aborted })),
+      ]).catch((): Seen => ({ host, path, request, unread: why, aborted })),
     );
   };
   context.on("requestfinished", (request: Request) => read(request));
@@ -145,16 +150,27 @@ test("a member of both hospitals holds two independent host-only cookies (dr.mee
   // No request to either address carried the other's cookie, and Keycloak got neither
   const leaks: string[] = [];
   const headerReads = await Promise.all(seen);
+  // A finished request the service worker answered never reached the network, so it carried no
+  // cookie anywhere, and Chromium gives it no raw headers to read (once seen: an unread beta
+  // request). Those are counted, not failed; every other unread request still fails, by path.
+  for (const r of headerReads) {
+    if (!r.unread || r.aborted) continue;
+    const response = await Promise.race([
+      r.request.response().catch(() => null),
+      new Promise<null>((resolve) => setTimeout(() => resolve(null), 2_000)),
+    ]);
+    if (response?.fromServiceWorker()) r.aborted = true;
+  }
   // A request whose headers could not be read is never counted as clean, except one the browser
   // itself cancelled (ERR_ABORTED: a page moving on); those are only counted. Cookie scope is
   // asserted above from the cookies themselves (host-only, HttpOnly).
   const unread = headerReads.filter((r) => r.unread && !r.aborted);
   expect(
-    unread.map((r) => `${r.host}: ${r.unread}`),
+    unread.map((r) => `${r.host}${r.path}: ${r.unread}`),
     "every finished request's headers were read",
   ).toEqual([]);
   test.info().annotations.push({
-    type: "cancelled requests not read",
+    type: "cancelled or service-worker requests not read",
     description: String(
       headerReads.filter((r) => r.unread && r.aborted).length,
     ),
