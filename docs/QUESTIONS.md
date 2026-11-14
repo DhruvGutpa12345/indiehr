@@ -182,7 +182,16 @@ confirmation):**
   readiness with a benchmark; then licensed content, behind your licences.
 - The design attack found that one T10a was 8 to 15 hours, against the 1 to 3 the plan allows.
 
-### Q-K21 — 🔴 What may front-office and back-office roles see? (P1-T11b; blocks it)
+### Q-K21 — What may front-office and back-office roles see? (P1-T11b; **answered by owner, 2026-11-14**)
+
+**Owner answer (2026-11-14):** in chat, "Answer Q-K21": the recommended defaults are taken.
+- **A:** a narrow override in our plugin. Receptionist, Cashier, TPA Desk and Owner get a
+  demographics-and-billing view only (identity, contact, encounter status; never notes,
+  diagnoses, reports or advice); clinical endpoints stay closed to them, with a test per
+  endpoint. MRD and Radiologist get clinical read, MRD only through an audited path.
+- **Owner approvals:** no. Discounts, cancellations and locked invoices stay with Facility Admin.
+- **Owner's billing view:** totals only (census counts, revenue), no identified patient or
+  billing list, until MIS (P2-T16).
 
 *Not auto-accepted: it decides what patient data each job sees (DPDP purpose limitation, NABH
 access control), and the P1-T11 design attack showed CARE cannot do it without an authorization
@@ -213,7 +222,9 @@ Options:
   with Facility Admin.)
 - Does the Owner see identified billing (who was billed for what)? (Proposed: totals only.)
 
-### Q-K22 — P1-T11 split into a, b and c (auto-accepted by Claude, 2026-11-12, awaiting owner confirmation)
+### Q-K22 — P1-T11 split into a, b and c (auto-accepted by Claude, 2026-11-12; **confirmed by owner, 2026-11-14**)
+
+**Owner answer (2026-11-14):** confirmed as taken (option A ⭐), in chat: "confirm the earlier Q-K22 to Q-K28".
 
 - **A ⭐ (taken).**
   - **P1-T11a (built):** the safe groundwork.
@@ -228,7 +239,9 @@ Options:
   - **P1-T11c:** the web app's menus, shown by permission (an `apps/frontend` patch, CI only).
 - B. One task. The design attack showed it is 3 to 4 sittings and rests on Q-K21.
 
-### Q-K23 — The Phase 1 review's findings as tasks (auto-accepted by Claude, 2026-11-12, awaiting owner confirmation)
+### Q-K23 — The Phase 1 review's findings as tasks (auto-accepted by Claude, 2026-11-12; **confirmed by owner, 2026-11-14**)
+
+**Owner answer (2026-11-14):** confirmed as taken (option A ⭐), in chat: "confirm the earlier Q-K22 to Q-K28".
 
 The independent Phase 1 review (docs/reviews/phase-1-review.md) had 22 findings. Two agents
 challenged each one: 1 was refuted, 3 confirmed as written, and 18 confirmed with corrections.
@@ -250,7 +263,9 @@ answers:
 
 They are listed so you can decide, not changed. **To reverse:** delete or reorder the rows.
 
-### Q-K24 — P1-T15 split into a and b (auto-accepted by Claude, 2026-11-13, awaiting owner confirmation)
+### Q-K24 — P1-T15 split into a and b (auto-accepted by Claude, 2026-11-13; **confirmed by owner, 2026-11-14**)
+
+**Owner answer (2026-11-14):** confirmed as taken (option A ⭐), in chat: "confirm the earlier Q-K22 to Q-K28".
 
 - **A ⭐ (taken).**
   - **P1-T15a (this run):** the pack engine, plus CARE's own system value sets as the first pack.
@@ -264,7 +279,9 @@ They are listed so you can decide, not changed. **To reverse:** delete or reorde
     - Their content is clinical or yours (Q-K12), so it comes with Phase 2.
 - B. One task: more than one sitting, and most of B's content cannot be written yet.
 
-### Q-K25 — How reference packs behave (P1-T15a; auto-accepted by Claude, 2026-11-13, awaiting owner confirmation)
+### Q-K25 — How reference packs behave (P1-T15a; auto-accepted by Claude, 2026-11-13; **confirmed by owner, 2026-11-14**)
+
+**Owner answer (2026-11-14):** confirmed as taken (option A ⭐), in chat: "confirm the earlier Q-K22 to Q-K28".
 
 These are within your Q-T10 answer and TENANCY §5. Each is a rule in one module,
 `ihr_refdata/engine.py`, with a test.
@@ -288,7 +305,9 @@ These are within your Q-T10 answer and TENANCY §5. Each is a rule in one module
 
 **To reverse:** change the rule in `engine.py` and its test.
 
-### Q-K26 — P1-T16 split into a and b (auto-accepted by Claude, 2026-11-13, awaiting owner confirmation)
+### Q-K26 — P1-T16 split into a and b (auto-accepted by Claude, 2026-11-13; **confirmed by owner, 2026-11-14**)
+
+**Owner answer (2026-11-14):** confirmed as taken (option A ⭐), in chat: "confirm the earlier Q-K22 to Q-K28".
 
 - **A ⭐ (taken).**
   - **P1-T16a:** the isolation crawl.
@@ -300,7 +319,9 @@ These are within your Q-T10 answer and TENANCY §5. Each is a rule in one module
     each one answers its own hospital.
 - B. One task: two sittings of different kinds (test infrastructure, then 31 seeded models).
 
-### Q-K27 — Browser isolation tests (P1-T1d; auto-accepted by Claude, 2026-11-13, awaiting owner confirmation)
+### Q-K27 — Browser isolation tests (P1-T1d; auto-accepted by Claude, 2026-11-13; **confirmed by owner, 2026-11-14**)
+
+**Owner answer (2026-11-14):** confirmed as taken (option A ⭐), in chat: "confirm the earlier Q-K22 to Q-K28".
 
 - **A ⭐ (taken).**
   - The browser tests run in GitHub Actions on every relevant change and weekly, with
@@ -313,7 +334,9 @@ These are within your Q-T10 answer and TENANCY §5. Each is a rule in one module
     flow, so a shared kiosk does not show it.
 - B. Run them only by hand (cheaper, but a sign-in or clean-up regression would go unnoticed).
 
-### Q-K28 — Merge the trial upstream sync? (P1-T17; auto-accepted by Claude, 2026-11-13, awaiting owner confirmation)
+### Q-K28 — Merge the trial upstream sync? (P1-T17; auto-accepted by Claude, 2026-11-13; **confirmed by owner, 2026-11-14**)
+
+**Owner answer (2026-11-14):** confirmed as taken (option A ⭐), in chat: "confirm the earlier Q-K22 to Q-K28" (so `p1-t17-sync-trial` stays unmerged; the next sync merges it after a rebase, with the three follow-ups listed below).
 
 The trial synced CARE (backend 10 commits, frontend 7) on the branch `p1-t17-sync-trial`, with
 no conflicts and our tests passing.

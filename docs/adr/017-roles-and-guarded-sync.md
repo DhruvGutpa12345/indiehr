@@ -1,7 +1,8 @@
 # ADR-017: Hospital roles in code, and a role sync that never deletes a held role
 
-- **Status:** Proposed (auto-accepted by Claude in an unattended run, 2026-11-12; awaiting
-  owner confirmation: Q-K22; the roles themselves wait for Q-K21)
+- **Status:** Accepted (auto-accepted by Claude in an unattended run, 2026-11-12; confirmed by the
+  owner 2026-11-14: Q-K22; Q-K21 answered the same day with the recommended defaults, so P1-T11b can
+  start)
 - **Date:** 2026-11-12
 - **Decided by:** Claude. Evidence: CARE's role and permission code, read for P1-T11
   (docs/reviews/p1-t11/), and a design attack by two reviewers (security/privacy;
@@ -53,8 +54,9 @@ The design attack found two things that shape how roles may be added at all:
 5. **CARE's `PATIENT_GLOBAL_EDIT_ACCESS_ENABLED` must stay off** (`settings/secure.py` refuses
    it). With it on, any signed-in user can open any patient by id, and anyone holding
    `can_write_patient` anywhere can edit any patient.
-6. **The eight roles and their access come in P1-T11b**, after Q-K21. The proposed default is a
-   narrow demographics-and-billing override for the non-clinical roles.
+6. **The eight roles and their access come in P1-T11b.** Q-K21 (2026-11-14): a narrow
+   demographics-and-billing override for the non-clinical roles; the Owner sees totals only and
+   approves no discounts, cancellations or locked invoices.
 
 ## Consequences
 
