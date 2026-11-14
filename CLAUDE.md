@@ -112,9 +112,12 @@ Further reading:
 - **Versions:** use only the latest stable versions compatible with the stack. Re-check current releases before installing anything, pin exact versions, and record them in `docs/VERSIONS.md`.
 - **Phase reviews:** at the end of each phase, run an independent Opus review agent against PLAN.md, the ADRs and the goal (the user's `/goal` and `/advisor`).
 - **Clinical content** goes to the user for review (they review it themselves).
-- **Subagents:** use them sized to the job:
-  - Haiku or Sonnet for lookups and boilerplate;
-  - Opus for architecture, security, tenancy, ABDM crypto and billing maths.
+- **Subagents:** use them sized to the job, following Anthropic's "Choosing a model" and "Optimizing for cost and intelligence" guides (owner, 2026-11-14). Set model and effort explicitly on every agent:
+  - Opus 5.5 for architecture, security, tenancy, ABDM crypto, billing maths, builders and code reviews. Its default effort is `medium`; use `high` for reviews (defect search) and security or tenancy builders, `xhigh` only for the hardest access, crypto or tenancy logic;
+  - Sonnet 5.5 (default `high`) for records, docs, CI-log triage, boilerplate tests and bulk independent parts (Opus orchestrating Sonnet costs about a third less for the same result);
+  - Haiku 5.5 only for high-volume, checkable lookups (versions, licences, file search), not coding;
+  - Fable 5.2 only as the escalation when Opus at `xhigh` still leaves an item open;
+  - where the result is checkable, run cheaper first and re-run only failures at higher effort.
 
 ## Key constraints
 
