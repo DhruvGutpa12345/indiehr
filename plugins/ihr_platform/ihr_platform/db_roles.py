@@ -146,7 +146,15 @@ CLASSES = {
 # hospital's schema state (whether it is servable: trigger coverage is judged only then, A7)
 WATCH_TABLES = {
     "hospital": {"ihr_audit_entry", "ihr_audit_seal"},
-    "public": {"ihr_platform_hospital", "ihr_platform_hospitalschemastate"},
+    "public": {
+        "ihr_platform_hospital",
+        "ihr_platform_hospitalschemastate",
+        # The superseded segments of restores (P1-T22b): what a restore event is checked
+        # against (ihr_audit/archive.py)
+        "ihr_restore_record",
+        "ihr_restore_superseded_seal",
+        "ihr_restore_superseded_entry",
+    },
 }
 # Hospital-schema functions whose ACL is ours: who may EXECUTE each. Sealing runs as the owner
 # through the first (SECURITY DEFINER, no arguments); the second is the owner's own (tests,

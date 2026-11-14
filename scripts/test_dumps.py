@@ -1559,6 +1559,17 @@ class Live(unittest.TestCase):
         self.assertEqual(r, {"live": "held"})
         self.assertIn("ihr-dump: hospital=live outcome=held", out)
 
+    def test_a_hospital_held_for_a_restore_is_skipped(self):
+        """P1-T22b: the restore hold is its own field (a release never clears it); the dumper
+        honours it like a release's hold."""
+        self.su("UPDATE public.ihr_platform_hospitalschemastate SET restore_operation = "
+                "'11111111-1111-4111-8111-111111111111', restore_since = now()")
+        self.addCleanup(self.su, "UPDATE public.ihr_platform_hospitalschemastate SET "
+                        "restore_operation = NULL, restore_since = NULL")
+        r, out = self.run_now(only=["live"])
+        self.assertEqual(r, {"live": "held"})
+        self.assertIn("ihr-dump: hospital=live outcome=held", out)
+
     def test_the_hospital_lock(self):
         import psycopg
 
@@ -1645,7 +1656,8 @@ CREATE EXTENSION pg_trgm;
 CREATE TABLE public.ihr_platform_hospital (id serial PRIMARY KEY, uuid uuid UNIQUE, slug text, name text,
   schema_name text, status text, activated_at timestamptz, created_on timestamptz DEFAULT now());
 CREATE TABLE public.ihr_platform_hospitalschemastate (hospital_id int PRIMARY KEY REFERENCES public.ihr_platform_hospital,
-  schema_fingerprint text DEFAULT '', upgrading_since timestamptz, hold_reason text DEFAULT '');
+  schema_fingerprint text DEFAULT '', upgrading_since timestamptz, hold_reason text DEFAULT '',
+  restore_operation uuid, restore_since timestamptz);
 CREATE TABLE public.ihr_platform_domain (id serial PRIMARY KEY, domain text, tenant_id int REFERENCES public.ihr_platform_hospital);
 CREATE TABLE public.ihr_platform_staffinvitation (id serial PRIMARY KEY, email text, hospital_id int REFERENCES public.ihr_platform_hospital);
 INSERT INTO public.ihr_platform_hospital (uuid, slug, name, schema_name, status, activated_at)

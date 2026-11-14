@@ -33,18 +33,26 @@ def _served(schema):
 
 
 def gated_call(task, *args, **kwargs):
+    from ihr_platform import release
+
     schema = getattr(connection, "schema_name", "public")
-    if schema != "public" and not task.request.is_eager and not _served(schema):
-        again = task.signature_from_request(
-            countdown=DEFER_SECONDS, headers={"_schema_name": schema}
-        )
-        again.apply_async()
-        logger.warning(
-            "ihr-fleet: schema=%s task=%s outcome=task-deferred", schema, task.name
-        )
-        msg = f"{schema} is not served (held or not this build's): sent again later"
-        raise Ignore(msg)
-    return _ORIGINAL["call"](task, *args, **kwargs)
+    if schema == "public" or task.request.is_eager:
+        return _ORIGINAL["call"](task, *args, **kwargs)
+    # The hospital's job lock for the whole run, taken before the check (P1-T22b review C4):
+    # a restore's drain waits for this task, and a task that starts after the hold, or while
+    # the drain holds or waits for the lock (``taken`` False, at once), defers
+    with release.job(schema) as taken:
+        if not taken or not _served(schema):
+            again = task.signature_from_request(
+                countdown=DEFER_SECONDS, headers={"_schema_name": schema}
+            )
+            again.apply_async()
+            logger.warning(
+                "ihr-fleet: schema=%s task=%s outcome=task-deferred", schema, task.name
+            )
+            msg = f"{schema} is not served (held or not this build's): sent again later"
+            raise Ignore(msg)
+        return _ORIGINAL["call"](task, *args, **kwargs)
 
 
 def install():

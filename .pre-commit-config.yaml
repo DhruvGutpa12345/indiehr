@@ -274,3 +274,10 @@ repos:
         additional_dependencies: ["cryptography==50.0.2"]
         files: ^(deploy/dumps/|deploy/lib/|deploy/logs/archive/|scripts/test_dumps\.py$)
         pass_filenames: false
+      # Single-hospital restore (P1-T22b): the quarantine's checks and the drill's isolation
+      - id: restore-tests
+        name: hospital restore (quarantine, package forms, drill isolation)
+        entry: python -m unittest scripts/test_restore_quarantine.py
+        language: python
+        files: ^(deploy/restore/|deploy/dumps/|plugins/ihr_platform/ihr_platform/restore/package\.py$|scripts/staging\.sh$|scripts/test_restore_quarantine\.py$)
+        pass_filenames: false

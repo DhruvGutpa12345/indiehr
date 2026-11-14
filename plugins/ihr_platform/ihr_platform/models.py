@@ -156,6 +156,8 @@ class TenantOperation(models.Model):
         ROLLBACK = "rollback"
         # One hospital's part of a fleet run (ihr_fleet_run, P1-T18a); grouped by fleet_run
         UPGRADE = "upgrade"
+        # A single-hospital restore from a dump (ihr_hospital_restore, P1-T22b)
+        RESTORE = "restore"
 
     class Status(models.TextChoices):
         PENDING = "pending"
@@ -200,7 +202,16 @@ class TenantOperation(models.Model):
                 fields=["slug"],
                 condition=models.Q(kind="provision", status__in=["pending", "running"]),
                 name="one_open_provisioning_per_slug",
-            )
+            ),
+            # One unfinished restore per hospital (P1-T22b): a failed one is resumed or
+            # aborted (rolled_back) before another may start
+            models.UniqueConstraint(
+                fields=["slug"],
+                condition=models.Q(
+                    kind="restore", status__in=["pending", "running", "failed"]
+                ),
+                name="one_open_restore_per_slug",
+            ),
         ]
 
     def __str__(self):
@@ -221,6 +232,11 @@ class HospitalSchemaState(models.Model):
       running build's.
     - ``upgrading_since``: the hold of a release window; set and cleared only by ihr_fleet_run.
     - ``hold_reason``: why it is held (``window``, ``migrate`` or ``roles``).
+    - ``restore_operation`` / ``restore_since``: the restore hold (P1-T22b, design "After the
+      attack" 4): set by ihr_hospital_restore for its operation and lifted only by it (or its
+      --abort). Separate from the release hold: a release, the fleet runner and pack apply
+      never clear it, and every check that serves a hospital (``release.schema_ready``,
+      ``release.ready_q``) refuses it while it is set.
     """
 
     hospital = models.OneToOneField(
@@ -235,9 +251,14 @@ class HospitalSchemaState(models.Model):
     # Why it is held (release.HOLD_*): a window, a migration, or a refused role sync. A run
     # whose roles then pass releases only a "roles" hold, never a window's (C4/S2).
     hold_reason = models.CharField(max_length=16, blank=True)
+    # The restore hold (P1-T22b): the restore operation that holds the hospital, and since when
+    restore_operation = models.UUIDField(null=True, blank=True)
+    restore_since = models.DateTimeField(null=True, blank=True)
 
     def __str__(self):
         held = f" held ({self.hold_reason})" if self.upgrading_since else ""
+        if self.restore_operation:
+            held += f" held for restore {self.restore_operation}"
         return f"{self.hospital_id}: {self.schema_fingerprint[:12] or '-'}{held}"
 
     def save(self, *args, **kwargs):

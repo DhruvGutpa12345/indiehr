@@ -88,9 +88,17 @@ def deliver_once():
     if inv is None:
         return False
     try:
-        with audit.job(
-            {"job": "invitation", "invitation": inv.pk}, f"worker:for {inv.invited_by}"
+        # The hospital's job lock for the whole job: a restore's drain waits for it (P1-T22b
+        # C4); not taken (the drain holds or waits for it) is a hospital not ready yet
+        with (
+            release.job(inv.hospital.schema_name) as taken,
+            audit.job(
+                {"job": "invitation", "invitation": inv.pk},
+                f"worker:for {inv.invited_by}",
+            ),
         ):
+            if not taken:
+                raise HospitalNotReady
             deliver(inv)
     except WaitForSetup:
         _wait(inv)
@@ -364,10 +372,15 @@ def handle_request_once():
         req.save(update_fields=["status"])
     status, error = StaffAccessRequest.Status.DONE, ""
     try:
-        with audit.job(
-            {"job": "staff_access", "request": str(req.pk), "action": req.action},
-            f"worker:for {req.requested_by}",
+        with (
+            release.job(req.hospital.schema_name) as taken,  # (as in deliver_once)
+            audit.job(
+                {"job": "staff_access", "request": str(req.pk), "action": req.action},
+                f"worker:for {req.requested_by}",
+            ),
         ):
+            if not taken:
+                raise HospitalNotReady
             handle_request(req)
     except HospitalNotReady:
         # Nothing was done yet: back on the queue, picked up once the hospital is served

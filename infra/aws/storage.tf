@@ -63,9 +63,10 @@ resource "aws_s3_bucket_lifecycle_configuration" "care" {
     id     = "old-versions-and-unfinished-uploads"
     status = "Enabled"
     filter {}
-    # A deleted or replaced file can be brought back for 30 days, then it is gone
+    # A deleted or replaced file can be brought back for 35 days, then it is gone: a
+    # single-hospital restore brings each file back as it was at the dump's time (P1-T22b)
     noncurrent_version_expiration {
-      noncurrent_days = 30
+      noncurrent_days = 35
     }
     abort_incomplete_multipart_upload {
       days_after_initiation = 7

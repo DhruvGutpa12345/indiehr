@@ -57,13 +57,24 @@ def lock_key(slug):
     )
 
 
+# Hospitals whose lock this process holds, and for which operation (P1-T22b, design "After the
+# attack" 4: one lock, held once). A restore holds its hospital's lock for its whole run and calls
+# the same migrate, role and pack code in this process; their own ``exclusive`` then finds the
+# lock already held here, for that operation, instead of refusing as a second holder.
+_HELD_FOR = {}
+
+
 @contextmanager
 def exclusive(slug):
     """Hold a per-hospital lock for the whole run, on a connection of its own: the
     migrations close Django's main connection, which would silently drop a lock held there.
     Also taken by every other job that changes a hospital as a whole (reference packs,
     ihr_refdata) and, as the same key, by the nightly dumper while pg_dump runs; it never
-    waits: a second holder gets ProvisioningError at once."""
+    waits: a second holder gets ProvisioningError at once. Inside ``exclusive_for`` of the same
+    hospital (this process, a restore) it is already held: nothing more is taken."""
+    if slug in _HELD_FOR:
+        yield
+        return
     key = lock_key(slug)
     holder = connections.create_connection("default")
     try:
@@ -77,6 +88,29 @@ def exclusive(slug):
         yield
     finally:
         holder.close()  # ends that session, which releases the lock
+
+
+@contextmanager
+def exclusive_for(slug, operation):
+    """``exclusive`` held for ``operation`` (a restore): recorded, so the code it calls in this
+    process takes no second lock. Refuses a hospital this process already holds for another."""
+    if slug in _HELD_FOR:
+        if _HELD_FOR[slug] != str(operation):
+            msg = f"{slug} is held here for operation {_HELD_FOR[slug]}"
+            raise ProvisioningError(msg)
+        yield
+        return
+    with exclusive(slug):
+        _HELD_FOR[slug] = str(operation)
+        try:
+            yield
+        finally:
+            _HELD_FOR.pop(slug, None)
+
+
+def held_for(slug):
+    """The operation this process holds ``slug``'s lock for, or ""."""
+    return _HELD_FOR.get(slug, "")
 
 
 _exclusive = exclusive  # the name the tests and older callers use

@@ -247,6 +247,57 @@ def functions_sql(schema):
     )
 
 
+# The restore's final seal (P1-T22b review S5): the same window and hash code as
+# ihr_audit_seal_run, as a temporary function of the restore's own session, without the
+# sealer's advisory lock (the restore holds the trail ACCESS EXCLUSIVE: no other sealer, no
+# writer) and up to every transaction that has ended (the snapshot's xmax: with that lock held,
+# every entry is final), so no long transaction elsewhere and nobody holding the sealer's lock
+# can leave the live trail's last entries unsealed when it is parked.
+_LOCK_BLOCK = """    -- Another run is sealing this schema (or someone holds its key): nothing to do now (S6)
+    IF NOT pg_try_advisory_xact_lock(hashtext({lock})) THEN
+        RETURN 0;
+    END IF;
+"""
+_FINAL_EDITS = (
+    (
+        "CREATE OR REPLACE FUNCTION {schema}.ihr_audit_seal_run(p_batch integer, "
+        "p_version smallint)",
+        "CREATE OR REPLACE FUNCTION pg_temp.ihr_audit_seal_final(p_batch integer, "
+        "p_version smallint)",
+    ),
+    (
+        _LOCK_BLOCK,
+        "    -- The restore holds the trail ACCESS EXCLUSIVE: no other sealer\n",
+    ),
+    (
+        "v_horizon := pg_snapshot_xmin(pg_current_snapshot());",
+        "v_horizon := pg_snapshot_xmax(pg_current_snapshot());",
+    ),
+)
+
+
+def final_sql(schema):
+    """``pg_temp.ihr_audit_seal_final(batch, version)`` for ``schema`` (see above), as SQL."""
+    text = _FUNCTIONS[
+        : _FUNCTIONS.index("CREATE OR REPLACE FUNCTION {schema}.ihr_audit_seal_next")
+    ]
+    for old, new in _FINAL_EDITS:
+        if text.count(old) != 1:  # the sealing function changed: this must follow it
+            msg = f"ihr_audit_seal_run no longer has {old[:60]!r}"
+            raise RuntimeError(msg)
+        text = text.replace(old, new)
+    return sql.SQL(text).format(
+        schema=sql.Identifier(schema),
+        versions=sql.SQL(", ").join(sql.Literal(v) for v in sorted(CANONICAL)),
+        leaf1=sql.SQL(leaf_sql(1)),
+        leaf2=sql.SQL(leaf_sql(2)),
+        leaf3=sql.SQL(leaf_sql(3)),
+        tag1=sql.Literal(_TAG[1]),
+        tag2=sql.Literal(_TAG[2]),
+        tag3=sql.Literal(_TAG[3]),
+    )
+
+
 # The trigger that forces an entry's txid, time and salt (S2)
 STAMP_FUNCTION = """
 CREATE OR REPLACE FUNCTION {schema}.ihr_audit_stamp() RETURNS trigger

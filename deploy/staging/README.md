@@ -340,8 +340,8 @@ go-live files are in the provider's versioned bucket).
 pgBackRest (above) can only bring back **the whole server**. To undo one hospital's mistake
 without rolling back every other hospital, each hospital is also dumped on its own every night
 (design: `docs/reviews/p1-t22/design.md`, "After the attack"; sizes:
-`docs/reviews/p1-t22/size-model.md`; proof: `docs/reviews/p1-t22/proof-a.md`). The restore
-command and its drill come with P1-T22b.
+`docs/reviews/p1-t22/size-model.md`; proof: `docs/reviews/p1-t22/proof-a.md`). A hospital is
+restored from them with `hospital-restore` (next section).
 
 **The dumper** (`compose.dumps.yaml`, on when `.env` has `IHR_DUMPS`; `deploy/dumps/dumper.py`
 with `deploy/lib/`, in our dumper image `deploy/docker/dumper.Dockerfile`: the database's own
@@ -474,6 +474,149 @@ The metrics count hospitals only; they never carry a hospital's name or id.
   listing still shows a removed, replaced or hidden dump to `dumps-check`.
 - **The health check only asks whether the metrics answer.** A failed dump is an alert, not a
   sick container.
+
+## Restoring one hospital (P1-T22b)
+
+Brings **one** hospital back to its last nightly dump (or to a moment, `--from-pitr`) while every
+other hospital goes on (no app container is restarted unless you ask: `--restart`). A release or
+rollback refuses while a restore is unfinished: finish it (`--resume`) or `--abort` it first. Design: `docs/reviews/p1-t22/design.md` ("After the attack" 4-11 and
+"P1-T22b as built"); proof: `docs/reviews/p1-t22/proof-b.md`; code: `ihr_platform/restore/`,
+`ihr_audit/archive.py`, `deploy/restore/quarantine.py`.
+
+**What happens** (`scripts/staging.sh hospital-restore alpha --dump latest --reason "..."`):
+
+1. **The dump is fetched and checked** by the dumper's own readers (`dumps-get`, and the manifest
+   with `dumper.py manifest`: authentic, chained, its MAC and SHA-256), into `deploy/staging/restore/`
+   (mode 700). Free disk is checked first, from the manifest's size; the decrypted dump is removed
+   whatever stops the run (an EXIT trap) and as soon as the quarantine has passed.
+2. **The quarantine.** A dump is untrusted SQL. It is restored into a throwaway Postgres in the
+   dumper image with **no network**, as a role that owns only an empty schema of the hospital's
+   name; what came out is checked (only that schema; no function or trigger but ours; no
+   extension, role, grant, rule, policy, view or call into another schema; with a nightly dump,
+   the audit head, sequences and migrations the manifest names; every default, CHECK and index
+   expression calls only pure built-ins and a few others on this schema's own objects). Only then
+   is a **package** written from that catalogue: tables, sequences, keys, indexes and rows. The
+   quarantine stops its server, checks the files against what it wrote and prints
+   `quarantine: package sha256 <hex>`; the restore refuses a package.json with another hash.
+   Functions, triggers and the trail's defaults are never taken from a dump: this build's code
+   installs them.
+3. **`ihr_hospital_restore`** (a logged `migrate` one-off as the owner, the package read-only):
+   - **pre-checks** (nothing changes if one refuses): the package passed the quarantine and is of
+     this hospital's schema (never a side name); the hospital is active or suspended and not
+     already being restored; the dump's audit head is a seal of the live chain; its transaction
+     ids are below the cluster's; it is not ahead of this build's migrations; with the same
+     migrations, its tables, defaults, constraints and indexes exactly the live schema's; with an
+     older build's, its tables have every column the strict merge needs (else refused: restore a
+     newer dump); no ABDM data; enough disk; **no erasure ledger** (P4-T1: while that table
+     exists, every restore refuses); its lock free (a nightly dump holds it 03:30-06:00: try
+     again later);
+   - **hold** (a restore hold of its own: the gate answers 503, sign-ins, beat, queued tasks, the
+     staff worker, the fleet runner, releases, pack apply and the dumper all leave it alone, and
+     a release never lifts it), **drain** (60 s for transactions older than the hold, then the
+     hospital's background jobs that began before it: one still running stops the restore here,
+     held; `--resume` once it has finished; a job that starts meanwhile is put back at once,
+     never kept waiting in a worker), **seal** the live trail and write a fingerprint;
+   - **restore**: ONE transaction locks the live trail, seals all of it (the restore's own final
+     seal: a long transaction elsewhere or someone holding the sealer's lock cannot leave entries
+     only in the parked schema), renames the live schema to `ihr_parked_<schema>_<time>` (no app
+     or watch rights), loads the package under the real name (statements one at a time, every
+     expression inspected before any is evaluated, its shape and every table's rows checked),
+     recomputes the restored chain, advances every sequence past the parked copy, installs the
+     trail's guard, defaults, triggers and sealing from this build's code, and merges security
+     state strictly: inactive, deleted and unlinked users stay so; organisation, facility and role
+     assignments, direct patient grants, patient shares, role permissions, superuser and staff
+     flags never stronger than the parked copy's (`--keep-restored-access "why"` keeps the
+     restored ones, recorded); every other schema's and public's catalogue must be unchanged
+     (a hospital onboarded meanwhile, or one another restore holds, aside: a fleet-wide migrate
+     or `db-roles --assert` meanwhile stops the load, `--resume` after it); nothing is half done
+     if it stops;
+   - **migrate**, the role sync and the packs, in this process under this restore's lock (done
+     again by any later step that finds the schema behind this build);
+   - **reconcile**: **every staff session invalidated**, the affected patients' access caches
+     rebuilt, the hospital's Redis keys deleted; invitations and access requests made after the
+     dump, or for users no longer there, cancelled, except a sign-in reset or an invitation's
+     withdrawal for a user the restored copy has (kept queued and named: the staff worker runs it
+     once the hospital is served); the access difference and the profile's changed fields shown;
+   - **keycloak** (run with your bootstrap credential in the unlogged admin one-off): each
+     restored active staff link must still be a member of the hospital's organisation, else that
+     user is switched off; members with no link (added after the dump) are named. Fail closed;
+   - **files**: every object under the hospital's prefix in both file buckets as it was at the
+     dump's time, from the buckets' versions (kept 35 days; a server asks for the file buckets'
+     admin key, which may list versions); newer uploads are kept and counted;
+   - **audit**: the live tail the restore replaced is archived (`ihr_restore_superseded_*` in
+     `public`, append-only), a **restore event** goes to the fingerprint bucket, a `restore`
+     entry is added to the trail, sealed, fingerprinted, and `ihr_audit_verify --slug` must pass;
+   - **restart**: nothing, unless `--restart` (then every running app container at once, so
+     every hospital is down for that moment: only for a hospital DatabaseSchemaGated named before
+     the restore), then **smoke**: the schema is this build's, triggers and grants as modelled;
+     the hold is lifted and the hospital's address must answer 200.
+4. The **parked schema** (the hospital as it was just before) is kept 7 days, owner-only, then
+   dropped by `hospital-restore-expire` (it holds personal data). **ParkedSchemaOverdue** names
+   one kept longer.
+
+| Command | What it does |
+|---|---|
+| `scripts/staging.sh hospital-restore <slug> --dump <YYYY-MM-DD\|latest> --reason "..." [--dry-run]` | The restore above. `--dry-run`: fetch, quarantine and every pre-check, then stop (nothing held or changed). `--operator NAME` (default: who you are), `--keep-restored-access "why"`, `--restart` |
+| `scripts/staging.sh hospital-restore <slug> --from-pitr "YYYY-MM-DD HH:MM:SS+05:30" --reason "..."` | The ≤ 15-minute path (ADR-007): the restore-drill copy at that moment from pgBackRest, the hospital's schema dumped from it, then the same quarantine and restore |
+| `scripts/staging.sh hospital-restore <slug> --resume` | Go on after a stop (the database's own state says where; a restart or the Keycloak step is done for you) |
+| `scripts/staging.sh hospital-restore <slug> --abort` | Before reconcile only: the restored copy dropped, the live schema un-parked, the hold lifted |
+| `scripts/staging.sh hospital-restore-status` | Every restore and its steps; the parked schemas and their age |
+| `scripts/staging.sh hospital-restore-expire [--dry-run]` | **Daily (owner):** drops parked schemas older than 7 days (never one of an unfinished restore) |
+| `scripts/staging.sh hospital-restore-drill [--slug S]` (or `hospital-restore <slug> --drill`) | **Monthly:** the drill below |
+
+**Exit codes of `ihr_hospital_restore`:** 0 done; 1 refused (nothing changed) or a step failed (the
+hospital **stays held**: fix, then `--resume`; or `--abort` before reconcile; a stop before the hold,
+e.g. its lock busy, changed nothing there); 3 (only with `--restart`) restart the app containers then
+`--resume --restarted`; 4 the Keycloak step needs the operator's credential (a failure there is
+reported by the logged one-off that follows, so HospitalRestoreFailed names it).
+`hospital-restore` handles 3 and 4 itself.
+
+**After a restore, tell the hospital:** everyone signs in again; work done after the dump's time is
+gone from the system (it is in the parked schema for 7 days if it must be re-entered by hand);
+access granted after the dump must be granted again (the access difference lists how many);
+uploads after the dump are kept in the bucket but not linked.
+
+**The drill:**
+
+- **Monthly** (`hospital-restore-drill`; a 30-day rotation picks the hospital): the newest dump is
+  fetched, quarantined and restored **inside the restore-drill copy** of the database (pgBackRest,
+  `restore-drill --keep`), never live. The copy runs with `cluster_name=ihr-restore-drill`, and
+  `--drill` refuses any other database; the one-off runs with `ihr_platform.settings.drill` (no
+  `app.env`, no Redis, storage or fingerprint keys, no Keycloak credential: it refuses to start if
+  any reaches it) on a network that holds only the copy (no `edge`). Every step that would reach
+  outside the database is a reported dry run. Every other hospital schema and `public` (but the
+  drilled hospital's rows) are hashed before and after (rows, triggers, function bodies, grants,
+  sequences) and must match. Times are printed; `dumps-drill-mark` records it (DumpDrillOverdue
+  after 35 days without a passing one).
+- **Quarterly** (owner, with a maintenance notice): a live drill on the synthetic `drill`
+  hospital of staging: `ihr_create_tenant --slug drill ...` once, `dumps-now --slug drill`,
+  change something in it, then `hospital-restore drill --dump latest --reason "quarterly live
+  drill"` and check the result (proof-b.md is the script).
+
+**Alerts** (`deploy/logs/alerts/restore.yml`): **HospitalRestoreFailed** (critical; names the
+hospital and the step: it stays held until resumed or aborted) and **ParkedSchemaOverdue**. While
+a restore runs, the hospital is also named by HospitalNotServed (it is down, on purpose).
+
+**Database settings:** the restore's one transaction holds a lock on every relation of the
+restored schema (about 3.5 per relation, ~3,800 for a CARE hospital today, proof-b.md); the
+default lock table (`max_locks_per_transaction` 64 × 100 connections) holds it with little room
+to spare; P1-T23 sets it from these numbers. A load that runs out fails cleanly ("out of shared
+memory") and rolls back: raise the setting and `--resume`.
+
+**Known and accepted:**
+
+- **Up to 24 hours lost** with `--dump`; `--from-pitr` loses at most what pgBackRest has not yet
+  archived (≤ 15 minutes).
+- **`ihr_audit_verify` after a restore** must run as the owner or the audit watch's role: the app
+  role has no right on the archive (its entries hold values), so run as the app it reads a restore
+  event as unverifiable. `release`'s pre-check runs it in the backend: after a restore, run
+  `scripts/staging.sh manage ihr_audit_verify --all` with the reader key instead
+  (proof-b.md).
+- **Queued Celery tasks** of the hospital made before the restore run after it (the gate holds
+  them while it is held); ones naming rows the restore removed fail harmlessly.
+- **Offboarding** must also erase the hospital's archived segments (append-only; P4-T1/§7.7).
+- **A dump of another cluster** (a move) is refused: it needs a rebase seal (not built).
+
 
 ## Monitoring and alerts (P1-T9a)
 
@@ -961,7 +1104,7 @@ measure` is bounded (the last 7 days, 200,000 entries a hospital); `--full` runs
   the entry window or the fingerprint. Do not "fix" the trail: it is evidence. A checkpoint is
   never reset by hand. After a genuine restore the restore's event clears it (P1-T22); a restore
   without one stays a cut. **`staging.sh rollback --restore`** (or `restore --target`) puts the
-  whole database back: every hospital sealed since the restore point reads as cut until P1-T22b
+  whole database back: every hospital sealed since the restore point reads as cut until P1-T22c
   writes restore events for it (nothing does yet). Run it only for a real incident, record it as
   one, and never silence the alerts.
 - **AuditHospitalsUnchecked / a `check=unchecked` line.** The watch cannot read that hospital's

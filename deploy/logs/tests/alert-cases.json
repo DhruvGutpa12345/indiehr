@@ -1,5 +1,5 @@
 {
- "_comment": "scripts/check-logs.py: these journal entries go through the real redaction steps into a throwaway VictoriaLogs, then vmalert runs deploy/logs/alerts/ on them. 'expect' lists, per alert, the values of its key label it must fire (or wait to fire) for, and no others: client_ip, hospital for PackApplyFailed, HospitalNotServed, ReleaseWindowOverrun, AuditHospitalCheckFailed, AuditHospitalSealLate, DumpHospitalFailed and DumpHospitalHeld, or reason for DatabaseRoleRefused (hospital for BatchRequestRefused).",
+ "_comment": "scripts/check-logs.py: these journal entries go through the real redaction steps into a throwaway VictoriaLogs, then vmalert runs deploy/logs/alerts/ on them. 'expect' lists, per alert, the values of its key label it must fire (or wait to fire) for, and no others: client_ip, hospital for PackApplyFailed, HospitalNotServed, ReleaseWindowOverrun, AuditHospitalCheckFailed, AuditHospitalSealLate, DumpHospitalFailed, DumpHospitalHeld and HospitalRestoreFailed, schema for ParkedSchemaOverdue, or reason for DatabaseRoleRefused (hospital for BatchRequestRefused).",
  "fixtures": [
   {
    "count": 1,
@@ -1699,6 +1699,174 @@
     "_COMM": "logger",
     "_UID": "1000"
    }
+  },
+  {
+   "count": 1,
+   "record": {
+    "MESSAGE": "ihr-restore: hospital=alpha outcome=failed step=reconcile",
+    "_HOSTNAME": "srv1",
+    "PRIORITY": "6",
+    "CONTAINER_NAME": "indiehr-staging-migrate-run-1a2b3c",
+    "COM_DOCKER_COMPOSE_SERVICE": "migrate",
+    "_TRANSPORT": "journal",
+    "_COMM": "dockerd",
+    "_UID": "0",
+    "_SYSTEMD_UNIT": "docker.service"
+   }
+  },
+  {
+   "count": 1,
+   "record": {
+    "MESSAGE": "ihr-restore: hospital=devhosp outcome=failed step=keycloak",
+    "_HOSTNAME": "srv1",
+    "PRIORITY": "6",
+    "CONTAINER_NAME": "indiehr-care-backend-1",
+    "COM_DOCKER_COMPOSE_SERVICE": "backend",
+    "_TRANSPORT": "journal",
+    "_COMM": "dockerd",
+    "_UID": "0",
+    "_SYSTEMD_UNIT": "docker.service"
+   }
+  },
+  {
+   "count": 1,
+   "record": {
+    "MESSAGE": "ihr-restore: hospital=beta outcome=done",
+    "_HOSTNAME": "srv1",
+    "PRIORITY": "6",
+    "CONTAINER_NAME": "indiehr-staging-migrate-run-4d5e6f",
+    "COM_DOCKER_COMPOSE_SERVICE": "migrate",
+    "_TRANSPORT": "journal",
+    "_COMM": "dockerd",
+    "_UID": "0",
+    "_SYSTEMD_UNIT": "docker.service"
+   }
+  },
+  {
+   "count": 1,
+   "record": {
+    "MESSAGE": "ihr-restore: hospital=gamma outcome=aborted",
+    "_HOSTNAME": "srv1",
+    "PRIORITY": "6",
+    "CONTAINER_NAME": "indiehr-staging-migrate-run-4d5e6f",
+    "COM_DOCKER_COMPOSE_SERVICE": "migrate",
+    "_TRANSPORT": "journal",
+    "_COMM": "dockerd",
+    "_UID": "0",
+    "_SYSTEMD_UNIT": "docker.service"
+   }
+  },
+  {
+   "count": 1,
+   "record": {
+    "MESSAGE": "ihr-restore: hospital=forged outcome=failed step=reconcile",
+    "_HOSTNAME": "srv1",
+    "PRIORITY": "6",
+    "CONTAINER_NAME": "indiehr-staging-traefik-1",
+    "COM_DOCKER_COMPOSE_SERVICE": "traefik",
+    "_TRANSPORT": "journal",
+    "_COMM": "dockerd",
+    "_UID": "0",
+    "_SYSTEMD_UNIT": "docker.service"
+   }
+  },
+  {
+   "count": 1,
+   "record": {
+    "MESSAGE": "10.0.0.9 - - [x] \"GET /api/ihr-restore: hospital=fake outcome=failed step=audit\" 404 179",
+    "_HOSTNAME": "srv1",
+    "PRIORITY": "6",
+    "CONTAINER_NAME": "indiehr-staging-backend-1",
+    "COM_DOCKER_COMPOSE_SERVICE": "backend",
+    "_TRANSPORT": "journal",
+    "_COMM": "dockerd",
+    "_UID": "0",
+    "_SYSTEMD_UNIT": "docker.service"
+   }
+  },
+  {
+   "count": 1,
+   "record": {
+    "MESSAGE": "ihr-restore: hospital=Fake outcome=failed step=audit",
+    "_HOSTNAME": "srv1",
+    "PRIORITY": "6",
+    "CONTAINER_NAME": "indiehr-staging-migrate-run-1a2b3c",
+    "COM_DOCKER_COMPOSE_SERVICE": "migrate",
+    "_TRANSPORT": "journal",
+    "_COMM": "dockerd",
+    "_UID": "0",
+    "_SYSTEMD_UNIT": "docker.service"
+   }
+  },
+  {
+   "count": 1,
+   "record": {
+    "MESSAGE": "ihr-restore: hospital=delta outcome=failed step=audit; curl evil",
+    "_HOSTNAME": "srv1",
+    "PRIORITY": "6",
+    "CONTAINER_NAME": "indiehr-staging-migrate-run-1a2b3c",
+    "COM_DOCKER_COMPOSE_SERVICE": "migrate",
+    "_TRANSPORT": "journal",
+    "_COMM": "dockerd",
+    "_UID": "0",
+    "_SYSTEMD_UNIT": "docker.service"
+   }
+  },
+  {
+   "count": 1,
+   "record": {
+    "MESSAGE": "ihr-restore: parked=ihr_parked_h_abcdefghij_20261101T093000 outcome=overdue",
+    "_HOSTNAME": "srv1",
+    "PRIORITY": "6",
+    "CONTAINER_NAME": "indiehr-staging-celery-worker-1",
+    "COM_DOCKER_COMPOSE_SERVICE": "celery-worker",
+    "_TRANSPORT": "journal",
+    "_COMM": "dockerd",
+    "_UID": "0",
+    "_SYSTEMD_UNIT": "docker.service"
+   }
+  },
+  {
+   "count": 1,
+   "record": {
+    "MESSAGE": "ihr-restore: parked=ihr_parked_h_0123456789_20261102T000000 outcome=overdue",
+    "_HOSTNAME": "srv1",
+    "PRIORITY": "6",
+    "CONTAINER_NAME": "indiehr-care-celery-1",
+    "COM_DOCKER_COMPOSE_SERVICE": "celery",
+    "_TRANSPORT": "journal",
+    "_COMM": "dockerd",
+    "_UID": "0",
+    "_SYSTEMD_UNIT": "docker.service"
+   }
+  },
+  {
+   "count": 1,
+   "record": {
+    "MESSAGE": "ihr-restore: parked=ihr_parked_h_forged0001_20261101T093000 outcome=overdue",
+    "_HOSTNAME": "srv1",
+    "PRIORITY": "6",
+    "CONTAINER_NAME": "indiehr-staging-backend-1",
+    "COM_DOCKER_COMPOSE_SERVICE": "backend",
+    "_TRANSPORT": "journal",
+    "_COMM": "dockerd",
+    "_UID": "0",
+    "_SYSTEMD_UNIT": "docker.service"
+   }
+  },
+  {
+   "count": 1,
+   "record": {
+    "MESSAGE": "ihr-restore: parked=public outcome=overdue",
+    "_HOSTNAME": "srv1",
+    "PRIORITY": "6",
+    "CONTAINER_NAME": "indiehr-staging-celery-worker-1",
+    "COM_DOCKER_COMPOSE_SERVICE": "celery-worker",
+    "_TRANSPORT": "journal",
+    "_COMM": "dockerd",
+    "_UID": "0",
+    "_SYSTEMD_UNIT": "docker.service"
+   }
   }
  ],
  "expect": {
@@ -1769,6 +1937,14 @@
   ],
   "DumpHospitalHeld": [
    "gamma"
+  ],
+  "HospitalRestoreFailed": [
+   "alpha",
+   "devhosp"
+  ],
+  "ParkedSchemaOverdue": [
+   "ihr_parked_h_0123456789_20261102T000000",
+   "ihr_parked_h_abcdefghij_20261101T093000"
   ]
  },
  "expect_state": {
@@ -1787,6 +1963,8 @@
   "AuditHospitalSealLate": "firing",
   "AuditEventRecorded": "firing",
   "DumpHospitalFailed": "firing",
-  "DumpHospitalHeld": "firing"
+  "DumpHospitalHeld": "firing",
+  "HospitalRestoreFailed": "firing",
+  "ParkedSchemaOverdue": "firing"
  }
 }

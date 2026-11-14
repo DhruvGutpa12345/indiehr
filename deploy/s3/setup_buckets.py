@@ -13,6 +13,8 @@ staging: the backend image). Nothing here is IndieHR-specific Python: it needs n
 - facility bucket (staff photos, facility covers): private too, no bucket policy (P1-T20b,
   owner answer Q-T3): the web app gets 24-hour signed links (ihr_platform.storage); a public-read
   policy left by an older setup is removed; same CORS;
+- both file buckets versioned, old versions kept 35 days (P1-T22b: a restored hospital's files
+  come back from them);
 - anchor bucket: Object Lock (versioned), default retention <mode> for <days>. Created locked or
   refused: a bucket without a lock is never used. Weakening the retention of an existing bucket
   (mode or days) is refused; locks already on stored objects never change anyway.
@@ -83,6 +85,30 @@ def no_policy(s3, bucket):
     print(f"bucket {bucket}: private (no bucket policy)")
 
 
+# Old versions of patient files and pictures are kept this long (P1-T22b): a restored hospital's
+# files come back from them (ihr_platform/restore/files.py), and a restore drill is monthly
+FILE_VERSION_DAYS = 35
+
+
+def versioned(s3, bucket, days=FILE_VERSION_DAYS):
+    """Versioning on, and old versions expiring after ``days`` (where the store has lifecycle
+    rules; SeaweedFS keeps them until removed by hand, which the restore does not need)."""
+    s3.put_bucket_versioning(Bucket=bucket, VersioningConfiguration={"Status": "Enabled"})
+    if s3.get_bucket_versioning(Bucket=bucket).get("Status") != "Enabled":
+        sys.exit(f"bucket {bucket}: versioning could not be switched on")
+    try:
+        s3.put_bucket_lifecycle_configuration(
+            Bucket=bucket,
+            LifecycleConfiguration={"Rules": [{
+                "ID": "old-versions", "Status": "Enabled", "Filter": {},
+                "NoncurrentVersionExpiration": {"NoncurrentDays": days},
+            }]},
+        )
+        print(f"bucket {bucket}: versioned, old versions kept {days} days")
+    except ClientError as err:
+        print(f"bucket {bucket}: versioned (this store keeps no lifecycle rule: {code(err) or 'refused'})")
+
+
 def anchor_bucket(s3, bucket, mode, days):
     if not exists(s3, bucket):
         s3.create_bucket(Bucket=bucket, ObjectLockEnabledForBucket=True)
@@ -138,6 +164,8 @@ def main():
         cors(s3, bucket, a.cors_origin)
     no_policy(s3, a.patient)
     no_policy(s3, a.facility)
+    for bucket in (a.patient, a.facility):
+        versioned(s3, bucket)
     anchor_bucket(s3, a.anchor, a.lock_mode, a.lock_days)
     if a.backups:
         ensure_plain(s3, a.backups)

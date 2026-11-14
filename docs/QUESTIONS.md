@@ -424,6 +424,9 @@ R1-03.
   - Security state never goes back: deactivations stay, and all sessions end.
   - Parked schemas are deleted after 7 days.
   - Picture and patient-file buckets get versioning (old versions kept 35 days).
+  - The audit entries a restore replaces are kept in an append-only archive in `public`
+    (added when P1-T22b was built, 2026-11-14): verify and the audit watch check the restore
+    against it. It holds the replaced values, so its erasure and offboarding wait for P4-T1.
   - A nightly dump can lose up to 24 h for that hospital; `--from-pitr` restores to within 15
     minutes.
 - B. Rely on whole-cluster restore only (undoing one hospital's mistake rolls back every

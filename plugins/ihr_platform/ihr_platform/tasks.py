@@ -154,6 +154,12 @@ def report_unserved():
     for slug in overrun_slugs():
         if fleet.SLUG_RE.match(slug):
             _emit(fleet.log_line(slug, "overrun"))
+    # A parked schema (P1-T22b) holds personal data: kept past its 7 days it is named every
+    # run until the owner's hospital-restore-expire drops it (ParkedSchemaOverdue)
+    from ihr_platform.restore import engine
+
+    for line in engine.overdue_lines():
+        _emit(line)
 
 
 @current_app.on_after_finalize.connect

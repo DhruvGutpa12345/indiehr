@@ -43,6 +43,14 @@ PUBLIC_TABLE_ALLOW_LIST = {
     "ihr_platform_hospitalschemastate",
     "ihr_platform_fleetrun",
     "ihr_platform_maintenancewindow",
+    # Single-hospital restores (P1-T22b, design "After the attack" 7): the audit trail's tail a
+    # restore replaced, kept OUTSIDE the hospital schema so a later restore, the audit watch and
+    # trigger coverage all see it. It holds that tail's entries with their values (patient
+    # data), keyed by hospital: append-only (trigger), owner-written, no app rights (the watch
+    # reads it); offboarding must erase a hospital's rows (TENANCY §7.7 amendment)
+    "ihr_restore_record",
+    "ihr_restore_superseded_seal",
+    "ihr_restore_superseded_entry",
 }
 SECOND_DOMAIN = "second.testserver"
 

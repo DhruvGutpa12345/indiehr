@@ -718,6 +718,9 @@ FAKE_DOCKER = textwrap.dedent("""\
             sys.exit(0)
         if "exec" in a and "ihr_fleet_run" in a and env("FAKE_EXEC_OK"):
             sys.exit(0)  # the running build's hold or release succeeds
+        if "exec" in a and "psql" in a and "ihr_platform_tenantoperation" in " ".join(a):
+            print(env("FAKE_RESTORES", ""))  # rel_open_restores: unfinished restores (P1-T22b C1)
+            sys.exit(0)
         if "exec" in a and "psql" in a and "ihr_owner" in " ".join(a) and env("FAKE_ROLES"):
             print(env("FAKE_ROLES"))  # db_roles_state: split, single or none (P1-T19b)
             sys.exit(0)
@@ -971,6 +974,19 @@ class EndToEnd(unittest.TestCase):
                                       "--operator", "tester", running="db", fake={"FAKE_ROLES": "split"})
         self.assertEqual(out.returncode, 0, out.stderr)
         self.assertIn("The roles are split already: nothing to move", out.stdout)
+
+    def test_no_release_or_rollback_while_a_hospital_restore_is_unfinished(self):
+        """P1-T22b review C1: the release would leave the restored hospital on the old build
+        (the fleet runner leaves it alone), its smoke would fail and the restore could not
+        finish; a rollback would leave its schema ahead. Both refuse first, naming it."""
+        fake = {"FAKE_RESTORES": "alpha (8f0e2a4c-0000-4000-8000-000000000001)"}
+        for args, kw in ((("release", "--operator", "tester"), {"running": "backend"}),
+                         (("rollback", "--operator", "tester"), {"running": "db"})):
+            with self.subTest(args[0]):
+                out, calls = self.run_staging([release(A), release(RUNNING)], *args, fake=fake, **kw)
+                self.assertEqual(out.returncode, 1, out.stderr)
+                self.assertIn("an unfinished hospital restore: alpha (8f0e2a4c", out.stderr)
+                self.assertNothingChanged(calls)
 
     def test_no_rollback_while_the_database_has_its_single_role(self):
         """C1: every rollback ends with `up`, which refuses a single-role database (after the

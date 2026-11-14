@@ -61,6 +61,8 @@ deploy/staging/.init.*/
 deploy/staging/generated/
 # Release log, the release in progress and each release's stack files (P1-T18b)
 deploy/staging/releases/
+# A single-hospital restore's package while it runs (P1-T22b): personal data, never committed
+deploy/staging/restore/
 
 # OpenTofu (P1-T8b4): providers, state, plans and real settings never go into git
 infra/**/.terraform/

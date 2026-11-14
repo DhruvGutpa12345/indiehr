@@ -521,3 +521,89 @@ def _unclassified(cursor, schema):
                 f"{schema}.{table}.{column}: looks secret; classify it in install.py"
             )
     return problems
+
+
+# The trail's own guard, as migration 0001 made it (its SQL frozen there; the same here with the
+# schema named): a restored schema gets it from this, never from the dump (P1-T22b: a dump's
+# functions and triggers are never loaded, design "After the attack" 8)
+APPEND_ONLY = """
+CREATE OR REPLACE FUNCTION {schema}.ihr_audit_refuse() RETURNS trigger
+LANGUAGE plpgsql AS $$
+BEGIN
+    RAISE EXCEPTION 'the audit trail is append-only (% on %)', TG_OP, TG_TABLE_NAME
+        USING ERRCODE = 'insufficient_privilege';
+END $$;
+CREATE OR REPLACE TRIGGER ihr_audit_append_only BEFORE UPDATE OR DELETE ON {schema}.ihr_audit_entry
+    FOR EACH ROW EXECUTE FUNCTION {schema}.ihr_audit_refuse();
+CREATE OR REPLACE TRIGGER ihr_audit_no_truncate BEFORE TRUNCATE ON {schema}.ihr_audit_entry
+    FOR EACH STATEMENT EXECUTE FUNCTION {schema}.ihr_audit_refuse();
+CREATE OR REPLACE TRIGGER ihr_audit_append_only BEFORE UPDATE OR DELETE ON {schema}.ihr_audit_seal
+    FOR EACH ROW EXECUTE FUNCTION {schema}.ihr_audit_refuse();
+CREATE OR REPLACE TRIGGER ihr_audit_no_truncate BEFORE TRUNCATE ON {schema}.ihr_audit_seal
+    FOR EACH STATEMENT EXECUTE FUNCTION {schema}.ihr_audit_refuse();
+"""
+
+
+def ensure_append_only(cursor, schema):
+    """The append-only guard of ``schema``'s trail (a restored schema: P1-T22b)."""
+    cursor.execute(sql.SQL(APPEND_ONLY).format(schema=sql.Identifier(schema)))
+
+
+# The trail's column defaults as the migrations made them (0001, 0002, 0003; the tests check
+# they are a migrated schema's exactly). Set from here on a restored schema (P1-T22b review
+# S1): an audit entry is written by every request and job, as the app role, and never runs a
+# default a dump supplied. None: no default.
+AUDIT_DEFAULTS = {
+    "ihr_audit_entry": {
+        "txid": "pg_current_xact_id()",
+        "at": "clock_timestamp()",
+        "kind": None,
+        "actor": None,
+        "context": "'{}'::jsonb",
+        "tbl": "''::text",
+        "op": "''::text",
+        "row_pk": None,
+        "patients": "'{}'::bigint[]",
+        "data": "'{}'::jsonb",
+        "salt": "uuid_send(gen_random_uuid())",
+    },
+    "ihr_audit_seal": {
+        "seq": None,
+        "lower_txid": None,
+        "upper_txid": None,
+        "entries": None,
+        "entries_hash": None,
+        "prev_hash": None,
+        "hash": None,
+        "sealed_at": "clock_timestamp()",
+        "version": "1",
+    },
+}
+
+
+def ensure_defaults(cursor, schema):
+    """Every column default of ``schema``'s two trail tables set to AUDIT_DEFAULTS (a column
+    that is not there is left alone: an older schema's next migrate adds it)."""
+    cursor.execute(
+        "SELECT c.relname, a.attname FROM pg_attribute a JOIN pg_class c ON c.oid = a.attrelid "
+        "JOIN pg_namespace n ON n.oid = c.relnamespace WHERE n.nspname = %s "
+        "AND c.relname = ANY(%s) AND a.attnum > 0 AND NOT a.attisdropped "
+        "AND a.attidentity = '' AND a.attgenerated = ''",
+        [schema, list(AUDIT_DEFAULTS)],
+    )
+    for table, column in cursor.fetchall():
+        if column not in AUDIT_DEFAULTS[table]:
+            msg = f"{table}.{column}: a trail column this build does not know"
+            raise ValueError(msg)
+        default = AUDIT_DEFAULTS[table][column]
+        target = sql.SQL("ALTER TABLE {} ALTER COLUMN {} ").format(
+            sql.Identifier(schema, table), sql.Identifier(column)
+        )
+        cursor.execute(
+            target
+            + (
+                sql.SQL("DROP DEFAULT")
+                if default is None
+                else sql.SQL("SET DEFAULT ") + sql.SQL(default)
+            )
+        )

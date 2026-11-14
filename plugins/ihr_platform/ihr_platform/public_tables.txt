@@ -25,3 +25,6 @@ ihr_refdata_registry_packrelease select pack releases: recorded only by pack app
 ihr_terminology_codesystemversion select read-only terminology (ADR-016): written only by ihr_terminology_load (admin, owner)
 ihr_terminology_concept select read-only terminology (ADR-016): its write guard is a session flag any session can set, so the privilege is the control
 ihr_terminology_designation select read-only terminology (ADR-016): written only by ihr_terminology_load (admin, owner)
+ihr_restore_record none single-hospital restores (P1-T22b): written only by ihr_hospital_restore (owner); append-only (trigger); the audit watch reads it (its own role), the app never
+ihr_restore_superseded_seal none the live seals a restore replaced (P1-T22b): written only by ihr_hospital_restore (owner); append-only (trigger); the audit watch reads it, the app never
+ihr_restore_superseded_entry none the entries of those seals, with values (P1-T22b): written only by ihr_hospital_restore (owner); append-only (trigger); the audit watch reads it, the app never

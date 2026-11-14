@@ -29,6 +29,10 @@ class IhrAuditConfig(AppConfig):
             db_roles.clear_deferred, weak=False, dispatch_uid="ihr_db_roles_clear"
         )
         reads.connect()
+        # Restore events are checked against the superseded segments (P1-T22b)
+        from ihr_audit import archive
+
+        archive.install()
 
         # Every DRF authentication class, ours and CARE's patient-OTP ones, ends here.
         authenticate = APIView.perform_authentication

@@ -689,6 +689,7 @@ class Fleet:
                 fleet_run=self.run_row,
             )
             self.entries.append(_Entry(hospital, op))
+        self._leave_restores()
         try:
             self._preflight()
             for step in self.steps:
@@ -706,6 +707,23 @@ class Fleet:
             raise
         self._finish()
         return self.run_row
+
+    def _leave_restores(self):
+        """A hospital held for a restore (P1-T22b) is the restore's alone: no step of a fleet
+        run touches it (not even check, so a half-finished restore never stops the start of
+        the others), and its hold is never lifted here. It is reported as held."""
+        for entry in self.entries:
+            holder = release.restore_holder(entry.hospital)
+            if holder:
+                self._note(
+                    entry,
+                    self.steps[0],
+                    "held",
+                    error=f"held for restore {holder} (ihr_hospital_restore owns it)",
+                )
+                self.out(
+                    f"{entry.hospital.slug}: held for restore {holder}: left alone"
+                )
 
     def _preflight(self):
         """Faults that are the same for every hospital, found before any hospital is held or

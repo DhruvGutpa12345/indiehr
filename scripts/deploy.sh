@@ -340,7 +340,8 @@ log "Tagged every image :$TAG on the server"
 # ---- 3. Stack files (tracked files only: never a stray .env or secret) ----------------------
 # The same archive is kept on the server as the release's stack files (rollback unpacks it)
 log "Sending the stack files to $REMOTE_ROOT (kept as $REL_REMOTE/stack-$TAG.tgz)"
-git ls-files -z deploy/staging deploy/s3 deploy/monitoring deploy/logs deploy/lib deploy/dumps deploy/keycloak/password-blocklist \
+git ls-files -z deploy/staging deploy/s3 deploy/monitoring deploy/logs deploy/lib deploy/dumps deploy/restore \
+    plugins/ihr_platform/ihr_platform/restore/package.py deploy/keycloak/password-blocklist \
     deploy/grafana/provisioning deploy/grafana/dashboards deploy/grafana/logs-reader.yml deploy/grafana/allowed-empty.txt \
     deploy/docker/frontend-nginx.conf.template scripts/staging.sh scripts/client-keys.sh scripts/check-dashboards.py \
     scripts/release_log.py \

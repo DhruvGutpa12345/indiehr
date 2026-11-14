@@ -347,3 +347,244 @@ CI job "Dumper image"), and the staging static tests.
   unless the drill exists by then.
 - **Clinical tables** are not in the size model (the audit trail is assumed to dominate).
 - The first builder's proof logs were lost in a reboot; every number above was measured again.
+
+## P1-T22b as built (14-11-2026)
+
+Code: `plugins/ihr_platform/ihr_platform/restore/` (`engine.py` the steps, `package.py` the
+quarantine's package and its load, `files.py` the buckets' versions, `drill_cache.py`),
+`manage.py ihr_hospital_restore`, `ihr_audit/archive.py` (the superseded-segment archive,
+`events.SEGMENTS.source`), the restore hold in `release.py` (+ `fleet.py`, `watch.py`,
+`ihr_audit/tasks.py`, `deploy/dumps/dumper.py`), `runner.exclusive_for`, `settings/drill.py`,
+migrations ihr_platform 0012 (operation kind, hold fields, the archive tables) and ihr_audit 0006
+(the `restore` entry kind), `deploy/restore/quarantine.py`, `scripts/staging.sh hospital-restore*`,
+log alerts `deploy/logs/alerts/restore.yml`, file-bucket versioning (35 days) in
+`deploy/s3/setup_buckets.py` and `infra/aws/storage.tf`. Runbook: `deploy/staging/README.md`,
+"Restoring one hospital (P1-T22b)". Proof: `proof-b.md`. Tests: `ihr_platform.tests.test_restore`
+(end to end on a second hospital, every refusal, the hold everywhere, the package's checks, abort,
+expiry), `scripts/test_restore_quarantine.py` (a real dump through the quarantine and eight kinds of
+hostile dump refused, in the dumper image: `scripts/test-dumps-live.sh`), the log-alert cases, nine
+mutation rows (`restore-sequence-advance`, `restore-session-invalidation`, `restore-hold-served`,
+`restore-hold-fleet`; after the review `restore-final-seal`, `restore-sequences-before-migrate`,
+`restore-patient-grants`, `restore-drain-jobs`, `restore-expressions-inspected`). TENANCY §7.5/§7.7 and ADR-002 (Amendment 2) and ADR-010 carry the
+amendments, status Proposed (Q-K33).
+
+### Deviations from the sections above
+
+1. **Park and load are one transaction**, not "park, then `pg_restore --single-transaction`": the
+   quarantine writes a **package** from its checked catalogue (each statement built here from
+   `quote_ident`, `format_type` and `pg_get_*def`, the rows as COPY files with their SHA-256), and the
+   restore's one transaction locks the live trail, seals all of it (a final seal of its own),
+   renames the live schema, loads the package (each statement checked whole against the forms the
+   exporter writes and sent alone through the extended protocol; CHECKs as NOT VALID, exclusion
+   constraints and expression indexes made on the empty tables and every expression inspected in
+   the live cluster before any row or later statement evaluates one; review S1/S2), compares the
+   result's shape and every table's row count with the package's, recomputes the restored chain,
+   advances the sequences, installs the trail's guard, defaults, triggers and sealing from this
+   build's code, merges security state strictly, and checks every other schema's and public's
+   catalogue is unchanged. A crash leaves either nothing or all
+   of it; resume still reads the database's state (both schemas: committed; only the parked one: load
+   again; neither: a lost schema, refused). `--abort` is allowed before reconcile (after it, outside
+   state has changed): it drops the restored copy and renames the parked schema back.
+2. **No function or trigger ever comes from a dump.** The quarantine refuses any that is not ours by
+   name, kind and wiring; ours are compared with this build's **by definition hash** (the precheck
+   reports a difference, e.g. an older build's) and are never loaded either way: the code installs
+   them. The append-only guard, which only migration 0001 made, is re-made by
+   `ihr_audit.install.ensure_append_only`.
+3. **The restore hold** is two fields of `HospitalSchemaState` (`restore_operation`,
+   `restore_since`): `schema_ready`, `ready_q` and so `servable`, the gate, sign-ins, beat, queued
+   tasks, the staff worker and pack apply refuse it; `release_hold` never touches it; the fleet runner
+   notes such a hospital "held" and leaves it alone (also at start-up, so a half-finished restore
+   never stops `up`); the dumper skips it (`reason` restore); the audit watch shows it as restoring;
+   the inactive sealer skips it; `require_ready` names it.
+4. **One lock, held once:** `runner.exclusive_for(slug, operation)` records the holder in this
+   process, and every `runner.exclusive(slug)` inside it (migrate, packs) takes nothing more.
+5. **The steps after the database** run as separate invocations of the same operation:
+   `ihr_hospital_restore` exits 4 for the Keycloak check (it needs the operator's bootstrap
+   credential, which only the unlogged admin one-off holds: that step runs there with
+   `--stop-after keycloak --unlogged`, the rest in the logged migrate one-off, which also writes the
+   failure line of a step that failed there) and, only with `--restart`, 3 for a restart of the app
+   containers. There is **no rolling restart** (review C5): with one backend container a restart
+   takes every hospital down, and no process keeps state from a hospital's rows (its uuid lives in
+   public, its settings and role caches in Redis, deleted); a schema a process gated for rights
+   beyond the model stays gated there until a restart (`--restart`). `staging.sh` drives them.
+6. **Files:** every object under the hospital's prefix in both buckets, not only the ones the
+   restored rows name (keys are unique per upload, so it is the same set plus orphans). Listing
+   versions needs the buckets' admin key on AWS (the app's keys have no ListBucket): typed by the
+   operator for the run (`IHR_RESTORE_S3_ACCESS_KEY`), the stand-in's admin key in a proof.
+7. **The erasure ledger** (P4-T1, `public.ihr_privacy_erasure`): its mere existence refuses every
+   restore until P4-T1 teaches the restore to replay erasures after the restore point.
+8. **Disk:** `staging.sh` refuses below 12 × the dump plus 1 GiB free; the command below 2 × the
+   package plus 512 MiB (`--free-bytes`).
+9. **Locks:** the precheck estimates 4 per relation and warns past the lock table (a load that runs
+   out fails cleanly); measured 3,794 for a 1,101-relation schema.
+10. **The drill:** a 30-day rotation picks the hospital; the restore runs in a backend-image one-off
+    with `ihr_platform.settings.drill` (it refuses to start if any live setting reaches it; local
+    cache `DrillCache`), on a Docker network holding only the copy; "unchanged" is a hash of each
+    other schema's rows (count and sum of row hashes per table), triggers, function bodies and
+    settings, grants and sequence values, and of every public row not the drilled hospital's,
+    before and after (not a byte comparison of files; since the second verification the other
+    hospitals' rows by their tables' write counters: item 15). The nightly schema-only check of
+    every dump was built in P1-T22a.
+11. **Strict merge, concretely:** users inactive, deleted or gone in the parked copy stay off; a
+    staff link changed or removed since the dump switches its user off; `is_superuser` and `is_staff`
+    never come back; assignments in `emr_organizationuser`, `emr_facilityorganizationuser`,
+    `security_roleassociation` and `emr_patientuser` (a direct patient grant: review S4) absent or
+    deleted in the parked copy are soft-deleted, and one whose role grants permissions the parked
+    copy's role does not is set back to that role; patient shares (`emr_patientorganization`)
+    absent or deleted in the parked copy are soft-deleted; role permissions not in the parked copy
+    are soft-deleted; `cached_role_orgs` cleared for changed users, and the affected patients'
+    `users_cache` and `organization_cache` built again by CARE's own save after migrate. It runs in
+    the load's transaction, after the sequences are advanced and before migrate, roles or packs
+    write anything (review C3: the two copies' ids still name the same rows). `--keep-restored-access
+    "why"` skips the assignment, grant, share, role and flag merge (recorded); the user states,
+    links and sessions are never skipped. Requests made after the dump that take access away (a
+    sign-in reset, an invitation's withdrawal) for a user the restored copy has stay queued and are
+    named (review S8).
+12. **Parked schemas** are dropped by the owner's daily `hospital-restore-expire` (the app may not
+    drop schemas); the worker's per-minute report names one past 8 days (ParkedSchemaOverdue).
+13. **Package storage:** a Docker volume per restore (`ihr-restore-<slug>`), never the host's disk;
+    kept while a restore is unfinished (for `--resume`), removed after it ends or is aborted.
+
+14. **After the review of P1-T22b (14-11-2026)**, besides the above:
+    - **S1:** the quarantine walks every stored expression's node tree (`package.expression_problems`:
+      only immutable built-ins or extension functions and `nextval`, `now`, `clock_timestamp`,
+      `statement_timestamp`, `transaction_timestamp`, `gen_random_uuid`, `pg_current_xact_id`; only
+      this schema's relations), and the load runs the same check in the live cluster before it can
+      evaluate any of them; the precheck refuses a package whose shape is not the live schema's when
+      their migrations are the same; the trail's column defaults are set from code
+      (`ihr_audit.install.ensure_defaults`).
+    - **S2:** forms matched whole after a small lexer refuses a second statement or a comment;
+      the extended protocol; the quarantine stops its server, re-checks the files and prints
+      package.json's hash, which `staging.sh` passes as `--package-sha256` (recorded, checked again
+      on a resume before the load).
+    - **S5:** the final seal is a temporary function built from the sealing function's own SQL
+      (`seal.final_sql`), up to the snapshot's xmax and without the sealer's lock; an entry left
+      unsealed refuses and rolls the park back.
+    - **S6/C3:** sequences advanced right after the load; the reconcile pass is a re-check.
+    - **S7:** the restored chain is recomputed, and the dump's entries past its last seal compared
+      with the parked ones, before the commit (still abortable).
+    - **C1:** every step after migrate first checks the schema is this build's and migrates it again
+      when it is behind (ahead: a stop); `release` and `rollback` refuse while a restore is open.
+    - **C2:** the lock is tried before an operation exists (busy: refused, nothing recorded); a lock
+      failure on resume is not recorded as a step, and abort ignores names that are not steps.
+    - **C4:** every Celery task and staff-worker job holds its hospital's job lock (shared) for its
+      whole run (`release.job`); the drain takes it once, exclusively, after the hold.
+    - **C6:** a resume after the load never reads the package. **C7:** the drill's hash also covers
+      every other schema's shape and public's functions, triggers and shape (on a live restore the
+      same catalogue-only hash is compared inside the load's transaction). **C9:** a step that failed
+      in the unlogged one-off is reported by the logged one (`--report-failure`, every `--resume`).
+    - **S9:** free disk checked from the manifest before anything is fetched; the decrypted dump
+      removed by an EXIT trap whatever stops the run; the drill's owner address passed in the
+      command's environment, never a file.
+
+15. **After the second verification (14-11-2026):**
+    - **S2 (residual):** a constraint statement is matched as ONE constraint of its kind
+      (`package._CONSTRAINT_FORMS`: its text with every top-level parenthesis emptied must be
+      the form pg_get_constraintdef writes, a key's or a foreign key's parentheses hold column
+      names only, a foreign key's schema is this one). ALTER TABLE takes several subcommands
+      separated by commas, and one after a key (`, ALTER COLUMN x TYPE text USING (...)`,
+      `, OWNER TO ...`, `, DISABLE TRIGGER ALL`) would have run as the owner after the rows and
+      the inspection, a USING once per row and never stored. Refused before anything runs.
+    - **S1 (residual):** nextval only of a regclass constant (a sequence named at run time,
+      `('h_x.s'::name)::regclass` or `(oid)::regclass`, leaves no pg_depend row, so the
+      reference check could not see another hospital's); the operators of exclusion constraints
+      and foreign keys go through the same function check; an index's operator class must be a
+      built-in or an extension's, and an index that names one is built on the empty table and
+      inspected before the rows (it is no longer "plain").
+    - **S7:** two forged dumps restored end to end: sealed entries that no longer verify, and a
+      dump with no seal whose entries are not the live trail's own; both stop in the restore
+      step, before the commit, and abort cleanly (mutation `restore-chain-recomputed`).
+    - **C4 (jobs' side):** tests that a Celery task, an invitation job and an access-request job
+      each hold their hospital's job lock while their body runs (mutations
+      `restore-job-lock-celery`, `restore-job-lock-staff-worker`). A job never waits for the
+      lock: `release.job` tries it, and while the drain holds it or waits for it (Postgres
+      queues a new shared request behind a waiting exclusive one) the job is deferred at once,
+      as for a held hospital, so no worker slot (they serve every hospital) waits out the drain
+      (mutation `restore-job-lock-no-wait`).
+    - **C8:** the "only the parked schema" state (a park whose load never happened) is resumed
+      in the resume test; the trail's defaults from code are tested through the restore's own
+      `_install_trail` (mutation `restore-trail-defaults`).
+    - **The live "others unchanged" compare** is now `package.catalogue_versions`: per schema,
+      the number and versions (key and xmin) of every catalogue row of its objects, set-based
+      and without deparsing (any DDL writes a new row version; autovacuum and ANALYZE write in
+      place, checked). Two reads inside the load's transaction cost the same at any fleet size.
+      A hospital schema that appeared meanwhile (onboarding) and one held by another restore are
+      left out, so neither stops this restore; a schema that changed or went away otherwise is
+      named.
+    - **An older build's dump:** the precheck refuses one whose tables lack a column the strict
+      merge needs (`engine.MERGE_COLUMNS`), before anything is done, instead of failing half-way
+      through the restore step; a flag or a cache column its users table did not have yet
+      (`is_superuser`, `is_staff`, `cached_role_orgs`) is skipped and named.
+    - **C7 (the drill's cost):** the drill no longer reads every other hospital's rows twice.
+      On the drill copy nothing else runs, so each of their tables' write counters (rows
+      inserted, updated, deleted, from the statistics, which also count a rolled-back write)
+      and its relfilenode (a TRUNCATE) stand for its rows, with the catalogue and sequence
+      values as before (`package.fingerprint(rows="writes")`, after
+      `package.flush_write_counters`); public's rows are still hashed (all but the drilled
+      hospital's). Where the server does not count writes (`track_counts` off) every row is read,
+      as before.
+
+### Numbers (proof-b.md)
+
+- Restore of a 1,101-relation hospital with 200,000 audit entries (37.8 MB package): **42 s** end to
+  end (fetch 2 s, quarantine 4 s, park and load 1.7 s, migrate 1.6 s, audit 1.5 s, the restart and
+  one-off containers the rest); `--dry-run` 11 s.
+- Monthly drill: 22 s (the copy from the backups 10 s). `--from-pitr` dry run: 19 s.
+- Locks: 3,794 in the load transaction (default lock table 6,400). P1-T23: `max_locks_per_transaction
+  = 256`.
+- Tests (final code): plugin suites as the app role `Ran 719 tests ... OK (skipped=45)`, roles off
+  `Ran 685 tests ... OK (skipped=49)`; dumper image `Ran 91 ... OK (skipped=7)` and quarantine
+  `Ran 11 ... OK (skipped=4)` (`scripts/test-dumps-live.sh`); `scripts/test_dumps.py` +
+  `test_release_scripts.py` `Ran 168 ... OK (skipped=7)`; `check-logs.py` "Log pipeline OK"; the four
+  restore mutation rows each turn their test red (run locally: FAILED (failures=1) each).
+
+### Known limits
+
+- **`ihr_audit_verify` after a restore needs the owner or the watch's role:** the app role has no
+  right on the archive (its entries hold values of every hospital), so run as the app a restore
+  event reads as unverifiable and the superseded claims as a rewrite. The release's pre-check
+  (`rel_audit_check`, the running backend) therefore warns after a restore (it never stops a
+  release); `staging.sh manage ihr_audit_verify --all` with the reader key, or the audit watch, is
+  the check. A SECURITY DEFINER function returning only hashes would let the app verify too (open).
+- **The archive holds personal data in `public`** (the superseded entries' values), owner-only and
+  append-only. Offboarding and DPDP erasure must cover it (TENANCY §7.7 amendment; P4-T1); not built.
+- **Queued Celery tasks** of the hospital from before the restore run after it (the gate holds them
+  while it is held); none is purged. A task or staff-worker job still running when the drain's wait
+  ends stops the restore (held; `--resume`), it is never killed.
+- **The live "others unchanged" compare sees DDL, not rows.** Inside the load's transaction the
+  other hospitals go on writing, so only their catalogues are compared (by row version). A write
+  of rows into another hospital by the load is ruled out by the statement forms and the
+  expression inspection, not by this compare; the drill, where nothing else runs, compares rows
+  too.
+- **A fleet-wide DDL during a restore stops it:** `ihr_fleet_run migrate`, `db-roles --assert` or
+  anything else that changes another hospital's or public's catalogue while the load runs is named
+  by the compare and rolls the load back (the hospital stays held; `--resume` once it is done).
+  Onboarding and another hospital's restore do not.
+- **The drill's "other hospitals unchanged" trusts the statistics' write counters** for their
+  rows: a statistics reset between its before and after (`pg_stat_reset`, which the drill's owner
+  role may not run) would hide a write; a TRUNCATE shows by relfilenode, DDL by the catalogue.
+  Tested in the suite (`test_the_drill_stands_for_other_hospitals_rows_by_their_write_counters`),
+  not yet in a drill on the staging copy (the second fixer did not repeat the local staging
+  proof).
+- **An older build's dump without a column the strict merge needs is refused**, not merged
+  (`engine.MERGE_COLUMNS`: ids, `deleted`, `user_id`, `role_id`, `patient_id`, `permission_id`,
+  `is_active`, `keycloak_sub`; all long-standing in CARE). Restoring one would need this build's
+  migrations applied before the merge, which the merge's order (before migrate, review C3)
+  rules out.
+- **The package's shape is compared with a reference only when the dump's migrations are the
+  live schema's.** An older dump has no reference here (building one would need this build's
+  migrations up to the dump's state in a scratch schema): its expressions are still inspected,
+  its trail defaults set from code, and migrate brings it to this build.
+- **Keycloak members added after the dump** are named, not removed; the operator decides.
+- **Role definitions** are merged by permission only (a custom role's name or contexts come back as
+  they were at the dump).
+- **The parked schema** is readable by `ihr_dump` (`pg_read_all_data`; read-only, and the dumper never
+  dumps it) as well as the owner.
+- **A dump of another cluster** (a move) is refused by the transaction-id rule (rebase seal: not
+  built). A restore after a whole-cluster point-in-time restore is not covered.
+- **The restore event is written once per generation only when the reader key can see the bucket**
+  (a re-run checks first); with only the writer key a crash between the write and its record could
+  write a second object of the same generation (reported by the watch as a double).
+- **HospitalNotServed fires during a restore** (the hospital is down, on purpose).
+- **Not proven:** the quarterly live drill, alert delivery (rules tested by `check-logs.py`), E2E's
+  bucket versioning, a busy hospital at 3 years (P1-T23).

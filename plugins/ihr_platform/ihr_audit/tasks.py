@@ -42,7 +42,11 @@ def seal_inactive_hospitals():
         Hospital.Status.ARCHIVED,
     )
     done = {"sealed": 0, "entries": 0, "skipped": 0}
-    for hospital in Hospital.objects.filter(status__in=inactive).order_by("slug"):
+    # Never one held for a restore (P1-T22b): its schema is being parked and replaced
+    rows = Hospital.objects.filter(status__in=inactive).exclude(
+        schema_state__restore_operation__isnull=False
+    )
+    for hospital in rows.order_by("slug"):
         with connection.cursor() as cursor:
             if not has_trail(cursor, hospital.schema_name):
                 done["skipped"] += 1

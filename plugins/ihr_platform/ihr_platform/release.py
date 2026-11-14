@@ -16,7 +16,8 @@ Design: docs/reviews/p1-t18/design.md, "P1-T18a" as amended by "After the attack
   the schema was last verified against, and the hold of a release window. Written only here,
   with ``get_or_create`` and ``update()``; recorded after django-tenants' ``schema_migrated``
   signal (sent on success only: ``signals.py``) and by ``ihr_fleet_run``.
-- ``servable(hospital)``: ACTIVE, not held, and its recorded fingerprint is this build's. The
+- ``servable(hospital)``: ACTIVE, not held (for a release or a restore, P1-T22b), and its
+  recorded fingerprint is this build's. The
   gate (``release_gate.py``) answers 503 for a hospital whose schema is not ready; staff and
   service sign-ins, beat, the staff worker, the provisioner, every queued Celery task
   (``celery_gate.py``) and the operator commands that write into a hospital
@@ -27,6 +28,7 @@ import functools
 import hashlib
 import re
 import traceback
+from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -273,6 +275,99 @@ def release_hold(hospital_ids, reason=None):
     return rows.update(upgrading_since=None, hold_reason="")
 
 
+# --- the restore hold (P1-T22b) ---------------------------------------------------------------
+# Set and lifted only by ihr_hospital_restore, for its own operation: a release window, the fleet
+# runner, pack apply and the dumper never lift it (release_hold above does not touch it). Every
+# check that serves a hospital refuses it (schema_ready, ready_q), so beat, the staff worker,
+# queued Celery tasks, sign-ins and the gate all leave a hospital being restored alone.
+HOLD_RESTORE = "restore"
+
+
+class RestoreHeldError(RuntimeError):
+    """Another restore operation holds this hospital."""
+
+
+def restore_hold(hospital, operation_id):
+    """Hold ``hospital`` for restore ``operation_id`` (idempotent for the same operation).
+    Refuses (RestoreHeldError) when another operation holds it."""
+    model, now = _state_model(), timezone.now()
+    with transaction.atomic():
+        model.objects.get_or_create(hospital_id=hospital.pk)
+        row = model.objects.select_for_update().get(pk=hospital.pk)
+        if row.restore_operation and str(row.restore_operation) != str(operation_id):
+            msg = f"{hospital.slug} is held for restore {row.restore_operation}"
+            raise RestoreHeldError(msg)
+        if not row.restore_operation:
+            model.objects.filter(pk=hospital.pk).update(
+                restore_operation=operation_id, restore_since=now
+            )
+    return True
+
+
+def restore_holder(hospital):
+    """The restore operation (uuid string) holding ``hospital``, or ""."""
+    value = (
+        _state_model()
+        .objects.filter(pk=hospital.pk)
+        .values_list("restore_operation", flat=True)
+        .first()
+    )
+    return str(value) if value else ""
+
+
+def lift_restore_hold(hospital, operation_id):
+    """Lift the restore hold of ``operation_id`` (never another operation's). Returns how many
+    rows changed (0 or 1)."""
+    return (
+        _state_model()
+        .objects.filter(pk=hospital.pk, restore_operation=operation_id)
+        .update(restore_operation=None, restore_since=None)
+    )
+
+
+# --- the job lock (P1-T22b review C4) ------------------------------------------------------
+# Every background job that works in one hospital (a CARE Celery task, a staff-worker job)
+# holds that hospital's job lock, shared, for its whole run: it runs between transactions, so a
+# restore's drain cannot see it in pg_stat_activity. The restore takes the lock exclusively once,
+# after its hold: that waits for every job that began before the hold, and a job that begins
+# after it sees the hold (it checks only once it holds the lock) and defers. A job never waits
+# for the lock: while the drain holds it, or waits for it (Postgres queues a new shared request
+# behind a waiting exclusive one), the job is told so at once and defers as for a held
+# hospital, so no worker slot (shared by every hospital) is kept for the drain's length.
+
+
+def job_key(schema_name):
+    """The advisory lock key of ``schema_name``'s background jobs (not runner.lock_key's)."""
+    digest = hashlib.sha256(f"ihr_job:{schema_name}".encode()).digest()
+    return int.from_bytes(digest[:8], "big", signed=True)
+
+
+@contextmanager
+def job(schema_name):
+    """Hold ``schema_name``'s job lock, shared, on this process's connection while the job
+    runs (nothing for public). Yields True when held; False, at once, when a restore's drain
+    holds it or waits for it: the caller then defers the job (it must not run). A job whose
+    connection went away lost its lock with it."""
+    if not schema_name or schema_name == PUBLIC:
+        yield True
+        return
+    key = job_key(schema_name)
+    with connection.cursor() as cursor:
+        cursor.execute("SELECT pg_try_advisory_lock_shared(%s)", [key])
+        taken = bool(cursor.fetchone()[0])
+    if not taken:
+        yield False
+        return
+    try:
+        yield True
+    finally:
+        try:
+            with connection.cursor() as cursor:
+                cursor.execute("SELECT pg_advisory_unlock_shared(%s)", [key])
+        except Exception:  # a broken connection: closing it frees the lock
+            connection.close()
+
+
 def hold_reason(hospital):
     """Why ``hospital`` is held ("" when it is not)."""
     row = (
@@ -297,8 +392,18 @@ def schema_ready(hospital):
         return True
     if hospital.schema_name in db_roles.gated_schemas():
         return False
-    row = recorded(hospital)
-    return row is not None and row[1] is None and row[0] == code_fingerprint()
+    row = (
+        _state_model()
+        .objects.filter(pk=hospital.pk)
+        .values_list("schema_fingerprint", "upgrading_since", "restore_operation")
+        .first()
+    )
+    return (
+        row is not None
+        and row[1] is None
+        and row[2] is None  # the restore hold (P1-T22b)
+        and row[0] == code_fingerprint()
+    )
 
 
 def servable(hospital):
@@ -313,6 +418,12 @@ def require_ready(hospital):
     held for a release or whose schema is not this build's (CommandError)."""
     from django.core.management.base import CommandError
 
+    if restore_holder(hospital):
+        msg = (
+            f"{hospital.slug} is held for a restore (operation {restore_holder(hospital)}): "
+            "finish it (ihr_hospital_restore --resume) or abort it first"
+        )
+        raise CommandError(msg)
     if not schema_ready(hospital):
         msg = (
             f"{hospital.slug} is held for a release or not on this build's schema: run "
@@ -331,6 +442,8 @@ def ready_q(prefix=""):
         **{
             f"{prefix}schema_state__schema_fingerprint": code_fingerprint(),
             f"{prefix}schema_state__upgrading_since__isnull": True,
+            # never a hospital held for a restore (P1-T22b)
+            f"{prefix}schema_state__restore_operation__isnull": True,
         }
     )
     if gated := db_roles.gated_schemas():

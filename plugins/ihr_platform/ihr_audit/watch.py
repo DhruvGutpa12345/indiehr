@@ -289,8 +289,9 @@ class Hospital:
     )
 
 
-# A hospital being restored (P1-T22 holds it with this reason): its schema is parked and
-# replaced, so nothing about it can be judged until the restore ends and writes its event
+# A hospital being restored (P1-T22b's restore hold, HospitalSchemaState.restore_operation): its
+# schema is parked and replaced, so nothing about it can be judged until the restore ends and
+# writes its event
 HOLD_RESTORE = "restore"
 
 
@@ -310,14 +311,18 @@ def _hospitals():
     )
     for h in rows:
         state = getattr(h, "schema_state", None)
+        restoring = state is not None and state.restore_operation is not None
         ready = (
             state is not None
             and state.upgrading_since is None
+            and not restoring
             and state.schema_fingerprint == fingerprint
             and h.schema_name not in gated
         )
         since = state.upgrading_since if state is not None else None
         hold = state.hold_reason if since else ""
+        if restoring:  # the restore hold (P1-T22b): its own field, never a release's
+            since, hold = state.restore_since, HOLD_RESTORE
         found.append(
             Hospital(
                 str(h.uuid),

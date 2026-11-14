@@ -49,6 +49,9 @@ process's key may add, read and list versions under dumps/ and read erasure/, ne
                                      whole by pg_restore, listed and restored schema-only
     dumper.py get <uuid> <date|latest> <dump|public>
                                      the object decrypted and checked, on stdout (P1-T22b restores)
+    dumper.py manifest <uuid> <date|latest>
+                                     that dump's manifest, authentic and chained, as JSON (the
+                                     restore's pre-checks; no personal data)
     dumper.py probe                  the bucket's lock and what this key may do (go-live)
     dumper.py role                   this process's database role is ihr_dump as modelled (exit 1:
                                      it is not; 2: no session to check it with)
@@ -479,7 +482,8 @@ def role_problems(row):
 
 HOSPITALS_SQL = """
 SELECT h.uuid::text, h.slug, h.schema_name, h.status,
-       s.upgrading_since IS NOT NULL, coalesce(s.hold_reason, ''),
+       (s.upgrading_since IS NOT NULL OR s.restore_operation IS NOT NULL),
+       CASE WHEN s.restore_operation IS NOT NULL THEN 'restore' ELSE coalesce(s.hold_reason, '') END,
        extract(epoch FROM coalesce(h.activated_at, h.created_on))::bigint,
        (SELECT coalesce(sum(pg_total_relation_size(c.oid)), 0)::bigint FROM pg_class c
           JOIN pg_namespace n ON n.oid = c.relnamespace
@@ -564,7 +568,8 @@ def read_facts(conn, hospital):
 
     s = hospital.schema
     q = lambda text, args=(): conn.execute(text, args).fetchall()  # noqa: E731
-    row = q("SELECT h.status, s.upgrading_since IS NOT NULL, h.id FROM public.ihr_platform_hospital h "
+    row = q("SELECT h.status, (s.upgrading_since IS NOT NULL OR s.restore_operation IS NOT NULL), h.id "
+            "FROM public.ihr_platform_hospital h "
             "LEFT JOIN public.ihr_platform_hospitalschemastate s ON s.hospital_id = h.id WHERE h.uuid = %s",
             [hospital.uuid])
     if not row:
@@ -1427,6 +1432,20 @@ def get(bucket, sealer, hospital, when, part, out):
             out.write(chunk)
 
 
+def manifest(bucket, sealer, hospital, when, out):
+    """The manifest of the dump `get` would return (P1-T22b: the restore's pre-checks read it):
+    authentic (its MAC) and chained, as every reader takes it, or exit 1. Ids, hashes, sizes,
+    fingerprints and sequence values only: no personal data."""
+    held = Holdings(bucket, sealer)
+    ms = sorted((m for m in (held.by_hospital.get(hospital) or {}).values()
+                 if when == "latest" or m["date"] == when), key=lambda m: m["created"])
+    if not ms:
+        sys.exit(f"dumper: no dump of {hospital}" + ("" if when == "latest" else f" on {when}"))
+    if any(hospital in text for text in [*held.problems, *held.bad]):
+        sys.exit(f"dumper: {hospital}'s dumps have problems (dumper.py check says which): none is used")
+    out.write(json.dumps({"authentic": True, "manifest": ms[-1]}, sort_keys=True) + "\n")
+
+
 def probe(bucket, out=sys.stdout):
     """What this key may do in the dumps bucket, and its lock (run at go-live). A small probe
     object stays under dumps/ihr-key-check/ (locked like the rest; dump-expire erases it)."""
@@ -1669,7 +1688,7 @@ def service(cfg, source, tools, bucket, sealer, status):
 
 def main(argv):
     cmd = argv[1] if len(argv) > 1 else "run"
-    if cmd not in ("run", "once", "check", "get", "probe", "role", "drill-mark"):
+    if cmd not in ("run", "once", "check", "get", "manifest", "probe", "role", "drill-mark"):
         sys.exit(__doc__)
     cfg = Config()
     status = Status(os.path.join(cfg.workdir, "status.json") if os.path.isdir(cfg.workdir) else None,
@@ -1687,6 +1706,11 @@ def main(argv):
         if len(argv) != 5 or not UUID_RE.match(argv[2]) or argv[4] not in ("dump", "public"):
             sys.exit("usage: dumper.py get <hospital uuid> <YYYY-MM-DD|latest> <dump|public>")
         get(bucket, sealer, argv[2], argv[3], argv[4], sys.stdout.buffer)
+        return
+    if cmd == "manifest":
+        if len(argv) != 4 or not UUID_RE.match(argv[2]):
+            sys.exit("usage: dumper.py manifest <hospital uuid> <YYYY-MM-DD|latest>")
+        manifest(bucket, sealer, argv[2], argv[3], sys.stdout)
         return
     if cmd == "check":
         n, _ = check(bucket, sealer, tools, deep="--deep" in argv, every="--all" in argv,

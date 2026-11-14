@@ -451,13 +451,13 @@ class AuditWatchOperations(unittest.TestCase):
 
     def test_a_restoring_rollback_says_what_the_watch_will_report(self):
         """C1: a whole-database restore leaves cut chains no event excuses yet: the rollback
-        says so before it is confirmed, and P1-T22b carries the restore events for it."""
+        says so before it is confirmed, and P1-T22c (still open) carries the restore events for it."""
         rollback = func("rollback")
         said = rollback[rollback.index("What this rollback does and loses"):rollback.index("Type the release tag")]
-        for want in ("AuditChainBroken", "AuditFingerprintMismatch", "P1-T22b", "never a silence"):
+        for want in ("AuditChainBroken", "AuditFingerprintMismatch", "P1-T22c", "never a silence"):
             self.assertIn(want, said)
         tracker = (ROOT / "docs" / "TRACKER.md").read_text()
-        line = next(ln for ln in tracker.splitlines() if "P1-T22b" in ln and "⬜" in ln)
+        line = next(ln for ln in tracker.splitlines() if "P1-T22c" in ln and "⬜" in ln)
         self.assertIn("rollback --restore", line)
 
 

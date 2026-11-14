@@ -92,6 +92,13 @@
 #   scripts/staging.sh dumps-probe               the bucket's lock and what the dumper key may do
 #   scripts/staging.sh dumps-expire [--dry-run] [--erase-suspect]  erasure past 14 nights / 4 Sundays, from the
 #                                                owner's machine with the bucket's admin key (stdin)
+#   scripts/staging.sh hospital-restore <slug> (--dump <YYYY-MM-DD|latest> | --from-pitr "<time>")
+#                     --reason "..." [--keep-restored-access "why"] [--restart] [--dry-run] | <slug> --resume | --abort | --drill
+#                                                one hospital back to its dump (P1-T22b): quarantine,
+#                                                park, restore, reconcile, audit record; held meanwhile
+#   scripts/staging.sh hospital-restore-drill [--slug S]   monthly, on the restore-drill copy only
+#   scripts/staging.sh hospital-restore-status | hospital-restore-expire [--dry-run]
+#                                                restores and parked schemas | parked ones past 7 days dropped
 #
 # <suffix> is where hospitals live: <slug>.<suffix>, e.g. app.example.in (Q-T11).
 # --vm: a proof on a throwaway local VM (scripts/local-vm.sh): small memory, all addresses,
@@ -1195,8 +1202,9 @@ restore_drill() {  # a copy of the database from the backups, checked, then remo
   ((i == 0)) || die "restore failed"
   # The copy never archives into the repository (archive_mode=off); it fetches WAL to recover.
   # Recovery needs at least the original's max_connections (100, compose.yaml).
+  # cluster_name: how ihr_hospital_restore --drill knows the database is this copy (P1-T22b)
   pg_container "$DRILL" "$DRILL:/var/lib/postgresql" postgres -c archive_mode=off \
-    -c shared_buffers=128MB -c max_connections=100 "${PG_LOG_PRIVACY[@]}"
+    -c shared_buffers=128MB -c max_connections=100 -c cluster_name=ihr-restore-drill "${PG_LOG_PRIVACY[@]}"
   docker start "$DRILL" >/dev/null
   wait_promoted "$DRILL"
   # The copy's own moment: its last replayed transaction (what the fingerprints are checked at)
@@ -1323,6 +1331,13 @@ rel_held_count() {  # rel_held_count: how many hospitals are held for a window; 
   local n
   n="$(rel_sql "SELECT count(*) FROM ihr_platform_hospitalschemastate WHERE hold_reason = 'window' AND upgrading_since IS NOT NULL" 2>/dev/null || true)"
   [[ ! "$n" =~ ^[0-9]+$ ]] || echo "$n"
+}
+rel_open_restores() {  # rel_open_restores: "slug (operation)" of every unfinished hospital restore
+  # (P1-T22b review C1: a release would leave its hospital on the old build, its smoke would fail,
+  # and the restore could not finish); dies when the database cannot be read
+  rel_sql "SELECT string_agg(slug || ' (' || id || ')', ', ' ORDER BY slug) FROM ihr_platform_tenantoperation
+    WHERE kind = 'restore' AND status IN ('pending', 'running', 'failed')" \
+    || die "could not read the restore operations (above): nothing changed"
 }
 rel_lock() {  # one release or rollback at a time (fd 9 stays open until the script ends)
   (umask 077; mkdir -p "$REL_DIR")
@@ -1833,6 +1848,10 @@ release() {  # release [--now [--minutes N] [--note T]] [--operator NAME] | --fi
   # ...and the audit watch's reader key where the monitoring is on (P1-T21 C4): else step 8's
   # up would fail after the migrations
   watch_need_reader
+  # An unfinished hospital restore owns its hospital: finish or abort it first (review C1)
+  local restores
+  restores="$(rel_open_restores)"
+  [[ -z "$restores" ]] || die "an unfinished hospital restore: $restores. scripts/staging.sh hospital-restore <slug> --resume (or --abort) first: nothing changed"
   rel_lock
   t0=$SECONDS
   if ((finish)); then release_finish "$op"; return; fi
@@ -2083,6 +2102,10 @@ rollback() {  # rollback [--restore] [--operator NAME]: back to the release befo
   op="$(rel_operator "$op")"
   [[ -f "$DIR/.env" ]] || die "run: scripts/staging.sh init <suffix>"
   s3_need_split_keys  # every rollback ends with up, which refuses them (after the tags moved)
+  # A restore's schema migrated by this build would be ahead of the build rolled back to, and
+  # the restore could not finish (review C1): finish or abort it first
+  held="$(rel_open_restores)"
+  [[ -z "$held" ]] || die "an unfinished hospital restore: $held. scripts/staging.sh hospital-restore <slug> --resume (or --abort) first: nothing changed"
   rel_lock
   # The typed confirmation comes from our own stdin: no docker command below may read it
   exec 8<&0 0</dev/null
@@ -2168,7 +2191,7 @@ rollback() {  # rollback [--restore] [--operator NAME]: back to the release befo
   echo "  accounts disabled or removed (re-do them; the realm sync runs at the start);"
   echo "- the audit trail goes back too: fingerprints stored after it no longer match it, and the audit watch"
   echo "  reports every hospital sealed since as cut or rewritten (AuditChainBroken, AuditFingerprintMismatch,"
-  echo "  critical) until restore events for this rollback exist (P1-T22b; nothing writes them yet). Record it as"
+  echo "  critical) until restore events for this rollback exist (P1-T22c; nothing writes them yet). Record it as"
   echo "  an incident, never a silence; a checkpoint is never reset by hand;"
   if ((keep_copy)); then echo "- the current database is kept beside it (volume $aside, about $need MB)."
   else echo "- the current database is REPLACED: not enough disk to keep a copy ($free MB free; $need MB plus a ${floor} MB floor needed)."; fi
@@ -4114,7 +4137,7 @@ dumps_exec() {  # dumps_exec <dumper.py args>: in the running dumper (its keys, 
     compose exec -T dumper python3 -I /opt/ihr-dumps/dumper.py "$@"
     return
   fi
-  case "$1" in check|get|probe) ;; *) die "the dumper is not running here (scripts/staging.sh up)" ;; esac
+  case "$1" in check|get|manifest|probe) ;; *) die "the dumper is not running here (scripts/staging.sh up)" ;; esac
   if [[ "$d" == local ]]; then
     net=(--network "$(stack_net s3 internal)")
     [[ "${net[1]}" ]] || die "the proof's object storage is not running (scripts/staging.sh up)"
@@ -4186,6 +4209,330 @@ dumps_smoke() {  # smoke's dumps part (P1-T22a): the dumper runs as ihr_dump, ev
     echo "WARN  dumps: the dumper key cannot read the bucket's lock settings: check them in the provider's console (dumps-probe)"
   else
     check "dumps: the bucket is locked (30 days) with versioning" yes "$(grep -q '^ok .*bucket lock' <<< "$out" && echo yes || echo no)"
+  fi
+}
+
+# ---- Single-hospital restore (P1-T22b; ihr_platform/restore/, deploy/restore/quarantine.py) -----
+# A dump never reaches the database as it is: it goes through the quarantine (a throwaway
+# Postgres in the dumper image, no network), and only the package that writes is loaded, by
+# ihr_hospital_restore in a logged one-off as the owner. Runbook: deploy/staging/README.md,
+# "Restoring one hospital (P1-T22b)".
+RESTORE_WORK="$OUT/restore"  # the fetched dump while a restore runs (personal data: mode 700, removed after)
+restore_envs=()  # set by restore_keys: -e NAME for each key this run passes
+RESTORE_VOL=""   # the package's Docker volume (restore_volume): mounted read-only at /restore
+RESTORE_PKG_SHA=""  # package.json's SHA-256 as the quarantine printed it (restore_quarantine)
+RESTORE_PLAIN=()    # host files with personal data or a password while a restore runs: the EXIT
+                    # trap removes them, whatever stops the run (review S9; globals: a trap runs
+                    # after the function's locals are gone)
+restore_cleanup() { local f; for f in ${RESTORE_PLAIN[@]+"${RESTORE_PLAIN[@]}"}; do rm -f "$f"; done; }
+restore_trap() {  # restore_trap <file>...: removed on any exit from here on
+  RESTORE_PLAIN=("$@")
+  trap restore_cleanup EXIT
+  trap 'exit 130' INT TERM HUP
+}
+restore_untrap() { restore_cleanup; RESTORE_PLAIN=(); trap - EXIT INT TERM HUP; }
+restore_volume() {  # restore_volume <slug>: the name of that hospital's package volume. Docker's
+  # own folder (root only on the host), owned by the dumper image's postgres user (the volume is
+  # filled from the image's /state): the quarantine writes the package there, the restore reads it
+  echo "ihr-restore-$1"
+}
+restore_keys() {  # restore_keys [files]: the fingerprint bucket's reader and add-only keys (the
+  # restore writes a fingerprint and its event and runs the whole audit check), exported for this
+  # run's one-off only; [files] also the file buckets' key that may list versions
+  local f k v
+  restore_envs=()
+  for f in "$SECRETS/anchor-read.env" "$SECRETS/anchor-write.env"; do
+    [[ -f "$f" ]] || continue
+    while IFS='=' read -r k v; do
+      if [[ "$k" =~ ^IHR_AUDIT_ANCHOR_[A-Z_]+$ ]]; then export "$k=$v"; restore_envs+=(-e "$k"); fi
+    done < "$f"
+  done
+  [[ "${1:-}" == files ]] || return 0
+  if [[ "$(env_get IHR_S3)" == local ]]; then
+    # A proof's SeaweedFS: its admin key lists versions and copies them back
+    IHR_RESTORE_S3_ACCESS_KEY="$(sed -n 's/^IHR_S3_ADMIN_KEY=//p' "$SECRETS/s3-gateway.env")"
+    IHR_RESTORE_S3_SECRET="$(sed -n 's/^IHR_S3_ADMIN_SECRET=//p' "$SECRETS/s3-gateway.env")"
+  elif [[ -z "${IHR_RESTORE_S3_ACCESS_KEY:-}" ]]; then
+    # A server: the file buckets' admin key, from the keyboard (never an argument or a file)
+    read -rp "The file buckets' admin access key (lists versions; this restore only): " IHR_RESTORE_S3_ACCESS_KEY
+    read -rsp "Secret key: " IHR_RESTORE_S3_SECRET; echo
+  fi
+  export IHR_RESTORE_S3_ACCESS_KEY IHR_RESTORE_S3_SECRET
+  restore_envs+=(-e IHR_RESTORE_S3_ACCESS_KEY -e IHR_RESTORE_S3_SECRET)
+}
+restore_manage() {  # restore_manage <ihr_hospital_restore args>: in a logged migrate one-off, as the
+  # owner, the restore folder read-only at /restore (its "ihr-restore:" lines reach the alerts)
+  local mount=()
+  # only a package's volume that exists (Docker would make an empty one)
+  if [[ -n "$RESTORE_VOL" ]] && docker volume inspect "$RESTORE_VOL" >/dev/null 2>&1; then
+    mount=(-v "$RESTORE_VOL:/restore:ro")
+  fi
+  compose run --rm --no-deps -T ${mount[@]+"${mount[@]}"} ${restore_envs[@]+"${restore_envs[@]}"} \
+    migrate python manage.py ihr_hospital_restore "$@"
+}
+restore_admin() {  # restore_admin <args>: the Keycloak step, with the operator's bootstrap credential
+  # (the unlogged admin one-off, as admin_manage; the restore's own lines follow in restore_manage)
+  local id secret mount=()
+  id="$(sed -n 's/^KC_BOOTSTRAP_ADMIN_CLIENT_ID=//p' "$SECRETS/keycloak.env")"
+  secret="$(sed -n 's/^KC_BOOTSTRAP_ADMIN_CLIENT_SECRET=//p' "$SECRETS/keycloak.env")"
+  if [[ -n "$RESTORE_VOL" ]] && docker volume inspect "$RESTORE_VOL" >/dev/null 2>&1; then
+    mount=(-v "$RESTORE_VOL:/restore:ro")
+  fi
+  IHR_KEYCLOAK_ADMIN_CLIENT_ID="$id" IHR_KEYCLOAK_ADMIN_CLIENT_SECRET="$secret" \
+    compose --profile admin run --rm --no-deps -T ${mount[@]+"${mount[@]}"} \
+    -e IHR_KEYCLOAK_ADMIN_CLIENT_ID -e IHR_KEYCLOAK_ADMIN_CLIENT_SECRET \
+    ${restore_envs[@]+"${restore_envs[@]}"} admin python manage.py ihr_hospital_restore "$@" --unlogged
+}
+restore_plan() {  # restore_plan <slug>: the quarantine's plan (JSON) on stdout
+  restore_manage --plan --slug "$1" 2>/dev/null | grep '^{' | tail -1
+}
+plan_get() { python3 -c 'import json,sys;print(json.loads(sys.argv[1])[sys.argv[2]])' "$1" "$2"; }
+restore_quarantine() {  # restore_quarantine <work dir> <volume> <manifest|-> <pitr time|->: <dir>/in/dump
+  # and plan.json through the quarantine into <volume>/package (no network, read-only root, as
+  # postgres; its throwaway server in the same volume, removed when it ends)
+  local work="$1" vol="$2" args=()
+  if [[ "$3" != - ]]; then args+=(--manifest /in/manifest.json); else args+=(--pitr "$4"); fi
+  dumper_image
+  docker volume rm -f "$vol" >/dev/null 2>&1 || true
+  docker volume create "$vol" >/dev/null
+  docker run --rm --network none --read-only --tmpfs /tmp:uid=70,gid=70 -v "$vol:/state" -e TMPDIR=/state \
+    --user 70:70 --cap-drop ALL --security-opt no-new-privileges:true --memory 768m \
+    -v "$work/in:/in:ro" \
+    -v "$ROOT/plugins/ihr_platform/ihr_platform/restore/package.py:/opt/ihr-restore/package.py:ro" \
+    -v "$ROOT/deploy/restore/quarantine.py:/opt/ihr-restore/quarantine.py:ro" \
+    -v "$ROOT/deploy/dumps:/opt/ihr-dumps:ro" -v "$ROOT/deploy/lib:/opt/ihr-lib:ro" \
+    --entrypoint python3 "$(v="$(env_get IHR_DUMPER_IMAGE)"; echo "${v:-indiehr-dumper:staging}")" \
+    -I /opt/ihr-restore/quarantine.py --dump /in/dump --plan /in/plan.json "${args[@]}" \
+    --out /state/package --work /state | tee "$work/quarantine.out" || return 1
+  # package.json's hash, printed once by the quarantine after its server stopped (review S2):
+  # the restore refuses any other package.json
+  [[ "$(grep -cE '^quarantine: package sha256 [0-9a-f]{64}$' "$work/quarantine.out" || true)" == 1 ]] \
+    || { echo "the quarantine did not print its package's hash exactly once" >&2; return 1; }
+  RESTORE_PKG_SHA="$(sed -nE 's/^quarantine: package sha256 ([0-9a-f]{64})$/\1/p' "$work/quarantine.out")"
+  rm -f "$work/quarantine.out"
+}
+restore_done() {  # restore_done <slug>: the package's volume and the work folder removed
+  docker volume rm -f "$(restore_volume "$1")" >/dev/null 2>&1 || true
+  rm -rf "${RESTORE_WORK:?}/$1"
+}
+restore_restart() {  # only with hospital-restore --restart (review C5): every app container that
+  # runs, all at once (every hospital is down for that moment): for a hospital some process had
+  # gated (DatabaseSchemaGated) before the restore; nothing else in a process comes from a
+  # hospital's rows
+  local svcs
+  s3_keys_current  # (a restart never starts s3 itself, but every start path checks its keys first)
+  svcs="$(running_app_services backend celery-worker celery-beat staff-worker provisioner)" || die "could not list the running services"
+  [[ -z "$svcs" ]] || { echo "Restarting: $svcs"; read -ra s <<< "$svcs"; compose restart "${s[@]}" >/dev/null; }
+}
+restore_loop() {  # restore_loop <operation> <first rc>: on through restarts and the Keycloak step
+  local op="$1" rc="$2" i
+  for i in 1 2 3 4 5 6; do
+    case "$rc" in
+      0) return 0 ;;
+      3) restore_restart; rc=0; restore_manage --resume "$op" --restarted || rc=$? ;;
+      4) rc=0; restore_admin --resume "$op" --stop-after keycloak || rc=$?
+         # the admin one-off logs nothing: only that step there, the rest in the logged one-off;
+         # a failure there is reported from the logged one-off (HospitalRestoreFailed, review C9)
+         if [[ "$rc" == 0 ]]; then restore_manage --resume "$op" || rc=$?
+         else restore_manage --report-failure "$op" >/dev/null || true; fi ;;
+      *) if [[ "$(plan_get "$(restore_plan "$(restore_slug_of "$op")")" held_for_restore 2>/dev/null)" == "$op" ]]; then
+           echo "The restore stopped (exit $rc): the hospital stays held. scripts/staging.sh hospital-restore-status" \
+             "says where; fix it, then scripts/staging.sh hospital-restore <slug> --resume, or --abort before reconcile." >&2
+         else
+           echo "The restore stopped (exit $rc) before it held the hospital (nothing changed there):" \
+             "scripts/staging.sh hospital-restore <slug> --resume once its lock is free, or --abort." >&2
+         fi
+         return "$rc" ;;
+    esac
+  done
+  return "$rc"
+}
+restore_op_of() {  # restore_op_of <plan JSON>: the hospital's unfinished restore, or nothing
+  plan_get "$1" open_restore
+}
+RESTORE_SLUG=""  # the hospital of the restore this run drives (restore_slug_of)
+restore_slug_of() { echo "$RESTORE_SLUG"; }
+hospital_restore() {  # hospital_restore <slug> (--dump <date>|latest | --from-pitr "<time>") --reason "..."
+  # [--operator NAME] [--keep-restored-access "why"] [--dry-run] | <slug> --resume | <slug> --abort
+  # | <slug> --drill (the monthly drill of that hospital, on the restore-drill copy only)
+  local slug="${1:-}" when="" pitr="" reason="" operator="" keep="" dry=0 action=start plan uuid op
+  local work began rc free need t0 extra=() restart=0 bytes
+  [[ "$slug" =~ ^[a-z][a-z0-9-]{2,30}$ ]] || die "usage: scripts/staging.sh hospital-restore <slug> (--dump <date>|latest | --from-pitr \"<time>\") --reason \"...\" [--dry-run] | <slug> --resume | <slug> --abort"
+  shift
+  while (($#)); do
+    case "$1" in
+      --dump) when="${2:?--dump <YYYY-MM-DD|latest>}"; shift ;;
+      --from-pitr) pitr="${2:?--from-pitr 'YYYY-MM-DD HH:MM:SS+05:30'}"; shift ;;
+      --reason) reason="${2:?--reason \"why\"}"; shift ;;
+      --operator) operator="${2:?--operator NAME}"; shift ;;
+      --keep-restored-access) keep="${2:?--keep-restored-access \"why\"}"; shift ;;
+      --restart) restart=1 ;;
+      --dry-run) dry=1 ;;
+      --resume) action=resume ;;
+      --abort) action=abort ;;
+      --drill) action=drill ;;
+      *) die "unknown option: $1" ;;
+    esac
+    shift
+  done
+  if [[ "$action" == drill ]]; then hospital_restore_drill --slug "$slug"; return; fi
+  operator="${operator:-$(rel_operator)}"
+  restore_keys files
+  RESTORE_VOL="$(restore_volume "$slug")"
+  RESTORE_SLUG="$slug"
+  plan="$(restore_plan "$slug")"
+  [[ -n "$plan" ]] || die "no hospital $slug (or the restore command did not answer)"
+  op="$(restore_op_of "$plan")"
+  case "$action" in
+    resume) [[ -n "$op" ]] || die "$slug has no unfinished restore"
+            rc=0; restore_manage --resume "$op" --operator "$operator" || rc=$?
+            restore_loop "$op" "$rc" || return $?
+            restore_done "$slug"; return ;;
+    abort) [[ -n "$op" ]] || die "$slug has no unfinished restore"
+           restore_manage --abort "$op" --operator "$operator"; restore_done "$slug"; return ;;
+  esac
+  [[ -z "$op" ]] || die "$slug has an unfinished restore ($op): --resume or --abort it"
+  [[ -n "$when" || -n "$pitr" ]] && [[ -z "$when" || -z "$pitr" ]] || die "--dump <date>|latest or --from-pitr \"<time>\", one of them"
+  [[ -n "$reason" ]] || die "--reason \"...\": why (recorded in the restore record)"
+  [[ -z "$when" || "$when" == latest || "$when" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}$ ]] || die "--dump YYYY-MM-DD or latest"
+  [[ -z "$pitr" ]] || check_target "$pitr" >/dev/null
+  uuid="$(plan_get "$plan" uuid)"
+  work="$RESTORE_WORK/$slug"
+  rm -rf "$work"; mkdir -p "$work/in"; chmod 700 "$RESTORE_WORK" "$work"
+  printf '%s\n' "$plan" > "$work/in/plan.json"
+  # The decrypted dump is a whole hospital's personal data: gone whatever stops this run
+  restore_trap "$work/in/dump"
+  began=$SECONDS
+  # Room for the package and the restored schema beside the parked one (the same disk), checked
+  # before any personal data is written here (review S9)
+  free="$(df -Pm "$(docker info --format '{{.DockerRootDir}}')" 2>/dev/null | awk 'NR==2 {print $4}')"
+  if [[ -n "$when" ]]; then
+    # The dumper's own readers: the manifest authentic and chained, the dump's MAC and SHA-256
+    echo "== The dump of $slug ($when)"
+    t0=$SECONDS
+    dumps_exec manifest "$uuid" "$when" > "$work/in/manifest.json" || die "no authentic manifest for $slug $when"
+    bytes="$(python3 -c 'import json,sys;print(int(json.load(open(sys.argv[1]))["manifest"]["dump"]["bytes"]))' "$work/in/manifest.json")" \
+      || die "the manifest does not say how large the dump is"
+    need=$(( bytes * 12 / 1048576 + 1024 ))
+    [[ -z "$free" ]] || ((free >= need)) || die "not enough disk: ${free} MB free, about ${need} MB needed (nothing fetched)"
+    dumps_exec get "$uuid" "$when" dump > "$work/in/dump" || die "the dump could not be read back and checked"
+    echo "fetched and checked: $(stat -c %s "$work/in/dump") bytes in $((SECONDS - t0)) s"
+  else
+    echo "== $slug as it was at $pitr (the restore-drill copy, then pg_dump of its schema)"
+    t0=$SECONDS
+    # In a subshell: its own stop (die) leaves the copy, which is removed here
+    ( restore_drill --keep --target "$pitr" >/dev/null ) \
+      || { restore_drill --clean >/dev/null; restore_done "$slug"; die "the copy at $pitr could not be made (a time after the last transaction the backups hold is never reached)"; }
+    # The schema's size in the copy, before pg_dump writes anything here (a dump is smaller)
+    bytes="$(docker exec "$DRILL" psql -U postgres -d ihr -Atc "SELECT coalesce(sum(pg_total_relation_size(c.oid)), 0)
+      FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace WHERE n.nspname = '$(plan_get "$plan" schema)' AND c.relkind = 'r'" | tr -d '[:space:]')"
+    need=$(( ${bytes:-0} * 3 / 1048576 + 1024 ))
+    [[ -z "$free" ]] || ((free >= need)) || { restore_drill --clean >/dev/null; restore_done "$slug"; die "not enough disk: ${free} MB free, about ${need} MB needed (nothing dumped)"; }
+    docker exec "$DRILL" pg_dump -U postgres -Fc -n "$(plan_get "$plan" schema)" --no-owner --no-acl ihr \
+      > "$work/in/dump" || { restore_drill --clean; restore_done "$slug"; die "pg_dump of the copy failed"; }
+    restore_drill --clean >/dev/null
+    echo "dumped from the copy: $(stat -c %s "$work/in/dump") bytes in $((SECONDS - t0)) s"
+  fi
+  echo "== The quarantine (a throwaway Postgres, no network)"
+  t0=$SECONDS
+  restore_quarantine "$work" "$RESTORE_VOL" "$([[ -n "$when" ]] && echo "$work/in/manifest.json" || echo -)" "${pitr:--}" \
+    || { restore_done "$slug"; die "the dump was refused by the quarantine (above): nothing was changed"; }
+  restore_untrap  # the package is what is loaded; the decrypted dump goes now
+  echo "quarantine: $((SECONDS - t0)) s"
+  [[ -z "$keep" ]] || extra+=(--keep-restored-access "$keep")
+  [[ -z "$free" ]] || extra+=(--free-bytes "$((free * 1048576))")
+  ((restart == 0)) || extra+=(--restart)
+  extra+=(--package-sha256 "$RESTORE_PKG_SHA")
+  if ((dry)); then
+    rc=0; restore_manage --slug "$slug" --package /restore/package --reason "$reason" \
+      --operator "$operator" --dry-run "${extra[@]}" || rc=$?
+    restore_done "$slug"; return "$rc"
+  fi
+  echo "== The restore of $slug (held from now on)"
+  rc=0
+  restore_manage --slug "$slug" --package /restore/package --reason "$reason" \
+    --operator "$operator" "${extra[@]}" || rc=$?
+  op="$(restore_op_of "$(restore_plan "$slug")")"
+  if [[ "$rc" != 0 && -z "$op" ]]; then
+    restore_done "$slug"; return "$rc"  # refused before it began: nothing changed
+  fi
+  # (a stop keeps the package's volume for --resume)
+  [[ -z "$op" ]] || { restore_loop "$op" "$rc" || return $?; }
+  restore_done "$slug"
+  echo "== $slug restored in $((SECONDS - began)) s; served again:"
+  hospital_smoke "$slug"
+}
+hospital_smoke() {  # hospital_smoke <slug>: its address through Traefik answers (never 503)
+  local suffix port resolve code
+  suffix="$(env_get IHR_TENANT_DOMAIN_SUFFIX)"; port="$(env_get IHR_HTTPS_PORT)"; port="${port:-443}"
+  resolve="${IHR_SMOKE_RESOLVE:-$(env_get IHR_SMOKE_RESOLVE)}"
+  [[ -z "$resolve" && "$(env_get IHR_BIND)" == "127.0.0.1" ]] && resolve=127.0.0.1
+  code="$(curl -sk --max-time 20 ${resolve:+--resolve "$1.$suffix:$port:$resolve"} -o /dev/null -w '%{http_code}' \
+    "https://$1.$suffix:$port/api/ihr/bootstrap/")"
+  if [[ "$code" == 200 ]]; then echo "ok    $1.$suffix answers ($code)"; else echo "FAIL  $1.$suffix: $code"; return 1; fi
+}
+hospital_restore_drill() {  # hospital_restore_drill [--slug S]: the monthly drill, on the
+  # restore-drill copy only (never live): one hospital (rotating) restored there from its latest
+  # dump; every other schema and public must be unchanged; times recorded; dumper drill-mark
+  local slug="" slugs=() plan uuid work pw net rc=0 began t0
+  while (($#)); do
+    case "$1" in --slug) slug="${2:?--slug S}"; shift ;; *) die "usage: scripts/staging.sh hospital-restore-drill [--slug S]" ;; esac
+    shift
+  done
+  if [[ -z "$slug" ]]; then
+    mapfile -t slugs < <(compose exec -T db psql -U postgres -d ihr -Atc \
+      "SELECT slug FROM ihr_platform_hospital WHERE schema_name <> 'public' AND status = 'active' ORDER BY slug" \
+      | grep -E '^[a-z][a-z0-9-]{2,30}$' || true)
+    ((${#slugs[@]})) || die "no active hospital to drill"
+    slug="${slugs[$(( $(date +%s) / 2592000 % ${#slugs[@]} ))]}"  # a new one every 30 days
+  fi
+  restore_envs=()
+  RESTORE_VOL=""
+  plan="$(restore_plan "$slug")"; [[ -n "$plan" ]] || die "no hospital $slug"
+  uuid="$(plan_get "$plan" uuid)"
+  work="$RESTORE_WORK/drill-$slug"; rm -rf "$work"; mkdir -p "$work/in"; chmod 700 "$RESTORE_WORK" "$work"
+  printf '%s\n' "$plan" > "$work/in/plan.json"
+  restore_trap "$work/in/dump"  # (review S9)
+  began=$SECONDS
+  echo "== Restore drill of $slug ($uuid), on the restore-drill copy"
+  t0=$SECONDS
+  dumps_exec manifest "$uuid" latest > "$work/in/manifest.json" || die "no authentic manifest for $slug"
+  dumps_exec get "$uuid" latest dump > "$work/in/dump" || die "the dump could not be read back"
+  echo "time: dump fetched and checked $((SECONDS - t0)) s"
+  t0=$SECONDS
+  restore_quarantine "$work" "$(restore_volume "drill-$slug")" "$work/in/manifest.json" - \
+    || { restore_done "drill-$slug"; dumps_exec drill-mark "$uuid" failed; die "the quarantine refused the dump"; }
+  restore_untrap
+  echo "time: quarantine $((SECONDS - t0)) s"
+  t0=$SECONDS
+  ( restore_drill --keep >/dev/null ) \
+    || { restore_drill --clean >/dev/null; restore_done "drill-$slug"; dumps_exec drill-mark "$uuid" failed; die "the restore-drill copy could not be made"; }
+  echo "time: the copy from the backups $((SECONDS - t0)) s"
+  # The drill's own network: the copy, and nothing else (no edge, no Redis, no object storage)
+  net="ihr-restore-drill-net"
+  docker network rm "$net" >/dev/null 2>&1 || true
+  docker network create --internal "$net" >/dev/null
+  docker network connect "$net" "$DRILL"
+  pw="$(db_password owner)"; [[ -n "$pw" ]] || db_need_split_secrets
+  t0=$SECONDS
+  # The owner's address only in this one command's environment, never in a file (review S9)
+  DATABASE_URL="postgres://ihr_owner:$pw@$DRILL:5432/ihr" \
+  docker run --rm --network "$net" --read-only --tmpfs /tmp --cap-drop ALL --security-opt no-new-privileges:true \
+    -e DATABASE_URL -e DJANGO_SETTINGS_MODULE=ihr_platform.settings.drill -e IHR_DB_ROLES=required -e IHR_DB_ROLE=owner \
+    -e IHR_TENANT_DOMAIN_SUFFIX="$(env_get IHR_TENANT_DOMAIN_SUFFIX)" -v "$(restore_volume "drill-$slug"):/restore:ro" \
+    --entrypoint python "$(env_get IHR_BACKEND_IMAGE)" manage.py ihr_hospital_restore --slug "$slug" --package /restore/package \
+    --package-sha256 "$RESTORE_PKG_SHA" --reason "monthly restore drill on the drill copy" --operator restore-drill --drill || rc=$?
+  echo "time: the restore in the copy $((SECONDS - t0)) s"
+  docker network disconnect "$net" "$DRILL" >/dev/null 2>&1 || true
+  docker network rm "$net" >/dev/null 2>&1 || true
+  restore_drill --clean >/dev/null
+  restore_done "drill-$slug"
+  if ((rc == 0)); then
+    dumps_exec drill-mark "$uuid" ok
+    echo "Restore drill passed ($slug, $((SECONDS - began)) s in all)."
+  else
+    dumps_exec drill-mark "$uuid" failed
+    die "the restore drill failed (above): DumpDrillOverdue fires 35 days after the last good one"
   fi
 }
 
@@ -4279,6 +4626,11 @@ case "${1:-}" in
     [[ ! -t 1 ]] || die "dumps-get writes the decrypted object (personal data) to stdout: redirect it into a file on an encrypted disk"
     dumps_exec get "${@:2}" ;;
   dumps-drill-mark) dumps_exec drill-mark "${@:2}" ;;
+  hospital-restore) hospital_restore "${@:2}" ;;
+  hospital-restore-drill) hospital_restore_drill "${@:2}" ;;
+  hospital-restore-status) restore_envs=(); restore_manage --status; restore_manage --parked ;;
+  hospital-restore-expire)  # parked schemas past 7 days dropped (owner, daily); --dry-run lists them
+    restore_envs=(); restore_manage --expire-parked "${@:2}" ;;
   dumps-expire) dumps_expire "${@:2}" ;;
   local-proof)
     [[ -f "$DIR/.env" ]] || IHR_FRONTEND_IMAGE="${IHR_FRONTEND_IMAGE:-indiehr-frontend:local}" \
@@ -4304,5 +4656,5 @@ case "${1:-}" in
     admin_manage ihr_keycloak_sync --all >/dev/null
     smoke
     ;;
-  *) sed -n '5,82p' "$0"; exit 1 ;;
+  *) sed -n '5,101p' "$0"; exit 1 ;;
 esac

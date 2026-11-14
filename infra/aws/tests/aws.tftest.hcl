@@ -134,6 +134,10 @@ run "care_buckets_private_pictures_too" {
     error_message = "versions kept"
   }
   assert {
+    condition     = alltrue([for k, l in aws_s3_bucket_lifecycle_configuration.care : one(l.rule).noncurrent_version_expiration[0].noncurrent_days == 35])
+    error_message = "old file versions kept 35 days: a single-hospital restore brings files back from them (P1-T22b)"
+  }
+  assert {
     condition     = alltrue([for k, c in aws_s3_bucket_cors_configuration.care : one(c.cors_rule).allowed_origins == toset(["https://*.app.example.in"])])
     error_message = "only the hospitals' web app may upload and download from a browser"
   }
