@@ -10,4 +10,5 @@ buckets = {
   files    = "indiehr-staging-files-123456789012"
   facility = "indiehr-staging-facility-123456789012"
   backups  = "indiehr-staging-backups-123456789012"
+  dumps    = "indiehr-staging-dumps-123456789012"
 }

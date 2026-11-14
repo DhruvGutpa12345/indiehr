@@ -1,0 +1,307 @@
+# promtool unit tests for ../rules/dumps.yml (scripts/check-monitoring.sh runs them with the pinned
+# Prometheus image). Both sides of every threshold, and the absent() rule.
+rule_files:
+  - ../rules/dumps.yml
+evaluation_interval: 1m
+
+tests:
+  - name: no good dump and no finished run for 26 hours
+    interval: 1h
+    input_series:
+      # the newest good dump of the worst hospital, and the last run's end, both at 00:00
+      - series: 'ihr_dump_oldest_good_timestamp_seconds{job="dumps"}'
+        values: '0x30'
+      - series: 'ihr_dump_last_run_end_timestamp_seconds{job="dumps"}'
+        values: '0x30'
+    alert_rule_test:
+      - eval_time: 25h
+        alertname: DumpTooOld
+        exp_alerts: []
+      - eval_time: 27h
+        alertname: DumpTooOld
+        exp_alerts:
+          - exp_labels: {severity: critical, service: dumper, job: dumps}
+            exp_annotations:
+              summary: "A hospital has had no good nightly dump for more than 26 hours (the log alert DumpHospitalFailed or DumpHospitalHeld names it; scripts/staging.sh dumps-check)"
+      - eval_time: 25h
+        alertname: DumpRunMissing
+        exp_alerts: []
+      - eval_time: 27h
+        alertname: DumpRunMissing
+        exp_alerts:
+          - exp_labels: {severity: critical, service: dumper, job: dumps}
+            exp_annotations:
+              summary: "The nightly dumper has not finished a run for more than 26 hours (scripts/staging.sh logs dumper)"
+      # the series are there: the absent() rule stays silent
+      - eval_time: 27h
+        alertname: DumpsNotReporting
+        exp_alerts: []
+
+  - name: a good dump every night keeps both quiet
+    interval: 1h
+    input_series:
+      # each night at 04:00 (hour 4, 28, 52) the newest good dump moves on
+      - series: 'ihr_dump_oldest_good_timestamp_seconds{job="dumps"}'
+        values: '0x3 14400x23 100800x23 187200x10'
+    alert_rule_test:
+      - eval_time: 29h
+        alertname: DumpTooOld
+        exp_alerts: []
+      - eval_time: 60h
+        alertname: DumpTooOld
+        exp_alerts: []
+
+  - name: failed hospitals, a long run, authenticity, lock, role
+    interval: 1m
+    input_series:
+      - series: 'ihr_dump_hospitals_failed{job="dumps"}'
+        values: '0x10 2x20'
+      - series: 'ihr_dump_running{job="dumps"}'
+        values: '1x200'
+      - series: 'ihr_dump_running_since_timestamp_seconds{job="dumps"}'
+        values: '0x200'
+      - series: 'ihr_dump_bad_manifests{job="dumps"}'
+        values: '0x10 1x20'
+      - series: 'ihr_dump_check_problems{job="dumps"}'
+        values: '0x30'
+      - series: 'ihr_dump_bucket_locked{job="dumps"}'
+        values: '1x10 0x60'
+      - series: 'ihr_dump_role_ok{job="dumps"}'
+        values: '1x10 0x20'
+    alert_rule_test:
+      - eval_time: 9m
+        alertname: DumpRunFailing
+        exp_alerts: []
+      - eval_time: 11m
+        alertname: DumpRunFailing
+        exp_alerts:
+          - exp_labels: {severity: warning, service: dumper, job: dumps}
+            exp_annotations:
+              summary: "The last nightly run could not dump 2 hospital(s) (DumpHospitalFailed names them and why)"
+      - eval_time: 2h29m
+        alertname: DumpRunOverBudget
+        exp_alerts: []
+      - eval_time: 2h31m
+        alertname: DumpRunOverBudget
+        exp_alerts:
+          - exp_labels: {severity: warning, service: dumper, job: dumps}
+            exp_annotations:
+              summary: "The nightly dump run has gone on for more than 2.5 hours (docs/reviews/p1-t22/size-model.md: time for incremental audit dumps)"
+      - eval_time: 9m
+        alertname: DumpNotAuthentic
+        exp_alerts: []
+      - eval_time: 11m
+        alertname: DumpNotAuthentic
+        exp_alerts:
+          - exp_labels: {severity: critical, service: dumper, job: dumps}
+            exp_annotations:
+              summary: "The dumps bucket holds something not ours, a changed or replaced file, a broken chain or an early erasure record, or a dump does not read back, list or restore (scripts/staging.sh dumps-check --deep)"
+      - eval_time: 30m
+        alertname: DumpBucketNotLocked
+        exp_alerts: []
+      - eval_time: 42m
+        alertname: DumpBucketNotLocked
+        exp_alerts:
+          - exp_labels: {severity: critical, service: dumper, job: dumps}
+            exp_annotations:
+              summary: "The dumps bucket is not locked for 30 days with versioning: dumps could be deleted"
+      - eval_time: 9m
+        alertname: DumpRoleRefused
+        exp_alerts: []
+      - eval_time: 11m
+        alertname: DumpRoleRefused
+        exp_alerts:
+          - exp_labels: {severity: critical, service: dumper, job: dumps}
+            exp_annotations:
+              summary: "The dumper refused its database role (not ihr_dump as modelled): nothing is dumped (scripts/staging.sh dumps-role)"
+
+  - name: a run that ended, a lock this key cannot read, the check problems
+    interval: 1m
+    input_series:
+      - series: 'ihr_dump_running{job="dumps"}'
+        values: '0x200'
+      - series: 'ihr_dump_running_since_timestamp_seconds{job="dumps"}'
+        values: '0x200'
+      - series: 'ihr_dump_bucket_locked{job="dumps"}'
+        values: '-1x60'
+      - series: 'ihr_dump_bad_manifests{job="dumps"}'
+        values: '0x30'
+      - series: 'ihr_dump_check_problems{job="dumps"}'
+        values: '0x10 3x20'
+    alert_rule_test:
+      - eval_time: 3h
+        alertname: DumpRunOverBudget
+        exp_alerts: []
+      - eval_time: 50m
+        alertname: DumpBucketNotLocked
+        exp_alerts: []
+      - eval_time: 11m
+        alertname: DumpNotAuthentic
+        exp_alerts:
+          - exp_labels: {severity: critical, service: dumper, job: dumps}
+            exp_annotations:
+              summary: "The dumps bucket holds something not ours, a changed or replaced file, a broken chain or an early erasure record, or a dump does not read back, list or restore (scripts/staging.sh dumps-check --deep)"
+
+  - name: the work volume
+    interval: 5m
+    input_series:
+      # A night needs 6.07 GB (two dumps of a 2 GB largest: 2 x (2.4 GB + 512 MiB), the dumper's
+      # figure); 7 GB free is enough, from 1h 5 GB is not (it was enough for the old rule's 1.5
+      # times the largest plus 1 GiB, which left out the second dump's fifth and margin)
+      - series: 'ihr_dump_work_free_bytes{job="dumps"}'
+        values: '7e9x11 5e9x36'
+      - series: 'ihr_dump_largest_bytes{job="dumps"}'
+        values: '2e9x48'
+      - series: 'ihr_dump_work_need_bytes{job="dumps"}'
+        values: '6.0737e9x48'
+    alert_rule_test:
+      - eval_time: 55m
+        alertname: DumpDiskLow
+        exp_alerts: []
+      - eval_time: 1h55m
+        alertname: DumpDiskLow
+        exp_alerts: []
+      - eval_time: 2h10m
+        alertname: DumpDiskLow
+        exp_alerts:
+          - exp_labels: {severity: warning, service: dumper, job: dumps}
+            exp_annotations:
+              summary: "The dumper's work volume has less room than a night's parallel dumps need"
+
+  - name: drills and erasure
+    interval: 1d
+    input_series:
+      # never a drill; dumps since day 0 (A) and since day 10 (B, a newer server). The weekly
+      # expiry keeps the oldest dump held (first_good) between about 21 and 35 days old: the
+      # drill's clock is the first dump ever, which expiry never raises (review C5)
+      - series: 'ihr_dump_last_drill_timestamp_seconds{job="dumps",instance="a"}'
+        values: '0x50'
+      - series: 'ihr_dump_first_dump_ever_timestamp_seconds{job="dumps",instance="a"}'
+        values: '0x50'
+      - series: 'ihr_dump_first_good_timestamp_seconds{job="dumps",instance="a"}'
+        values: '0x28 604800x6 1209600x6 1814400x9'
+      - series: 'ihr_dump_last_drill_timestamp_seconds{job="dumps",instance="b"}'
+        values: '0x50'
+      - series: 'ihr_dump_first_dump_ever_timestamp_seconds{job="dumps",instance="b"}'
+        values: '864000x50'
+      - series: 'ihr_dump_first_good_timestamp_seconds{job="dumps",instance="b"}'
+        values: '864000x50'
+      - series: 'ihr_dump_oldest_object_timestamp_seconds{job="dumps"}'
+        values: '0x50'
+    alert_rule_test:
+      - eval_time: 34d
+        alertname: DumpDrillOverdue
+        exp_alerts: []
+      - eval_time: 36d
+        alertname: DumpDrillOverdue
+        exp_alerts:
+          - exp_labels: {severity: warning, service: dumper, job: dumps, instance: a}
+            exp_annotations:
+              summary: "No passing restore drill of a hospital dump for 35 days (P1-T22b's drill)"
+      - eval_time: 35d
+        alertname: DumpErasureOverdue
+        exp_alerts: []
+      - eval_time: 37d
+        alertname: DumpErasureOverdue
+        exp_alerts:
+          - exp_labels: {severity: warning, service: dumper, job: dumps}
+            exp_annotations:
+              summary: "Dumps older than 36 days wait for erasure: run scripts/staging.sh dumps-expire from your machine"
+
+  # Drills that passed, then stopped: 35 days after the last one, whatever the oldest dump held
+  - name: drills that stopped
+    interval: 1d
+    input_series:
+      # the last drill passed on day 5; dumps since day 0, the oldest held kept under 35 days
+      - series: 'ihr_dump_last_drill_timestamp_seconds{job="dumps"}'
+        values: '432000x60'
+      - series: 'ihr_dump_first_dump_ever_timestamp_seconds{job="dumps"}'
+        values: '0x60'
+      - series: 'ihr_dump_first_good_timestamp_seconds{job="dumps"}'
+        values: '0x28 1814400x31'
+    alert_rule_test:
+      - eval_time: 39d
+        alertname: DumpDrillOverdue
+        exp_alerts: []
+      - eval_time: 41d
+        alertname: DumpDrillOverdue
+        exp_alerts:
+          - exp_labels: {severity: warning, service: dumper, job: dumps}
+            exp_annotations:
+              summary: "No passing restore drill of a hospital dump for 35 days (P1-T22b's drill)"
+
+  - name: an early erasure
+    interval: 1h
+    input_series:
+      - series: 'ihr_dump_early_erasures{job="dumps"}'
+        values: '0x3 1x3'
+    alert_rule_test:
+      - eval_time: 2h
+        alertname: DumpErasedEarly
+        exp_alerts: []
+      - eval_time: 5h
+        alertname: DumpErasedEarly
+        exp_alerts:
+          - exp_labels: {severity: warning, service: dumper, job: dumps}
+            exp_annotations:
+              summary: "Dumps were erased inside their retention (dumps-expire --allow-short, meant for a proof only; scripts/staging.sh dumps-check names the record)"
+
+  - name: the dumper down, or answering with nothing
+    interval: 1m
+    input_series:
+      # up for an hour, then down
+      - series: 'up{job="dumps",instance="dumper:9110"}'
+        values: '1x60 0x90'
+    alert_rule_test:
+      - eval_time: 1h5m
+        alertname: DumperDown
+        exp_alerts: []
+      - eval_time: 1h50m
+        alertname: DumperDown
+        exp_alerts:
+          - exp_labels: {severity: critical, service: dumper, job: dumps, instance: "dumper:9110"}
+            exp_annotations:
+              summary: "Prometheus cannot read the dumper's metrics (scripts/staging.sh ps; logs dumper)"
+      # a target, no dump metrics: pending, firing after 2 hours
+      - eval_time: 1h50m
+        alertname: DumpsNotReporting
+        exp_alerts: []
+      - eval_time: 2h10m
+        alertname: DumpsNotReporting
+        exp_alerts:
+          - exp_labels: {severity: critical, service: dumper}
+            exp_annotations:
+              summary: "The dumper answers but has never finished a run or read its bucket (the nightly dumps do not happen)"
+
+  # A release window stops the dumper with the workers (P1-T22a review C1): not paged until
+  # the window's end (the marker's time, 30 min here), then paged
+  - name: the dumper stopped by a release window
+    interval: 1m
+    input_series:
+      - series: 'up{job="dumps",instance="dumper:9110"}'
+        values: '0x60'
+      - series: 'ihr_release_workers_stopped_until_seconds{instance="node-exporter:9100", job="node"}'
+        values: '1800x60'
+    alert_rule_test:
+      - eval_time: 25m
+        alertname: DumperDown
+        exp_alerts: []
+      - eval_time: 45m
+        alertname: DumperDown
+        exp_alerts:
+          - exp_labels: {severity: critical, service: dumper, job: dumps, instance: "dumper:9110"}
+            exp_annotations:
+              summary: "Prometheus cannot read the dumper's metrics (scripts/staging.sh ps; logs dumper)"
+
+  - name: no dumps target, no dump alerts
+    interval: 1h
+    input_series:
+      - series: 'up{job="prometheus"}'
+        values: '1x30'
+    alert_rule_test:
+      - eval_time: 27h
+        alertname: DumpsNotReporting
+        exp_alerts: []
+      - eval_time: 27h
+        alertname: DumperDown
+        exp_alerts: []

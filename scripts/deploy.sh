@@ -178,15 +178,29 @@ if ((BUILD)) && [[ -n "$GRAFANA" ]]; then
   docker buildx build -q --load -f deploy/docker/grafana.Dockerfile \
     --label "ihr.dockerfile.sha256=$GRAFANA_DF_SUM" -t "$GRAFANA" deploy/docker >/dev/null
 fi
-((BUILD_ONLY)) && { log "Images built: $BACKEND, $FRONTEND, $POSTGRES, $KEYCLOAK${ACMEDNS:+, $ACMEDNS}${GRAFANA:+, $GRAFANA}"; exit 0; }
+# The nightly dumper (P1-T22a), only with dumps (staging.sh dumps-init; a VM proof turns them on
+# there). Labelled with its Dockerfile's hash, as Grafana's image.
+DUMPER=""
+if ((LOCAL_PROOF)) || [[ -f "$ENV_DIR/.env" && -n "$(env_get IHR_DUMPS)" ]]; then
+  [[ -f "$ENV_DIR/.env" ]] && DUMPER="$(env_get IHR_DUMPER_IMAGE)"
+  DUMPER="${DUMPER:-indiehr-dumper:staging}"
+fi
+DUMPER_DF_SUM="$(sha256sum deploy/docker/dumper.Dockerfile | cut -d' ' -f1)"
+if ((BUILD)) && [[ -n "$DUMPER" ]]; then
+  log "Building $DUMPER (deploy/docker/dumper.Dockerfile: Postgres 18.6 Alpine + Python, Alpine's own packages)"
+  docker buildx build -q --load -f deploy/docker/dumper.Dockerfile \
+    --label "ihr.dockerfile.sha256=$DUMPER_DF_SUM" -t "$DUMPER" deploy/docker >/dev/null
+fi
+((BUILD_ONLY)) && { log "Images built: $BACKEND, $FRONTEND, $POSTGRES, $KEYCLOAK${ACMEDNS:+, $ACMEDNS}${GRAFANA:+, $GRAFANA}${DUMPER:+, $DUMPER}"; exit 0; }
 
 [[ -f "$ENV_DIR/.env" && -d "$ENV_DIR/secrets" ]] \
   || die "no $ENV_DIR/.env and secrets/: run scripts/staging.sh init <suffix> first"
 [[ -f "$ENV_DIR/.local" ]] && die "$ENV_DIR was made for a proof on this machine (init --local); use init without --local, or --local-proof"
-# The split database roles (P1-T19b; the audit watch's own since P1-T21): their secrets are made
+# The split database roles (P1-T19b; the audit watch's own since P1-T21, the dumper's since
+# P1-T22a): their secrets are made
 # here, on the deploying machine, never on the server; this build's stack runs nothing without
 # them. Checked the way the server checks them (db-split-secrets --check: the app's, the
-# owner's and the watch's addresses), before anything is written or sent (review C13); the
+# owner's, the watch's and the dumper's addresses), before anything is written or sent (review C13); the
 # throwaway VM's own folder gets what it lacks here
 if ((LOCAL_PROOF)); then IHR_STAGING_OUT="$ENV_DIR" scripts/staging.sh db-split-secrets >/dev/null; fi
 IHR_STAGING_OUT="$ENV_DIR" scripts/staging.sh db-split-secrets --check >/dev/null \
@@ -212,6 +226,11 @@ for img in "$BACKEND" "$FRONTEND" "$POSTGRES" "$KEYCLOAK" ${ACMEDNS:+"$ACMEDNS"}
     die "image $img was built from ${rev:0:12}, HEAD is ${SHA:0:12}: rebuild (drop --no-build) or pass --allow-dirty"
   fi
 done
+if [[ -n "$DUMPER" ]]; then
+  docker image inspect "$DUMPER" >/dev/null 2>&1 || die "image $DUMPER not found here (drop --no-build)"
+  [[ "$(label_of "$DUMPER" ihr.dockerfile.sha256)" == "$DUMPER_DF_SUM" ]] \
+    || die "image $DUMPER was not built from this deploy/docker/dumper.Dockerfile: rebuild (drop --no-build)"
+fi
 if [[ -n "$GRAFANA" ]]; then
   docker image inspect "$GRAFANA" >/dev/null 2>&1 || die "image $GRAFANA not found here (drop --no-build)"
   [[ "$(label_of "$GRAFANA" ihr.dockerfile.sha256)" == "$GRAFANA_DF_SUM" ]] \
@@ -312,7 +331,8 @@ ship_image "$POSTGRES"
 ship_image "$KEYCLOAK"
 [[ -z "$ACMEDNS" ]] || ship_image "$ACMEDNS"
 [[ -z "$GRAFANA" ]] || ship_image "$GRAFANA"
-for img in "$BACKEND" "$FRONTEND" "$POSTGRES" "$KEYCLOAK" ${ACMEDNS:+"$ACMEDNS"} ${GRAFANA:+"$GRAFANA"}; do
+[[ -z "$DUMPER" ]] || ship_image "$DUMPER"
+for img in "$BACKEND" "$FRONTEND" "$POSTGRES" "$KEYCLOAK" ${ACMEDNS:+"$ACMEDNS"} ${GRAFANA:+"$GRAFANA"} ${DUMPER:+"$DUMPER"}; do
   tag_release "$img"
 done
 log "Tagged every image :$TAG on the server"
@@ -320,7 +340,7 @@ log "Tagged every image :$TAG on the server"
 # ---- 3. Stack files (tracked files only: never a stray .env or secret) ----------------------
 # The same archive is kept on the server as the release's stack files (rollback unpacks it)
 log "Sending the stack files to $REMOTE_ROOT (kept as $REL_REMOTE/stack-$TAG.tgz)"
-git ls-files -z deploy/staging deploy/s3 deploy/monitoring deploy/logs deploy/keycloak/password-blocklist \
+git ls-files -z deploy/staging deploy/s3 deploy/monitoring deploy/logs deploy/lib deploy/dumps deploy/keycloak/password-blocklist \
     deploy/grafana/provisioning deploy/grafana/dashboards deploy/grafana/logs-reader.yml deploy/grafana/allowed-empty.txt \
     deploy/docker/frontend-nginx.conf.template scripts/staging.sh scripts/client-keys.sh scripts/check-dashboards.py \
     scripts/release_log.py \

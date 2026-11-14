@@ -84,6 +84,14 @@
 #   scripts/staging.sh logs-archive-expire [--dry-run] [--older-than-days N]
 #                                                erasure after 400 days, from the owner's machine
 #                                                with the bucket's admin key (stdin)
+#   scripts/staging.sh dumps-init <https://endpoint> <bucket> <region> [--uri-style path|host]
+#                     [--existing-key] | --local nightly per-hospital dumps (P1-T22a); the bucket
+#                                                key (and, rebuilding, the dump key) on stdin
+#   scripts/staging.sh dumps-now [--slug S]... | dumps-check [--deep [--all]] | dumps-role
+#   scripts/staging.sh dumps-get <hospital uuid> <YYYY-MM-DD|latest> <dump|public> > file
+#   scripts/staging.sh dumps-probe               the bucket's lock and what the dumper key may do
+#   scripts/staging.sh dumps-expire [--dry-run] [--erase-suspect]  erasure past 14 nights / 4 Sundays, from the
+#                                                owner's machine with the bucket's admin key (stdin)
 #
 # <suffix> is where hospitals live: <slug>.<suffix>, e.g. app.example.in (Q-T11).
 # --vm: a proof on a throwaway local VM (scripts/local-vm.sh): small memory, all addresses,
@@ -116,6 +124,11 @@ compose() {  # the file list is worked out on each call: init may have just made
   [[ "$(env_get IHR_S3)" == local ]] && files+=(-f "$DIR/compose.s3.yaml")
   [[ "$(env_get IHR_MAIL)" == test ]] && files+=(-f "$DIR/compose.mailtest.yaml")
   [[ -n "$(env_get IHR_BACKUP)" ]] && files+=(-f "$DIR/compose.backup.yaml")
+  # Nightly per-hospital dumps (P1-T22a), and in a proof their way to the local stand-in
+  case "$(env_get IHR_DUMPS)" in
+    s3) files+=(-f "$DIR/compose.dumps.yaml") ;;
+    local) files+=(-f "$DIR/compose.dumps.yaml" -f "$DIR/compose.dumps.local.yaml") ;;
+  esac
   local mon; mon="$(env_get IHR_MONITORING)"
   if [[ -n "$mon" ]]; then
     # Logs come with the metrics: their alerts go through the same Alertmanager (P1-T9b)
@@ -211,10 +224,10 @@ init() {
     fi
   } > "$work/.env"
 
-  local pg owner app watch kc redis_pw admin_pw admin_secret jwks
+  local pg owner app watch dump kc redis_pw admin_pw admin_secret jwks
   local SECRETS_TARGET="$work/secrets"
   pg="$(rand 32)"; owner="$(rand 32)"; app="$(rand 32)"; kc="$(rand 32)"; redis_pw="$(rand 32)"
-  watch="$(rand 32)"
+  watch="$(rand 32)"; dump="$(rand 32)"
   admin_pw="$(rand 24)"; admin_secret="$(rand 32)"
   # --log-driver none: the private key must not reach the host's journal
   jwks="$(docker run --rm --log-driver none --network none --entrypoint python "$backend_image" -c \
@@ -231,6 +244,7 @@ EOF
 DATABASE_URL=postgres://ihr_owner:$owner@db:5432/ihr
 EOF
   audit_watch_env "$watch" | write_secret audit-watch.env
+  dumper_db_env "$dump" | write_secret dumper-db.env
   write_secret redis.env <<EOF
 REDIS_PASSWORD=$redis_pw
 EOF
@@ -312,23 +326,31 @@ DB_WATCH_URL_RE='^DATABASE_URL=postgres://ihr_audit_watch:([A-Za-z0-9_-]{32,})@d
 audit_watch_env() {  # audit_watch_env <password>: secrets/audit-watch.env's text (to write_secret)
   printf '# The audit watch'"'"'s address (P1-T21): ihr_audit_watch, read-only; the audit-watch container only\nDATABASE_URL=postgres://ihr_audit_watch:%s@db:5432/ihr\n' "$1"
 }
+# The nightly dumper's read-only role (P1-T22a): its address alone, in its own file (the dumper
+# container only; a member of pg_read_all_data, so this file reads every hospital)
+DB_DUMP_URL_RE='^IHR_DUMP_DATABASE_URL=postgres://ihr_dump:([A-Za-z0-9_-]{32,})@db:5432/ihr$'
+dumper_db_env() {  # dumper_db_env <password>: secrets/dumper-db.env's text (to write_secret)
+  printf '# The nightly dumper'"'"'s address (P1-T22a): ihr_dump, pg_read_all_data only; the dumper container only\nIHR_DUMP_DATABASE_URL=postgres://ihr_dump:%s@db:5432/ihr\n' "$1"
+}
 DB_APP_SERVICES=(backend frontend celery-worker celery-beat provisioner staff-worker)
-db_password() {  # db_password <app|owner|watch> [secrets dir]: that role's password from its address; nothing if absent
-  local f re line
+db_password() {  # db_password <app|owner|watch|dump> [secrets dir]: that role's password from its address; nothing if absent
+  local f re line var=DATABASE_URL
   case "$1" in
     app) f=app.env re="$DB_APP_URL_RE" ;;
     owner) f=db-owner.env re="$DB_OWNER_URL_RE" ;;
     watch) f=audit-watch.env re="$DB_WATCH_URL_RE" ;;
-    *) die "db_password: app, owner or watch" ;;
+    dump) f=dumper-db.env re="$DB_DUMP_URL_RE" var=IHR_DUMP_DATABASE_URL ;;
+    *) die "db_password: app, owner, watch or dump" ;;
   esac
-  line="$(grep '^DATABASE_URL=' "${2:-$SECRETS}/$f" 2>/dev/null | tail -1 || true)"
+  line="$(grep "^$var=" "${2:-$SECRETS}/$f" 2>/dev/null | tail -1 || true)"
   if [[ "$line" =~ $re ]]; then echo "${BASH_REMATCH[1]}"; fi
 }
-db_secrets_split() {  # db_secrets_split [secrets dir]: the three addresses are the split roles'
-  [[ -n "$(db_password app "${1:-}")" && -n "$(db_password owner "${1:-}")" && -n "$(db_password watch "${1:-}")" ]]
+db_secrets_split() {  # db_secrets_split [secrets dir]: the four addresses are the split roles'
+  [[ -n "$(db_password app "${1:-}")" && -n "$(db_password owner "${1:-}")" && -n "$(db_password watch "${1:-}")" \
+     && -n "$(db_password dump "${1:-}")" ]]
 }
 db_need_split_secrets() {
-  db_secrets_split || die "secrets/app.env, secrets/db-owner.env and secrets/audit-watch.env do not hold the split database roles' addresses (P1-T19b, P1-T21): run scripts/staging.sh db-split-secrets on the deploying machine and send them (scripts/deploy.sh); deploy/staging/README.md, Moving to split roles"
+  db_secrets_split || die "secrets/app.env, secrets/db-owner.env, secrets/audit-watch.env and secrets/dumper-db.env do not hold the split database roles' addresses (P1-T19b, P1-T21, P1-T22a): run scripts/staging.sh db-split-secrets on the deploying machine and send them (scripts/deploy.sh); deploy/staging/README.md, Moving to split roles"
 }
 # The audit watch (P1-T21) starts with the monitoring and refuses to run without the fingerprint
 # bucket's reader key: a stack with monitoring needs its fingerprint storage. Checked by up and
@@ -395,9 +417,12 @@ ALTER ROLE ihr RENAME TO ihr_owner;'
 # database (a role may ALTER ROLE itself, also IN DATABASE another database: design.md, known
 # limit 1); no membership but the dump role's
 # pg_read_all_data, and nobody a member of ours; large objects closed to PUBLIC (known limit 3).
-# The audit watch logs in (P1-T21; its verifier in :vw, at most 4 connections); the dump role has
-# no login until its service exists (P1-T22). Grants are not here: ensure_grants (the migrate
-# one-shot, as the owner) converges them.
+# The audit watch logs in (P1-T21; its verifier in :vw, at most 4 connections), and the nightly
+# dumper (P1-T22a; :vd, at most 10: up to 4 dumps at a time (IHR_DUMP_PARALLEL), each two sessions
+# while pg_dump runs (its lock's, which also exports the snapshot, and pg_dump's), and two for
+# `dumper.py role` and the hospitals' listing; dumper.py's SESSIONS_PER_DUMP x MAX_PARALLEL + 2,
+# held together by scripts/test_dumps.py). Grants are not here: ensure_grants (the migrate one-shot, as the owner) converges them
+# (CONNECT for ihr_dump; pg_read_all_data gives it every read, nothing else).
 # shellcheck disable=SC2016
 DB_ROLES_SQL='DO $$
 BEGIN
@@ -415,7 +440,7 @@ END $$;
 ALTER ROLE ihr_owner WITH LOGIN INHERIT NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS PASSWORD :'"'vo'"';
 ALTER ROLE ihr_app WITH LOGIN NOINHERIT NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS PASSWORD :'"'va'"';
 ALTER ROLE ihr_audit_watch WITH LOGIN NOINHERIT NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS CONNECTION LIMIT 4 PASSWORD :'"'vw'"';
-ALTER ROLE ihr_dump WITH NOLOGIN INHERIT NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS PASSWORD NULL;
+ALTER ROLE ihr_dump WITH LOGIN INHERIT NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS CONNECTION LIMIT 10 PASSWORD :'"'vd'"';
 DO $$
 DECLARE s record;
 BEGIN
@@ -465,13 +490,13 @@ db_roles_apply() {  # db_roles_apply [--move]: (the move, then) the roles re-ass
   # in one transaction; the passwords from the secrets as SCRAM verifiers, on stdin. In the
   # database ihr: roles are the cluster's, but a function's privileges are each database's own
   # (the large-object revoke must be ihr's)
-  local owner app watch vo va vw
-  owner="$(db_password owner)"; app="$(db_password app)"; watch="$(db_password watch)"
-  [[ -n "$owner" && -n "$app" && -n "$watch" ]] || db_need_split_secrets
-  vo="$(scram <<< "$owner")"; va="$(scram <<< "$app")"; vw="$(scram <<< "$watch")"
-  [[ "$vo" =~ ^SCRAM-SHA-256\$4096:[A-Za-z0-9+/=]+\$[A-Za-z0-9+/=]+:[A-Za-z0-9+/=]+$ && "$va" =~ ^SCRAM-SHA-256\$ && "$vw" =~ ^SCRAM-SHA-256\$ ]] \
+  local owner app watch dump vo va vw vd
+  owner="$(db_password owner)"; app="$(db_password app)"; watch="$(db_password watch)"; dump="$(db_password dump)"
+  [[ -n "$owner" && -n "$app" && -n "$watch" && -n "$dump" ]] || db_need_split_secrets
+  vo="$(scram <<< "$owner")"; va="$(scram <<< "$app")"; vw="$(scram <<< "$watch")"; vd="$(scram <<< "$dump")"
+  [[ "$vo" =~ ^SCRAM-SHA-256\$4096:[A-Za-z0-9+/=]+\$[A-Za-z0-9+/=]+:[A-Za-z0-9+/=]+$ && "$va" =~ ^SCRAM-SHA-256\$ && "$vw" =~ ^SCRAM-SHA-256\$ && "$vd" =~ ^SCRAM-SHA-256\$ ]] \
     || die "could not make the password verifiers"
-  { printf '\\set vo %s\n\\set va %s\n\\set vw %s\n' "'$vo'" "'$va'" "'$vw'"
+  { printf '\\set vo %s\n\\set va %s\n\\set vw %s\n\\set vd %s\n' "'$vo'" "'$va'" "'$vw'" "'$vd'"
     [[ "${1:-}" != --move ]] || printf '%s\n' "$DB_ROLES_MOVE_SQL"
     printf '%s\n' "$DB_ROLES_SQL"
   } | pg_su -1 -q -d ihr >/dev/null
@@ -488,8 +513,8 @@ db_split_secrets() {  # db-split-secrets: the split roles' secrets (P1-T19b), on
   case "${1:-}" in
     "") ;;
     --check)
-      if db_secrets_split "$sec"; then echo "The database roles' secrets are split (app.env, db-owner.env, audit-watch.env)."; return 0; fi
-      echo "$sec: the database roles' secrets are not all split (app.env, db-owner.env, audit-watch.env)" >&2
+      if db_secrets_split "$sec"; then echo "The database roles' secrets are split (app.env, db-owner.env, audit-watch.env, dumper-db.env)."; return 0; fi
+      echo "$sec: the database roles' secrets are not all split (app.env, db-owner.env, audit-watch.env, dumper-db.env)" >&2
       return 1 ;;
     *) die "usage: scripts/staging.sh db-split-secrets [--check]" ;;
   esac
@@ -526,6 +551,13 @@ db_split_secrets() {  # db-split-secrets: the split roles' secrets (P1-T19b), on
     mv "$sec/audit-watch.env.new" "$sec/audit-watch.env"
     changed+=(secrets/audit-watch.env)
   fi
+  # The nightly dumper's read-only role (P1-T22a): the same
+  if [[ -z "$(db_password dump "$sec")" ]]; then
+    [[ ! -e "$sec/dumper-db.env" ]] || die "secrets/dumper-db.env exists but holds no dumper address: nothing more changed (look at it; a secret is never replaced silently)"
+    dumper_db_env "$(rand 32)" | write_secret dumper-db.env.new
+    mv "$sec/dumper-db.env.new" "$sec/dumper-db.env"
+    changed+=(secrets/dumper-db.env)
+  fi
   if grep -q '^IHR_DB_PASSWORD=' "$sec/db.env" 2>/dev/null; then
     tmp="$(grep -v '^IHR_DB_PASSWORD=' "$sec/db.env")"
     printf '%s\n' "$tmp" | write_secret db.env.new
@@ -557,6 +589,9 @@ db_roles_move_stopped() {  # the move with every app container stopped (release,
   local t
   echo "== Stopping every app container: ${DB_APP_SERVICES[*]}"
   compose stop "${DB_APP_SERVICES[@]}"
+  # The nightly dumper too (P1-T22a review C1): the fleet migration after the move would meet a
+  # dump in flight on its hospital's lock. `up` recreates it (dumps_up)
+  [[ -z "$(env_get IHR_DUMPS)" ]] || compose stop dumper
   compose up -d --wait db redis
   t=$SECONDS
   echo "== Moving the database roles: ihr -> ihr_owner (new password), ihr_app, ihr_audit_watch, ihr_dump; settings reset; large objects closed"
@@ -600,7 +635,9 @@ start_existing() {  # start_existing <service>...: the existing containers of th
   local s got ids=()
   (($#)) || die "usage: scripts/staging.sh start-existing <service>..."
   for s in "$@"; do
-    [[ " ${DB_APP_SERVICES[*]} " == *" $s "* ]] || die "$s is not an app service (${DB_APP_SERVICES[*]}): nothing was started"
+    # The app services, and the nightly dumper (a release stops it with the workers; P1-T22a
+    # review C1)
+    [[ " ${DB_APP_SERVICES[*]} dumper " == *" $s "* ]] || die "$s is not an app service (${DB_APP_SERVICES[*]}) or the dumper: nothing was started"
     got="$(existing_containers "$s")" || die "could not list the containers of $s (above): nothing was started"
     [[ -n "$got" ]] || die "no container of $s is left to start (scripts/staging.sh down removed it, or it never ran): nothing was started"
     mapfile -t -O "${#ids[@]}" ids <<< "$got"
@@ -638,6 +675,28 @@ db_serve_previous() {  # db-roles --serve-previous [--operator NAME]: a release 
   fi
   echo "Served by the build that ran; the database still has its single role. A release in progress stays unfinished (releases/attempt): fix the cause and run scripts/staging.sh release again (scripts/deploy.sh --release)."
 }
+fleet_locks() {  # fleet_locks <ihr_fleet_run args>: whether the run may take hospitals' locks
+  # (runner.exclusive: migrate, roles, packs; a --resume repeats whatever its run had)
+  local a
+  for a in "$@"; do
+    case "$a" in migrate|roles|packs|--resume|--resume=*) return 0 ;; esac
+  done
+  return 1
+}
+FLEET_PAUSED=0
+fleet_pause_dumper() {  # fleet_pause_dumper <ihr_fleet_run args>: before an operator's fleet run
+  # (the fleet dispatch below) that takes hospitals' locks, a running nightly dumper is stopped
+  # (P1-T22a review C1): a dump holds its hospital's lock while pg_dump runs, and the fleet waits
+  # about 50 s for a busy hospital before it leaves it held. The dispatch starts its container
+  # again after the run, whatever the outcome (FLEET_PAUSED); a dump it cut short is redone when
+  # the dumper starts. A dumper that was not running (a release stopped it) is left as it was
+  if [[ -n "$(env_get IHR_DUMPS)" ]] && fleet_locks "$@" \
+    && [[ -n "$(compose ps -q --status running dumper 2>/dev/null || true)" ]]; then
+    echo "== Stopping the nightly dumper while the fleet runs (started again after)"
+    compose stop dumper
+    FLEET_PAUSED=1
+  fi
+}
 running_app_services() {  # running_app_services <service>...: those of them that run, space
   # separated; fails (never "none run") if Compose cannot say
   local out
@@ -659,7 +718,7 @@ db_roles_cmd() {  # db-roles --migrate [--operator NAME] | --serve-previous [--o
   [[ -f "$DIR/.env" ]] || die "run: scripts/staging.sh init <suffix>"
   case "$what" in
     --status)
-      if db_secrets_split; then echo "secrets: split (secrets/app.env: ihr_app, secrets/db-owner.env: ihr_owner, secrets/audit-watch.env: ihr_audit_watch)"
+      if db_secrets_split; then echo "secrets: split (secrets/app.env: ihr_app, secrets/db-owner.env: ihr_owner, secrets/audit-watch.env: ihr_audit_watch, secrets/dumper-db.env: ihr_dump)"
       else echo "secrets: not split (scripts/staging.sh db-split-secrets)"; fi
       if [[ -n "$(compose ps -q db 2>/dev/null || true)" ]]; then
         echo "database: $(db_roles_state || echo unreadable)"
@@ -767,6 +826,10 @@ up() {  # up [--new-database]: the flag only where an empty database is really m
   if [[ "$(env_get IHR_MAIL)" == test ]]; then mail_test_files; extra=(smtp-test); fi
   if [[ -n "$(env_get IHR_BACKUP)" ]]; then backup_config; extra+=(backup); fi
   compose up -d --wait "${extra[@]}" traefik keycloak
+  # The nightly dumper stops first (P1-T22a review C1): a dump in flight holds its hospital's
+  # lock, which the start-up roles step below never waits for (it would hold that hospital, 503).
+  # dumps_up below recreates it; a dump it cut short is redone by its catch-up run
+  [[ -z "$(env_get IHR_DUMPS)" ]] || compose stop dumper
   # Schema changes to the end first: the sync reads the hospitals from the database. Run here,
   # once; the services below start without their dependency chain, so it does not run again.
   compose run --rm --no-deps -T migrate
@@ -789,6 +852,8 @@ up() {  # up [--new-database]: the flag only where an empty database is really m
   # The workers' Keycloak secrets of before P1-T8d2: replaced by the sync above, so dead;
   # their files go too
   rm -f "$SECRETS/provisioner.env" "$SECRETS/staff-worker.env"
+  # The nightly dumper (P1-T22a): after migrate (its CONNECT comes from ensure_grants)
+  [[ -z "$(env_get IHR_DUMPS)" ]] || dumps_up
   # Metrics and alerts last (P1-T9a): they watch what is already running
   [[ -z "$(env_get IHR_MONITORING)" ]] || monitoring_up
   compose ps --format 'table {{.Service}}\t{{.Status}}'
@@ -905,6 +970,7 @@ smoke() {  # every public address through Traefik, as a browser would reach it
     if [[ "$bh" == starting ]]; then echo "skip  backups: the backup service is still starting"
     else check "backups healthy (WAL pushed, check passing, backup within 26 h)" healthy "$bh"; fi
   fi
+  [[ -z "$(env_get IHR_DUMPS)" ]] || dumps_smoke
   # The outside uptime check's address (P1-T9a): Traefik's ping there, nothing else; ops. closed
   check "status address for the uptime check" "200 OK" "$(curl "${curl_args[@]}" -w ' %{http_code}' -o /dev/null "https://status.$suffix:$port/healthz" | sed 's/^ //') $(curl "${curl_args[@]}" "https://status.$suffix:$port/healthz")"
   check "status host: nothing else served" 418 "$(code "https://status.$suffix:$port/")"
@@ -1273,6 +1339,9 @@ rel_images() {  # "<name> <image>" for each of our images in this stack
   printf 'backend %s\nfrontend %s\npostgres %s\nkeycloak %s\n' "$(env_get IHR_BACKEND_IMAGE)" \
     "$(env_get IHR_FRONTEND_IMAGE)" "$(env_get IHR_POSTGRES_IMAGE)" "$(env_get IHR_KEYCLOAK_IMAGE)"
   [[ -z "$(env_get IHR_ACME)" ]] || printf 'acmedns %s\n' "$(env_get IHR_ACMEDNS_IMAGE)"
+  if [[ -n "$(env_get IHR_DUMPS)" ]]; then
+    g="$(env_get IHR_DUMPER_IMAGE)"; printf 'dumper %s\n' "${g:-indiehr-dumper:staging}"
+  fi
   if [[ -n "$(env_get IHR_MONITORING)" ]]; then
     g="$(env_get IHR_GRAFANA_IMAGE)"; printf 'grafana %s\n' "${g:-indiehr-grafana:staging}"
   fi
@@ -1668,7 +1737,7 @@ rel_serve_outgoing_advice() {  # rel_serve_outgoing_advice: at stage 1 (held, wo
   storage="$(rel_outgoing_storage 2>/dev/null || echo no)"
   case "$storage" in
     no) echo "; its backend still runs, but its object-storage key is no longer the gateway's (s3 was recreated with the split keys): serving it again would break patient files and pictures" ;;
-    *) echo "; or, as its backend still runs and the database is unchanged by this release, serve the hospitals in it: scripts/staging.sh fleet release --operator $op then scripts/staging.sh fleet window --clear --operator $op (a worker this release stopped stays stopped until scripts/staging.sh start-existing <it>, of ${REL_WORKERS[*]}; $([[ "$storage" == provider ]] && echo "only while its old storage key (BUCKET_KEY) still works at the provider" || echo "only while the gateway is not restarted: the deployed start.sh refuses the combined key"))" ;;
+    *) echo "; or, as its backend still runs and the database is unchanged by this release, serve the hospitals in it: scripts/staging.sh fleet release --operator $op then scripts/staging.sh fleet window --clear --operator $op (a worker this release stopped stays stopped until scripts/staging.sh start-existing <it>, of ${REL_WORKERS[*]} and the nightly dumper where this stack has one; $([[ "$storage" == provider ]] && echo "only while its old storage key (BUCKET_KEY) still works at the provider" || echo "only while the gateway is not restarted: the deployed start.sh refuses the combined key"))" ;;
   esac
 }
 rel_rollback_advice() {  # rel_rollback_advice: the rollbacks `rollback` accepts now, found the way
@@ -1684,7 +1753,7 @@ rel_rollback_advice() {  # rel_rollback_advice: the rollbacks `rollback` accepts
     # Its backend still runs (the database answered single): the fleet steps run in it before the
     # move (the fleet dispatch, through old_manage), so they lift the holds too
     if [[ "$state" == single && -n "$(compose ps -q backend 2>/dev/null || true)" ]]; then
-      out+="; or, as its backend still runs, scripts/staging.sh fleet release --operator ${REL_OP:-<you>} then scripts/staging.sh fleet window --clear --operator ${REL_OP:-<you>} (in that backend; a worker this release stopped stays stopped until scripts/staging.sh start-existing <it>, of ${REL_WORKERS[*]})"
+      out+="; or, as its backend still runs, scripts/staging.sh fleet release --operator ${REL_OP:-<you>} then scripts/staging.sh fleet window --clear --operator ${REL_OP:-<you>} (in that backend; a worker this release stopped stays stopped until scripts/staging.sh start-existing <it>, of ${REL_WORKERS[*]} and the nightly dumper where this stack has one)"
     fi
     echo "$out"
     return 0
@@ -1837,6 +1906,10 @@ release() {  # release [--now [--minutes N] [--note T]] [--operator NAME] | --fi
     # 3. No worker writes into a hospital from here (and none is paged as down until the window's end)
     echo "== [$((SECONDS - t0)) s] Stopping the workers: ${REL_WORKERS[*]}"
     compose stop "${REL_WORKERS[@]}"
+    # The nightly dumper too (P1-T22a review C1): a dump in flight holds its hospital's lock,
+    # which the fleet migration below never waits for (that hospital would stay held). `up`
+    # recreates it; until the window's end it is not paged as down (rel_workers_marker)
+    [[ -z "$(env_get IHR_DUMPS)" ]] || compose stop dumper
     quiet_until="$(window_end "$win" 2>/dev/null || echo $(($(date +%s) + minutes * 60)))"
     rel_workers_marker "$quiet_until"
     # 4. Requests that began before the hold finish (capped)
@@ -2272,11 +2345,11 @@ s3_init() {  # SeaweedFS keys into secrets/, CARE's and the fingerprint keys int
     || die "FILE_UPLOAD_BUCKET / FACILITY_S3_BUCKET in secrets/app.env are not two bucket names"
   hex() { python3 -c "import secrets;print(secrets.token_hex($1))"; }
   declare -A key
-  for k in ADMIN $S3_CARE_IDS ANCHOR_WRITE ANCHOR_READ BACKUP LOGS_ARCHIVE; do key[${k}_KEY]="ihr$(hex 10)"; key[${k}_SECRET]="$(hex 20)"; done
+  for k in ADMIN $S3_CARE_IDS ANCHOR_WRITE ANCHOR_READ BACKUP LOGS_ARCHIVE DUMPS; do key[${k}_KEY]="ihr$(hex 10)"; key[${k}_SECRET]="$(hex 20)"; done
   local SECRETS_TARGET="$sec"
   {
     echo "# SeaweedFS identities (P1-T8b3), written by scripts/staging.sh s3-init; the s3 container only."
-    for k in ADMIN $S3_CARE_IDS ANCHOR_WRITE ANCHOR_READ BACKUP LOGS_ARCHIVE; do
+    for k in ADMIN $S3_CARE_IDS ANCHOR_WRITE ANCHOR_READ BACKUP LOGS_ARCHIVE DUMPS; do
       echo "IHR_S3_${k}_KEY=${key[${k}_KEY]}"
       echo "IHR_S3_${k}_SECRET=${key[${k}_SECRET]}"
     done
@@ -2302,6 +2375,7 @@ s3_init() {  # SeaweedFS keys into secrets/, CARE's and the fingerprint keys int
     echo "IHR_S3_ANCHOR_BUCKET=$S3_ANCHOR_BUCKET_DEFAULT"
     echo "IHR_S3_BACKUP_BUCKET=ihr-backups"
     echo "IHR_S3_LOGS_ARCHIVE_BUCKET=ihr-log-archive"
+    echo "IHR_S3_DUMPS_BUCKET=ihr-dumps"
     echo "# Audit fingerprints: kept 10 years, removable by nobody through S3 (ADR-010 §9)"
     echo "IHR_S3_LOCK_MODE=COMPLIANCE"
     echo "IHR_S3_LOCK_DAYS=3650"
@@ -2313,7 +2387,7 @@ s3_init() {  # SeaweedFS keys into secrets/, CARE's and the fingerprint keys int
 s3_tool() {  # s3_tool <script> <args>: a deploy/s3 script with the S3_* keys through the environment
   local script="$1" k v envs=()
   shift
-  for k in ADMIN $S3_CARE_IDS ANCHOR_WRITE ANCHOR_READ LOGS_ARCHIVE; do
+  for k in ADMIN $S3_CARE_IDS ANCHOR_WRITE ANCHOR_READ LOGS_ARCHIVE DUMPS; do
     for v in KEY SECRET; do
       export "S3_${k}_${v}=$(sed -n "s/^IHR_S3_${k}_${v}=//p" "$SECRETS/s3-gateway.env")"
       envs+=(-e "S3_${k}_${v}")
@@ -2335,6 +2409,16 @@ s3_archive_key() {  # the log archive's SeaweedFS key, for a stand-in set up bef
   grep -q '^IHR_S3_LOGS_ARCHIVE_KEY=' "$f" && return 0
   { cat "$f"
     printf 'IHR_S3_LOGS_ARCHIVE_KEY=ihr%s\nIHR_S3_LOGS_ARCHIVE_SECRET=%s\n' \
+      "$(python3 -c 'import secrets;print(secrets.token_hex(10))')" "$(python3 -c 'import secrets;print(secrets.token_hex(20))')"
+  } | write_secret s3-gateway.env.new
+  mv "$SECRETS/s3-gateway.env.new" "$f"
+}
+s3_dumps_key() {  # the dumper's SeaweedFS key (P1-T22a), made by dumps-init --local in a proof's own
+  # folder only: a stand-in without it gives that identity a random key nobody holds (start.sh)
+  local f="$SECRETS/s3-gateway.env"
+  grep -q '^IHR_S3_DUMPS_KEY=' "$f" && return 0
+  { cat "$f"
+    printf 'IHR_S3_DUMPS_KEY=ihr%s\nIHR_S3_DUMPS_SECRET=%s\n' \
       "$(python3 -c 'import secrets;print(secrets.token_hex(10))')" "$(python3 -c 'import secrets;print(secrets.token_hex(20))')"
   } | write_secret s3-gateway.env.new
   mv "$SECRETS/s3-gateway.env.new" "$f"
@@ -2462,7 +2546,8 @@ s3_up() {  # SeaweedFS, then its buckets (idempotent)
   s3_tool setup_buckets.py --lock-mode "$(env_get IHR_S3_LOCK_MODE)" --lock-days "$(env_get IHR_S3_LOCK_DAYS)" \
     --cors-origin "https://*.$(env_get IHR_TENANT_DOMAIN_SUFFIX)" \
     --backups "$(env_get IHR_S3_BACKUP_BUCKET || true)" \
-    --log-archive "$(v="$(env_get IHR_S3_LOGS_ARCHIVE_BUCKET)"; echo "${v:-ihr-log-archive}")"
+    --log-archive "$(v="$(env_get IHR_S3_LOGS_ARCHIVE_BUCKET)"; echo "${v:-ihr-log-archive}")" \
+    --dumps "$(v="$(env_get IHR_S3_DUMPS_BUCKET)"; echo "${v:-ihr-dumps}")"
 }
 
 s3_check() {  # every key and lock, and the public paths through Traefik (files.<suffix>)
@@ -2470,7 +2555,8 @@ s3_check() {  # every key and lock, and the public paths through Traefik (files.
   # files.<suffix> is Traefik on the files network (port 8443 inside); its certificate is
   # checked by `cert` and smoke, so these requests skip TLS verification
   s3_tool check_keys.py --public-endpoint "https://files.$suffix:8443" --origin "https://alpha.$suffix" --insecure --size-limit \
-    --log-archive "$(v="$(env_get IHR_S3_LOGS_ARCHIVE_BUCKET)"; echo "${v:-ihr-log-archive}")"
+    --log-archive "$(v="$(env_get IHR_S3_LOGS_ARCHIVE_BUCKET)"; echo "${v:-ihr-log-archive}")" \
+    --dumps "$(v="$(env_get IHR_S3_DUMPS_BUCKET)"; echo "${v:-ihr-dumps}")"
 }
 
 # ---- Wildcard certificate (P1-T8b2, compose.acme.yaml) ---------------------------------------
@@ -3155,6 +3241,9 @@ monitoring_config() {  # generated/monitoring/: Prometheus's targets and alertma
   # The log archive's own metrics (P1-T9c), when it runs here
   if [[ -n "$(env_get IHR_LOGS_ARCHIVE)" ]]; then json_targets "$d/targets/logs-archive.json" "logs-archive:9100" ""
   else json_targets "$d/targets/logs-archive.json"; fi
+  # The nightly dumper (P1-T22a): counts and ages only, no hospital
+  if [[ -n "$(env_get IHR_DUMPS)" ]]; then json_targets "$d/targets/dumps.json" "dumper:9110" ""
+  else json_targets "$d/targets/dumps.json"; fi
   if [[ "$(env_get IHR_S3)" == local ]]; then json_targets "$d/targets/s3.json" "s3:9327" "service=s3"
   else json_targets "$d/targets/s3.json"; fi
   # The audit watch (P1-T21): always with the monitoring
@@ -3808,14 +3897,19 @@ archive_exec() {  # archive_exec <archive.py args>: in the running archiver (its
     [[ "${net[1]}" ]] || die "the proof's object storage is not running (scripts/staging.sh up)"
   fi
   docker run --rm -i "${net[@]}" --log-driver none --read-only --tmpfs /tmp -e HOME=/tmp -e TMPDIR=/tmp \
-    --env-file "$SECRETS/logs-archive.env" -v "$ROOT/deploy/logs/archive:/opt/ihr-archive:ro" \
+    --env-file "$SECRETS/logs-archive.env" -v "$ROOT/deploy/logs/archive:/opt/ihr-archive:ro" -v "$ROOT/deploy/lib:/opt/ihr-lib:ro" \
     --entrypoint python3 "$(env_get IHR_BACKEND_IMAGE)" -I /opt/ihr-archive/archive.py "$@"
 }
 
 logs_archive_expire() {  # [--dry-run] [--older-than-days N]: erasure, with the bucket's admin key
-  local arc net=() admin=() mac extra=()
+  local arc net=() admin=() mac extra=() a
   arc="$(env_get IHR_LOGS_ARCHIVE)"
   [[ -n "$arc" ]] || die "no log archive here (logs-archive-init)"
+  # Shorter periods only in a proof, which adds the flag itself below (P1-T22a review S3); any
+  # spelling of it (expire.py takes no abbreviations either, and refuses it off the stand-in)
+  for a in "$@"; do
+    [[ "$a" != --a* ]] || die "--allow-short is for a proof on the local stand-in only (it is added there by itself)"
+  done
   local f="$SECRETS/logs-archive.env" envs=() k v
   # The bucket's address only: never the writer's key or the encryption key
   while IFS='=' read -r k v; do
@@ -3840,7 +3934,7 @@ print(hmac.new(k, b"ihr-log-archive erasure", hashlib.sha256).hexdigest())')"
     admin=("$k" "$v")
   fi
   printf '%s\n%s\n%s\n' "${admin[@]}" "$mac" | docker run --rm -i "${net[@]}" --log-driver none --read-only \
-    --tmpfs /tmp -e HOME=/tmp "${envs[@]}" -v "$ROOT/deploy/logs/archive:/opt/ihr-archive:ro" \
+    --tmpfs /tmp -e HOME=/tmp "${envs[@]}" -v "$ROOT/deploy/logs/archive:/opt/ihr-archive:ro" -v "$ROOT/deploy/lib:/opt/ihr-lib:ro" \
     --entrypoint python3 "$(env_get IHR_BACKEND_IMAGE)" -I /opt/ihr-archive/expire.py "$@" "${extra[@]}"
 }
 
@@ -3897,6 +3991,204 @@ else:
 PY
 }
 
+# ---- Nightly per-hospital dumps (P1-T22a; compose.dumps.yaml, deploy/dumps/) ---------------------
+dumps_init() {  # <https://endpoint> <bucket> <region> [--uri-style path|host] [--existing-key] | --local
+  local envf="$OUT/.env" sec="$OUT/secrets" endpoint="" bucket="" region="" style="host" local_d=0
+  local existing=0 key="" secret="" enc args=()
+  [[ -f "$envf" && -d "$sec" ]] || die "no $envf / secrets: run scripts/staging.sh init <suffix> first"
+  grep -q '^IHR_DUMPS=' "$envf" && die "$envf already has dump settings (IHR_DUMPS=...)"
+  while (($#)); do
+    case "$1" in
+      --local) local_d=1 ;;
+      # A rebuilt server writing into the existing dumps: its dump key (from the password
+      # manager), typed or as the last line on stdin, instead of a new one
+      --existing-key) existing=1 ;;
+      --uri-style) style="${2:?--uri-style path|host}"; shift ;;
+      -*) die "unknown option: $1" ;;
+      *) args+=("$1") ;;
+    esac
+    shift
+  done
+  if ((local_d)); then
+    # Proof only: this stack's own SeaweedFS (same disk, so not a real second copy)
+    grep -q '^IHR_S3=local' "$envf" || die "dumps-init --local needs SeaweedFS on this stack (s3-init)"
+    SECRETS="$sec" s3_dumps_key
+    endpoint="http://s3:8333" region="ap-south-1" style="path"
+    bucket="$(sed -n 's/^IHR_S3_DUMPS_BUCKET=//p' "$envf" | tail -1)"; bucket="${bucket:-ihr-dumps}"
+    grep -q '^IHR_S3_DUMPS_BUCKET=' "$envf" || echo "IHR_S3_DUMPS_BUCKET=$bucket" >> "$envf"
+    key="$(sed -n 's/^IHR_S3_DUMPS_KEY=//p' "$sec/s3-gateway.env")"
+    secret="$(sed -n 's/^IHR_S3_DUMPS_SECRET=//p' "$sec/s3-gateway.env")"
+  else
+    ((${#args[@]} == 3)) || die "usage: scripts/staging.sh dumps-init <https://endpoint> <bucket> <region> [--uri-style path|host]"
+    endpoint="${args[0]}" bucket="${args[1]}" region="${args[2]}"
+    [[ "$endpoint" =~ ^https://[a-z0-9.-]+(:[0-9]+)?$ ]] || die "the endpoint must be https://host"
+    # The bucket's dumper key, from the keyboard or stdin (two lines), never arguments
+    if [[ -t 0 ]]; then
+      read -rp "Dumps bucket access key (the dumper's key: add and read under dumps/): " key; read -rsp "Secret key: " secret; echo
+    else
+      IFS= read -r key || true; IFS= read -r secret || true
+    fi
+  fi
+  if ((existing)); then
+    if [[ -t 0 ]]; then read -rsp "The dump key (IHR_DUMP_KEY): " enc; echo
+    else IFS= read -r enc || true; fi
+  else
+    enc="$(python3 -c 'import base64,os;print(base64.urlsafe_b64encode(os.urandom(32)).decode())')"
+  fi
+  [[ "$enc" =~ ^[A-Za-z0-9_-]{43}=$ ]] || die "that is not a dump key (44 characters, ending in =)"
+  [[ "$bucket" =~ $BUCKET_RE ]] || die "not a bucket name: $bucket"
+  [[ "$region" =~ ^[A-Za-z0-9-]+$ ]] || die "not a region: $region"
+  [[ "$style" =~ ^(path|host)$ ]] || die "--uri-style is path or host"
+  for v in "$key" "$secret"; do
+    [[ ${#v} -ge 8 ]] || die "the bucket key and secret are required"
+    case "$v" in *[[:space:]\"\'\\\$\`]*) die "the key has characters an env file cannot hold" ;; esac
+  done
+  local SECRETS_TARGET="$sec"
+  {
+    echo "# Nightly per-hospital dumps (P1-T22a, scripts/staging.sh dumps-init): the dumper only."
+    echo "# IHR_DUMP_KEY encrypts and authenticates every dump: without it no dump can be read or"
+    echo "# checked. Keep a copy in the owner's password manager. Not the pgBackRest passphrase."
+    echo "IHR_DUMP_ENDPOINT=$endpoint"
+    echo "IHR_DUMP_REGION=$region"
+    echo "IHR_DUMP_BUCKET=$bucket"
+    echo "IHR_DUMP_URI_STYLE=$style"
+    echo "IHR_DUMP_ACCESS_KEY=$key"
+    echo "IHR_DUMP_SECRET=$secret"
+    echo "IHR_DUMP_KEY=$enc"
+  } | write_secret dumps.env
+  {
+    echo "# Nightly per-hospital dumps (P1-T22a; scripts/staging.sh dumps-init): 14 nights, 4 Sundays"
+    echo "IHR_DUMPS=$( ((local_d)) && echo local || echo s3)"
+    echo "IHR_DUMPER_IMAGE=${IHR_DUMPER_IMAGE:-indiehr-dumper:staging}"
+  } >> "$envf"
+  # A proof's SeaweedFS also takes the dumps: at its default 448m a 74 MB upload got it killed
+  # (P1-T22a proof); a server's dumps go to their own bucket elsewhere
+  if ((local_d)) && ! grep -q '^IHR_S3_MEMORY=' "$envf"; then echo "IHR_S3_MEMORY=768m" >> "$envf"; fi
+  echo "Dump settings added ($endpoint, bucket $bucket). Copy IHR_DUMP_KEY from $sec/dumps.env into"
+  echo "your password manager now: without it no dump can be read, checked or restored."
+}
+
+dumper_image() {  # built by scripts/deploy.sh (a server) or here (a proof on this machine); a
+  # proof rebuilds when the Dockerfile changed (its hash is the image's label, as deploy.sh sets)
+  local img df sum have
+  img="$(env_get IHR_DUMPER_IMAGE)"; img="${img:-indiehr-dumper:staging}"
+  df="$ROOT/deploy/docker/dumper.Dockerfile"
+  have="$(docker image inspect -f '{{index .Config.Labels "ihr.dockerfile.sha256"}}' "$img" 2>/dev/null || true)"
+  if [[ -f "$DIR/.local" && -f "$df" ]]; then
+    sum="$(sha256sum "$df" | cut -d' ' -f1)"
+    if [[ "$have" != "$sum" ]]; then
+      echo "Building $img (deploy/docker/dumper.Dockerfile)"
+      docker buildx build -q --load --label "ihr.dockerfile.sha256=$sum" -f "$df" -t "$img" "$ROOT/deploy/docker" >/dev/null
+    fi
+  elif [[ -z "$have" ]]; then
+    die "image $img is not here (scripts/deploy.sh builds and sends it)"
+  fi
+}
+
+dumps_up() {  # the dumper, after migrate; it checks its database role before every run
+  local rc i
+  [[ -f "$SECRETS/dumps.env" ]] || die "no secrets/dumps.env: run scripts/staging.sh dumps-init"
+  dumper_image
+  compose up -d --wait --no-deps dumper
+  # `dumper.py role`: 0 as modelled, 1 not, 2 could not connect (the role's connection limit
+  # while dumps run, or the database): only 1 is a wrong role; 2 is tried again (review C7)
+  for i in 1 2 3 4 5 6; do
+    rc=0; dumps_exec role >/dev/null 2>&1 || rc=$?
+    [[ $rc == 2 && $i -lt 6 ]] || break
+    sleep 10
+  done
+  case "$rc" in
+    0) ;;
+    2) die "could not connect as ihr_dump to check the dumper's database role (its connection limit, or the database): scripts/staging.sh dumps-role says why" ;;
+    *) die "the dumper's database role is not ihr_dump as modelled: scripts/staging.sh dumps-role says why" ;;
+  esac
+}
+
+dumps_exec() {  # dumps_exec <dumper.py args>: in the running dumper (its keys, its networks);
+  # without one (a lost server, or the owner's machine) `check`, `get` and `probe` run in a
+  # one-off container from secrets/dumps.env (no database address)
+  local d net=()
+  d="$(env_get IHR_DUMPS)"
+  [[ -n "$d" ]] || die "no nightly dumps here (dumps-init)"
+  if [[ -n "$(compose ps -q dumper 2>/dev/null)" ]]; then
+    compose exec -T dumper python3 -I /opt/ihr-dumps/dumper.py "$@"
+    return
+  fi
+  case "$1" in check|get|probe) ;; *) die "the dumper is not running here (scripts/staging.sh up)" ;; esac
+  if [[ "$d" == local ]]; then
+    net=(--network "$(stack_net s3 internal)")
+    [[ "${net[1]}" ]] || die "the proof's object storage is not running (scripts/staging.sh up)"
+  fi
+  dumper_image
+  # /state on disk, never in memory (review C8): an anonymous volume (the image's /state, owned
+  # by postgres), removed with the container; `get` and `check --deep` copy a whole sealed dump
+  # into it (gigabytes for a busy hospital)
+  docker run --rm -i "${net[@]}" --log-driver none --read-only --tmpfs /tmp -v /state \
+    -e HOME=/tmp -e TMPDIR=/state --env-file "$SECRETS/dumps.env" \
+    -v "$ROOT/deploy/dumps:/opt/ihr-dumps:ro" -v "$ROOT/deploy/lib:/opt/ihr-lib:ro" \
+    "$(v="$(env_get IHR_DUMPER_IMAGE)"; echo "${v:-indiehr-dumper:staging}")" "$@"
+}
+
+dumps_expire() {  # [--dry-run] [--erase-suspect] [--daily-days N] [--weekly-days N]: erasure, with the bucket's admin key
+  local d net=() admin=() mac extra=() f="$SECRETS/dumps.env" envs=() k v a
+  d="$(env_get IHR_DUMPS)"
+  [[ -n "$d" ]] || die "no nightly dumps here (dumps-init)"
+  # Shorter periods only in a proof, which adds the flag itself below (review S3); any spelling
+  # of it (expire.py takes no abbreviations either, and refuses it off the stand-in)
+  for a in "$@"; do
+    [[ "$a" != --a* ]] || die "--allow-short is for a proof on the local stand-in only (it is added there by itself)"
+  done
+  # The bucket's address only: never the dumper's key or the dump key
+  while IFS='=' read -r k v; do
+    case "$k" in IHR_DUMP_ENDPOINT|IHR_DUMP_REGION|IHR_DUMP_BUCKET|IHR_DUMP_URI_STYLE) envs+=(-e "$k=$v") ;; esac
+  done < "$f"
+  # The erasure records' key, derived from the dump key here: expire.py never sees the dump key
+  mac="$(sed -n 's/^IHR_DUMP_KEY=//p' "$f" | python3 -c 'import base64,hashlib,hmac,sys
+k = base64.urlsafe_b64decode(sys.stdin.read().strip())
+print(hmac.new(k, b"ihr-dump erasure", hashlib.sha256).hexdigest())')"
+  if [[ "$d" == local ]]; then
+    # A proof: the stand-in's admin key and its network (s3 by its internal name); shorter
+    # periods allowed
+    extra=(--allow-short)
+    envs+=(-e "IHR_DUMP_ENDPOINT=http://s3:8333")
+    net=(--network "$(stack_net s3 internal)")
+    admin=("$(sed -n 's/^IHR_S3_ADMIN_KEY=//p' "$SECRETS/s3-gateway.env")" "$(sed -n 's/^IHR_S3_ADMIN_SECRET=//p' "$SECRETS/s3-gateway.env")")
+  elif [[ -t 0 ]]; then
+    read -rp "The dumps bucket's admin access key: " k; read -rsp "Secret key: " v; echo
+    admin=("$k" "$v")
+  else
+    IFS= read -r k || true; IFS= read -r v || true
+    admin=("$k" "$v")
+  fi
+  dumper_image
+  printf '%s\n%s\n%s\n' "${admin[@]}" "$mac" | docker run --rm -i "${net[@]}" --log-driver none --read-only \
+    --tmpfs /tmp -e HOME=/tmp "${envs[@]}" -v "$ROOT/deploy/dumps:/opt/ihr-dumps:ro" -v "$ROOT/deploy/lib:/opt/ihr-lib:ro" \
+    --entrypoint python3 "$(v="$(env_get IHR_DUMPER_IMAGE)"; echo "${v:-indiehr-dumper:staging}")" \
+    -I /opt/ihr-dumps/expire.py "$@" "${extra[@]}"
+}
+
+dumps_smoke() {  # smoke's dumps part (P1-T22a): the dumper runs as ihr_dump, every manifest
+  # authentic and chained, every object present with its size, the bucket locked
+  local dh out rc
+  dh="$(docker inspect -f '{{.State.Health.Status}}' "$(compose ps -q dumper)" 2>/dev/null || echo missing)"
+  if [[ "$dh" == starting ]]; then echo "skip  dumps: the dumper is still starting"
+  else check "dumps: the dumper runs" healthy "$dh"; fi
+  rc="$(dumps_exec role >/dev/null 2>&1; echo $?)"
+  if [[ "$rc" == 2 ]]; then
+    # Its connection limit while dumps run, or the database: not checked, not wrong (review C7)
+    echo "WARN  dumps: could not connect as ihr_dump to check its role (dumps running?): scripts/staging.sh dumps-role later"
+  else
+    check "dumps: its database role is ihr_dump as modelled" 0 "$rc"
+  fi
+  out="$(dumps_exec check 2>/dev/null | tail -2)"
+  check "dumps: every dump authentic, chained, present" "0 problem(s)" "$(grep -oE '[0-9]+ problem\(s\)' <<< "$out" || echo unreadable)"
+  if grep -q '^WARN .*not readable' <<< "$out"; then
+    echo "WARN  dumps: the dumper key cannot read the bucket's lock settings: check them in the provider's console (dumps-probe)"
+  else
+    check "dumps: the bucket is locked (30 days) with versioning" yes "$(grep -q '^ok .*bucket lock' <<< "$out" && echo yes || echo no)"
+  fi
+}
+
 case "${1:-}" in
   init) init "${@:2}" ;;
   up) up "${@:2}" ;;
@@ -3917,7 +4209,12 @@ case "${1:-}" in
     elif rel_db_single; then
       die "the database still has its single role ihr (the move has not run): only fleet window, release and hold run before it, in the running backend ($([[ -n "$(compose ps -q backend 2>/dev/null || true)" ]] && echo "it runs" || echo "none runs: $REL_SERVE_PREVIOUS <you> starts the build that ran"))"
     else
-      compose run --rm --no-deps -T migrate python manage.py ihr_fleet_run "${@:2}"
+      # A run that takes hospitals' locks with the nightly dumper paused around it
+      fleet_pause_dumper "${@:2}"
+      rc=0
+      compose run --rm --no-deps -T migrate python manage.py ihr_fleet_run "${@:2}" || rc=$?
+      if ((FLEET_PAUSED)); then start_existing dumper || rc=$((rc ? rc : 1)); fi
+      exit "$rc"
     fi ;;
   release) release "${@:2}" ;;
   rollback) rollback "${@:2}" ;;
@@ -3972,6 +4269,17 @@ case "${1:-}" in
   logs-archive-get) [[ -n "${2:-}" ]] || die "usage: scripts/staging.sh logs-archive-get <YYYY-MM-DD> [revision]"; archive_exec get "${@:2}" ;;
   logs-archive-expire) logs_archive_expire "${@:2}" ;;
   logs-archive-probe) archive_exec probe ;;
+  dumps-init) dumps_init "${@:2}" ;;
+  dumps-now) dumps_exec once "${@:2}" ;;
+  dumps-check) dumps_exec check "${@:2}" ;;
+  dumps-role) dumps_exec role ;;
+  dumps-probe) dumps_exec probe ;;
+  dumps-get)
+    [[ $# -eq 4 ]] || die "usage: scripts/staging.sh dumps-get <hospital uuid> <YYYY-MM-DD|latest> <dump|public> > file"
+    [[ ! -t 1 ]] || die "dumps-get writes the decrypted object (personal data) to stdout: redirect it into a file on an encrypted disk"
+    dumps_exec get "${@:2}" ;;
+  dumps-drill-mark) dumps_exec drill-mark "${@:2}" ;;
+  dumps-expire) dumps_expire "${@:2}" ;;
   local-proof)
     [[ -f "$DIR/.env" ]] || IHR_FRONTEND_IMAGE="${IHR_FRONTEND_IMAGE:-indiehr-frontend:local}" \
       init "$LOCAL_SUFFIX" --local
@@ -3985,6 +4293,8 @@ case "${1:-}" in
     grep -q '^IHR_MONITORING=' "$DIR/.env" || monitoring_init --test
     # ...and the daily locked log archive into that SeaweedFS (P1-T9c)
     grep -q '^IHR_LOGS_ARCHIVE=' "$DIR/.env" || logs_archive_init --local
+    # ...and the nightly per-hospital dumps into that SeaweedFS (P1-T22a)
+    grep -q '^IHR_DUMPS=' "$DIR/.env" || dumps_init --local
     up
     # A synthetic hospital for the address checks, then its Keycloak organisation and client
     # (smoke checks every hospital's client holds the web app's current key)

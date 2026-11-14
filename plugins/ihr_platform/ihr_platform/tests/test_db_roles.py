@@ -991,20 +991,35 @@ class GrantsTests(AppRoleCase):
         self.assertEqual(after, [])
 
     def test_a_role_no_service_uses_yet_may_lack_login(self):
-        """C6: a missing LOGIN on the dump role (no service logs in as it yet) is a notice,
-        never a problem that stops migrate; on the app role, and on the audit watch's since
-        its service exists (P1-T21), it is a problem."""
+        """C6: a missing LOGIN on a role no service logs in as yet would be a notice, never a
+        problem that stops migrate. Every role has its service now: the app's, the audit
+        watch's (P1-T21) and the nightly dumper's (P1-T22a), so a missing LOGIN on any of
+        them is a problem; the notice path stays for a role added before its service."""
         with as_owner(), transaction.atomic(), connection.cursor() as cursor:
             cursor.execute("ALTER ROLE ihr_audit_watch NOLOGIN")
             cursor.execute("ALTER ROLE ihr_dump NOLOGIN")
             cursor.execute("ALTER ROLE ihr_app NOLOGIN")
             found = db_roles.role_problems(cursor, "test")
+            unused = dict(db_roles.ROLES)
+            unused[db_roles.DUMP] = db_roles.Role(
+                db_roles.DUMP,
+                inherit=True,
+                memberships=("pg_read_all_data",),
+                in_use=False,
+            )
+            with mock.patch.object(db_roles, "ROLES", unused):
+                notice = db_roles.role_problems(cursor, "test")
             transaction.set_rollback(True)
-        self.assertIn(("notice", "role ihr_dump must be able to log in (LOGIN)"), found)
+        self.assertIn(
+            ("problem", "role ihr_dump must be able to log in (LOGIN)"), found
+        )
         self.assertIn(
             ("problem", "role ihr_audit_watch must be able to log in (LOGIN)"), found
         )
         self.assertIn(("problem", "role ihr_app must be able to log in (LOGIN)"), found)
+        self.assertIn(
+            ("notice", "role ihr_dump must be able to log in (LOGIN)"), notice
+        )
 
     def test_a_membership_or_the_databases_temporary_is_refused_at_run_time(self):
         """C8/C9/S6: what the per-process check catches beyond the ACLs."""

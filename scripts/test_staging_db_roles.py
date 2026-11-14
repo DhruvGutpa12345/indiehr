@@ -159,19 +159,24 @@ class Secrets(unittest.TestCase):
         # the audit watch's own read-only role (P1-T21), its address alone in its own file
         watch_pw = re.search(r"^DATABASE_URL=postgres://ihr_audit_watch:([A-Za-z0-9_-]{43})@db:5432/ihr$", watch, re.M).group(1)
         self.assertEqual(watch.count("DATABASE_URL="), 1)
-        self.assertEqual(len({app_pw, owner_pw, watch_pw}), 3)
+        # the nightly dumper's own read-only role (P1-T22a), the same way
+        dump = (sec / "dumper-db.env").read_text()
+        dump_pw = re.search(r"^IHR_DUMP_DATABASE_URL=postgres://ihr_dump:([A-Za-z0-9_-]{43})@db:5432/ihr$", dump, re.M).group(1)
+        self.assertEqual(dump.count("DATABASE_URL="), 1)
+        self.assertEqual(len({app_pw, owner_pw, watch_pw, dump_pw}), 4)
         self.assertNotIn("oldsharedpassword", app + owner)
         self.assertIn("DJANGO_SECRET_KEY=k\n", app)
         self.assertIn("REDIS_URL=redis://:r@redis:6379/0\n", app)
         self.assertEqual(app.count("DATABASE_URL="), 1)
         self.assertNotIn("IHR_DB_PASSWORD", (sec / "db.env").read_text())
         self.assertIn("KC_DB_PASSWORD=kc", (sec / "db.env").read_text())
-        for f in ("app.env", "db-owner.env", "db.env", "audit-watch.env"):
+        for f in ("app.env", "db-owner.env", "db.env", "audit-watch.env", "dumper-db.env"):
             self.assertEqual(stat.S_IMODE((sec / f).stat().st_mode), 0o600, f)
-        for pw in (app_pw, owner_pw, watch_pw, "oldsharedpassword"):
+        for pw in (app_pw, owner_pw, watch_pw, dump_pw, "oldsharedpassword"):
             self.assertNotIn(pw, out.stdout + out.stderr)
         self.assertIn("password manager", out.stdout)
-        self.assertEqual(sorted(p.name for p in sec.iterdir()), ["app.env", "audit-watch.env", "db-owner.env", "db.env"])
+        self.assertEqual(sorted(p.name for p in sec.iterdir()),
+                         ["app.env", "audit-watch.env", "db-owner.env", "db.env", "dumper-db.env"])
         # idempotent: a second run keeps every secret
         again = subprocess.run(["bash", str(ROOT / "scripts" / "staging.sh"), "db-split-secrets"],
                                env={**os.environ, "IHR_STAGING_DIR": str(sec.parent)},
@@ -181,6 +186,7 @@ class Secrets(unittest.TestCase):
         self.assertEqual((sec / "app.env").read_text(), app)
         self.assertEqual((sec / "db-owner.env").read_text(), owner)
         self.assertEqual((sec / "audit-watch.env").read_text(), watch)
+        self.assertEqual((sec / "dumper-db.env").read_text(), dump)
 
     def test_check_needs_all_three_addresses(self):
         """P1-T21 review C13: a folder split before the audit watch (app.env and db-owner.env,
@@ -279,10 +285,12 @@ class Roles(unittest.TestCase):
                     self.assertIn(attr, line)
         self.assertRegex(sql, r"ALTER ROLE ihr_owner WITH LOGIN .*PASSWORD :'vo';")
         self.assertRegex(sql, r"ALTER ROLE ihr_app WITH LOGIN .*PASSWORD :'va';")
-        # the audit watch logs in (P1-T21), with few connections; no service logs in as the dump
-        # role yet (P1-T22): no login, no password
+        # the audit watch logs in (P1-T21), with few connections; so does the nightly dumper
+        # (P1-T22a: two dumps at a time, each a lock, a snapshot and pg_dump's own connection)
         self.assertRegex(sql, r"ALTER ROLE ihr_audit_watch WITH LOGIN .*CONNECTION LIMIT 4 PASSWORD :'vw';")
-        self.assertRegex(sql, r"ALTER ROLE ihr_dump WITH NOLOGIN .*PASSWORD NULL;")
+        # Two sessions a dump while pg_dump runs, up to 4 at a time, and two more (P1-T22a review
+        # C7; scripts/test_dumps.py ties it to dumper.py's SESSIONS_PER_DUMP x MAX_PARALLEL + 2)
+        self.assertRegex(sql, r"ALTER ROLE ihr_dump WITH LOGIN .*CONNECTION LIMIT 10 PASSWORD :'vd';")
         self.assertIn("REVOKE %I FROM %I GRANTED BY %I CASCADE", sql)
         self.assertIn("GRANT pg_read_all_data TO ihr_dump", sql)
         # the model's own inherit flags (db_roles.ROLES)

@@ -262,5 +262,15 @@ repos:
         entry: python -m unittest scripts/test_logs_archive.py
         language: python
         additional_dependencies: ["cryptography==50.0.2"]
-        files: ^(deploy/logs/archive/|scripts/test_logs_archive\.py$)
+        files: ^(deploy/logs/archive/|deploy/lib/|scripts/test_logs_archive\.py$)
+        pass_filenames: false
+      # The nightly per-hospital dumps (P1-T22a): the dumper and dump-expire against a fake
+      # database, pg_dump and bucket (the live class, with a real Postgres, runs in the dumper
+      # image: scripts/test-dumps-live.sh, CI job "Dumper image")
+      - id: dumps-tests
+        name: nightly dumps (chain, encryption, snapshot, held, lock, expiry)
+        entry: python -m unittest scripts/test_dumps.py
+        language: python
+        additional_dependencies: ["cryptography==50.0.2"]
+        files: ^(deploy/dumps/|deploy/lib/|deploy/logs/archive/|scripts/test_dumps\.py$)
         pass_filenames: false

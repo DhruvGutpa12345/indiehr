@@ -33,7 +33,8 @@ object uploaded before a crash, without its manifest) is skipped: the next revis
 
 Format of an object: lines of Fernet tokens (AES-128-CBC + HMAC-SHA256, `cryptography`), each
 holding one MiB of a gzip stream of the day's JSON lines in hour order, as VictoriaLogs returns
-them. Configuration: environment (see deploy/staging/compose.logs-archive.yaml).
+them (deploy/lib/sealer.py, shared with the nightly dumps). Configuration: environment (see
+deploy/staging/compose.logs-archive.yaml).
 """
 
 import base64
@@ -42,7 +43,6 @@ import datetime as dt
 import fcntl
 import gzip
 import hashlib
-import hmac
 import http.server
 import json
 import os
@@ -56,13 +56,28 @@ import urllib.error
 import urllib.parse
 import urllib.request
 
+
+def _shared_lib():
+    """The shared modules: /opt/ihr-lib in a container (a read-only mount), else deploy/lib beside
+    this folder (tests, the owner's machine). Never the working directory (python3 -I)."""
+    here = os.path.dirname(os.path.abspath(__file__))
+    for path in ("/opt/ihr-lib", os.path.normpath(os.path.join(here, "..", "..", "lib"))):
+        if os.path.isfile(os.path.join(path, "sealer.py")):
+            return path
+    sys.exit("the shared sealer (deploy/lib/sealer.py) is missing")
+
+
+sys.path.insert(0, _shared_lib())
+import chain  # noqa: E402
+import locked_bucket  # noqa: E402
+from locked_bucket import taken_error  # noqa: E402, F401 (used below and by the tests)
+from sealer import CHUNK, HEX64, Sealer, erasure_mac_key, mac_ok, record_bytes  # noqa: E402, F401
+
 IST = dt.timezone(dt.timedelta(hours=5, minutes=30))
 FORMAT = "ihr-log-archive/1"
 ERASURE_FORMAT = "ihr-log-archive-erasure/2"
-CHUNK = 1024 * 1024
 PREFIX = "logs/"
 KEY_RE = re.compile(r"^logs/(\d{4})/(\d{2})/(\d{4}-\d{2}-\d{2})\.r([1-9]\d{0,3})\.(jsonl\.gz\.enc|manifest\.json)$")
-HEX64 = re.compile(r"^[0-9a-f]{64}$")
 MIN_LOCK_DAYS = 400
 
 
@@ -141,59 +156,11 @@ class Store:
         return out
 
 
-# ---- encryption and authentication --------------------------------------------------------------
-
-
-def derived_key(archive_key, label):
-    raw = base64.urlsafe_b64decode(archive_key)
-    return hmac.new(raw, label.encode(), hashlib.sha256).digest()
-
-
-def erasure_mac_key(archive_key):
-    """The key that authenticates erasure records (expire.py gets this, never the archive key)."""
-    return derived_key(archive_key, "ihr-log-archive erasure")
-
-
-def body_mac(key, doc):
-    body = {k: v for k, v in doc.items() if k != "mac"}
-    canon = json.dumps(body, sort_keys=True, separators=(",", ":")).encode()
-    return hmac.new(key, canon, hashlib.sha256).hexdigest()
-
-
-def mac_ok(key, doc):
-    mac = doc.get("mac")
-    return isinstance(mac, str) and bool(HEX64.match(mac)) and hmac.compare_digest(
-        mac.encode(), body_mac(key, doc).encode())
-
-
-class Sealer:
-    def __init__(self, key):
-        from cryptography.fernet import Fernet
-
-        self.fernet = Fernet(key.encode() if isinstance(key, str) else key)
-        self.mac_key = derived_key(key, "ihr-log-archive manifest")
-        self.erasure_key = erasure_mac_key(key)
-
-    def encrypt_file(self, src, dst):
-        while True:
-            chunk = src.read(CHUNK)
-            if not chunk:
-                break
-            dst.write(self.fernet.encrypt(chunk) + b"\n")
-
-    def decrypt_lines(self, src):
-        """Yields the plaintext chunks of an object (a file of token lines)."""
-        for token in src:
-            token = token.strip()
-            if token:
-                yield self.fernet.decrypt(token)
-
-    def mac(self, manifest):
-        return body_mac(self.mac_key, manifest)
+# ---- encryption and authentication: the shared sealer (deploy/lib/sealer.py) ------------------
 
 
 def manifest_bytes(manifest):
-    return (json.dumps(manifest, sort_keys=True, indent=1) + "\n").encode()
+    return record_bytes(manifest)
 
 
 def object_key(day, rev):
@@ -242,68 +209,13 @@ def valid_manifest(m, key, sealer):
     return bool(ok)
 
 
-# ---- the bucket -------------------------------------------------------------------------------
+# ---- the bucket: the shared one (deploy/lib/locked_bucket.py) ------------------------------------
 
 
-def taken_error(exc):
-    """A write refused because the name exists (If-None-Match)."""
-    err = getattr(exc, "response", None) or {}
-    code = str((err.get("Error") or {}).get("Code", ""))
-    status = (err.get("ResponseMetadata") or {}).get("HTTPStatusCode")
-    return code in ("PreconditionFailed", "412") or status == 412 or "PreconditionFailed" in str(exc)
-
-
-class Bucket:
-    def __init__(self, client, name):
-        self.s3 = client
-        self.name = name
-
+class Bucket(locked_bucket.Bucket):
     @classmethod
     def from_env(cls):
-        import boto3
-        from botocore.config import Config
-
-        client = boto3.client(
-            "s3",
-            endpoint_url=os.environ.get("IHR_LOGS_ARCHIVE_ENDPOINT") or None,
-            region_name=env("IHR_LOGS_ARCHIVE_REGION", "ap-south-1"),
-            aws_access_key_id=env("IHR_LOGS_ARCHIVE_KEY"),
-            aws_secret_access_key=env("IHR_LOGS_ARCHIVE_SECRET"),
-            config=Config(signature_version="s3v4",
-                          s3={"addressing_style": os.environ.get("IHR_LOGS_ARCHIVE_URI_STYLE", "path")},
-                          connect_timeout=10, read_timeout=120, retries={"max_attempts": 3}),
-        )
-        return cls(client, env("IHR_LOGS_ARCHIVE_BUCKET"))
-
-    # A key is written once (If-None-Match: *): a second write of the same key is refused rather
-    # than becoming a new version. IHR_LOGS_ARCHIVE_IF_NONE_MATCH=off for a store without it.
-    def _once(self):
-        return {"IfNoneMatch": "*"} if os.environ.get("IHR_LOGS_ARCHIVE_IF_NONE_MATCH", "on") != "off" else {}
-
-    def put_file(self, key, path, content_type):
-        md5 = hashlib.md5()  # noqa: S324 (the S3 integrity header a locked bucket needs)
-        with open(path, "rb") as f:
-            for block in iter(lambda: f.read(CHUNK), b""):
-                md5.update(block)
-        with open(path, "rb") as f:
-            self.s3.put_object(Bucket=self.name, Key=key, Body=f, ContentType=content_type,
-                               ContentMD5=base64.b64encode(md5.digest()).decode(), **self._once())
-
-    def put_bytes(self, key, body, content_type):
-        md5 = base64.b64encode(hashlib.md5(body).digest()).decode()  # noqa: S324
-        self.s3.put_object(Bucket=self.name, Key=key, Body=body, ContentType=content_type,
-                           ContentMD5=md5, **self._once())
-
-    def get(self, key):
-        return self.s3.get_object(Bucket=self.name, Key=key)["Body"]
-
-    def size(self, key):
-        return self.s3.head_object(Bucket=self.name, Key=key)["ContentLength"]
-
-    def keys(self, prefix):
-        for page in self.s3.get_paginator("list_objects_v2").paginate(Bucket=self.name, Prefix=prefix):
-            for item in page.get("Contents", []):
-                yield item["Key"]
+        return super().from_env("IHR_LOGS_ARCHIVE", "archive")
 
 
 # ---- what the bucket holds ------------------------------------------------------------------
@@ -357,43 +269,17 @@ class Holdings:
                 self.early_erasures.append(key)
         self._chain()
 
-    def _resolve(self, prev, present):
-        """Follows a link through erased manifests to the first one still present (or None)."""
-        seen = set()
-        while prev is not None and prev not in present and prev in self.erased and prev not in seen:
-            seen.add(prev)
-            prev = self.erased[prev]
-        return prev
-
     def _chain(self):
         present = {sha: (d, r, m) for d, r, m, sha in self.manifests}
-        children = collections.defaultdict(list)
-        roots = []
-        self.order = []
-        for d, r, m, sha in self.manifests:
-            p = self._resolve(m["previous"], present)
-            if p is None:
-                roots.append(sha)
-            elif p in present:
-                children[p].append(sha)
-            else:
-                self.problems.append(f"{d} r{r}: the manifest before it is missing (deleted without an erasure record?)")
-        for parent, kids in children.items():
-            if len(kids) > 1:
-                d, r, _ = present[parent]
-                self.problems.append(f"{d} r{r}: {len(kids)} manifests follow it (the chain forks)")
-        if len(roots) > 1:
-            self.problems.append(f"{len(roots)} manifests start a chain (only the first may)")
-        # The order: from each root along its links (a forked chain: every branch, oldest first)
-        def created(sha):
-            return present[sha][2]["created"]
-        stack = sorted(roots, key=created, reverse=True)
-        while stack:
-            sha = stack.pop()
-            self.order.append(sha)
-            stack.extend(sorted(children.get(sha, []), key=created, reverse=True))
-        heads = [sha for sha in present if not children.get(sha)]
-        self.head = max(heads, key=created) if heads else None
+
+        def label(sha):
+            d, r, _ = present[sha]
+            return f"{d} r{r}"
+
+        self.order, self.head, problems = chain.follow(
+            {sha: m for sha, (_, _, m) in present.items()}, self.erased,
+            lambda sha: present[sha][2]["created"], label)
+        self.problems.extend(problems)
         self.present = present
 
     def latest(self):
@@ -580,17 +466,7 @@ METRICS = {
 
 def lock_state(bucket):
     """1: Object Lock with at least 400 days and versioning on; 0: not; -1: this key cannot read it."""
-    try:
-        conf = bucket.s3.get_object_lock_configuration(Bucket=bucket.name)["ObjectLockConfiguration"]
-        versioning = bucket.s3.get_bucket_versioning(Bucket=bucket.name).get("Status")
-    except Exception as exc:  # noqa: BLE001
-        code = str(((getattr(exc, "response", None) or {}).get("Error") or {}).get("Code", ""))
-        return -1 if code in ("AccessDenied", "403") else 0
-    rule = (conf.get("Rule") or {}).get("DefaultRetention") or {}
-    days = rule.get("Days") or 365 * (rule.get("Years") or 0)
-    ok = (conf.get("ObjectLockEnabled") == "Enabled" and rule.get("Mode") in ("GOVERNANCE", "COMPLIANCE")
-          and days >= MIN_LOCK_DAYS and versioning == "Enabled")
-    return 1 if ok else 0
+    return locked_bucket.lock_state(bucket, MIN_LOCK_DAYS)
 
 
 def run_pass(store, bucket, sealer, status, workdir, grace, recheck_days, retention_days, now=None):

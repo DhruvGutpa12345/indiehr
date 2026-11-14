@@ -335,6 +335,146 @@ lock mode (`IHR_AUDIT_ANCHOR_LOCK_MODE`).
 **Not backed up:** SeaweedFS's files when they live on the server itself (owner, 09-11-2026: at
 go-live files are in the provider's versioned bucket).
 
+## Hospital dumps (P1-T22a)
+
+pgBackRest (above) can only bring back **the whole server**. To undo one hospital's mistake
+without rolling back every other hospital, each hospital is also dumped on its own every night
+(design: `docs/reviews/p1-t22/design.md`, "After the attack"; sizes:
+`docs/reviews/p1-t22/size-model.md`; proof: `docs/reviews/p1-t22/proof-a.md`). The restore
+command and its drill come with P1-T22b.
+
+**The dumper** (`compose.dumps.yaml`, on when `.env` has `IHR_DUMPS`; `deploy/dumps/dumper.py`
+with `deploy/lib/`, in our dumper image `deploy/docker/dumper.Dockerfile`: the database's own
+Postgres 18.6 image plus Python, so `pg_dump` matches the server):
+
+- **When:** 03:30 IST (`IHR_DUMP_TIME`), after the 02:00 release window and the 02:30 backup;
+  nothing starts inside the quiet window 01:45–03:25 (`IHR_DUMP_QUIET`). A fresh or restarted
+  dumper first dumps every hospital without a good dump in the last 26 hours.
+- **Who:** active, suspended and offboarding hospitals, 2 at a time (`IHR_DUMP_PARALLEL`, 1 to 4). A
+  hospital **held** for a release is skipped and reported (`ihr-dump: hospital=<slug>
+  outcome=held`); provisioning and archived ones are not dumped.
+- **How, per hospital:** its advisory lock (the one provisioning and the fleet runner take;
+  waited for 10 minutes), on the same session one REPEATABLE READ snapshot in which the
+  manifest's facts and the hospital's own rows in `public` are read, then `pg_dump -Fc
+  --compress=zstd -n <schema> --snapshot=<that snapshot> --no-owner --no-acl
+  --lock-wait-timeout=60s`. When `pg_dump` exits the session ends, and with it the lock: the
+  upload and the checks never keep the hospital from a release or provisioning. `up` and
+  `release` stop the dumper before any migration (a dump in flight holds its lock).
+- **Sealed:** with `IHR_DUMP_KEY` (Fernet, 1 MiB a token; its own key, not the pgBackRest
+  passphrase), uploaded once per name (If-None-Match, Content-MD5), **read back and checked**
+  as it arrives (the stored version's size and SHA-256, every token decrypts, the plaintext's
+  size and SHA-256, `pg_restore --list` holds that schema only), and only then its manifest.
+  After the run each new dump is fetched, checked whole and restored schema-only into a
+  throwaway Postgres inside the container (no network). `dumps-check --deep` also has
+  `pg_restore` read every data block.
+- **Manifests** hold ids, hashes, sizes, the stored versions, fingerprints and sequence values,
+  **no personal data** (the public rows travel encrypted in `*.public.enc`). Each names the
+  SHA-256 of the hospital's previous one and carries an HMAC. Every reader takes the version a
+  manifest recorded, and **any name under `dumps/` written twice or hidden by a delete marker is
+  a problem** (DumpNotAuthentic): the dumper never writes a name twice. So a missing, replaced
+  or forged dump shows, whoever holds the keys; a new dump written by someone holding the
+  server's keys does not (see "Known and accepted").
+- **Names:** `dumps/<daily|weekly>/<hospital uuid>/<YYYY-MM-DD>.r<N>.{dump.enc,public.enc,manifest.json}`;
+  Sunday's run writes under `weekly/`.
+- **Disk:** each dump needs the larger of 0.30 of its schema's bytes on disk and its last
+  sealed dump plus a fifth, plus 512 MiB (the read-back streams: no second copy). A dump that
+  does not fit beside the one running waits for it; it is refused (`reason=disk`) only when it
+  would not fit on the empty volume. The night's check copies one dump at a time.
+- **Database role:** `ihr_dump` (`secrets/dumper-db.env`): CONNECT and `pg_read_all_data` only,
+  at most 10 sessions (two a dump while `pg_dump` runs, up to 4 at a time, and two more); the
+  dumper refuses to run as anything else (`dumps-role`; exit 2: it could not connect, which is
+  not a wrong role).
+- **Networks:** `internal` (the database, over TCP), `monitoring` (its metrics on :9110 answer
+  Prometheus and itself only) and `dumpsout`, its own way out to the bucket. Never `edge`.
+
+**Keys:**
+
+- **Dumper key (server, `secrets/dumps.env`):** add, read and list versions under `dumps/`
+  only; never delete, hide, unlock or write elsewhere (`dumps-probe` proves it). On AWS the
+  store also refuses any write of it without If-None-Match (`infra/aws`); on a store that does
+  not, a rewrite becomes a second version, which `dumps-check` reports (`dumps-probe` says
+  which of the two).
+- **Dump key `IHR_DUMP_KEY` (server and your password manager):** without it no dump can be
+  read, checked or restored.
+- **Admin key (your machine only, typed when needed):** for erasure only.
+
+| Command | What it does |
+|---|---|
+| `scripts/staging.sh dumps-init https://in-south1-objectstore.e2enetworks.net <bucket> Chennai [--uri-style path\|host]` | Once: asks for the dumps bucket's dumper key (typed or two lines on stdin), makes the dump key, writes `secrets/dumps.env` (mode 600) and `IHR_DUMPS=s3`. **Copy `IHR_DUMP_KEY` into your password manager.** `--existing-key`: a rebuilt server continuing the dumps. `--local`: a proof into this stack's SeaweedFS (automatic in `local-proof`; same disk, not a second copy). AWS: `https://s3.ap-south-2.amazonaws.com <dumps bucket> ap-south-2` (`tofu output -json dumper_key`) |
+| `scripts/staging.sh dumps-now [--slug S]...` | A run now: every due hospital without a dump since today's 03:30 (or the named ones, again), then the check |
+| `scripts/staging.sh dumps-check [--deep [--all]]` | Every manifest and erasure record authentic, each hospital's chain whole, every name under `dumps/` written once, every object present with its size (the version its manifest recorded), the bucket's lock. `--deep`: each hospital's newest dump (`--all`: every dump) read back, decrypted, read whole by `pg_restore`, listed and restored schema-only. Runs from your machine too, without the server (its copies on a Docker volume of its own, removed afterwards: room for the largest sealed dump) |
+| `scripts/staging.sh dumps-get <hospital uuid> <YYYY-MM-DD\|latest> <dump\|public> > file` | One dump (or its public rows, gzip JSON) back, in the version its manifest recorded, checked whole and decrypted (P1-T22b restores from it). Needs disk for the sealed object (a Docker volume, removed afterwards) and for the decrypted file |
+| `scripts/staging.sh dumps-probe` | What the dumper key may do and whether the bucket is locked for 30 days with versioning. Run it at go-live; it leaves a small file under `dumps/ihr-key-check/` |
+| `scripts/staging.sh dumps-role` | The dumper's database role is `ihr_dump` as modelled |
+| `scripts/staging.sh dumps-expire [--dry-run] [--erase-suspect]` | **Weekly, from your machine:** asks for the bucket's admin key and erases every version of nightly dumps older than 14 days and Sunday dumps older than 28, lifting the Governance lock. It refuses shorter periods (`--allow-short` only in a proof on the local stand-in, never abbreviated) and a clock more than an hour off the bucket's, counts an object's age from the younger of its name and its upload, and **first writes a signed erasure record** (`erasure/<time>.json`) so `dumps-check` follows each hospital's chain through what was erased (a record erasing anything inside its retention is a problem). A dump name with more than one version is **SUSPECT** and left alone: look at it (`dumps-check`), then `--erase-suspect`. Run `--dry-run` first |
+
+**Alerts** (`rules/dumps.yml`; log alerts `deploy/logs/alerts/dumps.yml`):
+
+- **DumpTooOld** (critical): a hospital has had no good dump for 26 hours (one never dumped
+  counts from when it went live; a held one is not excused).
+- **DumpHospitalFailed** (log): names the hospital and why (`ihr-dump: hospital=<slug>
+  outcome=failed reason=<lock|disk|window|dump|upload|verify|check|error>`); **DumpHospitalHeld**
+  (log) names a held one; **DumpRunFailing**: the last run's count of failures.
+- **DumpRunMissing** (critical): no run ended for 26 hours. **DumpRunOverBudget**: a run still
+  going after 2.5 hours (06:00 IST).
+- **DumpNotAuthentic** (critical): something in the bucket not ours, changed, replaced, hidden
+  or unchained, an erasure record erasing inside the retention, or a dump that does not read
+  back, list or restore. **DumpBucketNotLocked** (critical). **DumpErasedEarly**: an erasure
+  with `--allow-short` (a proof's only), counted whatever its records say; off a proof's own
+  stand-in such a record is also checked against the retention like any other (DumpNotAuthentic).
+- **DumpRoleRefused** (critical): the dumper refused its database role; nothing is dumped.
+- **DumpDiskLow** (less room than `IHR_DUMP_PARALLEL` dumps the size of the largest need),
+  **DumpErasureOverdue** (dumps older than 36 days: a weekly `dumps-expire` was missed),
+  **DumpDrillOverdue** (no passing restore drill for 35 days, or none 35 days after the first
+  dump; P1-T22b), **DumperDown** (not during a release window, which stops it), **DumpsNotReporting**.
+
+The metrics count hospitals only; they never carry a hospital's name or id.
+
+**What each `reason=` means** (then `scripts/staging.sh dumps-now --slug <hospital>`):
+
+| Reason | Meaning and what to do |
+|---|---|
+| `lock` | Another job (provisioning, the fleet runner, pack apply) held the hospital's lock for 10 minutes. Usually gone by itself; `fleet check` and the provisioner's log say who |
+| `disk` | The work volume lacks room for this dump even with nothing else running (DumpDiskLow warns first). Free or grow the volume |
+| `window` | The run reached the quiet window (01:45–03:25) before this hospital; the next run takes it |
+| `dump` | The snapshot or `pg_dump` failed (its last error is in `logs dumper`) |
+| `upload` | The bucket refused or could not be reached; `dumps-probe` |
+| `verify` | The uploaded dump did not read back whole (size, SHA-256, every token, the plaintext's SHA-256) or list as that schema alone: no manifest was written. Run `dumps-check --deep`; if it repeats, suspect the bucket or the link |
+| `check` | The night's schema-only restore of the new dump failed (`logs dumper` says why) |
+| `error` | Anything else, or a hospital row with an unexpected schema name or id |
+
+**At go-live (owner):**
+
+1. In E2E's console, in **Chennai** (the backup region), create a bucket of its own **with
+   Object Lock**: Governance, default retention 30 days (a little longer than the 28-day
+   retention). Versioning comes with the lock.
+2. Create an access key with the **Writer** role on that bucket only; keep the bucket's admin
+   key in your password manager (erasure only).
+3. On your machine: `scripts/staging.sh dumps-init https://in-south1-objectstore.e2enetworks.net <bucket> Chennai --uri-style path`,
+   then copy `IHR_DUMP_KEY` into your password manager. Deploy.
+4. On the server: `scripts/staging.sh dumps-probe`. **Every line must PASS; any FAIL blocks
+   go-live** (a delete, delete-marker, lock or "write outside dumps/" line: ask E2E for a role
+   without it, or use AWS: `infra/aws` makes the bucket and a put-only key). The line "replace
+   it without If-None-Match" says whether the store refuses it or keeps a second version for
+   `dumps-check` to report; both pass. Then `dumps-now` and `dumps-check --deep`.
+5. Weekly on your machine: `scripts/staging.sh dumps-expire --dry-run`, then without
+   `--dry-run`.
+
+**Known and accepted:**
+
+- **The dump key is on the server** (as the pgBackRest passphrase and the log archive's key):
+  someone holding the server can read dumps, derive the manifest and erasure-record keys and
+  write new, authentic-looking dumps. The MACs and the chain catch accidents and outsiders, not
+  a compromised server. What protects the dumps already written is the lock, which keeps every
+  version for 30 days, and the version-aware readers, which report any name written twice or
+  hidden. Per-hospital keys come with P4-T4.
+- **Up to 24 hours lost** with a nightly dump; the ≤15-minute path is pgBackRest's
+  point-in-time copy (P1-T22b's `--from-pitr`).
+- **E2E's Governance lock** stops the dumper's key, not E2E's account admin; the version
+  listing still shows a removed, replaced or hidden dump to `dumps-check`.
+- **The health check only asks whether the metrics answer.** A failed dump is an alert, not a
+  sick container.
+
 ## Monitoring and alerts (P1-T9a)
 
 Prometheus watches the stack and Alertmanager e-mails the owner (Q-E6) through Zoho ZeptoMail,
@@ -536,7 +676,11 @@ refused role sync is released by that resume once its roles pass). A hospital he
 (a window) is served again with `scripts/staging.sh fleet release --slug <it> --operator <you>`.
 Always run the fleet runner with `staging.sh fleet`, never `staging.sh manage`: the admin
 container logs nothing, so its lines would never reach the alert. One fleet run at a time; a run
-killed half-way is closed as interrupted by its `--resume`.
+killed half-way is closed as interrupted by its `--resume`. A run that takes hospitals' locks
+(`migrate`, `roles`, `packs`, a `--resume`) stops a running nightly dumper first and starts its
+container again afterwards, whatever the outcome: a dump holds its hospital's lock while
+`pg_dump` runs, and the fleet waits only about 50 s for a busy hospital (a dump it cut short is
+redone by its catch-up run).
 
 | Alert | When | Severity |
 |---|---|---|
@@ -986,7 +1130,9 @@ The database `ihr` has two roles (TENANCY_DESIGN §6.10; design: `docs/reviews/p
 - **`ihr_app`** serves every request and runs every other worker (backend, celery-worker,
   celery-beat, staff-worker): data only, with no right to change a schema, an audit trigger, a
   grant or the terminology tables. Address in `secrets/app.env`.
-- `ihr_audit_watch` and `ihr_dump` exist with no login until their services do (P1-T21, P1-T22).
+- `ihr_audit_watch` (the audit watch, P1-T21) and `ihr_dump` (the nightly dumper, P1-T22a:
+  CONNECT and `pg_read_all_data` only; address in `secrets/dumper-db.env`) log in for their
+  services only.
 
 Every app container runs with `IHR_DB_ROLES=required` (the deployment default; the settings refuse
 anything else on a server), declares its role (`IHR_DB_ROLE`), and runs `manage.py

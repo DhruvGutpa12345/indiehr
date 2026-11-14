@@ -529,6 +529,32 @@ class Erasure(Base):
         self.assertIn("erasure/x.json", text)
         self.assertIn("missing", text)
 
+    def test_allow_short_only_on_the_stand_in_and_never_abbreviated(self):
+        """P1-T22a review S3: `--allow` passed scripts/staging.sh's exact-string check and
+        argparse took it for --allow-short; off the stand-in --allow-short is refused here too."""
+        import subprocess
+        import sys
+
+        script = str(ROOT / "deploy" / "logs" / "archive" / "expire.py")
+        env = {k: v for k, v in os.environ.items() if not k.startswith("IHR_")}
+        for flag in ("--allow", "--allow-s", "--a"):
+            for endpoint in ("https://objects.example.in", E.STAND_IN):
+                with self.subTest(flag=flag, endpoint=endpoint):
+                    out = subprocess.run([sys.executable, "-I", script, flag, "--older-than-days", "0"], input="",
+                                         capture_output=True, text=True,
+                                         env=dict(env, IHR_LOGS_ARCHIVE_ENDPOINT=endpoint))
+                    self.assertEqual(out.returncode, 2, out.stderr)  # argparse: unrecognized
+                    self.assertIn("unrecognized arguments", out.stderr)
+        for endpoint, refused in (("https://objects.example.in", True), (None, True), (E.STAND_IN, False)):
+            with self.subTest(endpoint=endpoint):
+                e = dict(env, **({"IHR_LOGS_ARCHIVE_ENDPOINT": endpoint} if endpoint else {}))
+                out = subprocess.run([sys.executable, "-I", script, "--allow-short", "--older-than-days", "0"],
+                                     input="", capture_output=True, text=True, env=e)
+                self.assertNotEqual(out.returncode, 0)
+                self.assertEqual("refused: --allow-short" in out.stderr, refused, (endpoint, out.stderr))
+                if not refused:  # on to the keys, which a proof's wrapper gives on stdin
+                    self.assertIn("needed on stdin", out.stderr)
+
     def test_day_of(self):
         self.assertEqual(E.day_of("logs/2026/11/2026-11-10.r1.manifest.json"), D(2026, 11, 10))
         self.assertEqual(E.day_of("logs/ihr-key-check/2026-11-10T101010.probe"), D(2026, 11, 10))

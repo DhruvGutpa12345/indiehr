@@ -46,7 +46,8 @@ VMA = image("victoriametrics/vmalert")
 KEY_LABEL = {"PackApplyFailed": "hospital", "HospitalNotServed": "hospital", "ReleaseWindowOverrun": "hospital",
              "DatabaseRoleRefused": "reason", "DatabaseSchemaGated": "schema", "DatabaseRoleLoginFailed": "role",
              "BatchRequestRefused": "hospital", "AuditHospitalCheckFailed": "hospital",
-             "AuditHospitalSealLate": "hospital", "AuditEventRecorded": "hospital"}
+             "AuditHospitalSealLate": "hospital", "AuditEventRecorded": "hospital",
+             "DumpHospitalFailed": "hospital", "DumpHospitalHeld": "hospital"}
 
 
 def check(ok, what):

@@ -505,6 +505,29 @@ class ProvisioningTests(SimpleTestCase):
         with self.assertRaises(IntegrityError), transaction.atomic():
             runner.start(form("prov-three"), "test")
 
+    def test_the_lock_key_is_the_dumpers(self):
+        """P1-T22a review C10: the nightly dumper (deploy/dumps/dumper.py, no Django) takes the
+        same advisory lock from its own copy of the key; both suites pin this vector. And
+        exclusive() takes exactly that key: another session cannot take it while it is held."""
+        from django.db import connections
+
+        self.assertEqual(runner.lock_key("alpha"), -8154903275597228642)
+        other = connections.create_connection("default")
+        try:
+            with runner.exclusive("alpha"), other.cursor() as cursor:
+                cursor.execute(
+                    "SELECT pg_try_advisory_lock(%s)", [-8154903275597228642]
+                )
+                self.assertFalse(cursor.fetchone()[0])
+            with other.cursor() as cursor:
+                cursor.execute(
+                    "SELECT pg_try_advisory_lock(%s)", [-8154903275597228642]
+                )
+                self.assertTrue(cursor.fetchone()[0])
+                cursor.execute("SELECT pg_advisory_unlock(%s)", [-8154903275597228642])
+        finally:
+            other.close()
+
     def test_a_second_run_waits_for_the_first(self):
         """The lock holds for the whole run, also after the migrations (which close Django's
         main database connection)."""

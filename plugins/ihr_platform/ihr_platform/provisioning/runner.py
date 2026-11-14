@@ -47,13 +47,24 @@ def start(form, requested_by):
     )
 
 
+def lock_key(slug):
+    """The hospital's advisory lock key. The nightly dumper (deploy/dumps/dumper.py, no Django)
+    has its own copy of it: both are held together by a pinned vector,
+    lock_key("alpha") == -8154903275597228642 (here ihr_platform.tests.test_provisioning; there
+    scripts/test_dumps.py), so a dump and a whole-hospital job never run together."""
+    return int.from_bytes(
+        hashlib.sha256(slug.encode()).digest()[:8], "big", signed=True
+    )
+
+
 @contextmanager
 def exclusive(slug):
     """Hold a per-hospital lock for the whole run, on a connection of its own: the
     migrations close Django's main connection, which would silently drop a lock held there.
     Also taken by every other job that changes a hospital as a whole (reference packs,
-    ihr_refdata); it never waits: a second holder gets ProvisioningError at once."""
-    key = int.from_bytes(hashlib.sha256(slug.encode()).digest()[:8], "big", signed=True)
+    ihr_refdata) and, as the same key, by the nightly dumper while pg_dump runs; it never
+    waits: a second holder gets ProvisioningError at once."""
+    key = lock_key(slug)
     holder = connections.create_connection("default")
     try:
         with holder.cursor() as cursor:

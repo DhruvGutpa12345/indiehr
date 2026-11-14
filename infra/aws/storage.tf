@@ -229,3 +229,158 @@ resource "aws_iam_access_key" "care" {
   for_each = aws_iam_user.care
   user     = each.value.name
 }
+
+# ---- Nightly per-hospital dumps (P1-T22a): Hyderabad, a bucket of their own, locked -----------------
+# Built like the log archive's (ADR-014): versioning and a Governance Object Lock of 30 days, a
+# little longer than the longest retention (4 Sundays, 28 days). The dumper's key adds and reads
+# under dumps/ and reads erasure/, never deletes; the owner's dump-expire (deploy/dumps/expire.py)
+# erases past 14 nights / 4 Sundays with the account's own admin rights (it lifts Governance),
+# after writing an authenticated erasure record. No lifecycle expiry of dumps: a silent delete
+# would break the per-hospital chain. The pgBackRest key (backups bucket) never reaches it.
+resource "aws_s3_bucket" "dumps" {
+  provider            = aws.backup
+  bucket              = var.buckets.dumps
+  object_lock_enabled = true # only possible at creation; turns versioning on
+
+  lifecycle {
+    prevent_destroy = true
+  }
+}
+
+resource "aws_s3_bucket_versioning" "dumps" {
+  provider = aws.backup
+  bucket   = aws_s3_bucket.dumps.id
+  versioning_configuration {
+    status = "Enabled"
+  }
+}
+
+resource "aws_s3_bucket_object_lock_configuration" "dumps" {
+  provider = aws.backup
+  bucket   = aws_s3_bucket.dumps.id
+  rule {
+    default_retention {
+      mode = "GOVERNANCE"
+      days = 30
+    }
+  }
+  depends_on = [aws_s3_bucket_versioning.dumps]
+}
+
+resource "aws_s3_bucket_ownership_controls" "dumps" {
+  provider = aws.backup
+  bucket   = aws_s3_bucket.dumps.id
+  rule {
+    object_ownership = "BucketOwnerEnforced"
+  }
+}
+
+resource "aws_s3_bucket_public_access_block" "dumps" {
+  provider                = aws.backup
+  bucket                  = aws_s3_bucket.dumps.id
+  block_public_acls       = true
+  ignore_public_acls      = true
+  block_public_policy     = true
+  restrict_public_buckets = true
+}
+
+resource "aws_s3_bucket_server_side_encryption_configuration" "dumps" {
+  provider = aws.backup
+  bucket   = aws_s3_bucket.dumps.id
+  rule {
+    apply_server_side_encryption_by_default {
+      sse_algorithm = "AES256"
+    }
+    bucket_key_enabled = true
+  }
+}
+
+# Only unfinished multipart uploads go by themselves (a dump over 4 GiB goes up in parts)
+resource "aws_s3_bucket_lifecycle_configuration" "dumps" {
+  provider = aws.backup
+  bucket   = aws_s3_bucket.dumps.id
+  rule {
+    id     = "unfinished-uploads"
+    status = "Enabled"
+    filter {}
+    abort_incomplete_multipart_upload {
+      days_after_initiation = 7
+    }
+  }
+  depends_on = [aws_s3_bucket_versioning.dumps]
+}
+
+locals {
+  dumps_arn = aws_s3_bucket.dumps.arn
+  dumps_bucket_policy = {
+    Version = "2012-10-17"
+    Statement = [{
+      Sid       = "HttpsOnly"
+      Effect    = "Deny"
+      Principal = "*"
+      Action    = "s3:*"
+      Resource  = [local.dumps_arn, "${local.dumps_arn}/*"]
+      Condition = { Bool = { "aws:SecureTransport" = "false" } }
+    }]
+  }
+  # The dumper: add and read under dumps/ (the read-back check), read the erasure records (the
+  # chain goes through them), list (versions too: a name written twice or hidden shows; P1-T22a
+  # review S1), read the lock settings. The explicit denies also cover any policy attached by
+  # mistake later: never delete or unlock, and never write a name again. Every object write
+  # must carry If-None-Match (S3's conditional-write keys; CreateMultipartUpload and UploadPart
+  # are not object-creation operations and cannot carry it, CompleteMultipartUpload can), and
+  # never If-Match (which would replace a named version)
+  dumper_policy = {
+    Version = "2012-10-17"
+    Statement = [
+      { Sid = "AddAndReadDumps", Effect = "Allow", Action = ["s3:PutObject", "s3:GetObject", "s3:GetObjectVersion"], Resource = ["${local.dumps_arn}/dumps/*"] },
+      { Sid = "ReadErasureRecords", Effect = "Allow", Action = ["s3:GetObject"], Resource = ["${local.dumps_arn}/erasure/*"] },
+      { Sid = "ListAndLockSettings", Effect = "Allow", Action = ["s3:ListBucket", "s3:ListBucketVersions", "s3:GetBucketObjectLockConfiguration", "s3:GetBucketVersioning"], Resource = [local.dumps_arn] },
+      {
+        Sid       = "NeverOverwriteANameWithoutIfNoneMatch"
+        Effect    = "Deny"
+        Action    = ["s3:PutObject"]
+        Resource  = ["${local.dumps_arn}/*"]
+        Condition = { Null = { "s3:if-none-match" = "true" }, Bool = { "s3:ObjectCreationOperation" = "true" } }
+      },
+      {
+        Sid       = "NeverReplaceAVersionWithIfMatch"
+        Effect    = "Deny"
+        Action    = ["s3:PutObject"]
+        Resource  = ["${local.dumps_arn}/*"]
+        Condition = { Null = { "s3:if-match" = "false" } }
+      },
+      {
+        Sid    = "NeverRemoveOrUnlock"
+        Effect = "Deny"
+        Action = ["s3:DeleteObject", "s3:DeleteObjectVersion", "s3:PutObjectRetention", "s3:PutObjectLegalHold",
+          "s3:BypassGovernanceRetention", "s3:PutBucketObjectLockConfiguration", "s3:PutBucketVersioning",
+        "s3:PutLifecycleConfiguration", "s3:PutBucketPolicy", "s3:DeleteBucket"]
+        Resource = [local.dumps_arn, "${local.dumps_arn}/*"]
+      },
+    ]
+  }
+}
+
+resource "aws_s3_bucket_policy" "dumps" {
+  provider   = aws.backup
+  bucket     = aws_s3_bucket.dumps.id
+  policy     = jsonencode(local.dumps_bucket_policy)
+  depends_on = [aws_s3_bucket_public_access_block.dumps]
+}
+
+resource "aws_iam_user" "dumper" {
+  name = "${var.name}-dumper"
+  path = "/indiehr/"
+}
+
+resource "aws_iam_user_policy" "dumper" {
+  name   = "add-and-read-dumps-only"
+  user   = aws_iam_user.dumper.name
+  policy = jsonencode(local.dumper_policy)
+}
+
+# Read once with `tofu output -json dumper_key` into scripts/staging.sh dumps-init (stdin)
+resource "aws_iam_access_key" "dumper" {
+  user = aws_iam_user.dumper.name
+}

@@ -137,11 +137,12 @@ groups:
       # staff-worker and the monitoring itself are warnings. A release window stops the four
       # workers on purpose (scripts/staging.sh release, P1-T18b): they are not paged until the
       # window's end (ihr_release_workers_stopped_until_seconds, written by the release and
-      # removed when it ends, so a release that stops with them down is paged).
+      # removed when it ends, so a release that stops with them down is paged). The nightly
+      # dumper (P1-T22a) is stopped with them: a dump in flight holds its hospital's lock.
       - alert: ContainerNotRunning
         expr: >-
-          ihr_container_running{service!~"celery-worker|celery-beat|provisioner|staff-worker|prometheus|alertmanager|node-exporter|blackbox-exporter|postgres-exporter|redis-exporter|fluent-bit|victorialogs|vmalert|logs-archive|audit-watch|heartbeat-stub|smtp-test"} == 0
-          or (ihr_container_running{service=~"celery-worker|celery-beat"} == 0
+          ihr_container_running{service!~"celery-worker|celery-beat|dumper|provisioner|staff-worker|prometheus|alertmanager|node-exporter|blackbox-exporter|postgres-exporter|redis-exporter|fluent-bit|victorialogs|vmalert|logs-archive|audit-watch|heartbeat-stub|smtp-test"} == 0
+          or (ihr_container_running{service=~"celery-worker|celery-beat|dumper"} == 0
               unless on() (ihr_release_workers_stopped_until_seconds > time()))
         for: 5m
         labels:

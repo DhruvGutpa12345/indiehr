@@ -76,6 +76,12 @@ scrape_configs:
     file_sd_configs:
       - files: ["/etc/prometheus/targets/logs-archive.json"]
 
+  # The nightly dumper (P1-T22a), when it runs here: counts and ages only (no hospital); an
+  # empty target list otherwise
+  - job_name: dumps
+    file_sd_configs:
+      - files: ["/etc/prometheus/targets/dumps.json"]
+
   # The audit watch (P1-T21): the audit trail's integrity, counts and ages only (no hospital)
   - job_name: audit-watch
     file_sd_configs:

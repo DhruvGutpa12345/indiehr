@@ -21,6 +21,7 @@ output "buckets" {
     files    = { name = aws_s3_bucket.care["files"].id, region = "ap-south-1" }
     facility = { name = aws_s3_bucket.care["facility"].id, region = "ap-south-1" }
     backups  = { name = aws_s3_bucket.backups.id, region = "ap-south-2" }
+    dumps    = { name = aws_s3_bucket.dumps.id, region = "ap-south-2" }
   }
 }
 
@@ -32,5 +33,11 @@ output "care_access_key_ids" {
 output "care_keys" {
   description = "FILE_UPLOAD_KEY/_SECRET (files) and FACILITY_S3_KEY/_SECRET (facility) in secrets/app.env (tofu output -json care_keys)."
   value       = { for k, key in aws_iam_access_key.care : k => { id = key.id, secret = key.secret } }
+  sensitive   = true
+}
+
+output "dumper_key" {
+  description = "The dumper's key for scripts/staging.sh dumps-init https://s3.ap-south-2.amazonaws.com <dumps bucket> ap-south-2 (two lines on stdin; tofu output -json dumper_key)."
+  value       = { id = aws_iam_access_key.dumper.id, secret = aws_iam_access_key.dumper.secret }
   sensitive   = true
 }

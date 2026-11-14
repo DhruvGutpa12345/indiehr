@@ -1,0 +1,12 @@
+# A proof's dumps bucket is this stack's own SeaweedFS (scripts/staging.sh dumps-init --local; same
+# disk, so not a real second copy). The dumper reaches it over dumpsout, its own way out, by a
+# name that exists only there (s3-dumpsout): the path a server's dumper takes to the real bucket,
+# never `internal`, where `s3` is the web app's.
+services:
+  s3:
+    networks:
+      dumpsout:
+        aliases: [s3-dumpsout]
+  dumper:
+    environment:
+      IHR_DUMP_ENDPOINT: http://s3-dumpsout:8333

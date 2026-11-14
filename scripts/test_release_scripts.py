@@ -149,7 +149,8 @@ class Lines(unittest.TestCase):
         self.assertEqual(set(re.findall(r"env_get (\w+)", fields)), {"IHR_BACKEND_IMAGE"})
         self.assertEqual(set(re.findall(r"env_get (\w+)", func("rel_images"))),
                          {"IHR_BACKEND_IMAGE", "IHR_FRONTEND_IMAGE", "IHR_POSTGRES_IMAGE", "IHR_KEYCLOAK_IMAGE",
-                          "IHR_ACME", "IHR_ACMEDNS_IMAGE", "IHR_MONITORING", "IHR_GRAFANA_IMAGE"})
+                          "IHR_ACME", "IHR_ACMEDNS_IMAGE", "IHR_MONITORING", "IHR_GRAFANA_IMAGE",
+                          "IHR_DUMPS", "IHR_DUMPER_IMAGE"})
 
 
 class Stack(unittest.TestCase):
@@ -421,7 +422,8 @@ class ReleaseScript(unittest.TestCase):
         self.assertIn("ihr_release_workers_stopped_until_seconds $1", marker)
         self.assertIn('chmod 644 "$f.tmp"', marker)  # node-exporter reads it
         self.assertEqual(rules.count("unless on() (ihr_release_workers_stopped_until_seconds > time())"), 2)
-        for worker in ("celery-worker|celery-beat", "provisioner|staff-worker"):
+        # the nightly dumper is stopped with the critical workers (P1-T22a review C1)
+        for worker in ("celery-worker|celery-beat|dumper", "provisioner|staff-worker"):
             self.assertIn(f'ihr_container_running{{service=~"{worker}"}} == 0', rules)
         tests = (ROOT / "deploy" / "monitoring" / "prometheus" / "tests" / "availability.yml").read_text()
         self.assertIn("workers stopped by a release window", tests)
@@ -785,6 +787,9 @@ class EndToEnd(unittest.TestCase):
                 # and the audit watch's read-only role (P1-T21)
                 (d / "secrets" / "audit-watch.env").write_text(
                     f"DATABASE_URL=postgres://ihr_audit_watch:{'w' * 43}@db:5432/ihr\n")
+                # and the nightly dumper's (P1-T22a)
+                (d / "secrets" / "dumper-db.env").write_text(
+                    f"IHR_DUMP_DATABASE_URL=postgres://ihr_dump:{'d' * 43}@db:5432/ihr\n")
             for tag, stack in (stacks or {}).items():  # releases' kept stack files
                 compose_text, extra = stack if isinstance(stack, tuple) else (stack, None)
                 make_stack_archive(d / "releases" / f"stack-{tag}.tgz", compose_text, extra)
@@ -1233,6 +1238,11 @@ class EndToEnd(unittest.TestCase):
         self.assertEqual(out.returncode, 0, out.stderr)
         self.assertEqual([ln for ln in calls.splitlines() if ln.startswith("start ")], ["start cid-backend"], calls)
         self.assertNotRegex(calls, r"compose .* (up|start) ")
+        # the nightly dumper too: a release stops it with the workers (P1-T22a review C1)
+        out, calls = self.run_staging([], "start-existing", "dumper", running="db",
+                                      fake={"FAKE_STOPPED": "dumper", "FAKE_ONEOFF": "dumper"})
+        self.assertEqual(out.returncode, 0, out.stderr)
+        self.assertEqual([ln for ln in calls.splitlines() if ln.startswith("start ")], ["start cid-dumper"], calls)
         for args, why in ((("traefik",), "traefik is not an app service"),
                           (("backend", "celery-beat"), "no container of celery-beat is left to start"),
                           ((), "usage: scripts/staging.sh start-existing")):

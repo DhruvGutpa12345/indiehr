@@ -1,0 +1,38 @@
+# Nightly per-hospital dumps (P1-T22a; deploy/dumps/dumper.py, compose.dumps.yaml). The dumper's
+# metrics count hospitals only (no hospital label: privacy, deploy/monitoring/prometheus/rules/
+# dumps.yml); the hospital is named here, from the dumper's own fixed lines
+#   "ihr-dump: hospital=<slug> outcome=failed reason=<lock|disk|window|dump|upload|verify|check|error>"
+#   "ihr-dump: hospital=<slug> outcome=held"
+# which it writes once per hospital per run (03:30 IST; a catch-up or `dumps-now` run writes
+# again). A slug that does not match its pattern is named "invalid-slug". A day's window: a night's
+# failure is still firing when warnings are mailed, and clears after the next good night.
+# What to do: deploy/staging/README.md, "Hospital dumps" (reasons explained there);
+# scripts/staging.sh dumps-now --slug <the hospital named> once the cause is fixed.
+# Forgery: only container lines (source:=container) of the dumper service (never the web backend,
+# whose access log prints request paths anyone can choose), and only a whole line that is exactly
+# ours, with a slug-shaped hospital. The dumper prints slugs from the database's hospital rows
+# only, and escapes every control character of everything else it prints, which starts
+# "dumper: ". A forged line can at most raise a false alert naming a slug: the label is never put
+# into the action's command. Tests: scripts/check-logs.py (cases in
+# deploy/logs/tests/alert-cases.json) and scripts/test_staging_logs.py.
+groups:
+  - name: dumps
+    type: vlogs
+    interval: 1m
+    rules:
+      - alert: DumpHospitalFailed
+        expr: '_time:24h source:=container service:in(dumper) "ihr-dump: hospital=" | extract_regexp "^ihr-dump: hospital=(?P<hospital>[a-z][a-z0-9-]{2,30}) outcome=failed reason=(?P<reason>lock|disk|window|dump|upload|verify|check|error)$" | filter hospital:~"^[a-z][a-z0-9-]{2,30}$" | stats by (hospital, reason) count() as failures'
+        labels:
+          severity: warning
+          service: dumper
+        annotations:
+          summary: 'The nightly dump of hospital {{ $labels.hospital }} failed ({{ $labels.reason }}; {{ $value }} times in 24 hours)'
+          action: 'deploy/staging/README.md, Hospital dumps, names what each reason means; fix it, then scripts/staging.sh dumps-now --slug <the hospital named above> (a hospital without a good dump for 26 hours also raises DumpTooOld)'
+      - alert: DumpHospitalHeld
+        expr: '_time:24h source:=container service:in(dumper) "ihr-dump: hospital=" | extract_regexp "^ihr-dump: hospital=(?P<hospital>[a-z][a-z0-9-]{2,30}) outcome=held$" | filter hospital:~"^[a-z][a-z0-9-]{2,30}$" | stats by (hospital) count() as skipped'
+        labels:
+          severity: warning
+          service: dumper
+        annotations:
+          summary: 'Hospital {{ $labels.hospital }} was held for a release when the nightly dumps ran, so it was not dumped'
+          action: 'Finish or roll back the release (HospitalNotServed names held hospitals; scripts/staging.sh fleet check), then scripts/staging.sh dumps-now --slug <the hospital named above>'

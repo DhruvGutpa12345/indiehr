@@ -85,14 +85,15 @@ variable "tenant_domain_suffix" {
 }
 
 variable "buckets" {
-  description = "S3 bucket names (globally unique): CARE's files and pictures (Mumbai) and the backups (Hyderabad). The audit fingerprint bucket is in infra/aws/anchor, in a separate account."
+  description = "S3 bucket names (globally unique): CARE's files and pictures (Mumbai), the backups and the nightly dumps (Hyderabad). The audit fingerprint bucket is in infra/aws/anchor, in a separate account."
   type = object({
     files    = string
     facility = string
     backups  = string
+    dumps    = string
   })
   validation {
-    condition     = alltrue([for b in values(var.buckets) : can(regex("^[a-z0-9][a-z0-9-]{1,61}[a-z0-9]$", b))]) && length(distinct(values(var.buckets))) == 3
-    error_message = "buckets: three different names, 3-63 characters, a-z, 0-9 and -."
+    condition     = alltrue([for b in values(var.buckets) : can(regex("^[a-z0-9][a-z0-9-]{1,61}[a-z0-9]$", b))]) && length(distinct(values(var.buckets))) == 4
+    error_message = "buckets: four different names, 3-63 characters, a-z, 0-9 and -."
   }
 }

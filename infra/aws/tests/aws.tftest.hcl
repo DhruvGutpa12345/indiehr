@@ -28,6 +28,10 @@ override_resource {
   target = aws_s3_bucket.backups
   values = { arn = "arn:aws:s3:::indiehr-test-backups", id = "indiehr-test-backups" }
 }
+override_resource {
+  target = aws_s3_bucket.dumps
+  values = { arn = "arn:aws:s3:::indiehr-test-dumps", id = "indiehr-test-dumps" }
+}
 
 variables {
   state_passphrase     = "a test passphrase, not real"
@@ -39,6 +43,7 @@ variables {
     files    = "indiehr-test-files"
     facility = "indiehr-test-facility"
     backups  = "indiehr-test-backups"
+    dumps    = "indiehr-test-dumps"
   }
 }
 
@@ -213,4 +218,69 @@ run "rejects_a_bad_ssh_key" {
     ssh_public_key = "not a key"
   }
   expect_failures = [var.ssh_public_key]
+}
+
+run "dumps_locked_in_hyderabad_with_a_key_that_never_deletes" {
+  command = plan
+
+  assert {
+    condition     = output.buckets.dumps.region == "ap-south-2" && aws_s3_bucket.dumps.object_lock_enabled == true
+    error_message = "the dumps bucket is in Hyderabad, created with Object Lock"
+  }
+  assert {
+    condition     = one(aws_s3_bucket_object_lock_configuration.dumps.rule).default_retention[0].mode == "GOVERNANCE" && one(aws_s3_bucket_object_lock_configuration.dumps.rule).default_retention[0].days == 30
+    error_message = "Governance lock of 30 days (longer than the 28-day retention; the owner's dump-expire lifts it)"
+  }
+  assert {
+    condition     = aws_s3_bucket_versioning.dumps.versioning_configuration[0].status == "Enabled"
+    error_message = "versioning on"
+  }
+  assert {
+    condition     = aws_s3_bucket_public_access_block.dumps.block_public_policy && aws_s3_bucket_public_access_block.dumps.restrict_public_buckets && aws_s3_bucket_public_access_block.dumps.block_public_acls
+    error_message = "the dumps bucket is private"
+  }
+  assert {
+    condition     = length([for r in aws_s3_bucket_lifecycle_configuration.dumps.rule : r if length(r.expiration) > 0 || length(r.noncurrent_version_expiration) > 0]) == 0
+    error_message = "no lifecycle expiry of dumps (only the owner's dump-expire erases, with a record)"
+  }
+  assert {
+    condition = toset(flatten([for s in jsondecode(aws_iam_user_policy.dumper.policy).Statement : s.Action if s.Effect == "Allow"])) == toset(
+    ["s3:PutObject", "s3:GetObject", "s3:GetObjectVersion", "s3:ListBucket", "s3:ListBucketVersions", "s3:GetBucketObjectLockConfiguration", "s3:GetBucketVersioning"])
+    error_message = "the dumper may add, read and list (versions too) only"
+  }
+  assert {
+    condition = length([for s in jsondecode(aws_iam_user_policy.dumper.policy).Statement : s if s.Effect == "Deny" && contains(s.Action, "s3:PutObject")
+    && try(s.Condition.Null["s3:if-none-match"], "") == "true" && try(s.Condition.Bool["s3:ObjectCreationOperation"], "") == "true" && contains(s.Resource, "arn:aws:s3:::indiehr-test-dumps/*")]) == 1
+    error_message = "the store refuses any object write of the dumper without If-None-Match (P1-T22a review S1: a name is never written twice)"
+  }
+  assert {
+    condition = length([for s in jsondecode(aws_iam_user_policy.dumper.policy).Statement : s if s.Effect == "Deny" && contains(s.Action, "s3:PutObject")
+    && try(s.Condition.Null["s3:if-match"], "") == "false" && contains(s.Resource, "arn:aws:s3:::indiehr-test-dumps/*")]) == 1
+    error_message = "the store refuses the dumper's writes with If-Match (replacing a version it can name)"
+  }
+  assert {
+    condition     = toset(flatten([for s in jsondecode(aws_iam_user_policy.dumper.policy).Statement : s.Resource if s.Effect == "Allow" && contains(s.Action, "s3:PutObject")])) == toset(["arn:aws:s3:::indiehr-test-dumps/dumps/*"])
+    error_message = "the dumper writes under dumps/ only (allowed there alone; the denies below cover the whole bucket)"
+  }
+  assert {
+    condition     = alltrue([for a in ["s3:DeleteObject", "s3:DeleteObjectVersion", "s3:BypassGovernanceRetention", "s3:PutObjectRetention"] : contains(flatten([for s in jsondecode(aws_iam_user_policy.dumper.policy).Statement : s.Action if s.Effect == "Deny"]), a)])
+    error_message = "the dumper is explicitly denied deleting and unlocking"
+  }
+  assert {
+    condition     = !contains(flatten([for s in jsondecode(aws_iam_user_policy.care["files"].policy).Statement : s.Resource]), "arn:aws:s3:::indiehr-test-dumps/*")
+    error_message = "CARE's keys never reach the dumps"
+  }
+}
+
+run "rejects_one_bucket_for_dumps_and_backups" {
+  command = plan
+  variables {
+    buckets = {
+      files    = "indiehr-test-files"
+      facility = "indiehr-test-facility"
+      backups  = "indiehr-test-backups"
+      dumps    = "indiehr-test-backups"
+    }
+  }
+  expect_failures = [var.buckets]
 }

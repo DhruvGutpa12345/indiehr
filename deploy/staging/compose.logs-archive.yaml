@@ -2,7 +2,7 @@
 # scripts/staging.sh when .env has IHR_LOGS_ARCHIVE (scripts/staging.sh logs-archive-init); never
 # run directly. Runbook: deploy/staging/README.md, "Log archive".
 #
-# One process (deploy/logs/archive/archive.py, from the backend image: Python, boto3,
+# One process (deploy/logs/archive/archive.py with deploy/lib, from the backend image: Python, boto3,
 # cryptography): every India day, once over, exported hour by hour from VictoriaLogs, encrypted
 # with our key, uploaded with its chained manifest into the archive bucket (Object Lock, 400
 # days), read back and checked. Its key can add and read, never delete (erasure: the owner's
@@ -39,6 +39,8 @@ services:
       HOME: /state
     volumes:
       - ../logs/archive:/opt/ihr-archive:ro
+      # The sealer and bucket code it shares with the nightly dumps (P1-T22a)
+      - ../lib:/opt/ihr-lib:ro
       - ./secrets/logs-http-password:/run/ihr-logs/http-password:ro
       # Work files of the day being archived (compressed and encrypted copies)
       - logsarchive:/state

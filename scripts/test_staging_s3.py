@@ -115,6 +115,16 @@ class Hardening(unittest.TestCase):
         self.assertEqual(DEV["services"]["minio"]["profiles"], ["upstream-minio"])
         self.assertEqual(DEV["services"]["s3"]["ports"], ["127.0.0.1:9100:8333"])
 
+    def test_every_bucket_start_needs_is_set(self):
+        """start.sh refuses to start without each bucket it renders (P1-T22a: the dev stack's
+        SeaweedFS restart-looped when IHR_S3_DUMPS_BUCKET was added to staging only)."""
+        start = (ROOT / "deploy" / "s3" / "start.sh").read_text()
+        needed = re.search(r'^BUCKETS="([^"]*)"', start, re.M).group(1).split()
+        self.assertIn("IHR_S3_DUMPS_BUCKET", needed)
+        for name, svc in storage_services():
+            for var in needed:
+                self.assertIn(var, svc["environment"], f"{name}: {var}")
+
     def test_tool_runs_only_on_request(self):
         tool = OVERLAY["services"]["s3-tool"]
         self.assertEqual(tool["profiles"], ["admin"])
@@ -263,7 +273,8 @@ GATEWAY_OLD = "".join(f"IHR_S3_{k}_KEY=ihr{k.lower()}keyid\nIHR_S3_{k}_SECRET={k
                       for k in OLD_KEYS)
 DB_URLS = (f"DATABASE_URL=postgres://ihr_app:{'a' * 43}@db:5432/ihr\n",
            f"DATABASE_URL=postgres://ihr_owner:{'o' * 43}@db:5432/ihr\n",
-           f"DATABASE_URL=postgres://ihr_audit_watch:{'w' * 43}@db:5432/ihr\n")
+           f"DATABASE_URL=postgres://ihr_audit_watch:{'w' * 43}@db:5432/ihr\n",
+           f"IHR_DUMP_DATABASE_URL=postgres://ihr_dump:{'d' * 43}@db:5432/ihr\n")
 APP_OLD = (DB_URLS[0] + "FILE_UPLOAD_BUCKET=ihr-staging-files\nFACILITY_S3_BUCKET=ihr-staging-facility\n"
            "BUCKET_ENDPOINT=http://s3:8333\nBUCKET_EXTERNAL_ENDPOINT=https://files.app.example.in\n"
            "BUCKET_KEY=ihrcarekeyid\nBUCKET_SECRET=" + OLD_CARE_SECRET + "\n")
@@ -272,7 +283,7 @@ FAKE_DOCKER = "#!/bin/sh\necho \"$*\" >> \"$FAKE_LOG\"\necho \"docker must not r
 
 def make_site(d, *, s3="local", gateway=GATEWAY_OLD, app=APP_OLD, local=False):
     """A staging folder (.env, secrets/) as init and s3-init made it; P1-T19b's roles split
-    (and P1-T21's audit watch role)."""
+    (and P1-T21's audit watch role, P1-T22a's dumper role)."""
     d.mkdir(parents=True, exist_ok=True)
     (d / ".env").write_text("IHR_TENANT_DOMAIN_SUFFIX=app.example.in\nIHR_BACKEND_IMAGE=indiehr-backend:staging\n"
                             + (f"IHR_S3={s3}\n" if s3 else ""))
@@ -281,6 +292,7 @@ def make_site(d, *, s3="local", gateway=GATEWAY_OLD, app=APP_OLD, local=False):
     (sec / "app.env").write_text(app)
     (sec / "db-owner.env").write_text(DB_URLS[1])
     (sec / "audit-watch.env").write_text(DB_URLS[2])
+    (sec / "dumper-db.env").write_text(DB_URLS[3])
     if gateway is not None:
         (sec / "s3-gateway.env").write_text(gateway)
     if local:

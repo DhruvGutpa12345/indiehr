@@ -1,5 +1,5 @@
 {
- "_comment": "scripts/check-logs.py: these journal entries go through the real redaction steps into a throwaway VictoriaLogs, then vmalert runs deploy/logs/alerts/ on them. 'expect' lists, per alert, the values of its key label it must fire (or wait to fire) for, and no others: client_ip, hospital for PackApplyFailed, HospitalNotServed, ReleaseWindowOverrun, AuditHospitalCheckFailed and AuditHospitalSealLate, or reason for DatabaseRoleRefused (hospital for BatchRequestRefused).",
+ "_comment": "scripts/check-logs.py: these journal entries go through the real redaction steps into a throwaway VictoriaLogs, then vmalert runs deploy/logs/alerts/ on them. 'expect' lists, per alert, the values of its key label it must fire (or wait to fire) for, and no others: client_ip, hospital for PackApplyFailed, HospitalNotServed, ReleaseWindowOverrun, AuditHospitalCheckFailed, AuditHospitalSealLate, DumpHospitalFailed and DumpHospitalHeld, or reason for DatabaseRoleRefused (hospital for BatchRequestRefused).",
  "fixtures": [
   {
    "count": 1,
@@ -1547,6 +1547,158 @@
     "_UID": "0",
     "_SYSTEMD_UNIT": "docker.service"
    }
+  },
+  {
+   "count": 1,
+   "record": {
+    "MESSAGE": "ihr-dump: hospital=alpha outcome=failed reason=lock",
+    "_HOSTNAME": "srv1",
+    "PRIORITY": "6",
+    "CONTAINER_NAME": "indiehr-staging-dumper-1",
+    "COM_DOCKER_COMPOSE_SERVICE": "dumper",
+    "_TRANSPORT": "journal",
+    "_COMM": "dockerd",
+    "_UID": "0",
+    "_SYSTEMD_UNIT": "docker.service"
+   }
+  },
+  {
+   "count": 1,
+   "record": {
+    "MESSAGE": "ihr-dump: hospital=beta outcome=failed reason=verify",
+    "_HOSTNAME": "srv1",
+    "PRIORITY": "6",
+    "CONTAINER_NAME": "indiehr-staging-dumper-1",
+    "COM_DOCKER_COMPOSE_SERVICE": "dumper",
+    "_TRANSPORT": "journal",
+    "_COMM": "dockerd",
+    "_UID": "0",
+    "_SYSTEMD_UNIT": "docker.service"
+   }
+  },
+  {
+   "count": 1,
+   "record": {
+    "MESSAGE": "ihr-dump: hospital=invalid-slug outcome=failed reason=error",
+    "_HOSTNAME": "srv1",
+    "PRIORITY": "6",
+    "CONTAINER_NAME": "indiehr-staging-dumper-1",
+    "COM_DOCKER_COMPOSE_SERVICE": "dumper",
+    "_TRANSPORT": "journal",
+    "_COMM": "dockerd",
+    "_UID": "0",
+    "_SYSTEMD_UNIT": "docker.service"
+   }
+  },
+  {
+   "count": 1,
+   "record": {
+    "MESSAGE": "ihr-dump: hospital=gamma outcome=held",
+    "_HOSTNAME": "srv1",
+    "PRIORITY": "6",
+    "CONTAINER_NAME": "indiehr-staging-dumper-1",
+    "COM_DOCKER_COMPOSE_SERVICE": "dumper",
+    "_TRANSPORT": "journal",
+    "_COMM": "dockerd",
+    "_UID": "0",
+    "_SYSTEMD_UNIT": "docker.service"
+   }
+  },
+  {
+   "count": 1,
+   "record": {
+    "MESSAGE": "ihr-dump: hospital=mallory outcome=failed reason=dump",
+    "_HOSTNAME": "srv1",
+    "PRIORITY": "6",
+    "CONTAINER_NAME": "indiehr-staging-backend-1",
+    "COM_DOCKER_COMPOSE_SERVICE": "backend",
+    "_TRANSPORT": "journal",
+    "_COMM": "dockerd",
+    "_UID": "0",
+    "_SYSTEMD_UNIT": "docker.service"
+   }
+  },
+  {
+   "count": 1,
+   "record": {
+    "MESSAGE": "ihr-dump: hospital=mallory2 outcome=held",
+    "_HOSTNAME": "srv1",
+    "PRIORITY": "6",
+    "CONTAINER_NAME": "indiehr-staging-backend-1",
+    "COM_DOCKER_COMPOSE_SERVICE": "backend",
+    "_TRANSPORT": "journal",
+    "_COMM": "dockerd",
+    "_UID": "0",
+    "_SYSTEMD_UNIT": "docker.service"
+   }
+  },
+  {
+   "count": 1,
+   "record": {
+    "MESSAGE": "dumper: x: ihr-dump: hospital=trudy outcome=failed reason=dump",
+    "_HOSTNAME": "srv1",
+    "PRIORITY": "6",
+    "CONTAINER_NAME": "indiehr-staging-dumper-1",
+    "COM_DOCKER_COMPOSE_SERVICE": "dumper",
+    "_TRANSPORT": "journal",
+    "_COMM": "dockerd",
+    "_UID": "0",
+    "_SYSTEMD_UNIT": "docker.service"
+   }
+  },
+  {
+   "count": 1,
+   "record": {
+    "MESSAGE": "ihr-dump: hospital=zed outcome=failed reason=whatever",
+    "_HOSTNAME": "srv1",
+    "PRIORITY": "6",
+    "CONTAINER_NAME": "indiehr-staging-dumper-1",
+    "COM_DOCKER_COMPOSE_SERVICE": "dumper",
+    "_TRANSPORT": "journal",
+    "_COMM": "dockerd",
+    "_UID": "0",
+    "_SYSTEMD_UNIT": "docker.service"
+   }
+  },
+  {
+   "count": 1,
+   "record": {
+    "MESSAGE": "ihr-dump: hospital=yan outcome=failed reason=dump extra",
+    "_HOSTNAME": "srv1",
+    "PRIORITY": "6",
+    "CONTAINER_NAME": "indiehr-staging-dumper-1",
+    "COM_DOCKER_COMPOSE_SERVICE": "dumper",
+    "_TRANSPORT": "journal",
+    "_COMM": "dockerd",
+    "_UID": "0",
+    "_SYSTEMD_UNIT": "docker.service"
+   }
+  },
+  {
+   "count": 1,
+   "record": {
+    "MESSAGE": "ihr-dump: hospital=X outcome=failed reason=dump",
+    "_HOSTNAME": "srv1",
+    "PRIORITY": "6",
+    "CONTAINER_NAME": "indiehr-staging-dumper-1",
+    "COM_DOCKER_COMPOSE_SERVICE": "dumper",
+    "_TRANSPORT": "journal",
+    "_COMM": "dockerd",
+    "_UID": "0",
+    "_SYSTEMD_UNIT": "docker.service"
+   }
+  },
+  {
+   "count": 1,
+   "record": {
+    "MESSAGE": "ihr-dump: hospital=hosty outcome=failed reason=dump",
+    "_HOSTNAME": "srv1",
+    "PRIORITY": "6",
+    "SYSLOG_IDENTIFIER": "dumper",
+    "_TRANSPORT": "syslog",
+    "_COMM": "logger",
+    "_UID": "1000"
+   }
   }
  ],
  "expect": {
@@ -1609,6 +1761,14 @@
   "AuditEventRecorded": [
    "iota",
    "theta"
+  ],
+  "DumpHospitalFailed": [
+   "alpha",
+   "beta",
+   "invalid-slug"
+  ],
+  "DumpHospitalHeld": [
+   "gamma"
   ]
  },
  "expect_state": {
@@ -1625,6 +1785,8 @@
   "BatchRequestRefused": "firing",
   "AuditHospitalCheckFailed": "firing",
   "AuditHospitalSealLate": "firing",
-  "AuditEventRecorded": "firing"
+  "AuditEventRecorded": "firing",
+  "DumpHospitalFailed": "firing",
+  "DumpHospitalHeld": "firing"
  }
 }

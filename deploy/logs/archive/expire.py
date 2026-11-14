@@ -3,7 +3,9 @@ owner decision Q-O12). Run monthly from the owner's machine (scripts/staging.sh 
 never on the server: it needs the bucket's admin key, which can lift the Governance lock.
 
 Safety:
-- never fewer than 400 days (--allow-short only in a proof on the local stand-in);
+- never fewer than 400 days (--allow-short only in a proof on the local stand-in: refused unless
+  IHR_LOGS_ARCHIVE_ENDPOINT is the stand-in's http://s3:8333, and never abbreviated; P1-T22a
+  review S3);
 - the machine's clock is compared with the bucket's before anything is deleted;
 - a version whose own lock still runs for more than a week is not touched (that is not a day
   past its 400 days, whatever its name says);
@@ -22,15 +24,28 @@ import base64
 import datetime as dt
 import email.utils
 import hashlib
-import hmac
 import json
 import os
 import re
 import sys
 
+
+def _shared_lib():
+    """The shared modules (deploy/lib): /opt/ihr-lib in a container, else beside this folder."""
+    here = os.path.dirname(os.path.abspath(__file__))
+    for path in ("/opt/ihr-lib", os.path.normpath(os.path.join(here, "..", "..", "lib"))):
+        if os.path.isfile(os.path.join(path, "sealer.py")):
+            return path
+    sys.exit("the shared sealer (deploy/lib/sealer.py) is missing")
+
+
+sys.path.insert(0, _shared_lib())
+from sealer import signed  # noqa: E402
+
 IST = dt.timezone(dt.timedelta(hours=5, minutes=30))
 FORMAT = "ihr-log-archive-erasure/2"
 MIN_DAYS = 400
+STAND_IN = "http://s3:8333"  # a proof's own SeaweedFS (scripts/staging.sh logs-archive-expire, IHR_LOGS_ARCHIVE=local)
 DAY_RE = re.compile(r"^logs/(?:\d{4}/\d{2}/|ihr-key-check/)(\d{4}-\d{2}-\d{2})[.T]")
 
 
@@ -47,9 +62,7 @@ def day_of(key):
 
 
 def sign(mac_key, doc):
-    body = {k: v for k, v in doc.items() if k != "mac"}
-    canon = json.dumps(body, sort_keys=True, separators=(",", ":")).encode()
-    return {**doc, "mac": hmac.new(mac_key, canon, hashlib.sha256).hexdigest()}
+    return signed(mac_key, doc)
 
 
 def put_record(s3, bucket, key, doc):
@@ -136,11 +149,14 @@ def erase(s3, bucket, mac_key, now, older_than_days, allow_short=False, dry_run=
 
 
 def main():
-    p = argparse.ArgumentParser(description=__doc__.split("\n", 1)[0])
+    # No abbreviations: `--allow` is not --allow-short (P1-T22a review S3)
+    p = argparse.ArgumentParser(description=__doc__.split("\n", 1)[0], allow_abbrev=False)
     p.add_argument("--older-than-days", type=int, default=MIN_DAYS)
     p.add_argument("--dry-run", action="store_true")
     p.add_argument("--allow-short", action="store_true", help="a proof on the local stand-in only")
     a = p.parse_args()
+    if a.allow_short and os.environ.get("IHR_LOGS_ARCHIVE_ENDPOINT") != STAND_IN:
+        sys.exit(f"refused: --allow-short is for a proof on the local stand-in ({STAND_IN}) only")
     if a.older_than_days < 0:
         sys.exit("--older-than-days must not be negative")
     if a.older_than_days < MIN_DAYS and not a.allow_short:

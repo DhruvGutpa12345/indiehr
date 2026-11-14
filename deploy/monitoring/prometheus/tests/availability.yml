@@ -211,6 +211,9 @@ tests:
         values: '0x20'
       - series: 'ihr_container_running{service="db"}'
         values: '0x20'
+      # the nightly dumper is stopped with the workers (P1-T22a review C1)
+      - series: 'ihr_container_running{service="dumper"}'
+        values: '0x20'
       - series: 'ihr_release_workers_stopped_until_seconds{instance="node-exporter:9100", job="node"}'
         values: '600x20'
     alert_rule_test:
@@ -229,6 +232,9 @@ tests:
           - exp_labels: {severity: critical, service: celery-worker}
             exp_annotations:
               summary: "Container celery-worker is not running"
+          - exp_labels: {severity: critical, service: dumper}
+            exp_annotations:
+              summary: "Container dumper is not running"
           - exp_labels: {severity: warning, service: staff-worker}
             exp_annotations:
               summary: "Container staff-worker is not running"

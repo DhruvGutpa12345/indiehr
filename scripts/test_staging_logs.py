@@ -53,11 +53,17 @@ AUDIT_EVENT_LINE = r"^ihr-audit: hospital=(?P<hospital>[a-z][a-z0-9-]{2,30}) eve
 # The services each alert reads: the ones that run its command (packs: the start-up one-shot;
 # fleet: that one-shot, `staging.sh fleet`, and the worker's per-minute report, S3; audit: the
 # audit watch alone)
+# The nightly dumper (P1-T22a; deploy/logs/alerts/dumps.yml): a held hospital, and a failed one
+# with a fixed reason; the dumper alone writes them
+DUMP_HELD_LINE = r"^ihr-dump: hospital=(?P<hospital>[a-z][a-z0-9-]{2,30}) outcome=held$"
+DUMP_FAILED_LINE = (r"^ihr-dump: hospital=(?P<hospital>[a-z][a-z0-9-]{2,30}) outcome=failed "
+                    r"reason=(?P<reason>lock|disk|window|dump|upload|verify|check|error)$")
 HOSPITAL_LINES = {"PackApplyFailed": ("ihr-packs", PACKS_LINE, "migrate, celery"),
                   "HospitalNotServed": ("ihr-fleet", FLEET_LINE, "migrate, celery, celery-worker"),
                   "ReleaseWindowOverrun": ("ihr-fleet", OVERRUN_LINE, "celery, celery-worker"),
                   "AuditHospitalCheckFailed": ("ihr-audit", AUDIT_LINE, "audit-watch"),
-                  "AuditHospitalSealLate": ("ihr-audit", AUDIT_SEAL_LINE, "audit-watch")}
+                  "AuditHospitalSealLate": ("ihr-audit", AUDIT_SEAL_LINE, "audit-watch"),
+                  "DumpHospitalHeld": ("ihr-dump", DUMP_HELD_LINE, "dumper")}
 # A refused database role (deploy/logs/alerts/db-roles.yml, P1-T19a): our whole fixed line, a
 # role and a reason code (never a value), from the services that run as a declared role
 DB_ROLE_LINE = r"^ihr-db-role: refused role=(?P<role>app|owner|watch|none) reason=(?P<reason>[a-z_]{3,24})$"
@@ -303,6 +309,13 @@ class LogAlerts(unittest.TestCase):
                                  r'\| filter hospital:~"\^\[a-z\]\[a-z0-9-\]\{2,30\}\$" ')
                 allowed = r"^\$(labels\.hospital|labels\.event|value)$"
                 self.assertNotIn("{{", r["annotations"]["action"], r["alert"])
+            elif r["alert"] == "DumpHospitalFailed":
+                self.assertEqual(by, ["hospital, reason"], r["alert"])
+                self.assertRegex(r["expr"], r'^_time:24h source:=container service:in\(dumper\) "ihr-dump: hospital=" '
+                                 r'\| extract_regexp "' + re.escape(DUMP_FAILED_LINE) + r'" '
+                                 r'\| filter hospital:~"\^\[a-z\]\[a-z0-9-\]\{2,30\}\$" ')
+                allowed = r"^\$(labels\.hospital|labels\.reason|value)$"
+                self.assertNotIn("{{", r["annotations"]["action"], r["alert"])
             elif r["alert"] == "DatabaseRoleRefused":
                 self.assertEqual(by, ["reason"], r["alert"])
                 self.assertRegex(r["expr"], r"^_time:\d+m source:=container service:in\(" + re.escape(DB_ROLE_SERVICES)
@@ -339,6 +352,7 @@ class LogAlerts(unittest.TestCase):
                 self.assertRegex(ref.strip(), allowed, r["alert"])
         self.assertEqual(sorted(names), ["AuditEventRecorded", "AuditHospitalCheckFailed", "AuditHospitalSealLate",
                                          "BatchRequestRefused", "DatabaseRoleLoginFailed", "DatabaseRoleRefused", "DatabaseSchemaGated",
+                                         "DumpHospitalFailed", "DumpHospitalHeld",
                                          "FailedSignInsFromAddress", "HospitalNotServed", "PackApplyFailed",
                                          "RateLimitedAddress", "ReleaseWindowOverrun", "SignInLockoutStorm",
                                          "SignInLockoutsFromAddress"])
@@ -573,7 +587,8 @@ class LogAlerts(unittest.TestCase):
                                  "ReleaseWindowOverrun": None, "DatabaseRoleRefused": None,
                                  "DatabaseSchemaGated": None, "DatabaseRoleLoginFailed": None,
                                  "BatchRequestRefused": None, "AuditHospitalCheckFailed": None,
-                                 "AuditHospitalSealLate": None, "AuditEventRecorded": None})
+                                 "AuditHospitalSealLate": None, "AuditEventRecorded": None,
+                                 "DumpHospitalFailed": None, "DumpHospitalHeld": None})
         anytime = sorted(r["alert"] for _, r in self.rules() if r["labels"].get("notify") == "anytime")
         self.assertEqual(anytime, ["FailedSignInsFromAddress", "RateLimitedAddress", "SignInLockoutsFromAddress"])
         cfg = func("monitoring_config")

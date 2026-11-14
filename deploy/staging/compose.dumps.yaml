@@ -1,0 +1,85 @@
+# Nightly per-hospital dumps (P1-T22a; docs/reviews/p1-t22/design.md, "After the attack"; ADR-007
+# amendment). Added by scripts/staging.sh when .env has IHR_DUMPS (scripts/staging.sh dumps-init);
+# never run directly. Runbook: deploy/staging/README.md, "Hospital dumps".
+#
+# One process (deploy/dumps/dumper.py with deploy/lib, in our dumper image: the database's own
+# Postgres 18.6 Alpine image with Python, so pg_dump matches the server): at 03:30 IST each active,
+# suspended and offboarding hospital is dumped from one snapshot, sealed with IHR_DUMP_KEY,
+# uploaded with its chained manifest into the dumps bucket (Object Lock, Governance, 30 days;
+# versioning), read back and checked, then restored schema-only into a throwaway server inside
+# this container. A held hospital is skipped and reported.
+#
+# What it holds and reaches (least privilege):
+# - the database as ihr_dump (secrets/dumper-db.env): LOGIN, pg_read_all_data only, no write or
+#   DDL right, checked before every run (`dumper.py role`); over TCP on `internal`, never the
+#   database's socket (the socket trusts every local login, the superuser's included);
+# - the dumps bucket's own key and IHR_DUMP_KEY (secrets/dumps.env), which no other container
+#   gets: it adds, reads and lists versions under dumps/, never deletes (erasure: the owner's machine,
+#   deploy/dumps/expire.py); not the pgBackRest passphrase or key;
+# - networks: internal (the database), monitoring (Prometheus scrapes :9110; the metrics answer
+#   Prometheus only) and dumpsout, its own way out to the bucket, shared with no other container
+#   (a proof: this stack's SeaweedFS joins it, compose.dumps.local.yaml); never edge.
+x-logging: &logging
+  driver: ${IHR_LOG_DRIVER:-journald}
+  options:
+    tag: "indiehr/{{.Name}}"
+    labels: com.docker.compose.service
+
+services:
+  dumper:
+    image: ${IHR_DUMPER_IMAGE:-indiehr-dumper:staging}
+    entrypoint: ["python3", "-I", "/opt/ihr-dumps/dumper.py", "run"]
+    security_opt: ["no-new-privileges:true"]
+    cap_drop: ["ALL"]
+    read_only: true
+    restart: unless-stopped
+    logging: *logging
+    env_file:
+      - secrets/dumper-db.env
+      - secrets/dumps.env
+    environment:
+      TZ: Asia/Kolkata
+      IHR_DUMP_TIME: ${IHR_DUMP_TIME:-03:30}
+      IHR_DUMP_QUIET: ${IHR_DUMP_QUIET:-01:45-03:25}
+      IHR_DUMP_WEEKLY_DAY: ${IHR_DUMP_WEEKLY_DAY:-7}
+      # Two at a time and zstd: the size model (docs/reviews/p1-t22/size-model.md)
+      IHR_DUMP_PARALLEL: ${IHR_DUMP_PARALLEL:-2}
+      IHR_DUMP_COMPRESS: ${IHR_DUMP_COMPRESS:-zstd}
+      IHR_DUMP_LOCK_WAIT: ${IHR_DUMP_LOCK_WAIT:-600}
+      IHR_DUMP_WORKDIR: /state
+      IHR_DUMP_SCRAPERS: prometheus
+      HOME: /tmp
+      TMPDIR: /state
+    volumes:
+      - ../dumps:/opt/ihr-dumps:ro
+      - ../lib:/opt/ihr-lib:ro
+      # Work files: the sealed dump of each hospital being dumped (two at a time; the read-back
+      # streams, no second copy), status, the night's check (one dump copied at a time) and its
+      # throwaway server. Sized by the size model: two of the largest sealed dumps, each with a
+      # fifth more and 512 MiB (ihr_dump_work_need_bytes; DumpDiskLow below it). A dump waits for
+      # room beside the other; one that would not fit alone is refused (reason=disk)
+      - dumpstate:/state
+    tmpfs:
+      - /tmp:size=64m,mode=1777
+    networks: [internal, monitoring, dumpsout]
+    depends_on:
+      db:
+        condition: service_healthy
+    # Alive only: the metrics answer. A failed dump is not a sick container (DumpTooOld,
+    # DumpRunFailing and the log line say that)
+    healthcheck:
+      test: ["CMD", "python3", "-I", "-c", "import urllib.request as u; u.urlopen('http://127.0.0.1:9110/metrics', timeout=5).read()"]
+      interval: 60s
+      timeout: 10s
+      retries: 3
+      start_period: 120s
+    mem_limit: ${IHR_DUMPER_MEMORY:-512m}
+    pids_limit: 128
+
+networks:
+  # The dumper's way out to the dumps bucket (the other Indian region). No other container joins
+  # it (in a proof: this stack's own SeaweedFS, compose.dumps.local.yaml).
+  dumpsout:
+
+volumes:
+  dumpstate:

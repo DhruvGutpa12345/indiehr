@@ -13,7 +13,11 @@ Four roles, one model (``ROLES``):
   hospital list and its schema state in public, USAGE on the schemas, CONNECT; nothing else (it
   writes nothing, executes no sealing function). Its process declares ``IHR_DB_ROLE=watch``
   and is checked like the app's (``watch_problems``).
-- ``ihr_dump`` (P1-T22 item 2): the nightly dumper, a member of ``pg_read_all_data`` only.
+- ``ihr_dump`` (P1-T22a, design "After the attack" item 2): the nightly dumper's own login
+  (compose.dumps.yaml, secrets/dumper-db.env; deploy/dumps/dumper.py). CONNECT on the database
+  (the model's default, which ``ensure_grants`` converges) and a member of ``pg_read_all_data``
+  only: every read, no write, no DDL, no attributes, no stored settings. The dumper is not a
+  Django process: it checks its own role before every run (``dumper.py role``).
 
 What ``ihr_app`` (and the watch role) may do on each table comes from two reviewed lists next
 to this file: ``public_tables.txt`` (every table in ``public``) and ``hospital_tables.txt``
@@ -98,7 +102,8 @@ ROLES = {
     OWNER: Role(OWNER, inherit=True, database=frozenset({"CONNECT", "TEMPORARY"})),
     APP: Role(APP, inherit=False),
     WATCH: Role(WATCH, inherit=False),
-    DUMP: Role(DUMP, inherit=True, memberships=("pg_read_all_data",), in_use=False),
+    # The nightly dumper (P1-T22a) logs in: a missing LOGIN is a problem since its service exists
+    DUMP: Role(DUMP, inherit=True, memberships=("pg_read_all_data",)),
 }
 # The roles the test runner makes (the owner there is the tests' own superuser)
 TEST_ROLES = (APP, WATCH, DUMP)

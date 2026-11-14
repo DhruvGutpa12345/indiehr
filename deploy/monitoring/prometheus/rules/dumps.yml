@@ -1,0 +1,147 @@
+# Nightly per-hospital dumps (P1-T22a; docs/reviews/p1-t22/design.md, "After the attack"; ADR-007
+# amendment). From the dumper (compose.dumps.yaml, deploy/dumps/dumper.py): counts, sizes and
+# ages only, never a hospital (privacy). Which hospital: the log alerts DumpHospitalFailed and
+# DumpHospitalHeld (deploy/logs/alerts/dumps.yml) name it from the dumper's fixed line.
+# Nothing here fires on a stack without dumps (no dump metrics and no dumps target at all);
+# with the dumps target configured, a dumper that stops reporting is an alert of its own.
+# Times: the run starts at 03:30 IST; the size model (docs/reviews/p1-t22/size-model.md) gives
+# it 2.5 hours (to 06:00 IST) before DumpRunOverBudget.
+# Runbooks: deploy/staging/README.md, "Hospital dumps". Tests: ../tests/dumps.yml.
+groups:
+  - name: dumps
+    rules:
+      # The newest good dump of the hospital longest without one (a hospital never dumped
+      # counts from when it went live; a held hospital is not excused). The dumper moves the
+      # gauge on as each hospital's dump is done, so a long run does not page for the hospitals
+      # it has already dumped
+      - alert: DumpTooOld
+        expr: time() - ihr_dump_oldest_good_timestamp_seconds > 26 * 3600
+        labels:
+          severity: critical
+          service: dumper
+        annotations:
+          summary: "A hospital has had no good nightly dump for more than 26 hours (the log alert DumpHospitalFailed or DumpHospitalHeld names it; scripts/staging.sh dumps-check)"
+
+      # The dumper itself: no run has ended for 26 hours (stuck, restarting, refused)
+      - alert: DumpRunMissing
+        expr: time() - ihr_dump_last_run_end_timestamp_seconds > 26 * 3600
+        labels:
+          severity: critical
+          service: dumper
+        annotations:
+          summary: "The nightly dumper has not finished a run for more than 26 hours (scripts/staging.sh logs dumper)"
+
+      - alert: DumpRunFailing
+        expr: ihr_dump_hospitals_failed > 0
+        labels:
+          severity: warning
+          service: dumper
+        annotations:
+          summary: "The last nightly run could not dump {{ $value | printf \"%.0f\" }} hospital(s) (DumpHospitalFailed names them and why)"
+
+      # Still going at 06:00 IST: the size model's window (incremental audit dumps are the
+      # follow-up when runs grow past half of it)
+      - alert: DumpRunOverBudget
+        expr: ihr_dump_running == 1 and (time() - ihr_dump_running_since_timestamp_seconds) > 2.5 * 3600
+        labels:
+          severity: warning
+          service: dumper
+        annotations:
+          summary: "The nightly dump run has gone on for more than 2.5 hours (docs/reviews/p1-t22/size-model.md: time for incremental audit dumps)"
+
+      - alert: DumpNotAuthentic
+        expr: ihr_dump_bad_manifests > 0 or ihr_dump_check_problems > 0
+        labels:
+          severity: critical
+          service: dumper
+        annotations:
+          summary: "The dumps bucket holds something not ours, a changed or replaced file, a broken chain or an early erasure record, or a dump does not read back, list or restore (scripts/staging.sh dumps-check --deep)"
+
+      # The owner's dumps-expire run with --allow-short (a proof on the local stand-in only):
+      # dumps erased inside their retention
+      - alert: DumpErasedEarly
+        expr: ihr_dump_early_erasures > 0
+        labels:
+          severity: warning
+          service: dumper
+        annotations:
+          summary: "Dumps were erased inside their retention (dumps-expire --allow-short, meant for a proof only; scripts/staging.sh dumps-check names the record)"
+
+      # Object Lock (Governance, at least 30 days) and versioning; -1: this key cannot read the
+      # settings (the provider's console and dumps-probe then)
+      - alert: DumpBucketNotLocked
+        expr: ihr_dump_bucket_locked == 0
+        for: 30m
+        labels:
+          severity: critical
+          service: dumper
+        annotations:
+          summary: "The dumps bucket is not locked for 30 days with versioning: dumps could be deleted"
+
+      - alert: DumpRoleRefused
+        expr: ihr_dump_role_ok == 0
+        labels:
+          severity: critical
+          service: dumper
+        annotations:
+          summary: "The dumper refused its database role (not ihr_dump as modelled): nothing is dumped (scripts/staging.sh dumps-role)"
+
+      # Space for IHR_DUMP_PARALLEL dumps the size of the largest newest one (with a fifth more
+      # and the margin each: ihr_dump_work_need_bytes, worked out by the dumper from what the
+      # bucket holds). Below it dumps wait for each other; below one of them a hospital is
+      # refused (reason=disk)
+      - alert: DumpDiskLow
+        expr: ihr_dump_work_free_bytes < ihr_dump_work_need_bytes
+        for: 1h
+        labels:
+          severity: warning
+          service: dumper
+        annotations:
+          summary: "The dumper's work volume has less room than a night's parallel dumps need"
+
+      # P1-T22b's restore drill records itself (dumper.py drill-mark). After a first drill, 35
+      # days without another; before it, 35 days after the first dump ever (a gauge expiry
+      # never raises: the oldest dump still held never gets older than about 35 days)
+      - alert: DumpDrillOverdue
+        expr: >-
+          (time() - ihr_dump_last_drill_timestamp_seconds > 35 * 86400)
+          and (ihr_dump_last_drill_timestamp_seconds > 0
+               or time() - ihr_dump_first_dump_ever_timestamp_seconds > 35 * 86400)
+        labels:
+          severity: warning
+          service: dumper
+        annotations:
+          summary: "No passing restore drill of a hospital dump for 35 days (P1-T22b's drill)"
+
+      # 14 nights and 4 Sundays: the owner runs dumps-expire weekly, so the oldest dump (a
+      # Sunday's) is at most 28 + 7 days old; at 36 a weekly run was missed (DPDP: backups age
+      # out by a stated date; the size model's bucket peak holds only while this stays quiet)
+      - alert: DumpErasureOverdue
+        expr: time() - ihr_dump_oldest_object_timestamp_seconds > 36 * 86400
+        labels:
+          severity: warning
+          service: dumper
+        annotations:
+          summary: "Dumps older than 36 days wait for erasure: run scripts/staging.sh dumps-expire from your machine"
+
+      # Fail closed: the dumps target is configured, but the dumper is down or reports nothing.
+      # A release window stops it with the workers (until the window's end; P1-T22a review C1)
+      - alert: DumperDown
+        expr: up{job="dumps"} == 0 unless on() (ihr_release_workers_stopped_until_seconds > time())
+        for: 10m
+        labels:
+          severity: critical
+          service: dumper
+        annotations:
+          summary: "Prometheus cannot read the dumper's metrics (scripts/staging.sh ps; logs dumper)"
+
+      - alert: DumpsNotReporting
+        expr: >-
+          (absent(ihr_dump_oldest_good_timestamp_seconds) or absent(ihr_dump_last_run_end_timestamp_seconds))
+          and on() count(up{job="dumps"}) > 0
+        for: 2h
+        labels:
+          severity: critical
+          service: dumper
+        annotations:
+          summary: "The dumper answers but has never finished a run or read its bucket (the nightly dumps do not happen)"

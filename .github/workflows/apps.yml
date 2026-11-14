@@ -795,6 +795,47 @@ jobs:
           exit-code: "1"
           format: table
 
+  dumper-image:
+    name: Dumper image (build, the dumper's tests with a real Postgres, Trivy)
+    needs: changes
+    if: needs.changes.outputs.infra == 'true' || github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false # no step pushes or calls the API with it
+
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+
+      - name: Build (deploy/docker/dumper.Dockerfile)
+        run: |
+          docker buildx build --load -f deploy/docker/dumper.Dockerfile \
+            --label "ihr.dockerfile.sha256=$(sha256sum deploy/docker/dumper.Dockerfile | cut -d' ' -f1)" \
+            -t indiehr-dumper:ci deploy/docker
+
+      - name: Smoke (runs as postgres, no gosu, pg_dump 18 and the three libraries)
+        run: |
+          set -euo pipefail
+          test "$(docker image inspect indiehr-dumper:ci --format '{{.Config.User}}')" = postgres
+          docker run --rm --network none --entrypoint sh indiehr-dumper:ci -c \
+            'pg_dump --version | grep -q " 18\." && ! test -e /usr/local/bin/gosu && python3 -I -c "import boto3, cryptography, psycopg"'
+
+      - name: The dumper's tests in the image, with a real Postgres (P1-T22a)
+        run: TAIL=200 scripts/test-dumps-live.sh indiehr-dumper:ci | tee /tmp/dumps-tests.txt && grep -q '^OK' /tmp/dumps-tests.txt
+
+      - name: Trivy image scan (fail on fixable HIGH/CRITICAL)
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          scan-type: image
+          image-ref: indiehr-dumper:ci
+          scanners: vuln,secret
+          severity: CRITICAL,HIGH
+          ignore-unfixed: true
+          trivyignores: .trivyignore.yaml
+          exit-code: "1"
+          format: table
+
   keycloak-image:
     name: Keycloak image (optimized build, smoke, Trivy)
     needs: changes

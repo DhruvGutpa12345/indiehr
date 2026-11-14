@@ -1,5 +1,5 @@
 """Buckets of our SeaweedFS (P1-T8b3): CARE's two file buckets, the audit fingerprint bucket and,
-in a proof, the backup and log-archive buckets (P1-T8c, P1-T9c).
+in a proof, the backup, log-archive and dumps buckets (P1-T8c, P1-T9c, P1-T22a).
 
 Idempotent; run with the storage admin key, from any image that has boto3 (dev: care_local,
 staging: the backend image). Nothing here is IndieHR-specific Python: it needs no Django.
@@ -124,6 +124,8 @@ def main():
     p.add_argument("--log-archive", help="the locked log archive (proofs; P1-T9c)")
     p.add_argument("--log-archive-mode", choices=sorted(STRENGTH), default="GOVERNANCE")
     p.add_argument("--log-archive-days", type=int, default=400)
+    p.add_argument("--dumps", help="the nightly per-hospital dumps (proofs; P1-T22a)")
+    p.add_argument("--dumps-days", type=int, default=30)
     p.add_argument("--lock-mode", choices=sorted(STRENGTH), required=True)
     p.add_argument("--lock-days", type=int, required=True)
     p.add_argument("--cors-origin", action="append", required=True)
@@ -144,6 +146,11 @@ def main():
         # Locked like E2E's (Governance, 400 days, owner Q-O10): erasure lifts it (expire.py)
         anchor_bucket(s3, a.log_archive, a.log_archive_mode, a.log_archive_days)
         no_policy(s3, a.log_archive)
+    if a.dumps:
+        # Locked a little longer than the longest retention (4 Sundays: 28 days), Governance:
+        # the owner's dump-expire lifts it with the admin key (P1-T22a, Q-K33)
+        anchor_bucket(s3, a.dumps, "GOVERNANCE", a.dumps_days)
+        no_policy(s3, a.dumps)
 
 
 if __name__ == "__main__":

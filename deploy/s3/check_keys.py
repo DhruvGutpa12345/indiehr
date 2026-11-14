@@ -7,7 +7,8 @@ nothing more, and a locked fingerprint can be removed by nobody, the admin key i
 
 Keys (environment): S3_ADMIN_*, S3_FILES_* (CARE's patient files), S3_PICTURES_* (CARE's staff
 photos and facility covers; P1-T20b), S3_ANCHOR_WRITE_*, S3_ANCHOR_READ_*, optional
-S3_LOGS_ARCHIVE_* and S3_RETIRED_CARE_* (the combined key P1-T20b retired: it must be dead).
+S3_LOGS_ARCHIVE_*, S3_DUMPS_* (P1-T22a) and S3_RETIRED_CARE_* (the combined key P1-T20b
+retired: it must be dead).
 
 Writes small test objects: CARE's under ihr-key-check/ (removed again), one fingerprint-sized
 object under anchors/ihr-key-check/ in the anchor bucket, which stays until its retention ends
@@ -101,6 +102,7 @@ def main():
     p.add_argument("--origin", help="a web app origin that CORS must allow")
     p.add_argument("--insecure", action="store_true", help="skip TLS checks on the public address")
     p.add_argument("--log-archive", help="the log archive bucket (P1-T9c): its key adds and reads, never deletes")
+    p.add_argument("--dumps", help="the dumps bucket (P1-T22a): its key adds and reads under dumps/, never deletes")
     p.add_argument("--size-limit", action="store_true",
                    help="through Traefik: a 50 MB upload works, a 120 MB one is refused (413)")
     a = p.parse_args()
@@ -188,6 +190,50 @@ def main():
         print(f"      archive retention: {lmode} (Governance, like E2E's: erasure with the admin key lifts it)")
         check("admin without the bypass cannot delete it", "denied", outcome(lambda: admin.delete_object(Bucket=a.log_archive, Key=lkey, VersionId=lvid)))
         check("admin with the bypass erases it (expire.py)", "ok", outcome(lambda: admin.delete_object(Bucket=a.log_archive, Key=lkey, VersionId=lvid, BypassGovernanceRetention=True)))
+
+    if a.dumps and os.environ.get("S3_DUMPS_KEY"):
+        print("== Dumps key (P1-T22a): add and read under dumps/, never delete, unlock or write elsewhere")
+        dumper = client(a.endpoint, "DUMPS")
+        dkey = f"dumps/ihr-key-check/{run}.probe"
+        dbody = b"probe"
+        dmd5 = base64.b64encode(hashlib.md5(dbody).digest()).decode()  # noqa: S324
+        check("add (If-None-Match, Content-MD5)", "ok", outcome(lambda: dumper.put_object(Bucket=a.dumps, Key=dkey, Body=dbody, ContentMD5=dmd5, IfNoneMatch="*")))
+        check("read it back", "ok", outcome(lambda: dumper.get_object(Bucket=a.dumps, Key=dkey)))
+        check("list the bucket", "ok", outcome(lambda: dumper.list_objects_v2(Bucket=a.dumps, Prefix="dumps/ihr-key-check/")))
+        check("list the versions (a replaced or hidden dump shows)", "ok", outcome(lambda: dumper.list_object_versions(Bucket=a.dumps, Prefix="dumps/ihr-key-check/")))
+        check("write the same name twice (If-None-Match)", "denied", outcome(lambda: dumper.put_object(Bucket=a.dumps, Key=dkey, Body=b"y", ContentMD5=base64.b64encode(hashlib.md5(b"y").digest()).decode(), IfNoneMatch="*")))  # noqa: S324
+        # Without the header (P1-T22a review S1): refused where the store enforces conditional
+        # writes (AWS: infra/aws's policy); elsewhere a second version, which the dumper's
+        # version-aware check reports as a replaced dump (DumpNotAuthentic)
+        rewrite = outcome(lambda: dumper.put_object(Bucket=a.dumps, Key=dkey, Body=b"z", ContentMD5=base64.b64encode(hashlib.md5(b"z").digest()).decode()))  # noqa: S324
+        if rewrite == "ok":
+            n = len(admin.list_object_versions(Bucket=a.dumps, Prefix=dkey).get("Versions", []))
+            check(f"rewrite it without If-None-Match: kept as a second version, which dumps-check reports ({n} versions)", "ok", "ok" if n >= 2 else f"{n} version(s)")
+        else:
+            check("rewrite it without If-None-Match: refused by the store", "denied", rewrite)
+        check("add outside dumps/ (erasure records)", "denied", outcome(lambda: dumper.put_object(Bucket=a.dumps, Key=f"erasure/{run}.json", Body=b"x", ContentMD5=base64.b64encode(hashlib.md5(b"x").digest()).decode())))  # noqa: S324
+        check("add at the bucket's top", "denied", outcome(lambda: dumper.put_object(Bucket=a.dumps, Key=f"{run}.txt", Body=b"x", ContentMD5=base64.b64encode(hashlib.md5(b"x").digest()).decode())))  # noqa: S324
+        dversions = admin.list_object_versions(Bucket=a.dumps, Prefix=dkey).get("Versions", [])
+        dvid = dversions[-1]["VersionId"] if dversions else "none"  # the first written (newest are listed first)
+        dsoon = datetime.now(UTC) + timedelta(seconds=5)
+        check("delete the version", "denied", outcome(lambda: dumper.delete_object(Bucket=a.dumps, Key=dkey, VersionId=dvid)))
+        check("hide it with a delete marker", "denied", outcome(lambda: dumper.delete_object(Bucket=a.dumps, Key=dkey)))
+        check("delete with the governance bypass", "denied", outcome(lambda: dumper.delete_object(Bucket=a.dumps, Key=dkey, VersionId=dvid, BypassGovernanceRetention=True)))
+        check("shorten its retention", "denied", outcome(lambda: dumper.put_object_retention(Bucket=a.dumps, Key=dkey, VersionId=dvid, Retention={"Mode": "GOVERNANCE", "RetainUntilDate": dsoon})))
+        check("change the bucket's lock", "denied", outcome(lambda: dumper.put_object_lock_configuration(Bucket=a.dumps, ObjectLockConfiguration={"ObjectLockEnabled": "Enabled", "Rule": {"DefaultRetention": {"Mode": "GOVERNANCE", "Days": 1}}})))
+        check("read a patient file", "denied", outcome(lambda: dumper.list_objects_v2(Bucket=a.patient)))
+        check("read the fingerprint bucket", "denied", outcome(lambda: dumper.list_objects_v2(Bucket=a.anchor)))
+        if a.log_archive:
+            check("read the log archive", "denied", outcome(lambda: dumper.list_objects_v2(Bucket=a.log_archive)))
+        dmode = admin.get_object_retention(Bucket=a.dumps, Key=dkey, VersionId=dvid)["Retention"]["Mode"]
+        print(f"      dumps retention: {dmode} (Governance: the owner's dump-expire lifts it with the admin key)")
+        check("admin without the bypass cannot delete it", "denied", outcome(lambda: admin.delete_object(Bucket=a.dumps, Key=dkey, VersionId=dvid)))
+        check("admin with the bypass erases it (dump-expire)", "ok", outcome(lambda: admin.delete_object(Bucket=a.dumps, Key=dkey, VersionId=dvid, BypassGovernanceRetention=True)))
+        for extra in dversions[:-1]:  # the rewrite's version, where the store kept it
+            admin.delete_object(Bucket=a.dumps, Key=dkey, VersionId=extra["VersionId"], BypassGovernanceRetention=True)
+        if a.log_archive and os.environ.get("S3_LOGS_ARCHIVE_KEY"):
+            check("the log archive key cannot read the dumps", "denied", outcome(lambda: client(a.endpoint, "LOGS_ARCHIVE").list_objects_v2(Bucket=a.dumps)))
+        check("the patient files key cannot read the dumps", "denied", outcome(lambda: files.list_objects_v2(Bucket=a.dumps)))
 
     print("== Fingerprint reader: read and list only")
     check("read a version", "ok", outcome(lambda: reader.get_object(Bucket=a.anchor, Key=akey, VersionId=vid)))
