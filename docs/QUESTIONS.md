@@ -469,6 +469,119 @@ TENANCY §7.5 and §7.7 are corrected (amendment, Proposed):
 - no restore under a side name, because our audit triggers would write into the live trail;
 - the erasure ledger lives outside the hospital's schema.
 
+### Q-K34 — Which patients may the front desk open? (P1-T11b; auto-accepted by Claude, 2026-11-14, awaiting owner confirmation)
+
+- **A ⭐ (taken). The whole hospital register.** Receptionist, Cashier, TPA Desk and MRD may open any patient of this hospital (demographics only).
+- B. Only patients with an encounter in a facility where the user works.
+
+*Recommendation A.* Each hospital is its own schema, so "the register" is that hospital's. The patient search already finds any patient by phone. A returning patient has no open encounter until the front desk creates one, so B would block the main front-desk job.
+
+### Q-K35 — One person, two jobs (P1-T11b; auto-accepted by Claude, 2026-11-14, awaiting owner confirmation)
+
+- **A ⭐ (taken). Permissions add up.** A person who holds a clinical role (Doctor, Nurse, Radiologist) and one of our non-clinical roles is treated as a clinician. Example: an owner who is also a doctor.
+- B. Refuse mixed assignments. Such a person needs two accounts.
+- C. The narrowest role wins: a doctor-owner sees projected records everywhere.
+
+*Recommendation A.* It is how CARE's roles already combine. Doctor-owners are common in small Indian hospitals, and B or C would break their daily work. Our widening branches still project whatever else the user holds, so a non-clinical role never widens clinical access. After the attack: our encounter branch is used only where CARE's own path gives the user nothing, and it never adds its rows to CARE's. A Receptionist who is also a Paediatrics doctor gets CARE's Paediatrics encounters, unprojected, and nothing else through `?facility`. The attack's main case, a department doctor reading every account, booking, token and payment, is CARE's own Doctor behaviour and is not caused by adding a role. It is logged in Q-K40.
+
+### Q-K36 — MRD records grants: length, reasons, alerts (P1-T11b4; auto-accepted by Claude, 2026-11-14, awaiting owner confirmation)
+
+- **A ⭐ (taken).** 30 minutes, read only. Reason codes: patient request, legal, insurer, internal audit, NABH review, continuity of care. Legal and insurer need a reference. No second approver. Alerts: 3 refusals in 10 minutes, more than 40 grants a day per user, grants between 22:00 and 07:00 IST.
+- B. As A, but a Facility Admin approves each grant.
+- C. Standing clinical read for MRD, with the audit trail only.
+
+*Recommendation A.* Records work is frequent and B would stall it. C would give a records clerk every patient's record at all times. A stated reason plus the trail and the alerts meets NABH access-control expectations at small-hospital scale. After the attack: under A, a grant also opens that patient's lab and imaging requests, specimens, reports and prescriptions, read only. CARE checks these by department, not by `PatientUser`. File links issued during a grant last at most 5 minutes (CARE's last 60). Until a records screen exists (Q-K45), MRD uses the grant through the API only.
+
+### Q-K37 — Does the front desk see where an inpatient is? (P1-T11b; auto-accepted by Claude, 2026-11-14, awaiting owner confirmation)
+
+- **A ⭐ (taken). No.** Encounters shown to Receptionist, Cashier, TPA Desk and MRD carry no location and no department. Visitors' "which ward?" questions go to the nursing station.
+- B. The ward name only (not the bed), for visitor enquiries.
+
+*Recommendation A.* Q-K21 excludes bed occupants. A ward or department name (oncology, psychiatry) reveals the kind of illness. B can come with the P2-T2 registration screens if wanted. After the attack, A also means these roles:
+- cannot find patients by bed, department, doctor or tag (those encounter filters answer 400);
+- cannot read an encounter's departments;
+- do not see who is on a device;
+- see no booking notes and no booked doctor.
+
+### Q-K38 — Charge-item names seen by Cashier and TPA Desk (P1-T11b; auto-accepted by Claude, 2026-11-14, awaiting owner confirmation)
+
+- **A ⭐ (taken). Accept.** Billing lines name the service ("HIV test", "chemotherapy cycle"), which billing needs.
+- B. Hide service names from the Cashier and show codes only.
+
+*Recommendation A.* A bill without service names cannot be explained to the patient or the insurer. The view is still limited to people whose job is billing. ADR-018 records this as a known residual exposure.
+
+### Q-K39 — Small numbers in the Owner's totals (P1-T11b4; auto-accepted by Claude, 2026-11-14, awaiting owner confirmation)
+
+- **A ⭐ (taken). No suppression, and no clinical breakdown.** Totals are by encounter class and status, beds and money only. There are no department, doctor, service or diagnosis splits until MIS (P2-T16).
+- B. Hide any count under 5 in per-day figures.
+
+*Recommendation A.* Without a clinical dimension, a small count does not point to a patient's condition. Suppression would make daily figures wrong for small hospitals. The question comes back with MIS breakdowns.
+
+### Q-K40 — CARE's own access gaps found on the way (P1-T11b; auto-accepted by Claude, 2026-11-14, awaiting owner confirmation)
+
+These CARE behaviours affect CARE's own roles:
+- patient search is open to any signed-in staff user;
+- `add_user` can give any role on a patient;
+- prescriptions and the discharge summary are readable with `can_read_encounter` alone;
+- resource requests have no permission check;
+- `can_write_patient` also gates allergy, note and file writes;
+- (added after the attack) Doctor, Nurse, Staff, Volunteer and Pharmacist read every account, booking, token and payment of the hospital, each embedding the full encounter, wherever their department is;
+- the device list and retrieve need only facility membership and show the patient on each device;
+- a `PatientUser` care-team row keeps giving clinical read after the person's job changes;
+- an account-report template can print the whole clinical encounter, and anyone who reads the account can download it.
+
+Our roles are protected from all of them by the design (after the attack).
+- **A ⭐ (taken). Protect our roles now, and log the rest as a follow-up task** ("P1-T11d: close CARE-role access gaps", after P1-T11c). The `add_user` gate for restricted targets ships now.
+- B. Close all of them now for every role. That changes Doctor, Nurse and Staff behaviour inside this task.
+
+*Recommendation A.* P1-T11b's tests assert that CARE's roles are unchanged. The gaps are real, but fixing them for CARE's roles needs their own design and checks against the web app's flows.
+
+### Q-K41 — Account reports for the Cashier and TPA Desk (P1-T11b; auto-accepted by Claude, 2026-11-14, awaiting owner confirmation)
+
+An account report is a PDF built from a template. CARE's account template can print the whole clinical encounter (diagnoses, prescriptions, discharge advice), and anyone who may read the account may download any account report. A TPA "final bill" that shows the diagnosis is the normal Indian claim layout, so a hospital will make one.
+- **A ⭐ (taken). Refuse account reports to the restricted roles until P2-T15.** Receptionist, Cashier, TPA Desk, Owner, Lab Technician, Store Keeper and MRD cannot list, download, generate or archive account reports. Bills and receipts still print from the invoice screens. P2-T15 (TPA) designs a claim layout and a reviewed list of billing-only templates, and comes back to you if TPA claims need diagnosis codes.
+- B. Allow templates now that a check proves print no clinical field (a field-graph walker, re-checked on every template change).
+
+*Recommendation A.* It closes the leak with a small swap and a test. B is a sizeable piece of work whose real need, the claim layout, belongs to P2-T15.
+
+### Q-K42 — May the Receptionist see the list of departments? (P1-T11b; auto-accepted by Claude, 2026-11-14, awaiting owner confirmation)
+
+CARE's "create encounter" form needs a department. With no department rights, the Receptionist's picker offers only the hospital as a whole, so every front-desk encounter is filed under the whole hospital and a department's doctors may not see it.
+- **A ⭐ (taken). Yes.** The Receptionist gets CARE's `can_view_facility_organization` at the hospital level: department names and the department tree. These are hospital settings, not patient data. They still never see which department an existing patient's encounter is in.
+- B. No. Front-desk encounters land on the hospital as a whole and clinical staff move them to a department.
+
+*Recommendation A.* Sending a patient to the right department is the front desk's job. The department list holds no patient data, and the filters that could use department ids to find patients answer 400 (Q-K37).
+
+### Q-K43 — Store Keeper and patient medication returns (P1-T11b; auto-accepted by Claude, 2026-11-14, awaiting owner confirmation)
+
+CARE records a medication return as a delivery order to the store or pharmacy, named "Medication return - <patient name>", with the patient attached. Where the store and the pharmacy share a location, the Store Keeper would see a named patient next to the returned drugs (for example antiretrovirals).
+- **A ⭐ (taken). Hide them.** Delivery orders and supply deliveries linked to a patient are invisible to the Store Keeper and to every other restricted role. Pharmacists handle returns.
+- B. The Store Keeper handles returns and sees the patient's name on them.
+
+*Recommendation A.* It keeps the design's "nothing patient" rule for the store, and Q-K21 lists prescriptions among what non-clinical staff never see.
+
+### Q-K44 — When does the Radiologist see a patient's clinical record? (P1-T11b; auto-accepted by Claude, 2026-11-14, awaiting owner confirmation)
+
+In CARE a department sees a patient's record only when the department is on the encounter, or the patient's bed belongs to it. An X-ray request at the Radiology room does not count. So the earlier design's "wherever Radiology is involved" was wrong.
+- **A ⭐ (taken). CARE's rule, in P1.** The Radiologist sees the full record when the Radiology department is on the encounter (the front desk adds it at registration, or a clinician adds it later). Otherwise the Radiologist sees the imaging requests and reports only, not the chart.
+- B. A plugin rule: while a patient has an open imaging request at a Radiology room, the Radiologist may read the chart, time-boxed and audited like MRD's grants. It widens clinical access, so it would come with the imaging work (Orthanc/OHIF, Phase 2).
+
+*Recommendation A.* It needs no new access rule. B can be decided with the imaging workflow, when ordering a scan can add Radiology to the encounter by itself.
+
+### Q-K45 — Front-desk, records and owner screens in the web app (P1-T11b → P1-T11c; auto-accepted by Claude, 2026-11-14, awaiting owner confirmation)
+
+CARE's web app opens the patient tabs, the encounter list and the edit form only for CARE's own permissions, which these roles deliberately lack. After creating an encounter it opens a clinical page. There is no page for MRD's records access or for the Owner's totals.
+- **A ⭐ (taken). Widen P1-T11c** (the web-app patch, built in CI) to cover:
+  - the patient tabs, the encounter history, the patient home's encounter tab and the edit form;
+  - the redirect after creating an encounter;
+  - a records-access page (patient, reason, reference, active grants, end now);
+  - an Owner totals page (lakh/crore).
+
+  P1-T11b's own click-through is checked partly through the API.
+- B. Keep P1-T11c to menus and add a new task for the screens.
+
+*Recommendation A.* The screens and the menus are one patch to the same web app and one CI build. Until then the eight roles can be seeded and tested, but the front desk, MRD and the Owner cannot use them day to day.
+
 **Still open:** Q-B4 (final MVP module list: assumed as in PLAN.md Phase 2) and Q-B6/B7 (pricing, timeline). Q-F2 is moot while AI is deferred.
 
 ---

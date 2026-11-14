@@ -198,8 +198,12 @@ Detailed task definitions: [PLAN.md](PLAN.md) §6. Open questions: [QUESTIONS.md
   - ⬜ P1-T10b Licensed content (blocked on you; first, one clean run of `scripts/terminology-scale-bench.sh` on an 8 GB VM to settle the 30-min load limit, Q-F6): SNOMED CT India (MLDS/NRCeS licence + written SaaS permission), LOINC (account), ICD-10 or ICD-11, a drug list, Hindi designations (clinical review); then `scripts/staging.sh terminology-load <zip> --sha256 … --licence …` (read-only mount from outside the repo, memory limit, journal lines, free-disk check, off-hours window; added by the P1-T10a2 design attack)
 - 🔵 P1-T11 Indian hospital roles — split by Claude, 2026-11-12, confirmed by you 2026-11-14 (Q-K22; the design attack found CARE ties opening a patient to clinical-data rights)
   - 🟡 P1-T11a Guarded role sync (no role held by anyone is ever deleted), role registry (permanent names, no shared-list aliasing), refuse CARE's global patient-edit switch
-  - ⬜ P1-T11b (next) The eight Indian roles + a demographics-and-billing access override + endpoint tests + seeded users (Q-K21 answered 2026-11-14: option A; the Owner sees totals only and approves no discounts, cancellations or locked invoices)
-  - ⬜ P1-T11c Web-app menus shown by permission (`apps/frontend` patch, CI only; after P1-T11b)
+  - 🔵 P1-T11b The eight Indian roles + a demographics-and-billing access override + endpoint tests + seeded users (Q-K21 answered 2026-11-14: option A; the Owner sees totals only and approves no discounts, cancellations or locked invoices) — split by Claude, 2026-11-14, awaiting owner confirmation (design docs/reviews/p1-t11/design-b.md; decisions Q-K34…Q-K45):
+    - 🔵 P1-T11b1 Roles, grants and the serializer guard (projection to reviewed field lists), placement trigger, seeded users
+    - ⬜ P1-T11b2 Route swaps: patient, encounter, bed history, resource requests, devices, report upload, delivery orders
+    - ⬜ P1-T11b3 Role × endpoint matrix and clinical canary tests
+    - ⬜ P1-T11b4 MRD audited records grants and Owner totals (ADR-018, click-through)
+  - ⬜ P1-T11c Web-app menus shown by permission, plus the front-desk, records and Owner screens (Q-K45) (`apps/frontend` patch, CI only; after P1-T11b)
 - ⬜ P1-T14 Customer discovery: 5–10 hospital interviews, pilot LOI (before Phase 2); also re-check whether the DHIS incentive still runs (PLAN §1.1 and P3-T12 assume it; Phase 1 review R1-21)
 - 🟡 P1-T12 Hardening before staging: fix 29 fixable HIGH dependency vulns (22 backend, 7 frontend) + non-root Docker images
 - **From the Phase 1 review** (docs/reviews/phase-1-review.md, 2026-11-12; added by Claude, confirmed by you 2026-11-14, Q-K23). Each finding survived a two-agent challenge.
