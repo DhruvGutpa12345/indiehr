@@ -8,6 +8,7 @@
 #   scripts/care-tenancy.sh ihr_create_tenant --slug alpha --name "Alpha Hospital" --domain alpha.localhost
 #   scripts/care-tenancy.sh test --settings=ihr_platform.settings.test ihr_platform
 #   IHR_DB_ROLES=test scripts/care-tenancy.sh test ...   # tests run as the app role (P1-T19a)
+#   IHR_MATRIX_DUMP=1 scripts/care-tenancy.sh test ... ihr_access.tests.test_role_matrix  # print every matrix answer (P1-T11b3)
 #   scripts/care-tenancy.sh <any manage.py command and arguments>
 set -euo pipefail
 ROOT="$(git -C "$(dirname "$0")" rev-parse --show-toplevel)"
@@ -21,6 +22,7 @@ manage() {
     -e PYTHONPATH=/ihr/plugins/ihr_platform \
     -e SNOWSTORM_DEPLOYMENT_URL=http://127.0.0.1:9/fhir \
     ${IHR_DB_ROLES:+-e IHR_DB_ROLES="$IHR_DB_ROLES"} \
+    ${IHR_MATRIX_DUMP:+-e IHR_MATRIX_DUMP="$IHR_MATRIX_DUMP"} \
     -e HOME=/tmp -e PYTHONDONTWRITEBYTECODE=1 \
     -v "$ROOT/apps/backend:/app:ro" -v "$ROOT/plugins:/ihr/plugins:ro" -w /app \
     --user "$(id -u):$(id -g)" care_local python manage.py "$@"
@@ -31,5 +33,5 @@ if [[ "${1:-}" == "init" ]]; then
   manage migrate_schemas --shared
   exit 0
 fi
-[[ $# -gt 0 ]] || { sed -n '6,10p' "$0"; exit 1; }
+[[ $# -gt 0 ]] || { sed -n '6,11p' "$0"; exit 1; }
 manage "$@"

@@ -113,6 +113,23 @@ def restricted(user):
     return state.for_user(user).restricted
 
 
+def ours_only(user):
+    """Every role the user holds here is one of ours, the Radiologist included (P1-T11b3's
+    matrix): CARE's membership-only lists must not give such a user what our design keeps from
+    them (the Radiologist reads a chart only with Radiology on the encounter, Q-K44 A; no
+    patient-linked store rows, Q-K43 A), though the Radiologist is not restricted. A CARE role
+    held as well gives CARE's answer (Q-K35)."""
+    if not _signed_in(user) or getattr(user, "is_superuser", False):
+        return False
+    return state.for_user(user).ours_only
+
+
+def closed(user):
+    """Who CARE's membership-only lists are closed to: resource requests, devices, dispense
+    orders and patient-linked delivery rows (views.py)."""
+    return restricted(user) or ours_only(user)
+
+
 def widen():
     """Our branch serves this request: every patient, encounter, bed, device, booking and
     token it shows is projected, whatever else the user holds (design §5.2)."""

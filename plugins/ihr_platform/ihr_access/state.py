@@ -19,9 +19,11 @@ _state = ContextVar("ihr_access_state", default=None)
 
 class RequestState:
     __slots__ = (
+        "_chart",
         "_granting",
         "_grants",
         "_held",
+        "_ours_only",
         "_restricted",
         "_restricted_only",
         "_role_ids",
@@ -40,6 +42,8 @@ class RequestState:
         self._granting = None
         self._held = None
         self._role_ids = None
+        self._ours_only = None
+        self._chart = {}
 
     def is_for(self, user):
         return user is not None and getattr(self.user, "pk", None) == getattr(
@@ -57,6 +61,40 @@ class RequestState:
         if self._restricted_only is None:
             self._restricted_only = restricted_only(self.user, self.role_ids)
         return self._restricted_only
+
+    @property
+    def ours_only(self):
+        """Every role held here (any organisation) is one of ours: no CARE role adds to them
+        (Q-K35)."""
+        if self._ours_only is None:
+            held = self.held_role_ids
+            self._ours_only = (
+                bool(held)
+                and not getattr(self.user, "is_superuser", False)
+                and held <= set(self.role_ids.values())
+            )
+        return self._ours_only
+
+    @property
+    def chart_limited(self):
+        """Holds only roles of ours, one of them clinical: the Radiologist. They read a chart
+        only where CARE's own patient rule gives them clinical data (Radiology on the visit,
+        Q-K44 A), so a patient or visit embedded in an imaging request or report is projected
+        for them elsewhere (P1-T11b3's matrix; guard.Shape.applies)."""
+        return self.ours_only and not self.restricted
+
+    def may_read_chart(self, patient):
+        """CARE's ``can_view_clinical_data`` on this patient (through our PatientUser rule),
+        once per patient and request."""
+        if patient.pk not in self._chart:
+            from care.security.authorization import AuthorizationController
+
+            self._chart[patient.pk] = bool(
+                AuthorizationController.call(
+                    "can_view_clinical_data", self.user, patient
+                )
+            )
+        return self._chart[patient.pk]
 
     @property
     def granted_patients(self):

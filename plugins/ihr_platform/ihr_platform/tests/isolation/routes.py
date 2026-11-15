@@ -78,6 +78,38 @@ def get_routes():
     return routes
 
 
+WRITE_METHODS = ("post", "put", "patch", "delete")
+
+
+def get_route_views():
+    """(regex route, view class or None, methods) for the same routes as ``get_routes()``:
+    ``methods`` are the HTTP methods the route answers (lower case), from a viewset's actions
+    or a class view's handlers; None for a function view, whose methods cannot be read
+    (P1-T11b3's role matrix sends every method of a class view)."""
+    found = []
+    for route, callback in _walk(get_resolver().url_patterns):
+        if FORMAT_RE.search(route) or route.startswith(SKIP_PREFIXES):
+            continue
+        cls = getattr(callback, "cls", None) or getattr(callback, "view_class", None)
+        actions = getattr(callback, "actions", None)
+        initkwargs = (
+            getattr(callback, "view_initkwargs", None)
+            or getattr(callback, "initkwargs", None)
+            or {}
+        )
+        allowed = initkwargs.get("http_method_names") or ("get", *WRITE_METHODS)
+        if actions is not None:
+            methods = tuple(m for m in ("get", *WRITE_METHODS) if m in actions)
+        elif cls is not None:
+            methods = tuple(
+                m for m in ("get", *WRITE_METHODS) if hasattr(cls, m) and m in allowed
+            )
+        else:
+            methods = None
+        found.append((route, cls, methods))
+    return found
+
+
 def _model(cls):
     """The view's model: CARE's ``database_model``, else a plain DRF ``queryset``'s."""
     model = getattr(cls, "database_model", None)

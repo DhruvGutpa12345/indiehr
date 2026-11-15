@@ -1,0 +1,458 @@
+# The role x endpoint matrix (P1-T11b3; docs/reviews/p1-t11/design-b.md §6, "After the attack"
+# §9 and §10 items 13-17). Reviewed: test_role_matrix.RoleMatrix requests every route of the
+# hospital's URL configuration as every role below and compares each answer with this file. A
+# route (or list_params.txt line) not here, or a row for no route, fails until it is reviewed.
+# A restricted role reaching clinical data is a defect to fix in ihr_access, never a row.
+#
+# <methods> <route> [?<list_params.txt assignments>]  <who>:<outcome> ...  # why
+#
+# Who (later tokens win): all, ours (restricted + rad), restricted (rec cash tpa owner mrd lab
+# store; registry.RESTRICTED), frontdesk (rec cash tpa mrd), billing (cash tpa), clinical (rad
+# doctor admin), care (doctor admin), or roles: rec Receptionist, cash Cashier, tpa TPA Desk,
+# owner Owner, mrd MRD (no records grant: P1-T11b4), lab Lab Technician, store Store Keeper,
+# rad Radiologist, doctor Doctor (Paediatrics, CARE's), admin Facility Admin (CARE's). The
+# Nurse who moved to the front desk keeping a PatientUser row is requested too and must answer
+# exactly as rec.
+#
+# GET outcomes: allow (200 with rows, nothing projected), project (200 with rows, the guard
+# projected a shape in it), empty (200, no rows), deny (401/403/404/405), invalid (400),
+# conflict (409), unavailable (503), redirect (3xx), skip (not requested: fill() cannot fill
+# it, or nothing here to show). Anything else, a 5xx above all, never matches.
+#
+# Writes: "W" is every non-GET method of the route; POST, PUT, PATCH, DELETE (comma-joined) name
+# methods. A route with no write row: "ours:deny care:care". deny: sent with an empty JSON body
+# as that role, and must not answer 2xx (or 5xx); where CARE validates the body before it
+# authorizes, every role gets 400 there, so a deny row proves only that an empty write is not
+# accepted (the grants themselves: ihr_roles ExactGrants). allow: not sent; the reason names
+# the tests that cover the write ("tests: a.b.Class.test_x, ..."). care: CARE's own roles, not
+# sent (no write crawl of CARE's roles). skip: fill() cannot fill the route, and only then: a
+# skip row on a route fill() fills is requested (or sent) and fails (review M5). How each denied
+# write answered is snapshotted in role_matrix_writes.txt (auth or body, review M3); an allowed
+# write on a request, report or patient-scoped route names a test that sends it (review M4).
+# Every GET route under a patient also has a "?encounter=encounter_b" row (another patient's
+# visit, generated: matrix.CROSS, review K1/K2); reads by POST are in post_reads.txt (K3).
+# GET rows were written from the answers (IHR_MATRIX_DUMP=1), each investigated before it
+# was classified.
+
+# --- GET ------------------------------------------------------------------------------------
+GET /  all:allow  # health, version and root: no hospital data
+GET /api/ihr/audit/entries/  all:deny  # the audit viewer: top-level hospital admins only (ihr_audit IsHospitalAdmin), and no one in this world is one
+GET /api/ihr/audit/entries/<int:pk>/  all:deny  # the audit viewer: top-level hospital admins only (ihr_audit IsHospitalAdmin), and no one in this world is one
+GET /api/ihr/audit/export/  all:deny  # the audit viewer: top-level hospital admins only (ihr_audit IsHospitalAdmin), and no one in this world is one
+GET /api/ihr/audit/status/  all:deny  # the audit viewer: top-level hospital admins only (ihr_audit IsHospitalAdmin), and no one in this world is one
+GET /api/ihr/audit/verifier.py  all:deny  # the audit viewer: top-level hospital admins only (ihr_audit IsHospitalAdmin), and no one in this world is one
+GET /api/ihr/auth/callback/  all:redirect  # the sign-in flow: a redirect to Keycloak
+GET /api/ihr/auth/login/  all:redirect  # the sign-in flow: a redirect to Keycloak
+GET /api/ihr/auth/logout/  all:deny  # POST only: 405 to a GET
+GET /api/ihr/auth/session/  all:allow  # the signed-in person's own session (ADR-009)
+GET /api/ihr/bootstrap.js  all:allow  # the hospital's public branding (anonymous_allowlist.txt)
+GET /api/ihr/bootstrap/  all:allow  # the hospital's public branding (anonymous_allowlist.txt)
+GET /api/ihr/join/  all:redirect  # the join flow: a redirect to Keycloak
+GET /api/ihr/join/confirm/  all:redirect  # the join flow: a redirect to Keycloak
+GET /api/ihr/logo/  all:allow  # the hospital's public branding (anonymous_allowlist.txt)
+GET /api/ihr/pincode/<str:pincode>/  all:unavailable  # the PIN directory is not loaded in the test hospital: 503 for everyone (ihr_tenant_settings tests load it)
+GET /api/ihr/profile/  all:allow  # the hospital's own profile and branding (P1-T2a), no patient data
+GET /api/ihr/staff/<str:username>/access/  all:deny admin:allow  # the staff access screen: hospital admins only (P1-T5)
+GET /api/schema/  all:allow  # the API description: no hospital data
+GET /api/v1/encounter/  all:deny  # CARE needs facility or patient
+GET /api/v1/encounter/ ?facility=facility  all:project clinical:allow owner,lab,store:empty  # the facility status view: front desk through our branch, projected (b2); Owner, Lab and Store hold no status slug; Radiologist: CARE's Radiology visits
+GET /api/v1/encounter/ ?facility=facility&location=location  all:empty frontdesk:invalid care:allow  # finding a bed's patient: location is off fields/encounter_filters.txt, 400 on our branch (Q-K37 A); CARE's own path for CARE's roles; Owner, Lab, Store and the Radiologist hold no encounter list there
+GET /api/v1/encounter/ ?patient=patient  all:project care:allow owner,lab,store,rad:deny  # a patient's visits: front desk projected (b2); the Radiologist has no Radiology visit here (Q-K44 A)
+GET /api/v1/encounter/ ?patient=patient_b  all:project rad,admin:allow owner,lab,store,doctor:deny  # the Radiology patient's visits: front desk projected; Radiologist reads them (Radiology on the visit, Q-K44 A); the Paediatrics Doctor does not
+GET /api/v1/encounter/{external_id}/  all:project care:allow owner,lab,store,rad:deny  # one visit: front desk projected (b2); Radiologist only with Radiology on it (Q-K44 A)
+GET /api/v1/encounter/{external_id}/ ?{external_id}=encounter_b  all:project rad,admin:allow owner,lab,store,doctor:deny  # the Radiology visit: front desk projected; Radiologist reads it (Q-K44 A); not the Paediatrics Doctor
+GET /api/v1/encounter/{external_id}/ ?{external_id}=encounter_done  all:project care:allow owner,lab,store,rad:deny  # one visit: front desk projected (b2); Radiologist only with Radiology on it (Q-K44 A)
+GET /api/v1/encounter/{external_id}/organizations/  all:deny care:allow  # an encounter's departments: closed to every role of ours (Q-K37 A, b2)
+GET /api/v1/extensions/  all:allow  # settings and terminology: no patient data
+GET /api/v1/facility/  all:allow  # the facilities the person belongs to
+GET /api/v1/facility/{external_id}/  all:allow  # the facility: membership only (membership_only.txt); its identifier settings name the programme configuration (canary_exemptions.txt)
+GET /api/v1/facility/{facility_external_id}/account/  all:deny billing:project care:allow rec:project  # billing accounts: Receptionist, Cashier and TPA Desk read them (CARE's can_read_account), the embedded patient and visit projected; Owner and MRD hold none (Q-K21)
+GET /api/v1/facility/{facility_external_id}/account/{external_id}/  all:deny billing:project care:allow rec:project  # billing accounts: Receptionist, Cashier and TPA Desk read them (CARE's can_read_account), the embedded patient and visit projected; Owner and MRD hold none (Q-K21)
+GET /api/v1/facility/{facility_external_id}/activity_definition/  all:deny clinical:empty lab:empty  # settings: no patient data
+GET /api/v1/facility/{facility_external_id}/activity_definition/favorite_lists/  all:allow  # settings: no patient data
+GET /api/v1/facility/{facility_external_id}/activity_definition/{slug}/  all:skip  # fill() cannot fill it: no row of this kind in the access world (a setting, no patient data; the isolation crawl seeds one)
+GET /api/v1/facility/{facility_external_id}/appointments/  all:invalid  # CARE needs resource_type and resource_ids (list_params.txt gives them)
+GET /api/v1/facility/{facility_external_id}/appointments/ ?resource_type~practitioner&resource_ids=doctor_user  all:deny care:allow rec:project  # bookings: the Receptionist's own CARE screens (can_list_booking), patient projected; booking notes kept outside forced projection ("After the attack" §2.2)
+GET /api/v1/facility/{facility_external_id}/appointments/available_users/  all:allow  # the practitioners with schedules here (staff names, no patient)
+GET /api/v1/facility/{facility_external_id}/appointments/{external_id}/  all:deny care:allow rec:project  # bookings: the Receptionist's own CARE screens (can_list_booking), patient projected; booking notes kept outside forced projection ("After the attack" §2.2)
+GET /api/v1/facility/{facility_external_id}/charge_item/  all:deny billing:allow care:allow  # billing: Cashier and TPA Desk read charges (Q-K21), each naming its service (Q-K38 A); nothing embedded to project
+GET /api/v1/facility/{facility_external_id}/charge_item/{external_id}/  all:deny billing:allow care:allow  # billing: Cashier and TPA Desk read charges (Q-K21), each naming its service (Q-K38 A); nothing embedded to project
+GET /api/v1/facility/{facility_external_id}/charge_item_definition/  all:allow mrd,owner,lab,store,rad:deny  # the price list: settings, read by the front desk and billing (can_read_charge_item_definition)
+GET /api/v1/facility/{facility_external_id}/charge_item_definition/favorite_lists/  all:allow  # the price list: settings, read by the front desk and billing (can_read_charge_item_definition)
+GET /api/v1/facility/{facility_external_id}/charge_item_definition/{slug}/  all:allow mrd,owner,lab,store,rad:deny  # the price list: settings, read by the front desk and billing (can_read_charge_item_definition)
+GET /api/v1/facility/{facility_external_id}/device/  all:empty admin:allow  # devices: closed to users of our roles only (branches.closed; A2, P1-T11b3); device histories need can_list_devices
+GET /api/v1/facility/{facility_external_id}/device/ ?location=ward  all:empty  # CARE's device list by place (review O1): closed to our roles (branches.closed, empty); no device is placed at the ward itself
+GET /api/v1/facility/{facility_external_id}/device/{device_external_id}/encounter_history/  all:deny care:allow  # devices: closed to users of our roles only (branches.closed; A2, P1-T11b3); device histories need can_list_devices
+GET /api/v1/facility/{facility_external_id}/device/{device_external_id}/encounter_history/{external_id}/  all:deny care:allow  # devices: closed to users of our roles only (branches.closed; A2, P1-T11b3); device histories need can_list_devices
+GET /api/v1/facility/{facility_external_id}/device/{device_external_id}/location_history/  all:deny care:allow  # devices: closed to users of our roles only (branches.closed; A2, P1-T11b3); device histories need can_list_devices
+GET /api/v1/facility/{facility_external_id}/device/{device_external_id}/location_history/{external_id}/  all:deny care:allow  # devices: closed to users of our roles only (branches.closed; A2, P1-T11b3); device histories need can_list_devices
+GET /api/v1/facility/{facility_external_id}/device/{device_external_id}/service_history/  all:deny care:allow  # devices: closed to users of our roles only (branches.closed; A2, P1-T11b3); device histories need can_list_devices
+GET /api/v1/facility/{facility_external_id}/device/{device_external_id}/service_history/{external_id}/  all:deny care:allow  # devices: closed to users of our roles only (branches.closed; A2, P1-T11b3); device histories need can_list_devices
+GET /api/v1/facility/{facility_external_id}/device/{external_id}/  all:deny admin:allow  # devices: closed to users of our roles only (branches.closed; A2, P1-T11b3); device histories need can_list_devices
+GET /api/v1/facility/{facility_external_id}/healthcare_service/  all:deny care:empty rec,cash:empty  # settings: no patient data
+GET /api/v1/facility/{facility_external_id}/healthcare_service/{external_id}/  all:skip  # fill() cannot fill it: no row of this kind in the access world (a setting, no patient data; the isolation crawl seeds one)
+GET /api/v1/facility/{facility_external_id}/invoice/  all:deny billing:allow care:allow  # billing: Cashier and TPA Desk (Q-K21), embedded patient projected; service names shown (Q-K38 A)
+GET /api/v1/facility/{facility_external_id}/invoice/ ?account=account  all:deny billing:allow care:allow  # billing: Cashier and TPA Desk (Q-K21), embedded patient projected; service names shown (Q-K38 A)
+GET /api/v1/facility/{facility_external_id}/invoice/{external_id}/  all:deny billing:project care:allow  # billing: Cashier and TPA Desk (Q-K21), embedded patient projected; service names shown (Q-K38 A)
+GET /api/v1/facility/{facility_external_id}/location/  all:empty clinical:allow lab,store:project  # places: location rights per department (Lab, Store, Radiologist at their own), the occupant projected (Q-K37 A)
+GET /api/v1/facility/{facility_external_id}/location/{external_id}/  all:deny care:allow  # places: location rights per department (Lab, Store, Radiologist at their own), the occupant projected (Q-K37 A)
+GET /api/v1/facility/{facility_external_id}/location/{external_id}/ ?{external_id}=lab_location  all:deny admin:allow lab:project  # places: location rights per department (Lab, Store, Radiologist at their own), the occupant projected (Q-K37 A)
+GET /api/v1/facility/{facility_external_id}/location/{external_id}/ ?{external_id}=store_location  all:deny admin:allow store:project  # places: location rights per department (Lab, Store, Radiologist at their own), the occupant projected (Q-K37 A)
+GET /api/v1/facility/{facility_external_id}/location/{external_id}/organizations/  all:deny care:empty  # a place's departments: location management rights
+GET /api/v1/facility/{facility_external_id}/location/{location_external_id}/association/  all:deny care:allow  # bed history: each row embeds the whole visit; refused to restricted users (b2); others need the place's location rights
+GET /api/v1/facility/{facility_external_id}/location/{location_external_id}/association/ ?{location_external_id}=lab_location  all:deny admin:allow  # bed history: each row embeds the whole visit; refused to restricted users (b2); others need the place's location rights
+GET /api/v1/facility/{facility_external_id}/location/{location_external_id}/association/{external_id}/  all:deny care:allow  # bed history: each row embeds the whole visit; refused to restricted users (b2); others need the place's location rights
+GET /api/v1/facility/{facility_external_id}/location/{location_external_id}/product/  all:deny care:empty  # stock at a place: inventory rights at that place (Store Keeper at the store)
+GET /api/v1/facility/{facility_external_id}/location/{location_external_id}/product/ ?{location_external_id}=store_location  all:deny admin:allow store:project  # stock at a place: inventory rights at that place (Store Keeper at the store)
+GET /api/v1/facility/{facility_external_id}/location/{location_external_id}/product/{external_id}/  all:deny care:invalid  # stock at a place: inventory rights at that place (Store Keeper at the store)
+GET /api/v1/facility/{facility_external_id}/medication_prescription/summary/  all:deny admin:allow  # products and prescription summaries: store and pharmacy rights
+GET /api/v1/facility/{facility_external_id}/order/delivery/  all:project clinical:allow  # CARE lists every order to any member when neither origin nor destination is given (Q-K40 gap); patient-linked rows absent for our roles (Q-K43 A)
+GET /api/v1/facility/{facility_external_id}/order/delivery/ ?destination=store_location  all:deny admin:allow store:project  # the store's incoming orders: the Store Keeper, patient-linked rows absent (Q-K43 A)
+GET /api/v1/facility/{facility_external_id}/order/delivery/ ?origin=store_location  all:deny store,admin:empty  # orders leaving the store (none in this world): the Store Keeper and the Facility Admin may list them (empty); the others are refused
+GET /api/v1/facility/{facility_external_id}/order/delivery/{external_id}/  all:deny admin:allow store:project  # the stock order: the Store Keeper (store rights at the destination)
+GET /api/v1/facility/{facility_external_id}/order/delivery/{external_id}/ ?{external_id}=return_order  all:deny admin:allow  # the patient's return: absent for users of our roles (Q-K43 A, branches.closed)
+GET /api/v1/facility/{facility_external_id}/order/dispense/  all:empty admin:allow doctor:invalid  # dispense orders (each names its patient): an empty list and 403 for users of our roles (Q-K43 A, branches.closed)
+GET /api/v1/facility/{facility_external_id}/order/dispense/ ?location=store_location  all:empty admin:allow doctor:deny  # dispense orders (each names its patient): an empty list and 403 for users of our roles (Q-K43 A, branches.closed)
+GET /api/v1/facility/{facility_external_id}/order/dispense/{external_id}/  all:deny admin:allow  # dispense orders (each names its patient): an empty list and 403 for users of our roles (Q-K43 A, branches.closed)
+GET /api/v1/facility/{facility_external_id}/order/request/  all:project care,rad:allow  # a store's request orders (indents; no patient link, §7): CARE answers every one to any member when neither origin nor destination is named (Q-K40's list, as the delivery-order list); our roles see the place projected
+GET /api/v1/facility/{facility_external_id}/order/request/{external_id}/  all:deny admin:allow store:project  # one request order: the Store Keeper (the store's supply-request right), projected; the Facility Admin
+GET /api/v1/facility/{facility_external_id}/organizations/  all:empty care:allow rec:allow  # departments: the Receptionist reads them (Q-K42 A); others see the ones they are in
+GET /api/v1/facility/{facility_external_id}/organizations/favorite_lists/  all:allow  # departments: the Receptionist reads them (Q-K42 A); others see the ones they are in
+GET /api/v1/facility/{facility_external_id}/organizations/mine/  all:allow  # departments: the Receptionist reads them (Q-K42 A); others see the ones they are in
+GET /api/v1/facility/{facility_external_id}/organizations/{external_id}/  all:deny rec,admin:allow  # departments: the Receptionist reads them (Q-K42 A); others see the ones they are in
+GET /api/v1/facility/{facility_external_id}/organizations/{facility_organizations_external_id}/users/  all:deny care:allow  # department members: department management rights
+GET /api/v1/facility/{facility_external_id}/organizations/{facility_organizations_external_id}/users/{external_id}/  all:deny care:allow  # department members: department management rights
+GET /api/v1/facility/{facility_external_id}/payment_reconciliation/  all:deny billing:project care:allow  # billing: Cashier and TPA Desk (Q-K21), embedded patient projected; service names shown (Q-K38 A)
+GET /api/v1/facility/{facility_external_id}/payment_reconciliation/{external_id}/  all:deny billing:project care:allow  # billing: Cashier and TPA Desk (Q-K21), embedded patient projected; service names shown (Q-K38 A)
+GET /api/v1/facility/{facility_external_id}/product/  all:deny care:allow store:allow  # products and prescription summaries: store and pharmacy rights
+GET /api/v1/facility/{facility_external_id}/product/{external_id}/  all:deny care:allow store:allow  # products and prescription summaries: store and pharmacy rights
+GET /api/v1/facility/{facility_external_id}/resource_category/  all:deny care:empty  # settings: no patient data
+GET /api/v1/facility/{facility_external_id}/resource_category/{slug}/  all:skip  # fill() cannot fill it: no row of this kind in the access world (a setting, no patient data; the isolation crawl seeds one)
+GET /api/v1/facility/{facility_external_id}/schedulable_users/  all:empty  # the public doctor list (P1-T20a): no public schedule in this world
+GET /api/v1/facility/{facility_external_id}/schedulable_users/{external_id}/  all:deny  # the public doctor list (P1-T20a): no public schedule in this world
+GET /api/v1/facility/{facility_external_id}/schedule/  all:invalid  # CARE needs resource_type and resource_id (list_params.txt gives them)
+GET /api/v1/facility/{facility_external_id}/schedule/ ?resource_type~practitioner&resource_id=doctor_user  all:deny care:allow rec:allow  # schedules: the Receptionist's CARE screens (can_list_schedule); no patient data
+GET /api/v1/facility/{facility_external_id}/schedule/{external_id}/  all:deny care:allow rec:allow  # schedules: the Receptionist's CARE screens (can_list_schedule); no patient data
+GET /api/v1/facility/{facility_external_id}/schedule_exceptions/  all:invalid  # CARE needs resource_type and resource_id (list_params.txt gives them)
+GET /api/v1/facility/{facility_external_id}/schedule_exceptions/ ?resource_type~practitioner&resource_id=doctor_user  all:deny care:empty rec:empty  # schedules: the Receptionist's CARE screens (can_list_schedule); no patient data
+GET /api/v1/facility/{facility_external_id}/schedule_exceptions/{external_id}/  all:skip  # fill() cannot fill it: no row of this kind in the access world (a setting, no patient data; the isolation crawl seeds one)
+GET /api/v1/facility/{facility_external_id}/service_request/  all:invalid  # CARE needs location or encounter
+GET /api/v1/facility/{facility_external_id}/service_request/ ?encounter=encounter  all:deny care:allow  # a visit's requests: CARE's rights on the visit
+GET /api/v1/facility/{facility_external_id}/service_request/ ?location=lab_location  all:deny admin:allow lab:project  # the Laboratory's queue: Lab Technician, the patient and visit projected
+GET /api/v1/facility/{facility_external_id}/service_request/ ?location=ward  all:deny care:allow  # the ward's requests: Paediatrics and admin only
+GET /api/v1/facility/{facility_external_id}/service_request/ ?location=xray_location  all:deny admin:allow rad:project  # the Radiology room's queue: Radiologist, patient and visit projected by the chart rule (Q-K44 A)
+GET /api/v1/facility/{facility_external_id}/service_request/{external_id}/  all:deny care:allow  # the ward copy: Paediatrics and admin only
+GET /api/v1/facility/{facility_external_id}/service_request/{external_id}/ ?{external_id}=lab_service_request  all:deny care:allow lab:project  # the lab copy: Lab Technician, projected
+GET /api/v1/facility/{facility_external_id}/service_request/{external_id}/ ?{external_id}=xray_service_request  all:deny care:allow rad:project  # the imaging copy: Radiologist, projected by the chart rule (Q-K44 A)
+GET /api/v1/facility/{facility_external_id}/slots/{external_id}/  all:deny care:allow rec:allow  # schedules: the Receptionist's CARE screens (can_list_schedule); no patient data
+GET /api/v1/facility/{facility_external_id}/specimen/{external_id}/  all:deny care:allow  # the ward copy: Paediatrics and admin only
+GET /api/v1/facility/{facility_external_id}/specimen/{external_id}/ ?{external_id}=lab_specimen  all:deny care:allow lab:project  # the lab copy: Lab Technician, projected
+GET /api/v1/facility/{facility_external_id}/specimen_definition/  all:deny care:empty lab:empty  # settings: no patient data
+GET /api/v1/facility/{facility_external_id}/specimen_definition/{slug}/  all:skip  # fill() cannot fill it: no row of this kind in the access world (a setting, no patient data; the isolation crawl seeds one)
+GET /api/v1/facility/{facility_external_id}/token/category/  all:deny care:allow rec:allow  # queues and tokens: the Receptionist's CARE screens (can_list_token), the patient projected
+GET /api/v1/facility/{facility_external_id}/token/category/{external_id}/  all:deny care:allow rec:allow  # queues and tokens: the Receptionist's CARE screens (can_list_token), the patient projected
+GET /api/v1/facility/{facility_external_id}/token/queue/  all:invalid  # CARE needs resource_type and resource_id (list_params.txt gives them)
+GET /api/v1/facility/{facility_external_id}/token/queue/ ?resource_type~practitioner&resource_id=doctor_user  all:deny care:allow rec:allow  # queues and tokens: the Receptionist's CARE screens (can_list_token), the patient projected
+GET /api/v1/facility/{facility_external_id}/token/queue/{external_id}/  all:deny care:allow rec:allow  # queues and tokens: the Receptionist's CARE screens (can_list_token), the patient projected
+GET /api/v1/facility/{facility_external_id}/token/queue/{external_id}/summary/  all:deny care:allow rec:allow  # queues and tokens: the Receptionist's CARE screens (can_list_token), the patient projected
+GET /api/v1/facility/{facility_external_id}/token/queue/{token_queue_external_id}/token/  all:deny care:allow rec:project  # queues and tokens: the Receptionist's CARE screens (can_list_token), the patient projected
+GET /api/v1/facility/{facility_external_id}/token/queue/{token_queue_external_id}/token/{external_id}/  all:deny care:allow rec:project  # queues and tokens: the Receptionist's CARE screens (can_list_token), the patient projected
+GET /api/v1/facility/{facility_external_id}/token/sub_queue/  all:invalid  # CARE needs resource_type and resource_id (list_params.txt gives them)
+GET /api/v1/facility/{facility_external_id}/token/sub_queue/ ?resource_type~practitioner&resource_id=doctor_user  all:deny care:empty rec:empty  # queues and tokens: the Receptionist's CARE screens (can_list_token), the patient projected
+GET /api/v1/facility/{facility_external_id}/token/sub_queue/{external_id}/  all:skip  # fill() cannot fill it: no row of this kind in the access world (a setting, no patient data; the isolation crawl seeds one)
+GET /api/v1/facility/{facility_external_id}/users/  all:allow  # the hospital's staff list: membership only (membership_only.txt)
+GET /api/v1/facility/{facility_external_id}/users/{external_id}/  all:allow  # the hospital's staff list: membership only (membership_only.txt)
+GET /api/v1/files/  all:deny  # CARE needs file_type and associating_id (list_params.txt gives them)
+GET /api/v1/files/ ?file_type~patient&associating_id=patient  all:deny care:allow  # patient files and drawings: CARE's patient clinical rights
+GET /api/v1/files/{external_id}/  all:deny care:allow  # patient files and drawings: CARE's patient clinical rights
+GET /api/v1/form_submission/  all:invalid  # CARE needs encounter and patient (list_params.txt gives them)
+GET /api/v1/form_submission/ ?encounter=encounter&patient=patient  all:deny care:allow  # questionnaire submissions: CARE's clinical rights
+GET /api/v1/form_submission/{external_id}/  all:deny care:allow  # questionnaire submissions: CARE's clinical rights
+GET /api/v1/getallfacilities/  all:empty  # the public facility finder: this hospital is not public
+GET /api/v1/getallfacilities/{external_id}/  all:deny  # the public facility finder: this hospital is not public
+GET /api/v1/govt/organization/  all:allow  # government organisations (public, P1-T20a)
+GET /api/v1/govt/organization/{external_id}/  all:allow  # government organisations (public, P1-T20a)
+GET /api/v1/medication/dispense/  all:invalid  # CARE needs a location or an encounter (list_params.txt gives them)
+GET /api/v1/medication/dispense/ ?encounter=encounter  all:deny care:allow  # medicines dispensed to patients: pharmacy rights (is_pharmacist, read_medication_dispense), none of ours
+GET /api/v1/medication/dispense/ ?location=store_location  all:deny admin:allow  # medicines dispensed to patients: pharmacy rights (is_pharmacist, read_medication_dispense), none of ours
+GET /api/v1/medication/dispense/summary/  all:invalid  # CARE needs a location (list_params.txt gives it)
+GET /api/v1/medication/dispense/summary/ ?location=store_location  all:deny admin:allow  # medicines dispensed to patients: pharmacy rights (is_pharmacist, read_medication_dispense), none of ours
+GET /api/v1/medication/dispense/{external_id}/  all:deny care:allow  # medicines dispensed to patients: pharmacy rights (is_pharmacist, read_medication_dispense), none of ours
+GET /api/v1/meta_artifacts/  all:deny  # CARE needs associating_type and associating_id (list_params.txt gives them)
+GET /api/v1/meta_artifacts/ ?associating_type~patient&associating_id=patient  all:deny care:allow  # patient files and drawings: CARE's patient clinical rights
+GET /api/v1/meta_artifacts/{external_id}/  all:deny care:allow  # patient files and drawings: CARE's patient clinical rights
+GET /api/v1/observation_definition/  all:empty  # settings and terminology: no patient data
+GET /api/v1/observation_definition/ ?facility=facility  all:deny clinical:empty lab:empty  # settings and terminology: no patient data
+GET /api/v1/observation_definition/metrics/  all:allow  # settings and terminology: no patient data
+GET /api/v1/observation_definition/{slug}/  all:skip  # fill() cannot fill it: no row of this kind in the access world (a setting, no patient data; the isolation crawl seeds one)
+GET /api/v1/organization/  all:allow  # geographic and role organisations: membership only
+GET /api/v1/organization/accessible_role_organizations/  all:empty  # geographic and role organisations: membership only
+GET /api/v1/organization/mine/  all:empty  # geographic and role organisations: membership only
+GET /api/v1/organization/{external_id}/  all:allow  # geographic and role organisations: membership only
+GET /api/v1/organization/{organization_external_id}/users/  all:deny  # geographic and role organisations: membership only
+GET /api/v1/organization/{organization_external_id}/users/{external_id}/  all:skip  # fill() cannot fill it: no row of this kind in the access world (a setting, no patient data; the isolation crawl seeds one)
+GET /api/v1/otp/patient/  all:deny  # the patient OTP routes: a staff session is not a patient's
+GET /api/v1/otp/slots/get_appointments/  all:deny  # the patient OTP routes: a staff session is not a patient's
+GET /api/v1/otp/slots/{external_id}/  all:deny  # the patient OTP routes: a staff session is not a patient's
+GET /api/v1/patient/  all:empty  # CARE's patient list is geographic only: empty for everyone here (the front desk searches instead, b2)
+GET /api/v1/patient/ ?organization=district  all:empty  # CARE's geographic patient list: empty for every role here (no one holds can_list_patients in the district)
+GET /api/v1/patient/{external_id}/  all:project care:allow owner,lab,store,rad:deny  # open a patient: front desk projected (Q-K34 A); Owner, Lab, Store and the Radiologist (no Radiology visit) refused
+GET /api/v1/patient/{external_id}/ ?{external_id}=patient_b  all:project rad,admin:allow owner,lab,store,doctor:deny  # the Radiology patient: front desk projected; Radiologist reads the chart (Q-K44 A)
+GET /api/v1/patient/{external_id}/ ?facility=facility  all:project care:allow owner,lab,store,rad:deny  # CARE's pharmacist branch (?facility): no role here is a pharmacist; CARE's clinical rights
+GET /api/v1/patient/{external_id}/get_appointments/  all:deny care:allow  # restricted users must name the facility ("After the attack" §5.2)
+GET /api/v1/patient/{external_id}/get_appointments/ ?facility=facility  all:deny care:allow rec:project  # a patient's bookings or tokens with the facility named: Receptionist projected (forced: no note, doctor or tags); others hold no booking or token slug
+GET /api/v1/patient/{external_id}/get_tokens/  all:deny care:allow  # restricted users must name the facility ("After the attack" §5.2)
+GET /api/v1/patient/{external_id}/get_tokens/ ?facility=facility  all:deny care:allow rec:project  # a patient's bookings or tokens with the facility named: Receptionist projected (forced: no note, doctor or tags); others hold no booking or token slug
+GET /api/v1/patient/{external_id}/get_users/  all:deny care:allow  # the care team: CARE's patient rights only (b2: not widened)
+GET /api/v1/patient/{patient_external_id}/allergy_intolerance/  all:deny care:allow  # clinical data: CARE's clinical rights only (none of our restricted roles; the Radiologist has no Radiology visit here)
+GET /api/v1/patient/{patient_external_id}/allergy_intolerance/ ?encounter=encounter_b  all:deny care:empty  # another patient's visit named (review K1): refused to every role of ours (ihr_access/visits.py); CARE's roles get CARE's answer (a list narrowed to that visit: empty; a row by id: CARE does not check whose visit it is, Q-K40's list)
+GET /api/v1/patient/{patient_external_id}/allergy_intolerance/{external_id}/  all:deny care:allow  # clinical data: CARE's clinical rights only (none of our restricted roles; the Radiologist has no Radiology visit here)
+GET /api/v1/patient/{patient_external_id}/allergy_intolerance/{external_id}/ ?encounter=encounter_b  all:deny care:allow  # another patient's visit named (review K1): refused to every role of ours (ihr_access/visits.py); CARE's roles get CARE's answer (a list narrowed to that visit: empty; a row by id: CARE does not check whose visit it is, Q-K40's list)
+GET /api/v1/patient/{patient_external_id}/consent/  all:deny care:allow  # clinical data: CARE's clinical rights only (none of our restricted roles; the Radiologist has no Radiology visit here)
+GET /api/v1/patient/{patient_external_id}/consent/ ?encounter=encounter  all:deny care:allow  # the patient's own visit named: encounter decides who is authorized; CARE's clinical rights only (the Radiologist has no Radiology on it)
+GET /api/v1/patient/{patient_external_id}/consent/ ?encounter=encounter_b  all:deny care:empty  # another patient's visit named (review K1): refused to every role of ours (ihr_access/visits.py); CARE's roles get CARE's answer (a list narrowed to that visit: empty; a row by id: CARE does not check whose visit it is, Q-K40's list)
+GET /api/v1/patient/{patient_external_id}/consent/{external_id}/  all:deny care:allow  # clinical data: CARE's clinical rights only (none of our restricted roles; the Radiologist has no Radiology visit here)
+GET /api/v1/patient/{patient_external_id}/consent/{external_id}/ ?encounter=encounter_b  all:deny care:allow  # another patient's visit named (review K1): refused to every role of ours (ihr_access/visits.py); CARE's roles get CARE's answer (a list narrowed to that visit: empty; a row by id: CARE does not check whose visit it is, Q-K40's list)
+GET /api/v1/patient/{patient_external_id}/diagnosis/  all:deny care:allow  # clinical data: CARE's clinical rights only (none of our restricted roles; the Radiologist has no Radiology visit here)
+GET /api/v1/patient/{patient_external_id}/diagnosis/ ?{patient_external_id}=patient_b  all:deny rad,admin:allow  # the Radiology patient's problem list: the Radiologist reads it (Q-K44 A)
+GET /api/v1/patient/{patient_external_id}/diagnosis/ ?encounter=encounter  all:deny care:allow  # the patient's own visit named: encounter decides who is authorized; CARE's clinical rights only (the Radiologist has no Radiology on it)
+GET /api/v1/patient/{patient_external_id}/diagnosis/ ?encounter=encounter_b  all:deny care:empty  # another patient's visit named (review K1): refused to every role of ours (ihr_access/visits.py); CARE's roles get CARE's answer (a list narrowed to that visit: empty; a row by id: CARE does not check whose visit it is, Q-K40's list)
+GET /api/v1/patient/{patient_external_id}/diagnosis/{external_id}/  all:deny care:allow  # clinical data: CARE's clinical rights only (none of our restricted roles; the Radiologist has no Radiology visit here)
+GET /api/v1/patient/{patient_external_id}/diagnosis/{external_id}/ ?{patient_external_id}=patient_b&{external_id}=condition_b  all:deny rad,admin:allow  # the Radiology patient's problem list: the Radiologist reads it (Q-K44 A)
+GET /api/v1/patient/{patient_external_id}/diagnosis/{external_id}/ ?encounter=encounter_b  all:deny care:allow  # another patient's visit named (review K1): refused to every role of ours (ihr_access/visits.py); CARE's roles get CARE's answer (a list narrowed to that visit: empty; a row by id: CARE does not check whose visit it is, Q-K40's list)
+GET /api/v1/patient/{patient_external_id}/diagnostic_report/  all:deny care:allow  # clinical data: CARE's clinical rights only (none of our restricted roles; the Radiologist has no Radiology visit here)
+GET /api/v1/patient/{patient_external_id}/diagnostic_report/ ?encounter=encounter  all:deny care:allow  # clinical data: CARE's clinical rights only (none of our restricted roles; the Radiologist has no Radiology visit here)
+GET /api/v1/patient/{patient_external_id}/diagnostic_report/ ?service_request=lab_service_request  all:deny care:allow lab:allow  # the lab copy's reports: the Lab Technician through the request's Laboratory place
+GET /api/v1/patient/{patient_external_id}/diagnostic_report/ ?service_request=xray_service_request  all:deny clinical:allow  # the imaging copy's reports: the Radiologist through the request's Radiology place
+GET /api/v1/patient/{patient_external_id}/diagnostic_report/ ?encounter=encounter_b  all:deny admin:empty  # another patient's visit named (review K1): refused to every role of ours (ihr_access/visits.py); CARE's roles get CARE's answer (a list narrowed to that visit: empty; a row by id: CARE does not check whose visit it is, Q-K40's list)
+GET /api/v1/patient/{patient_external_id}/diagnostic_report/{external_id}/  all:deny care:allow  # clinical data: CARE's clinical rights only (none of our restricted roles; the Radiologist has no Radiology visit here)
+GET /api/v1/patient/{patient_external_id}/diagnostic_report/{external_id}/ ?{external_id}=lab_diagnostic_report  all:deny care:allow lab:project  # the lab copy: Lab Technician, projected (the patient and visit it embeds)
+GET /api/v1/patient/{patient_external_id}/diagnostic_report/{external_id}/ ?{external_id}=xray_diagnostic_report  all:deny care:allow rad:project  # the imaging copy: Radiologist, projected by the chart rule (another department's patient, Q-K44 A)
+GET /api/v1/patient/{patient_external_id}/diagnostic_report/{external_id}/ ?encounter=encounter_b  all:deny care:allow  # another patient's visit named (review K1): refused to every role of ours (ihr_access/visits.py); CARE's roles get CARE's answer (a list narrowed to that visit: empty; a row by id: CARE does not check whose visit it is, Q-K40's list)
+GET /api/v1/patient/{patient_external_id}/medication/administration/  all:deny care:allow  # clinical data: CARE's clinical rights only (none of our restricted roles; the Radiologist has no Radiology visit here)
+GET /api/v1/patient/{patient_external_id}/medication/administration/ ?encounter=encounter  all:deny care:allow  # the patient's own visit named: encounter decides who is authorized; CARE's clinical rights only (the Radiologist has no Radiology on it)
+GET /api/v1/patient/{patient_external_id}/medication/administration/ ?encounter=encounter_b  all:deny care:empty  # another patient's visit named (review K1): refused to every role of ours (ihr_access/visits.py); CARE's roles get CARE's answer (a list narrowed to that visit: empty; a row by id: CARE does not check whose visit it is, Q-K40's list)
+GET /api/v1/patient/{patient_external_id}/medication/administration/{external_id}/  all:deny care:allow  # clinical data: CARE's clinical rights only (none of our restricted roles; the Radiologist has no Radiology visit here)
+GET /api/v1/patient/{patient_external_id}/medication/administration/{external_id}/ ?encounter=encounter_b  all:deny care:allow  # another patient's visit named (review K1): refused to every role of ours (ihr_access/visits.py); CARE's roles get CARE's answer (a list narrowed to that visit: empty; a row by id: CARE does not check whose visit it is, Q-K40's list)
+GET /api/v1/patient/{patient_external_id}/medication/prescription/  all:deny care:allow  # clinical data: CARE's clinical rights only (none of our restricted roles; the Radiologist has no Radiology visit here)
+GET /api/v1/patient/{patient_external_id}/medication/prescription/ ?encounter=encounter  all:deny care:allow  # the patient's own visit named: encounter decides who is authorized; CARE's clinical rights only (the Radiologist has no Radiology on it)
+GET /api/v1/patient/{patient_external_id}/medication/prescription/ ?encounter=encounter_b  all:deny care:empty  # another patient's visit named (review K1): refused to every role of ours (ihr_access/visits.py); CARE's roles get CARE's answer (a list narrowed to that visit: empty; a row by id: CARE does not check whose visit it is, Q-K40's list)
+GET /api/v1/patient/{patient_external_id}/medication/prescription/ ?facility=facility  all:deny care:allow  # CARE's pharmacist branch (?facility): no role here is a pharmacist; CARE's clinical rights
+GET /api/v1/patient/{patient_external_id}/medication/prescription/{external_id}/  all:deny care:allow  # clinical data: CARE's clinical rights only (none of our restricted roles; the Radiologist has no Radiology visit here)
+GET /api/v1/patient/{patient_external_id}/medication/prescription/{external_id}/ ?encounter=encounter_b  all:deny care:allow  # another patient's visit named (review K1): refused to every role of ours (ihr_access/visits.py); CARE's roles get CARE's answer (a list narrowed to that visit: empty; a row by id: CARE does not check whose visit it is, Q-K40's list)
+GET /api/v1/patient/{patient_external_id}/medication/prescription/{external_id}/ ?facility=facility  all:deny care:allow  # CARE's pharmacist branch (?facility): no role here is a pharmacist; CARE's clinical rights
+GET /api/v1/patient/{patient_external_id}/medication/request/  all:deny care:allow  # clinical data: CARE's clinical rights only (none of our restricted roles; the Radiologist has no Radiology visit here)
+GET /api/v1/patient/{patient_external_id}/medication/request/ ?encounter=encounter  all:deny care:allow  # the patient's own visit named: encounter decides who is authorized; CARE's clinical rights only (the Radiologist has no Radiology on it)
+GET /api/v1/patient/{patient_external_id}/medication/request/ ?encounter=encounter_b  all:deny care:empty  # another patient's visit named (review K1): refused to every role of ours (ihr_access/visits.py); CARE's roles get CARE's answer (a list narrowed to that visit: empty; a row by id: CARE does not check whose visit it is, Q-K40's list)
+GET /api/v1/patient/{patient_external_id}/medication/request/ ?facility=facility  all:deny care:allow  # CARE's pharmacist branch (?facility): no role here is a pharmacist; CARE's clinical rights
+GET /api/v1/patient/{patient_external_id}/medication/request/{external_id}/  all:deny care:allow  # clinical data: CARE's clinical rights only (none of our restricted roles; the Radiologist has no Radiology visit here)
+GET /api/v1/patient/{patient_external_id}/medication/request/{external_id}/ ?encounter=encounter_b  all:deny care:allow  # another patient's visit named (review K1): refused to every role of ours (ihr_access/visits.py); CARE's roles get CARE's answer (a list narrowed to that visit: empty; a row by id: CARE does not check whose visit it is, Q-K40's list)
+GET /api/v1/patient/{patient_external_id}/medication/request/{external_id}/ ?facility=facility  all:deny care:allow  # CARE's pharmacist branch (?facility): no role here is a pharmacist; CARE's clinical rights
+GET /api/v1/patient/{patient_external_id}/medication/statement/  all:deny care:allow  # clinical data: CARE's clinical rights only (none of our restricted roles; the Radiologist has no Radiology visit here)
+GET /api/v1/patient/{patient_external_id}/medication/statement/ ?encounter=encounter  all:deny care:allow  # the patient's own visit named: encounter decides who is authorized; CARE's clinical rights only (the Radiologist has no Radiology on it)
+GET /api/v1/patient/{patient_external_id}/medication/statement/ ?encounter=encounter_b  all:deny care:empty  # another patient's visit named (review K1): refused to every role of ours (ihr_access/visits.py); CARE's roles get CARE's answer (a list narrowed to that visit: empty; a row by id: CARE does not check whose visit it is, Q-K40's list)
+GET /api/v1/patient/{patient_external_id}/medication/statement/{external_id}/  all:deny care:allow  # clinical data: CARE's clinical rights only (none of our restricted roles; the Radiologist has no Radiology visit here)
+GET /api/v1/patient/{patient_external_id}/medication/statement/{external_id}/ ?encounter=encounter_b  all:deny care:allow  # another patient's visit named (review K1): refused to every role of ours (ihr_access/visits.py); CARE's roles get CARE's answer (a list narrowed to that visit: empty; a row by id: CARE does not check whose visit it is, Q-K40's list)
+GET /api/v1/patient/{patient_external_id}/observation/  all:deny care:allow  # clinical data: CARE's clinical rights only (none of our restricted roles; the Radiologist has no Radiology visit here)
+GET /api/v1/patient/{patient_external_id}/observation/ ?encounter=encounter  all:deny care:allow  # clinical data: CARE's clinical rights only (none of our restricted roles; the Radiologist has no Radiology visit here)
+GET /api/v1/patient/{patient_external_id}/observation/ ?encounter=encounter_b  all:deny care:empty  # another patient's visit named (review K1): refused to every role of ours (ihr_access/visits.py); CARE's roles get CARE's answer (a list narrowed to that visit: empty; a row by id: CARE does not check whose visit it is, Q-K40's list)
+GET /api/v1/patient/{patient_external_id}/observation/{external_id}/  all:deny care:allow  # clinical data: CARE's clinical rights only (none of our restricted roles; the Radiologist has no Radiology visit here)
+GET /api/v1/patient/{patient_external_id}/observation/{external_id}/ ?{external_id}=lab_observation  all:deny care:allow  # clinical data: CARE's clinical rights only (none of our restricted roles; the Radiologist has no Radiology visit here)
+GET /api/v1/patient/{patient_external_id}/observation/{external_id}/ ?encounter=encounter_b  all:deny care:allow  # another patient's visit named (review K1): refused to every role of ours (ihr_access/visits.py); CARE's roles get CARE's answer (a list narrowed to that visit: empty; a row by id: CARE does not check whose visit it is, Q-K40's list)
+GET /api/v1/patient/{patient_external_id}/questionnaire_response/  all:deny care:allow  # clinical data: CARE's clinical rights only (none of our restricted roles; the Radiologist has no Radiology visit here)
+GET /api/v1/patient/{patient_external_id}/questionnaire_response/ ?encounter=encounter_b  all:deny care:empty  # another patient's visit named (review K1): refused to every role of ours (ihr_access/visits.py); CARE's roles get CARE's answer (a list narrowed to that visit: empty; a row by id: CARE does not check whose visit it is, Q-K40's list)
+GET /api/v1/patient/{patient_external_id}/questionnaire_response/{external_id}/  all:deny care:allow  # clinical data: CARE's clinical rights only (none of our restricted roles; the Radiologist has no Radiology visit here)
+GET /api/v1/patient/{patient_external_id}/questionnaire_response/{external_id}/ ?encounter=encounter_b  all:deny care:allow  # another patient's visit named (review K1): refused to every role of ours (ihr_access/visits.py); CARE's roles get CARE's answer (a list narrowed to that visit: empty; a row by id: CARE does not check whose visit it is, Q-K40's list)
+GET /api/v1/patient/{patient_external_id}/symptom/  all:deny care:allow  # clinical data: CARE's clinical rights only (none of our restricted roles; the Radiologist has no Radiology visit here)
+GET /api/v1/patient/{patient_external_id}/symptom/ ?encounter=encounter  all:deny care:allow  # the patient's own visit named: encounter decides who is authorized; CARE's clinical rights only (the Radiologist has no Radiology on it)
+GET /api/v1/patient/{patient_external_id}/symptom/ ?encounter=encounter_b  all:deny care:empty  # another patient's visit named (review K1): refused to every role of ours (ihr_access/visits.py); CARE's roles get CARE's answer (a list narrowed to that visit: empty; a row by id: CARE does not check whose visit it is, Q-K40's list)
+GET /api/v1/patient/{patient_external_id}/symptom/{external_id}/  all:deny care:allow  # clinical data: CARE's clinical rights only (none of our restricted roles; the Radiologist has no Radiology visit here)
+GET /api/v1/patient/{patient_external_id}/symptom/{external_id}/ ?encounter=encounter_b  all:deny care:allow  # another patient's visit named (review K1): refused to every role of ours (ihr_access/visits.py); CARE's roles get CARE's answer (a list narrowed to that visit: empty; a row by id: CARE does not check whose visit it is, Q-K40's list)
+GET /api/v1/patient/{patient_external_id}/thread/  all:deny care:allow  # clinical data: CARE's clinical rights only (none of our restricted roles; the Radiologist has no Radiology visit here)
+GET /api/v1/patient/{patient_external_id}/thread/ ?encounter=encounter  all:deny care:allow  # the patient's own visit named: encounter decides who is authorized; CARE's clinical rights only (the Radiologist has no Radiology on it)
+GET /api/v1/patient/{patient_external_id}/thread/ ?encounter=encounter_b  all:deny care:empty  # another patient's visit named (review K1): refused to every role of ours (ihr_access/visits.py); CARE's roles get CARE's answer (a list narrowed to that visit: empty; a row by id: CARE does not check whose visit it is, Q-K40's list)
+GET /api/v1/patient/{patient_external_id}/thread/{external_id}/  all:deny care:allow  # clinical data: CARE's clinical rights only (none of our restricted roles; the Radiologist has no Radiology visit here)
+GET /api/v1/patient/{patient_external_id}/thread/{external_id}/ ?encounter=encounter_b  all:deny care:allow  # another patient's visit named (review K1): refused to every role of ours (ihr_access/visits.py); CARE's roles get CARE's answer (a list narrowed to that visit: empty; a row by id: CARE does not check whose visit it is, Q-K40's list)
+GET /api/v1/patient/{patient_external_id}/thread/{thread_external_id}/note/  all:deny care:allow  # clinical data: CARE's clinical rights only (none of our restricted roles; the Radiologist has no Radiology visit here)
+GET /api/v1/patient/{patient_external_id}/thread/{thread_external_id}/note/ ?encounter=encounter  all:deny care:allow  # the patient's own visit named: encounter decides who is authorized; CARE's clinical rights only (the Radiologist has no Radiology on it)
+GET /api/v1/patient/{patient_external_id}/thread/{thread_external_id}/note/ ?encounter=encounter_b  all:deny care:allow  # another patient's visit named (review K1): refused to every role of ours (ihr_access/visits.py); CARE's roles get CARE's answer (a list narrowed to that visit: empty; a row by id: CARE does not check whose visit it is, Q-K40's list)
+GET /api/v1/patient/{patient_external_id}/thread/{thread_external_id}/note/{external_id}/  all:deny care:allow  # clinical data: CARE's clinical rights only (none of our restricted roles; the Radiologist has no Radiology visit here)
+GET /api/v1/patient/{patient_external_id}/thread/{thread_external_id}/note/{external_id}/ ?encounter=encounter_b  all:deny care:allow  # another patient's visit named (review K1): refused to every role of ours (ihr_access/visits.py); CARE's roles get CARE's answer (a list narrowed to that visit: empty; a row by id: CARE does not check whose visit it is, Q-K40's list)
+GET /api/v1/patient_identifier_config/  all:allow  # identifier settings: the catalogue, not patients' numbers
+GET /api/v1/patient_identifier_config/ ?facility=facility  all:deny care:allow rec:allow  # identifier settings: the catalogue, not patients' numbers
+GET /api/v1/patient_identifier_config/{external_id}/  all:allow  # identifier settings: the catalogue, not patients' numbers
+GET /api/v1/permission/  all:allow  # settings and terminology: no patient data
+GET /api/v1/permission/{slug}/  all:allow  # settings and terminology: no patient data
+GET /api/v1/plug_config/  all:allow  # settings and terminology: no patient data
+GET /api/v1/plug_config/{slug}/  all:skip  # fill() cannot fill it: no row of this kind in the access world (a setting, no patient data; the isolation crawl seeds one)
+GET /api/v1/product_knowledge/  all:empty  # settings and terminology: no patient data
+GET /api/v1/product_knowledge/ ?facility=facility  all:deny care:allow store:allow  # settings and terminology: no patient data
+GET /api/v1/product_knowledge/favorite_lists/  all:allow  # settings and terminology: no patient data
+GET /api/v1/product_knowledge/{slug}/  all:deny care:allow store:allow  # settings and terminology: no patient data
+GET /api/v1/questionnaire/  all:deny  # settings and terminology: no patient data
+GET /api/v1/questionnaire/favorite_lists/  all:allow  # settings and terminology: no patient data
+GET /api/v1/questionnaire/{slug}/  all:deny  # settings and terminology: no patient data
+GET /api/v1/questionnaire/{slug}/get_organizations/  all:deny  # settings and terminology: no patient data
+GET /api/v1/questionnaire_response_template/  all:empty  # settings and terminology: no patient data
+GET /api/v1/questionnaire_response_template/{external_id}/  all:skip  # fill() cannot fill it: no row of this kind in the access world (a setting, no patient data; the isolation crawl seeds one)
+GET /api/v1/resource/  all:deny care:allow  # resource requests (each names its patient, no permission in CARE): closed to users of our roles only (branches.closed; b2, P1-T11b3)
+GET /api/v1/resource/{external_id}/  all:deny care:allow  # resource requests (each names its patient, no permission in CARE): closed to users of our roles only (branches.closed; b2, P1-T11b3)
+GET /api/v1/resource/{resource_external_id}/comment/  all:deny care:allow  # resource requests (each names its patient, no permission in CARE): closed to users of our roles only (branches.closed; b2, P1-T11b3)
+GET /api/v1/resource/{resource_external_id}/comment/{external_id}/  all:deny care:allow  # resource requests (each names its patient, no permission in CARE): closed to users of our roles only (branches.closed; b2, P1-T11b3)
+GET /api/v1/role/  all:allow  # settings and terminology: no patient data
+GET /api/v1/role/{external_id}/  all:allow  # settings and terminology: no patient data
+GET /api/v1/supply_delivery/  all:invalid  # CARE needs an order, origin or destination
+GET /api/v1/supply_delivery/ ?destination=store_location  all:deny admin:allow store:project  # deliveries into the store: the Store Keeper, patient-linked rows absent (Q-K43 A)
+GET /api/v1/supply_delivery/ ?order=delivery_order  all:deny admin:allow store:project  # the stock order's deliveries: the Store Keeper, projected (the store's place); the Facility Admin
+GET /api/v1/supply_delivery/ ?request_order=request_order  all:deny admin:allow store:project  # deliveries against the store's request order: the Store Keeper sees the stock delivery only, never the patient's return (Q-K43 A: _NoPatientRows); the Facility Admin sees both
+GET /api/v1/supply_delivery/delivery_orders/  all:invalid  # CARE needs request_order (400 without it); the request-order variant below is the world's (review M8)
+GET /api/v1/supply_delivery/delivery_orders/ ?request_order=request_order  all:deny admin:allow store:project  # the orders delivered against the store's request order (review M8): the Store Keeper sees the stock order only, projected (the store's place), never the patient's return (Q-K43 A; StoreRows); the Facility Admin sees both; not the Doctor or the other roles
+GET /api/v1/supply_delivery/{external_id}/  all:deny admin:allow store:project  # the stock delivery: the Store Keeper
+GET /api/v1/supply_delivery/{external_id}/ ?{external_id}=return_delivery  all:deny admin:allow  # the patient's return delivery: absent for users of our roles (Q-K43 A)
+GET /api/v1/supply_request/  all:invalid  # CARE needs an order, origin or destination (list_params.txt gives one)
+GET /api/v1/supply_request/ ?destination=store_location  all:deny admin:allow store:project  # requests to the store (no patient link, §7): the Store Keeper, projected (the place); the Facility Admin
+GET /api/v1/supply_request/request_orders/  all:invalid  # CARE needs delivery_order
+GET /api/v1/supply_request/request_orders/ ?delivery_order=delivery_order  all:deny admin:allow store:project  # the request orders behind the stock order (no patient link): the Store Keeper, projected; the Facility Admin
+GET /api/v1/supply_request/{external_id}/  all:deny admin:allow store:project  # one supply request (no patient link): the Store Keeper, projected; the Facility Admin
+GET /api/v1/tag_config/  all:allow  # the tag catalogue (a setting): which patient carries a tag is what the guard hides
+GET /api/v1/tag_config/ ?facility=facility  all:deny care:allow rec:allow  # the tag catalogue (a setting): which patient carries a tag is what the guard hides
+GET /api/v1/tag_config/{external_id}/  all:deny care:allow rec:allow  # the tag catalogue (a setting): which patient carries a tag is what the guard hides
+GET /api/v1/template/  all:empty  # report templates: template rights
+GET /api/v1/template/ ?facility=facility  all:deny care:allow  # report templates: template rights
+GET /api/v1/template/schema/  all:deny admin:allow  # report templates: template rights
+GET /api/v1/template/{slug}/  all:deny care:allow  # report templates: template rights
+GET /api/v1/template_reports/  all:deny  # CARE needs report_type and associating_id (list_params.txt gives them)
+GET /api/v1/template_reports/ ?report_type~account_report&associating_id=account  all:deny care:allow  # reports: account reports refused to restricted users (Q-K41 A); others need CARE's report rights
+GET /api/v1/template_reports/{external_id}/  all:deny care:allow  # reports: account reports refused to restricted users (Q-K41 A); others need CARE's report rights
+GET /api/v1/users/  all:allow  # the staff directory and the person's own profile: membership only
+GET /api/v1/users/getcurrentuser/  all:allow  # the staff directory and the person's own profile: membership only
+GET /api/v1/users/{username}/  all:allow  # the staff directory and the person's own profile: membership only
+GET /api/v1/users/{username}/check_availability/  all:conflict  # a username already taken: 409
+GET /api/v1/users/{username}/pnconfig/  all:allow  # the staff directory and the person's own profile: membership only
+GET /api/v1/valueset/  all:empty  # settings and terminology: no patient data
+GET /api/v1/valueset/{slug}/  all:skip  # fill() cannot fill it: no row of this kind in the access world (a setting, no patient data; the isolation crawl seeds one)
+GET /api/v1/valueset/{slug}/favourites/  all:skip  # fill() cannot fill it: no row of this kind in the access world (a setting, no patient data; the isolation crawl seeds one)
+GET /api/v1/valueset/{slug}/recent_views/  all:skip  # fill() cannot fill it: no row of this kind in the access world (a setting, no patient data; the isolation crawl seeds one)
+GET /app_version/  all:allow  # health, version and root: no hospital data
+GET /health/  all:allow  # health, version and root: no hospital data
+GET /health/celery_queue_length  all:allow  # health, version and root: no hospital data
+GET /health/main_cache  all:allow  # health, version and root: no hospital data
+GET /health/main_database  all:allow  # health, version and root: no hospital data
+GET /health/statuspage  all:allow  # health, version and root: no hospital data
+GET /ping/  all:allow  # health, version and root: no hospital data
+GET /redoc/  all:allow  # the API description: no hospital data
+GET /swagger/  all:allow  # the API description: no hospital data
+
+# --- writes (allowed ones; every other non-GET method: ours:deny care:care) ------------------
+# Patients and visits (P1-T11b2's swaps)
+POST /api/v1/patient/  ours:deny care:care rec:allow  # registration (can_create_patient), decided before CARE reads the body; tests: ihr_access.tests.test_patient_swap.OpeningAPatient.test_patient_create_and_update_by_role, ihr_access.tests.test_patient_swap.WritesDecideBeforeTheBody.test_create_is_refused_before_the_body_is_read
+PUT,PATCH /api/v1/patient/{external_id}/  ours:deny care:care rec:allow  # demographics under the edit rule (edit.py); tests: ihr_access.tests.test_patient_swap.EditingDemographics.test_receptionist_save_keeps_hidden_fields, ihr_access.tests.test_patient_swap.WritesDecideBeforeTheBody.test_update_is_refused_before_the_body_is_read
+POST /api/v1/patient/{external_id}/update_identifier/  ours:deny care:care rec:allow  # identifiers on identifier_configs.txt only; tests: ihr_access.tests.test_patient_swap.EditingDemographics.test_receptionist_updates_an_allowed_identifier
+POST /api/v1/patient/search/  ours:deny care:care frontdesk,rad:allow  # a read by POST (post_reads.txt): the search gate (Q-K40), projected for the front desk; tests: ihr_access.tests.test_patient_swap.SearchGate.test_search_refused_to_roles_without_patient_access
+POST /api/v1/patient/search_retrieve/  ours:deny care:care frontdesk,rad:allow  # a read by POST, as search (post_reads.txt); tests: ihr_access.tests.test_patient_swap.SearchGate.test_search_refused_to_roles_without_patient_access
+POST /api/v1/encounter/  ours:deny care:care rec:allow  # a visit with a department, no clinical field (encounter_create.txt); tests: ihr_access.tests.test_encounter_swap.CreatingAVisit.test_receptionist_starts_a_visit_with_a_department, ihr_access.tests.test_encounter_swap.CreatingAVisit.test_receptionist_cannot_write_discharge_advice
+# Bookings and queues (the Receptionist's CARE grants: can_write_booking, can_reschedule_booking, can_write_token)
+PUT,PATCH /api/v1/facility/{facility_external_id}/appointments/{external_id}/  ours:deny care:care rec:allow  # can_write_booking; tests: ihr_roles.tests.test_grants.ExactGrants.test_each_of_our_roles_holds_exactly_its_grants, ihr_access.tests.test_role_matrix.AllowedWrites.test_writes_our_roles_are_granted, ihr_access.tests.test_role_matrix.DeskWrites.test_desk_writes_with_bodies
+POST /api/v1/facility/{facility_external_id}/appointments/{external_id}/cancel/  ours:deny care:care rec:allow  # can_write_booking; tests: ihr_roles.tests.test_grants.ExactGrants.test_each_of_our_roles_holds_exactly_its_grants, ihr_access.tests.test_role_matrix.AllowedWrites.test_writes_our_roles_are_granted, ihr_access.tests.test_role_matrix.DeskWrites.test_desk_writes_with_bodies
+POST /api/v1/facility/{facility_external_id}/appointments/{external_id}/reschedule/  ours:deny care:care rec:allow  # can_reschedule_booking; tests: ihr_roles.tests.test_grants.ExactGrants.test_each_of_our_roles_holds_exactly_its_grants, ihr_access.tests.test_role_matrix.DeskWrites.test_desk_writes_with_bodies
+POST /api/v1/facility/{facility_external_id}/appointments/{external_id}/generate_token/  ours:deny care:care rec:allow  # can_write_booking and can_write_token; tests: ihr_roles.tests.test_grants.ExactGrants.test_each_of_our_roles_holds_exactly_its_grants, ihr_access.tests.test_role_matrix.DeskWrites.test_desk_writes_with_bodies
+POST /api/v1/facility/{facility_external_id}/appointments/{external_id}/set_tags/  ours:deny care:care rec:allow  # can_write_booking (an empty body applies no tag); tests: ihr_access.tests.test_role_matrix.AllowedWrites.test_writes_our_roles_are_granted, ihr_access.tests.test_role_matrix.DeskWrites.test_desk_writes_with_bodies
+POST /api/v1/facility/{facility_external_id}/appointments/{external_id}/remove_tags/  ours:deny care:care rec:allow  # as set_tags; tests: ihr_access.tests.test_role_matrix.AllowedWrites.test_writes_our_roles_are_granted, ihr_access.tests.test_role_matrix.DeskWrites.test_desk_writes_with_bodies
+POST /api/v1/facility/{facility_external_id}/slots/{external_id}/create_appointment/  ours:deny care:care rec:allow  # booking a slot (can_write_booking); tests: ihr_roles.tests.test_grants.ExactGrants.test_each_of_our_roles_holds_exactly_its_grants, ihr_access.tests.test_role_matrix.DeskWrites.test_desk_writes_with_bodies
+POST /api/v1/facility/{facility_external_id}/slots/get_slots_for_day/  ours:deny care:care rec:allow  # a read by POST (can_list_schedule; post_reads.txt); tests: ihr_roles.tests.test_grants.ExactGrants.test_each_of_our_roles_holds_exactly_its_grants, ihr_access.tests.test_role_matrix.RoleMatrix.test_post_reads
+POST /api/v1/facility/{facility_external_id}/slots/availability_stats/  ours:deny care:care rec:allow  # a read by POST (can_list_schedule; post_reads.txt); tests: ihr_roles.tests.test_grants.ExactGrants.test_each_of_our_roles_holds_exactly_its_grants, ihr_access.tests.test_role_matrix.RoleMatrix.test_post_reads
+POST /api/v1/facility/{facility_external_id}/token/queue/  ours:deny care:care rec:allow  # can_write_token; tests: ihr_roles.tests.test_grants.ExactGrants.test_each_of_our_roles_holds_exactly_its_grants, ihr_access.tests.test_role_matrix.DeskWrites.test_desk_writes_with_bodies
+POST /api/v1/facility/{facility_external_id}/token/queue/upsert/  ours:deny care:care rec:allow  # can_write_token; tests: ihr_roles.tests.test_grants.ExactGrants.test_each_of_our_roles_holds_exactly_its_grants, ihr_access.tests.test_role_matrix.DeskWrites.test_desk_writes_with_bodies
+POST /api/v1/facility/{facility_external_id}/token/queue/generate_token/  ours:deny care:care rec:allow  # can_write_token; tests: ihr_roles.tests.test_grants.ExactGrants.test_each_of_our_roles_holds_exactly_its_grants, ihr_access.tests.test_role_matrix.DeskWrites.test_desk_writes_with_bodies
+W /api/v1/facility/{facility_external_id}/token/queue/{external_id}/  ours:deny care:care rec:allow  # can_write_token (update and delete a queue); tests: ihr_access.tests.test_role_matrix.AllowedWrites.test_writes_our_roles_are_granted, ihr_access.tests.test_role_matrix.DeskWrites.test_desk_writes_with_bodies
+POST /api/v1/facility/{facility_external_id}/token/queue/{external_id}/set_primary/  ours:deny care:care rec:allow  # can_write_token; tests: ihr_access.tests.test_role_matrix.AllowedWrites.test_writes_our_roles_are_granted, ihr_access.tests.test_role_matrix.DeskWrites.test_desk_writes_with_bodies
+POST /api/v1/facility/{facility_external_id}/token/queue/{external_id}/set_next_token_to_subqueue/  ours:deny care:care rec:allow  # can_write_token; tests: ihr_roles.tests.test_grants.ExactGrants.test_each_of_our_roles_holds_exactly_its_grants, ihr_access.tests.test_role_matrix.DeskWrites.test_desk_writes_with_bodies
+POST /api/v1/facility/{facility_external_id}/token/queue/{token_queue_external_id}/token/  ours:deny care:care rec:allow  # can_write_token; tests: ihr_roles.tests.test_grants.ExactGrants.test_each_of_our_roles_holds_exactly_its_grants, ihr_access.tests.test_role_matrix.DeskWrites.test_desk_writes_with_bodies
+POST /api/v1/facility/{facility_external_id}/token/queue/{token_queue_external_id}/token/upsert/  ours:deny care:care rec:allow  # can_write_token; tests: ihr_roles.tests.test_grants.ExactGrants.test_each_of_our_roles_holds_exactly_its_grants, ihr_access.tests.test_role_matrix.DeskWrites.test_desk_writes_with_bodies
+W /api/v1/facility/{facility_external_id}/token/queue/{token_queue_external_id}/token/{external_id}/  ours:deny care:care rec:allow  # can_write_token (update and delete a token); tests: ihr_access.tests.test_role_matrix.AllowedWrites.test_writes_our_roles_are_granted, ihr_access.tests.test_role_matrix.DeskWrites.test_desk_writes_with_bodies
+POST /api/v1/facility/{facility_external_id}/token/queue/{token_queue_external_id}/token/{external_id}/set_next/  ours:deny care:care rec:allow  # can_write_token; tests: ihr_roles.tests.test_grants.ExactGrants.test_each_of_our_roles_holds_exactly_its_grants, ihr_access.tests.test_role_matrix.DeskWrites.test_desk_writes_with_bodies
+# Billing (Q-K21: Cashier writes, TPA Desk updates accounts; cancellations stay with the Facility Admin)
+POST /api/v1/facility/{facility_external_id}/account/  ours:deny care:care rec,cash:allow  # can_create_account; tests: ihr_roles.tests.test_grants.ExactGrants.test_each_of_our_roles_holds_exactly_its_grants, ihr_access.tests.test_role_matrix.DeskWrites.test_desk_writes_with_bodies
+POST /api/v1/facility/{facility_external_id}/account/default_account/  ours:deny care:care rec,billing:allow  # finds the visit's (or the patient's open) account and creates nothing: CARE checks can_read_account only, so every reader of accounts (Receptionist, Cashier, TPA Desk) gets it, the patient projected as in the account list; tests: ihr_roles.tests.test_grants.ExactGrants.test_each_of_our_roles_holds_exactly_its_grants, ihr_access.tests.test_role_matrix.DeskWrites.test_desk_writes_with_bodies
+W /api/v1/facility/{facility_external_id}/account/{external_id}/  ours:deny care:care billing:allow  # can_update_account; tests: ihr_roles.tests.test_grants.ExactGrants.test_each_of_our_roles_holds_exactly_its_grants, ihr_access.tests.test_role_matrix.DeskWrites.test_desk_writes_with_bodies
+POST /api/v1/facility/{facility_external_id}/account/{external_id}/rebalance/  ours:deny care:care billing:allow  # can_update_account; tests: ihr_access.tests.test_role_matrix.AllowedWrites.test_writes_our_roles_are_granted, ihr_access.tests.test_role_matrix.DeskWrites.test_desk_writes_with_bodies
+POST /api/v1/facility/{facility_external_id}/account/{external_id}/set_tags/  ours:deny care:care billing:allow  # can_update_account (an empty body applies no tag); tests: ihr_access.tests.test_role_matrix.AllowedWrites.test_writes_our_roles_are_granted, ihr_access.tests.test_role_matrix.DeskWrites.test_desk_writes_with_bodies
+POST /api/v1/facility/{facility_external_id}/account/{external_id}/remove_tags/  ours:deny care:care billing:allow  # as set_tags; tests: ihr_access.tests.test_role_matrix.AllowedWrites.test_writes_our_roles_are_granted, ihr_access.tests.test_role_matrix.DeskWrites.test_desk_writes_with_bodies
+POST /api/v1/facility/{facility_external_id}/charge_item/  ours:deny care:care cash:allow  # can_create_charge_item; tests: ihr_access.tests.test_writes.BillingWrites.test_charge_item_create
+POST /api/v1/facility/{facility_external_id}/charge_item/upsert/  ours:deny care:care cash:allow  # as the create; tests: ihr_access.tests.test_writes.BillingWrites.test_charge_item_create
+POST /api/v1/facility/{facility_external_id}/charge_item/apply_charge_item_defs/  ours:deny care:care cash:allow  # can_create_charge_item (a negative charge only with the Facility Admin's right); tests: ihr_access.tests.test_writes.BillingWrites.test_billing_denials
+POST /api/v1/facility/{facility_external_id}/charge_item/change_account/  ours:deny care:care cash:allow  # can_update_charge_item; tests: ihr_roles.tests.test_grants.ExactGrants.test_each_of_our_roles_holds_exactly_its_grants
+W /api/v1/facility/{facility_external_id}/charge_item/{external_id}/  ours:deny care:care cash:allow  # can_update_charge_item (cancelling after the free period: 403); tests: ihr_access.tests.test_writes.BillingWrites.test_billing_denials
+POST /api/v1/facility/{facility_external_id}/charge_item/{external_id}/set_tags/  ours:deny care:care cash:allow  # can_update_charge_item; tests: ihr_access.tests.test_role_matrix.AllowedWrites.test_writes_our_roles_are_granted
+POST /api/v1/facility/{facility_external_id}/charge_item/{external_id}/remove_tags/  ours:deny care:care cash:allow  # as set_tags; tests: ihr_access.tests.test_role_matrix.AllowedWrites.test_writes_our_roles_are_granted
+POST /api/v1/facility/{facility_external_id}/invoice/  ours:deny care:care cash:allow  # can_write_invoice; tests: ihr_roles.tests.test_grants.ExactGrants.test_each_of_our_roles_holds_exactly_its_grants, ihr_access.tests.test_role_matrix.DeskWrites.test_desk_writes_with_bodies
+W /api/v1/facility/{facility_external_id}/invoice/{external_id}/  ours:deny care:care cash:allow  # can_write_invoice; tests: ihr_roles.tests.test_grants.ExactGrants.test_each_of_our_roles_holds_exactly_its_grants, ihr_access.tests.test_role_matrix.DeskWrites.test_desk_writes_with_bodies
+POST /api/v1/facility/{facility_external_id}/invoice/{external_id}/attach_account_to_invoice/  ours:deny care:care cash:allow  # can_write_invoice; tests: ihr_roles.tests.test_grants.ExactGrants.test_each_of_our_roles_holds_exactly_its_grants, ihr_access.tests.test_role_matrix.DeskWrites.test_desk_writes_with_bodies
+POST /api/v1/facility/{facility_external_id}/invoice/{external_id}/attach_items_to_invoice/  ours:deny care:care cash:allow  # can_write_invoice; tests: ihr_roles.tests.test_grants.ExactGrants.test_each_of_our_roles_holds_exactly_its_grants, ihr_access.tests.test_role_matrix.DeskWrites.test_desk_writes_with_bodies
+POST /api/v1/facility/{facility_external_id}/invoice/{external_id}/remove_item_from_invoice/  ours:deny care:care cash:allow  # can_write_invoice; tests: ihr_roles.tests.test_grants.ExactGrants.test_each_of_our_roles_holds_exactly_its_grants, ihr_access.tests.test_role_matrix.DeskWrites.test_desk_writes_with_bodies
+POST /api/v1/facility/{facility_external_id}/payment_reconciliation/  ours:deny care:care cash:allow  # can_write_payment_reconciliation; tests: ihr_roles.tests.test_grants.ExactGrants.test_each_of_our_roles_holds_exactly_its_grants, ihr_access.tests.test_role_matrix.DeskWrites.test_desk_writes_with_bodies
+POST /api/v1/facility/{facility_external_id}/payment_reconciliation/change_account/  ours:deny care:care cash:allow  # can_write_payment_reconciliation; tests: ihr_roles.tests.test_grants.ExactGrants.test_each_of_our_roles_holds_exactly_its_grants, ihr_access.tests.test_role_matrix.DeskWrites.test_desk_writes_with_bodies
+W /api/v1/facility/{facility_external_id}/payment_reconciliation/{external_id}/  ours:deny care:care cash:allow  # can_write_payment_reconciliation; tests: ihr_roles.tests.test_grants.ExactGrants.test_each_of_our_roles_holds_exactly_its_grants, ihr_access.tests.test_role_matrix.DeskWrites.test_desk_writes_with_bodies
+# Laboratory and imaging (can_write_specimen, can_write_diagnostic_report; a department's own requests)
+POST /api/v1/facility/{facility_external_id}/service_request/{external_id}/create_specimen/  ours:deny care:care lab:allow  # can_write_specimen at the request's Laboratory place; tests: ihr_roles.tests.test_grants.ExactGrants.test_each_of_our_roles_holds_exactly_its_grants, ihr_access.tests.test_role_matrix.AllowedWrites.test_department_writes_keep_to_their_own_copy
+POST /api/v1/facility/{facility_external_id}/service_request/{external_id}/create_specimen_from_definition/  ours:deny care:care lab:allow  # as create_specimen; tests: ihr_roles.tests.test_grants.ExactGrants.test_each_of_our_roles_holds_exactly_its_grants, ihr_access.tests.test_role_matrix.AllowedWrites.test_department_writes_keep_to_their_own_copy
+W /api/v1/facility/{facility_external_id}/specimen/{external_id}/  ours:deny care:care lab:allow  # can_write_specimen; tests: ihr_roles.tests.test_grants.ExactGrants.test_each_of_our_roles_holds_exactly_its_grants, ihr_access.tests.test_role_matrix.AllowedWrites.test_department_writes_keep_to_their_own_copy
+POST /api/v1/facility/{facility_external_id}/specimen/retrieve_by_accession_identifier/  ours:deny care:care lab:allow  # a read by POST (can_read_specimen; post_reads.txt: the lab copy, never the ward's); tests: ihr_roles.tests.test_grants.ExactGrants.test_each_of_our_roles_holds_exactly_its_grants, ihr_access.tests.test_role_matrix.RoleMatrix.test_post_reads
+POST /api/v1/patient/{patient_external_id}/diagnostic_report/  ours:deny care:care lab,rad:allow  # can_write_diagnostic_report on the department's own requests; tests: ihr_roles.tests.test_grants.ExactGrants.test_each_of_our_roles_holds_exactly_its_grants, ihr_access.tests.test_role_matrix.AllowedWrites.test_department_writes_keep_to_their_own_copy
+W /api/v1/patient/{patient_external_id}/diagnostic_report/{external_id}/  ours:deny care:care lab,rad:allow  # can_write_diagnostic_report; tests: ihr_roles.tests.test_grants.ExactGrants.test_each_of_our_roles_holds_exactly_its_grants, ihr_access.tests.test_role_matrix.AllowedWrites.test_department_writes_keep_to_their_own_copy
+POST /api/v1/patient/{patient_external_id}/observation/analyse/  ours:deny care:care  # a read by POST (post_reads.txt: every result of a code; another patient's visit named, review K1)
+POST /api/v1/patient/{patient_external_id}/diagnostic_report/{external_id}/upsert_observations/  ours:deny care:care lab,rad:allow  # results on the department's own reports; tests: ihr_roles.tests.test_grants.ExactGrants.test_each_of_our_roles_holds_exactly_its_grants, ihr_access.tests.test_role_matrix.AllowedWrites.test_department_writes_keep_to_their_own_copy
+# The store (can_write_supply_delivery, can_write_external_supply_delivery, can_write_supply_request; patient-linked rows refused, Q-K43 A)
+POST /api/v1/facility/{facility_external_id}/order/delivery/  ours:deny care:care store:allow  # a stock order (a patient-linked one is refused); tests: ihr_access.tests.test_further_swaps.PatientReturns.test_store_keeper_never_sees_a_patient_return
+POST /api/v1/facility/{facility_external_id}/order/delivery/upsert/  ours:deny care:care store:allow  # as the create; tests: ihr_access.tests.test_further_swaps.PatientReturns.test_store_keeper_never_sees_a_patient_return
+W /api/v1/facility/{facility_external_id}/order/delivery/{external_id}/  ours:deny care:care store:allow  # the stock order; tests: ihr_access.tests.test_further_swaps.PatientReturns.test_store_keeper_never_sees_a_patient_return
+POST /api/v1/facility/{facility_external_id}/order/delivery/{external_id}/set_tags/  ours:deny care:care store:allow  # can_write_supply_delivery; tests: ihr_access.tests.test_role_matrix.AllowedWrites.test_writes_our_roles_are_granted
+POST /api/v1/facility/{facility_external_id}/order/delivery/{external_id}/remove_tags/  ours:deny care:care store:allow  # as set_tags; tests: ihr_access.tests.test_role_matrix.AllowedWrites.test_writes_our_roles_are_granted
+POST /api/v1/facility/{facility_external_id}/order/request/  ours:deny care:care store:allow  # can_write_supply_request; tests: ihr_roles.tests.test_grants.ExactGrants.test_each_of_our_roles_holds_exactly_its_grants
+POST /api/v1/facility/{facility_external_id}/order/request/upsert/  ours:deny care:care store:allow  # as the create; tests: ihr_roles.tests.test_grants.ExactGrants.test_each_of_our_roles_holds_exactly_its_grants
+POST /api/v1/supply_delivery/  ours:deny care:care store:allow  # a delivery against a stock order (a patient-linked order: 404); tests: ihr_access.tests.test_further_swaps.PatientReturns.test_store_keeper_never_sees_a_patient_return
+POST /api/v1/supply_delivery/upsert/  ours:deny care:care store:allow  # as the create; tests: ihr_access.tests.test_further_swaps.PatientReturns.test_store_keeper_never_sees_a_patient_return
+W /api/v1/supply_delivery/{external_id}/  ours:deny care:care store:allow  # the stock delivery (a patient-linked one: 404); tests: ihr_access.tests.test_further_swaps.PatientReturns.test_store_keeper_never_sees_a_patient_return
+POST /api/v1/supply_request/  ours:deny care:care store:allow  # can_write_supply_request; tests: ihr_roles.tests.test_grants.ExactGrants.test_each_of_our_roles_holds_exactly_its_grants
+POST /api/v1/supply_request/upsert/  ours:deny care:care store:allow  # as the create; tests: ihr_roles.tests.test_grants.ExactGrants.test_each_of_our_roles_holds_exactly_its_grants
+# A person's own settings (no hospital data)
+POST /api/v1/facility/{facility_external_id}/charge_item_definition/{slug}/add_favorite/  ours:deny care:care rec,cash,tpa:allow  # the person's own favourites list (readers of the price list); tests: ihr_access.tests.test_role_matrix.AllowedWrites.test_preferences_are_the_callers_own
+POST /api/v1/facility/{facility_external_id}/charge_item_definition/{slug}/remove_favorite/  ours:deny care:care rec,cash,tpa:allow  # as add_favorite; tests: ihr_access.tests.test_role_matrix.AllowedWrites.test_preferences_are_the_callers_own
+POST /api/v1/facility/{facility_external_id}/organizations/{external_id}/add_favorite/  ours:deny care:care rec:allow  # the person's own favourites list (Q-K42 A); tests: ihr_access.tests.test_role_matrix.AllowedWrites.test_preferences_are_the_callers_own
+POST /api/v1/facility/{facility_external_id}/organizations/{external_id}/remove_favorite/  ours:deny care:care rec:allow  # as add_favorite; tests: ihr_access.tests.test_role_matrix.AllowedWrites.test_preferences_are_the_callers_own
+POST /api/v1/product_knowledge/{slug}/add_favorite/  all:care ours:allow  # the person's own favourites list (CARE checks no right: Q-K40; it answers {} and shows nothing); tests: ihr_access.tests.test_role_matrix.AllowedWrites.test_preferences_are_the_callers_own
+POST /api/v1/product_knowledge/{slug}/remove_favorite/  all:care ours:allow  # as add_favorite; tests: ihr_access.tests.test_role_matrix.AllowedWrites.test_preferences_are_the_callers_own
+PATCH /api/v1/users/{username}/pnconfig/  all:care ours:allow  # the caller's own push settings, whatever username is named; tests: ihr_access.tests.test_role_matrix.AllowedWrites.test_preferences_are_the_callers_own
+POST /api/v1/users/set_preferences/  all:care ours:allow  # the caller's own preferences; tests: ihr_access.tests.test_role_matrix.AllowedWrites.test_preferences_are_the_callers_own
+POST /health/statuspage  all:care ours:allow  # the health status page (no hospital data); tests: ihr_access.tests.test_role_matrix.AllowedWrites.test_preferences_are_the_callers_own
+
+# --- writes fill() cannot fill (no row of the kind in the access world; settings, no patient data) ---
+W /api/ihr/staff/<str:username>/<slug:action>/  all:skip  # fill() cannot fill <slug:action>; the staff access actions are hospital admins' only and ihr_identity tests them
+W /api/v1/facility/{facility_external_id}/activity_definition/{slug}/  all:skip  # no row of this kind in the access world (a setting, no patient data): ihr_platform's isolation crawl seeds one
+W /api/v1/facility/{facility_external_id}/activity_definition/{slug}/add_favorite/  all:skip  # no row of this kind in the access world (a setting, no patient data): ihr_platform's isolation crawl seeds one
+W /api/v1/facility/{facility_external_id}/activity_definition/{slug}/remove_favorite/  all:skip  # no row of this kind in the access world (a setting, no patient data): ihr_platform's isolation crawl seeds one
+W /api/v1/facility/{facility_external_id}/activity_definition/{slug}/remove_tags/  all:skip  # no row of this kind in the access world (a setting, no patient data): ihr_platform's isolation crawl seeds one
+W /api/v1/facility/{facility_external_id}/activity_definition/{slug}/set_tags/  all:skip  # no row of this kind in the access world (a setting, no patient data): ihr_platform's isolation crawl seeds one
+W /api/v1/facility/{facility_external_id}/healthcare_service/{external_id}/  all:skip  # no row of this kind in the access world (a setting, no patient data): ihr_platform's isolation crawl seeds one
+W /api/v1/facility/{facility_external_id}/order/request/{external_id}/  ours:deny care:care store:allow  # the store's own indent (can_write_supply_request; a request order has no patient link, §7); tests: ihr_roles.tests.test_grants.ExactGrants.test_each_of_our_roles_holds_exactly_its_grants
+W /api/v1/facility/{facility_external_id}/order/request/{external_id}/remove_tags/  ours:deny care:care store:allow  # as the indent; tests: ihr_roles.tests.test_grants.ExactGrants.test_each_of_our_roles_holds_exactly_its_grants
+W /api/v1/facility/{facility_external_id}/order/request/{external_id}/set_tags/  ours:deny care:care store:allow  # as the indent; tests: ihr_roles.tests.test_grants.ExactGrants.test_each_of_our_roles_holds_exactly_its_grants
+W /api/v1/facility/{facility_external_id}/resource_category/{slug}/  all:skip  # no row of this kind in the access world (a setting, no patient data): ihr_platform's isolation crawl seeds one
+W /api/v1/facility/{facility_external_id}/resource_category/{slug}/set_monetary_components/  all:skip  # no row of this kind in the access world (a setting, no patient data): ihr_platform's isolation crawl seeds one
+W /api/v1/facility/{facility_external_id}/schedule_exceptions/{external_id}/  all:skip  # no row of this kind in the access world (a setting, no patient data): ihr_platform's isolation crawl seeds one
+W /api/v1/facility/{facility_external_id}/specimen_definition/{slug}/  all:skip  # no row of this kind in the access world (a setting, no patient data): ihr_platform's isolation crawl seeds one
+W /api/v1/facility/{facility_external_id}/token/sub_queue/{external_id}/  all:skip  # no row of this kind in the access world (a setting, no patient data): ihr_platform's isolation crawl seeds one
+W /api/v1/observation_definition/{slug}/  all:skip  # no row of this kind in the access world (a setting, no patient data): ihr_platform's isolation crawl seeds one
+W /api/v1/organization/{organization_external_id}/users/{external_id}/  all:skip  # no row of this kind in the access world (a setting, no patient data): ihr_platform's isolation crawl seeds one
+W /api/v1/plug_config/{slug}/  all:skip  # no row of this kind in the access world (a setting, no patient data): ihr_platform's isolation crawl seeds one
+W /api/v1/questionnaire_response_template/{external_id}/  all:skip  # no row of this kind in the access world (a setting, no patient data): ihr_platform's isolation crawl seeds one
+W /api/v1/supply_request/{external_id}/  ours:deny care:care store:allow  # a supply request (can_write_supply_request; no patient link); tests: ihr_roles.tests.test_grants.ExactGrants.test_each_of_our_roles_holds_exactly_its_grants
+W /api/v1/valueset/{slug}/  all:skip  # no row of this kind in the access world (a setting, no patient data): ihr_platform's isolation crawl seeds one
+W /api/v1/valueset/{slug}/add_favourite/  all:skip  # no row of this kind in the access world (a setting, no patient data): ihr_platform's isolation crawl seeds one
+W /api/v1/valueset/{slug}/add_recent_view/  all:skip  # no row of this kind in the access world (a setting, no patient data): ihr_platform's isolation crawl seeds one
+W /api/v1/valueset/{slug}/clear_favourites/  all:skip  # no row of this kind in the access world (a setting, no patient data): ihr_platform's isolation crawl seeds one
+W /api/v1/valueset/{slug}/clear_recent_views/  all:skip  # no row of this kind in the access world (a setting, no patient data): ihr_platform's isolation crawl seeds one
+W /api/v1/valueset/{slug}/expand/  all:skip  # no row of this kind in the access world (a setting, no patient data): ihr_platform's isolation crawl seeds one
+W /api/v1/valueset/{slug}/remove_favourite/  all:skip  # no row of this kind in the access world (a setting, no patient data): ihr_platform's isolation crawl seeds one
+W /api/v1/valueset/{slug}/remove_recent_view/  all:skip  # no row of this kind in the access world (a setting, no patient data): ihr_platform's isolation crawl seeds one
+W /api/v1/valueset/{slug}/validate_code/  all:skip  # no row of this kind in the access world (a setting, no patient data): ihr_platform's isolation crawl seeds one

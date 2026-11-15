@@ -2,7 +2,8 @@
 
 - ihr_access.E022: the guard and the PatientUser rule sit on the classes CARE actually uses (an
   upstream sync that moves a spec, or a subclass that defines its own ``serialize``, would
-  otherwise bypass them silently).
+  otherwise bypass them silently); the visit check (visits.py) is installed and no view under a
+  patient overrides ``initial`` outside our code.
 - ihr_access.E024: the encounter filter allow-list classifies every filter of CARE's encounter
   list (P1-T11b2, "After the attack" §6.2), and fields/encounter_create.txt every field of
   CARE's encounter create spec (review C2); a filter or field upstream adds would otherwise be
@@ -13,7 +14,7 @@ from django.core.checks import Error
 
 
 def guard_installed(app_configs=None, **kwargs):
-    from ihr_access import authz, exceptions, guard, identifiers
+    from ihr_access import authz, exceptions, guard, identifiers, visits
 
     return [
         Error(f"the access guard does not hold: {problem}", id="ihr_access.E022")
@@ -22,6 +23,7 @@ def guard_installed(app_configs=None, **kwargs):
             + authz.problems()
             + exceptions.problems()
             + identifiers.problems()
+            + visits.problems()
         )
     ]
 

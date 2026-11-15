@@ -96,6 +96,23 @@ After each sync, before pushing:
      store's supply-delivery permissions fails
      `test_further_swaps.PatientReturns.test_every_supply_delivery_route_is_swapped` until
      swapped;
+   - any new, removed or changed route, or a changed answer to one of our roles (P1-T11b3's
+     role x endpoint matrix) → `ihr_access.tests.test_role_matrix` fails until the route is
+     classified in `plugins/ihr_platform/ihr_access/tests/role_matrix.txt` (and, in the same
+     folder: a route whose view reads the query string, in its own or any inherited code, or
+     on which the crawl saw a query key read, in `list_params.txt`; a new key in a body one of
+     our roles sees, the Radiologist included, in `role_matrix_keys.txt`; a write route that
+     appears, goes or moves between "auth" and "body" in `role_matrix_writes.txt`; a read CARE
+     makes by POST in `post_reads.txt`; a new Patient or Encounter spec in
+     `spec_exemptions.txt` or under the guard). A new view under a patient that overrides
+     `initial` stops the run at `ihr_access.E022` (the visit check, `ihr_access/visits.py`).
+     Print every answer with
+     `IHR_MATRIX_DUMP=1 scripts/care-tenancy.sh test --settings=ihr_platform.settings.test --noinput ihr_access.tests.test_role_matrix 2>&1 | grep '^@@'`
+     (`@@M` GET and `@@P` POST-read answers: key, role, outcome, status, markers, projected
+     shapes; `@@K` key paths; `@@R` query keys read; `@@S` write-snapshot lines; `@@U`/`@@WU`
+     unfilled routes) and read every changed cell: one of our roles reaching clinical data
+     (the Radiologist outside Q-K44 A included) is a defect to fix in `ihr_access`, never a
+     row;
    - new Playwright specs → check them against our India date formats;
    - new browser storage keys (localStorage, sessionStorage, `atomWithStorage`) → classify them
      in `apps/frontend/tests-ihr/storage-keys.json` or clear them in `clearStaffStorage`
@@ -107,6 +124,11 @@ After each sync, before pushing:
      P1-T20a). A call site whose `api:` is a variable fails until it is reviewed into the
      script's `DYNAMIC` table, and a reviewed one fails again whenever its file changes: re-read
      which routes the variable can name, then set the `sha256` the check prints;
+     - each new GET line also needs a case: an entry in `BATCH_GET_CASES` and a `BatchCases`
+       test in `plugins/ihr_platform/ihr_access/tests/test_role_matrix.py` that runs it in a
+       batch as the restricted roles and asserts no canary and no patient field (a removed GET
+       line: drop its entry). `BatchCases.test_every_listed_get_has_a_batch_case` fails in the
+       plugin suite (Apps CI) until you do, even though `--check` and pre-commit pass;
    - changes to CARE's batch code (`care/emr/api/viewsets/batch_request.py`,
      `care/emr/utils/batch_requests.py`) → carry them into `ihr_platform/batch.py` and update the
      fingerprints in `ihr_platform/tests/test_public_routes.py` (the test fails until you do);

@@ -537,9 +537,15 @@ These CARE behaviours affect CARE's own roles:
 - (added after the attack) Doctor, Nurse, Staff, Volunteer and Pharmacist read every account, booking, token and payment of the hospital, each embedding the full encounter, wherever their department is;
 - the device list and retrieve need only facility membership and show the patient on each device;
 - a `PatientUser` care-team row keeps giving clinical read after the person's job changes;
-- an account-report template can print the whole clinical encounter, and anyone who reads the account can download it.
+- an account-report template can print the whole clinical encounter, and anyone who reads the account can download it;
+- (added by P1-T11b3's role matrix) the delivery-order list with neither origin nor destination answers every order of the hospital to any member;
+- (P1-T11b3) a service request or diagnostic report read through its place (a lab or imaging room) embeds the patient's whole record and visit (discharge advice, bed, care team, tags, programme identifiers), also for a department that has no clinical right on that patient;
+- (P1-T11b3) favourites (`add_favorite`) are written for an object the caller may not read (only the caller's own list changes; nothing is shown);
+- (P1-T11b3 review K1) the patient-scoped clinical lists and rows (diagnosis, symptom, observation and `observation/analyse`, consent, medication request, prescription, statement and administration, note threads and messages) let a reader with no clinical right on the patient in through `?encounter=<a visit>`, without checking that the visit is that patient's, and a row read by id is not narrowed to that visit: anyone who can read one visit's clinical data reads any patient's rows whose ids they know. Closed for users of our roles (`ihr_access/visits.py`); CARE's roles unchanged;
+- (P1-T11b3 review) `slots/get_slots_for_day` checks no right ("TODO: Add Authorization"): any member reads any doctor's or room's day, schedule included (its sibling `availability_stats` checks the booking right). Closed for users of our roles without the booking right (`IhrSlotViewSet`);
+- (P1-T11b3 review M8) the request-order (indent) list with neither origin nor destination answers every request order of the hospital to any member (no patient link, as the delivery-order list).
 
-Our roles are protected from all of them by the design (after the attack).
+Our roles are protected from all of them by the design (after the attack), and by P1-T11b3's fixes for the Radiologist (CARE's membership-only lists are closed to users of our roles only, and a patient or visit embedded in another department's imaging request is projected for them) and its review fixes (a visit named in the query must be the path patient's; slots-for-day needs the booking right). The request-order list is not patient data (§7) and stays open to our roles as to CARE's.
 - **A ⭐ (taken). Protect our roles now, and log the rest as a follow-up task** ("P1-T11d: close CARE-role access gaps", after P1-T11c). The `add_user` gate for restricted targets ships now.
 - B. Close all of them now for every role. That changes Doctor, Nurse and Staff behaviour inside this task.
 

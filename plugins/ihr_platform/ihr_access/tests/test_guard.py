@@ -25,7 +25,13 @@ from rest_framework.test import APIClient
 
 from ihr_access import guard, state
 from ihr_access.models import RecordsGrant
-from ihr_access.testing import CANARY, PHONE_SYSTEM, PROGRAMME_SYSTEM, build_world
+from ihr_access.testing import (
+    CANARY,
+    PHONE_SYSTEM,
+    PROGRAMME_SYSTEM,
+    build_world,
+    marker,
+)
 
 HOST = "testserver"
 
@@ -68,7 +74,9 @@ class EncounterProjection(AccessCase):
         ).to_json()
         self.assertIn(CANARY, json.dumps(full, default=str))
         # the world's encounter carries a tag that names an illness (review C7)
-        self.assertEqual(tag_displays(full["tags"]), [f"Oncology {CANARY}"])
+        self.assertEqual(
+            tag_displays(full["tags"]), [f"Oncology {marker('tag-encounter')}"]
+        )
         self.as_user(w.users["Receptionist"])
         projected = EncounterRetrieveSpec.serialize(
             w.encounter, user=w.users["Receptionist"]
@@ -123,7 +131,7 @@ class EncounterProjection(AccessCase):
 
     def test_care_roles_see_everything(self):
         w = self.world
-        for role in ("Doctor", "Nurse", "Facility Admin", "Radiologist"):
+        for role in ("Doctor", "Nurse", "Facility Admin"):
             with self.subTest(role=role):
                 self.as_user(w.users[role])
                 body = EncounterRetrieveSpec.serialize(w.encounter).to_json()
@@ -131,6 +139,44 @@ class EncounterProjection(AccessCase):
                 self.assertEqual(body["patient"]["blood_group"], "AB_negative")
                 self.assertTrue(body["care_team"])
                 state.end()
+
+    def test_the_radiologist_sees_a_chart_only_with_radiology(self):
+        """The chart rule (P1-T11b3, Q-K44 A): the Radiologist, a clinical role of ours, gets a
+        patient and visit unprojected only where CARE gives them that patient's clinical data
+        (Radiology on an open visit); elsewhere (an imaging request of another department's
+        patient embeds both) they are projected."""
+        from care.emr.models.encounter import EncounterOrganization
+
+        w = self.world
+        radiologist = w.users["Radiologist"]
+        self.as_user(radiologist)
+        self.assertTrue(state.current().chart_limited)
+        body = EncounterRetrieveSpec.serialize(w.encounter).to_json()
+        self.assertNotIn(CANARY, json.dumps(body, default=str))
+        self.assertIsNone(body["discharge_summary_advice"])
+        self.assertIsNone(body["patient"]["blood_group"])
+        patient = PatientRetrieveSpec.serialize(
+            w.patient, facility=w.facility
+        ).to_json()
+        self.assertIsNone(patient["blood_group"])
+        state.end()
+        EncounterOrganization.objects.create(
+            encounter=w.encounter, organization=w.departments["Radiology"]
+        )
+        w.encounter.save()
+        self.as_user(radiologist)
+        body = EncounterRetrieveSpec.serialize(w.encounter).to_json()
+        self.assertEqual(body["discharge_summary_advice"], f"advice {CANARY}")
+        self.assertEqual(body["patient"]["blood_group"], "AB_negative")
+        # a Radiologist who also holds a CARE role is CARE's (Q-K35): never chart-limited
+        doctor_too = w.user(
+            "acc-rad-doctor",
+            ("Radiologist", w.departments["Radiology"]),
+            ("Doctor", w.departments["Stores"]),
+        )
+        state.end()
+        self.as_user(doctor_too)
+        self.assertFalse(state.current().chart_limited)
 
     def test_the_guard_is_off_outside_requests(self):
         body = EncounterRetrieveSpec.serialize(self.world.encounter).to_json()
@@ -180,10 +226,12 @@ class PatientProjection(AccessCase):
         w = self.world
         full = PatientRetrieveSpec.serialize(w.patient, facility=w.facility).to_json()
         self.assertEqual(
-            tag_displays(full["instance_tags"]), [f"HIV positive {CANARY}"]
+            tag_displays(full["instance_tags"]),
+            [f"HIV positive {marker('tag-patient')}"],
         )
         self.assertEqual(
-            tag_displays(full["facility_tags"]), [f"TB programme {CANARY}"]
+            tag_displays(full["facility_tags"]),
+            [f"TB programme {marker('tag-patient-facility')}"],
         )
         for role in ("Receptionist", "Cashier", "MRD"):
             with self.subTest(role=role):
@@ -295,9 +343,11 @@ class BookingAndToken(AccessCase):
         self.as_user(receptionist)
         own_screen = TokenBookingReadSpec.serialize(w.booking).to_json()
         self.assertEqual(
-            own_screen["note"], f"booking note {CANARY}"
+            own_screen["note"], f"booking note {marker('booking-note')}"
         )  # CARE-granted screen
-        self.assertEqual(tag_displays(own_screen["tags"]), [f"Psychiatry {CANARY}"])
+        self.assertEqual(
+            tag_displays(own_screen["tags"]), [f"Psychiatry {marker('booking-tag')}"]
+        )
         self.assertIsNone(own_screen["patient"]["blood_group"])  # the patient still is
         state.force_projection()
         forced = TokenBookingReadSpec.serialize(w.booking).to_json()

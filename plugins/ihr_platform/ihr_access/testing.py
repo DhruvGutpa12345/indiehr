@@ -93,6 +93,9 @@ class World:
     phone_config: PatientIdentifierConfig
     tags: dict  # "encounter", "patient_instance", "patient_facility", "booking" -> TagConfig
     extra: dict = field(default_factory=dict)
+    # name -> model instance, for the role matrix's path and query parameters (P1-T11b3):
+    # filled by build_world(full=True); tests/list_params.txt names these
+    objects: dict = field(default_factory=dict)
 
     def role(self, name):
         return RoleModel.objects.get(name=name, is_system=True)
@@ -113,7 +116,28 @@ def _tag():
     return f"{time.time_ns() % 10**10:x}"
 
 
-def build_world():
+MARKERS = (
+    set()
+)  # every named marker a world was built with (the canary's positive control)
+
+
+def marker(name):
+    """A named canary: ``CANARY`` plus ``-<name>``, so the canary walk (P1-T11b3) can tell which
+    field leaked and exempt one marker on one route (tests/canary_exemptions.txt)."""
+    MARKERS.add(name)
+    return f"{CANARY}-{name}"
+
+
+def build_world(full=False):
+    """The test hospital. ``full``: also everything the role matrix and the canary walk need
+    (P1-T11b3, ``add_matrix_world``); the b1/b2 tests use the small one."""
+    world = _build_small_world()
+    if full:
+        add_matrix_world(world)
+    return world
+
+
+def _build_small_world():
     # Our roles and their grants, as every start writes them into each hospital
     call_command("sync_permissions_roles")
     admin = User.objects.create_superuser(
@@ -197,7 +221,7 @@ def build_world():
         config={
             "use": "official",
             "system": PROGRAMME_SYSTEM,
-            "display": f"ART registration {CANARY}",
+            "display": f"ART registration {marker('programme-config')}",
             "required": False,
             "unique": False,
             "regex": "",
@@ -205,7 +229,7 @@ def build_world():
     )
     for config, value in (
         (phone_config, "+919876543210"),
-        (programme_config, f"ART-{CANARY}"),
+        (programme_config, f"ART-{marker('programme-number')}"),
     ):
         PatientIdentifier.objects.create(patient=patient, config=config, value=value)
     patient.build_instance_identifiers()
@@ -217,13 +241,13 @@ def build_world():
     now = timezone.now()
     schedule = Schedule.objects.create(
         resource=resource,
-        name=f"Dr Paediatrics OPD {CANARY}",
+        name=f"Dr Paediatrics OPD {marker('schedule')}",
         valid_from=now - datetime.timedelta(days=1),
         valid_to=now + datetime.timedelta(days=30),
     )
     availability = Availability.objects.create(
         schedule=schedule,
-        name=f"Morning {CANARY}",
+        name=f"Morning {marker('schedule')}",
         slot_type="appointment",
         slot_size_in_minutes=15,
         tokens_per_slot=1,
@@ -240,7 +264,7 @@ def build_world():
         patient=patient,
         booked_by=users["Receptionist"],
         status="booked",
-        note=f"booking note {CANARY}",
+        note=f"booking note {marker('booking-note')}",
     )
 
     encounter = Encounter.objects.create(
@@ -274,15 +298,29 @@ def build_world():
         key: TagConfig.objects.create(
             facility=tag_facility,
             status="active",
-            display=f"{label} {CANARY}",
+            display=f"{label} {canary}",
             category="diagnosis",
             resource=resource,
         )
-        for key, tag_facility, resource, label in (
-            ("encounter", facility, "encounter", "Oncology"),
-            ("patient_instance", None, "patient", "HIV positive"),
-            ("patient_facility", facility, "patient", "TB programme"),
-            ("booking", facility, "token_booking", "Psychiatry"),
+        for key, tag_facility, resource, label, canary in (
+            ("encounter", facility, "encounter", "Oncology", marker("tag-encounter")),
+            (
+                "patient_instance",
+                None,
+                "patient",
+                "HIV positive",
+                marker("tag-patient"),
+            ),
+            (
+                "patient_facility",
+                facility,
+                "patient",
+                "TB programme",
+                marker("tag-patient-facility"),
+            ),
+            # a marker of its own: CARE's booking screens show it to the Receptionist
+            # (tests/canary_exemptions.txt), our projected bookings never do
+            ("booking", facility, "token_booking", "Psychiatry", marker("booking-tag")),
         )
     }
     encounter.tags = [tags["encounter"].id]
@@ -340,3 +378,849 @@ def move_to(world, user, role, organization=None):
 
 def ext_id():
     return str(uuid.uuid4())
+
+
+# --- the role matrix's world (P1-T11b3) ----------------------------------------------------
+
+LAB = {
+    "system": "http://terminology.hl7.org/CodeSystem/v2-0074",
+    "code": "LAB",
+    "display": "Laboratory",
+}
+IMAGING = {
+    "system": "http://terminology.hl7.org/CodeSystem/v2-0074",
+    "code": "RAD",
+    "display": "Radiology",
+}
+BLOOD = {
+    "system": "http://terminology.hl7.org/CodeSystem/v2-0487",
+    "code": "BLD",
+    "display": "Whole blood",
+}
+
+
+def _medication(name):
+    return {"system": "http://snomed.info/sct", "code": "387517004", "display": name}
+
+
+def _place(world, name, department, mode="instance", form="ro"):
+    place = FacilityLocation.objects.create(
+        facility=world.facility,
+        name=name,
+        description=name,
+        status="active",
+        operational_status="O",
+        mode=mode,
+        form=form,
+    )
+    FacilityLocationOrganization.objects.create(
+        location=place, organization=world.departments[department]
+    )
+    return place
+
+
+def add_matrix_world(world):
+    """Everything the role matrix and the canary walk need (design-b.md "After the attack" §10
+    items 12-19), added to the small world. Every clinical field holds a named marker
+    (``marker(name)``); the request, specimen, report and observation come in a lab copy (at a
+    Laboratory place), a ward copy (at the Paediatrics ward) and, for the request and report,
+    an imaging copy (at a Radiology place), so a department's view can be told from the
+    hospital's. A second patient has an open visit filed under Radiology (Q-K44 A: the
+    Radiologist reads that chart, not the first patient's). ``world.objects`` names each row
+    for tests/list_params.txt; the default row of a model is the first one named for it."""
+    _MatrixWorld(world).build()
+    return world
+
+
+class _MatrixWorld:
+    def __init__(self, world):
+        self.w = world
+        self.now = timezone.now()
+        self.objects = world.objects
+        self.doctor = world.users["Doctor"]
+
+    def make(self, model, **values):
+        values.setdefault("created_by", self.doctor)
+        values.setdefault("updated_by", self.doctor)
+        return model.objects.create(**values)
+
+    def name(self, key, obj):
+        self.objects[key] = obj
+        return obj
+
+    def build(self):
+        w = self.w
+        for key in ("facility", "patient", "encounter", "booking", "device"):
+            self.objects[key] = getattr(w, key)
+        # The bed (the default place) names its occupant's ward: never shown to our roles
+        # (Q-K37 A); the encounter shapes drop it
+        w.bed.name = f"Bed 1 {marker('bed')}"
+        w.bed.save()
+        self.objects["location"] = w.bed
+        self.objects["ward"] = w.ward
+        self.objects["doctor_user"] = self.doctor
+        self.objects["district"] = w.patient.geo_organization
+        self.places()
+        # the first row named for a model is its default row: the first patient's come first
+        self.clinical()
+        self.orders()
+        self.second_patient()
+        self.billing()
+        self.queue()
+        self.store()
+        self.records()
+        self.people()
+
+    def places(self):
+        w = self.w
+        self.lab = self.name(
+            "lab_location", _place(w, "Sample collection", "Laboratory")
+        )
+        self.xray = self.name("xray_location", _place(w, "X-ray room", "Radiology"))
+        self.store_place = self.name(
+            "store_location", _place(w, "Main store", "Stores", mode="kind", form="wa")
+        )
+
+    def second_patient(self):
+        """A patient whose open visit has Radiology on it (Q-K44 A)."""
+        from care.emr.models.condition import Condition
+
+        w = self.w
+        patient = Patient.objects.create(
+            name=f"Bharat Imaging {_tag()}",
+            gender="male",
+            phone_number="+919812345678",
+            address="3 Station Road, Nagpur",
+            pincode=440001,
+            year_of_birth=1975,
+            blood_group="O_negative",
+            geo_organization=w.patient.geo_organization,
+            extensions={"core": {"note": marker("rad-extension")}},
+        )
+        encounter = Encounter.objects.create(
+            patient=patient,
+            facility=w.facility,
+            status="in_progress",
+            encounter_class="amb",
+            priority="routine",
+            period={"start": self.now.isoformat()},
+            discharge_summary_advice=f"advice {marker('rad-advice')}",
+            hospitalization={"admit_source": "outp"},
+        )
+        EncounterOrganization.objects.create(
+            encounter=encounter, organization=w.departments["Radiology"]
+        )
+        encounter.save()
+        self.name("patient_b", patient)
+        self.name("encounter_b", encounter)
+        self.name(
+            "condition_b",
+            self.make(
+                Condition,
+                patient=patient,
+                encounter=encounter,
+                category="problem_list_item",
+                clinical_status="active",
+                verification_status="confirmed",
+                severity="mild",
+                code={
+                    "system": "http://snomed.info/sct",
+                    "code": "386661006",
+                    "display": marker("rad-condition"),
+                },
+                recorded_date=self.now,
+                note=marker("rad-condition"),
+            ),
+        )
+        # And a finished outpatient visit of the first patient (Paediatrics)
+        done = Encounter.objects.create(
+            patient=w.patient,
+            facility=w.facility,
+            status="completed",
+            encounter_class="amb",
+            priority="routine",
+            period={
+                "start": (self.now - datetime.timedelta(days=30)).isoformat(),
+                "end": (self.now - datetime.timedelta(days=29)).isoformat(),
+            },
+            discharge_summary_advice=f"advice {marker('done-advice')}",
+            hospitalization={},
+        )
+        EncounterOrganization.objects.create(
+            encounter=done, organization=w.departments["Paediatrics"]
+        )
+        done.save()
+        self.name("encounter_done", done)
+
+    def clinical(self):
+        """One row of each clinical kind on the first patient's inpatient visit."""
+        from care.emr.models.allergy_intolerance import AllergyIntolerance
+        from care.emr.models.condition import Condition
+        from care.emr.models.consent import Consent
+        from care.emr.models.file_upload import FileUpload
+        from care.emr.models.medication_administration import MedicationAdministration
+        from care.emr.models.medication_request import (
+            MedicationRequest,
+            MedicationRequestPrescription,
+        )
+        from care.emr.models.medication_statement import MedicationStatement
+        from care.emr.models.meta_artifact import MetaArtifact
+        from care.emr.models.notes import NoteMessage, NoteThread
+        from care.emr.models.questionnaire import (
+            FormSubmission,
+            Questionnaire,
+            QuestionnaireResponse,
+        )
+
+        w = self.w
+        common = {"patient": w.patient, "encounter": w.encounter}
+        self.name(
+            "condition",
+            self.make(
+                Condition,
+                category="problem_list_item",
+                clinical_status="active",
+                verification_status="confirmed",
+                severity="mild",
+                code={
+                    "system": "http://snomed.info/sct",
+                    "code": "386661006",
+                    "display": marker("condition-code"),
+                },
+                recorded_date=self.now,
+                note=marker("condition"),
+                **common,
+            ),
+        )
+        self.name(
+            "allergy",
+            self.make(
+                AllergyIntolerance,
+                clinical_status="active",
+                verification_status="confirmed",
+                category="medication",
+                criticality="low",
+                code=_medication("Penicillin"),
+                recorded_date=self.now,
+                note=marker("allergy"),
+                **common,
+            ),
+        )
+        self.name(
+            "consent",
+            self.make(
+                Consent,
+                encounter=w.encounter,
+                status="active",
+                category="treatment",
+                date=self.now,
+                decision="permit",
+                note=marker("consent"),
+            ),
+        )
+        prescription = self.name(
+            "prescription",
+            self.make(
+                MedicationRequestPrescription,
+                name=f"Tenofovir {marker('prescription')}",
+                note=marker("prescription"),
+                status="active",
+                prescribed_by=self.doctor,
+                **common,
+            ),
+        )
+        self.request = self.name(
+            "medication_request",
+            self.make(
+                MedicationRequest,
+                status="active",
+                intent="order",
+                category="inpatient",
+                priority="routine",
+                do_not_perform=False,
+                medication=_medication("Tenofovir"),
+                dosage_instruction=[{"text": marker("dosage")}],
+                authored_on=self.now,
+                requester=self.doctor,
+                prescription=prescription,
+                note=marker("medication-request"),
+                **common,
+            ),
+        )
+        self.name(
+            "medication_administration",
+            self.make(
+                MedicationAdministration,
+                status="completed",
+                category="inpatient",
+                medication=_medication("Tenofovir"),
+                request=self.request,
+                authored_on=self.now,
+                occurrence_period_start=self.now,
+                note=marker("medication-administration"),
+                **common,
+            ),
+        )
+        self.name(
+            "medication_statement",
+            self.make(
+                MedicationStatement,
+                status="active",
+                medication=_medication("Lithium"),
+                information_source="patient",
+                effective_period={"start": self.now.isoformat()},
+                note=marker("medication-statement"),
+                **common,
+            ),
+        )
+        thread = self.name(
+            "thread",
+            self.make(
+                NoteThread, title=f"Ward round {marker('note-thread')}", **common
+            ),
+        )
+        self.name(
+            "note",
+            self.make(NoteMessage, thread=thread, message=marker("note-message")),
+        )
+        questionnaire = self.name(
+            "questionnaire",
+            self.make(
+                Questionnaire,
+                version="1.0",
+                slug=f"ihr-matrix-{_tag()}",
+                title="Mental state examination",
+                status="active",
+                subject_type="encounter",
+                questions=[],
+            ),
+        )
+        self.name(
+            "form_submission",
+            self.make(
+                FormSubmission,
+                questionnaire=questionnaire,
+                status="submitted",
+                **common,
+            ),
+        )
+        self.name(
+            "questionnaire_response",
+            self.make(
+                QuestionnaireResponse,
+                questionnaire=questionnaire,
+                subject_id=w.encounter.external_id,
+                responses=[
+                    {"question_id": "q1", "values": [{"value": marker("answer")}]}
+                ],
+                structured_response_type="",
+                status="completed",
+                **common,
+            ),
+        )
+        upload = FileUpload(
+            name=f"Biopsy {marker('patient-file')}",
+            internal_name="probe.pdf",
+            associating_id=str(w.patient.external_id),
+            file_type="patient",
+            file_category="unspecified",
+            upload_completed=True,
+            meta={"mime_type": "application/pdf"},
+            created_by=self.doctor,
+            updated_by=self.doctor,
+        )
+        upload.save()
+        self.name("file", upload)
+        self.name(
+            "meta_artifact",
+            self.make(
+                MetaArtifact,
+                associating_type="patient",
+                associating_external_id=w.patient.external_id,
+                name=f"Sketch {marker('artifact')}",
+                object_type="drawing",
+                object_value={"elements": []},
+                note=marker("artifact"),
+            ),
+        )
+
+    def orders(self):
+        """Requests, specimens, reports and results: a ward copy (the default rows), a lab copy
+        and an imaging copy (design §10 item 18)."""
+        from care.emr.models.diagnostic_report import DiagnosticReport
+        from care.emr.models.observation import Observation
+        from care.emr.models.service_request import ServiceRequest
+        from care.emr.models.specimen import Specimen
+
+        w = self.w
+        common = {"patient": w.patient, "encounter": w.encounter}
+        for copy, place, category, code in (
+            ("ward", w.ward, "laboratory", LAB),
+            ("lab", self.lab, "laboratory", LAB),
+            ("xray", self.xray, "imaging", IMAGING),
+        ):
+            prefix = "" if copy == "ward" else f"{copy}_"
+            request = self.name(
+                f"{prefix}service_request",
+                self.make(
+                    ServiceRequest,
+                    facility=w.facility,
+                    title=f"Viral load {marker(f'request-{copy}')}",
+                    category=category,
+                    status="active",
+                    intent="order",
+                    priority="routine",
+                    note=marker(f"request-{copy}"),
+                    code=code,
+                    requester=self.doctor,
+                    locations=[place.id],
+                    **common,
+                ),
+            )
+            if copy != "xray":
+                self.name(
+                    f"{prefix}specimen",
+                    self.make(
+                        Specimen,
+                        facility=w.facility,
+                        accession_identifier=f"ACC-{copy}-{_tag()}",
+                        status="available",
+                        specimen_type=BLOOD,
+                        service_request=request,
+                        note=marker(f"specimen-{copy}"),
+                        **common,
+                    ),
+                )
+            report = self.name(
+                f"{prefix}diagnostic_report",
+                self.make(
+                    DiagnosticReport,
+                    facility=w.facility,
+                    status="final",
+                    category=code,
+                    service_request=request,
+                    note=marker(f"report-{copy}"),
+                    conclusion=marker(f"report-{copy}"),
+                    **common,
+                ),
+            )
+            self.name(
+                f"{prefix}observation",
+                self.make(
+                    Observation,
+                    status="final",
+                    value_type="string",
+                    value={"value": marker(f"result-{copy}")},
+                    main_code={"system": "http://loinc.org", "code": "20447-9"},
+                    effective_datetime=self.now,
+                    diagnostic_report=report,
+                    subject_type="encounter",
+                    subject_id=w.encounter.external_id,
+                    note=marker(f"result-{copy}"),
+                    **common,
+                ),
+            )
+
+    def billing(self):
+        from decimal import Decimal
+
+        from care.emr.models.account import Account
+        from care.emr.models.charge_item import ChargeItem
+        from care.emr.models.invoice import Invoice
+        from care.emr.models.payment_reconciliation import PaymentReconciliation
+
+        w = self.w
+        account = self.name(
+            "account",
+            Account.objects.create(
+                facility=w.facility,
+                patient=w.patient,
+                primary_encounter=w.encounter,
+                status="active",
+                billing_status="open",
+                name="IPD account",
+            ),
+        )
+        component = {
+            "monetary_component_type": "base",
+            "currency": "INR",
+            "amount": "100.00",
+        }
+        self.name(
+            "charge_item",
+            ChargeItem.objects.create(
+                facility=w.facility,
+                title=f"HIV viral load {marker('charge')}",
+                patient=w.patient,
+                encounter=w.encounter,
+                account=account,
+                status="billable",
+                quantity=Decimal("1.00"),
+                unit_price_components=[component],
+                total_price_components=[component],
+                total_price=Decimal("100.00"),
+            ),
+        )
+        self.name(
+            "invoice",
+            Invoice.objects.create(
+                facility=w.facility,
+                patient=w.patient,
+                account=account,
+                status="issued",
+                title="Final bill",
+            ),
+        )
+        self.name(
+            "payment_reconciliation",
+            PaymentReconciliation.objects.create(
+                facility=w.facility,
+                account=account,
+                reconciliation_type="payment",
+                status="active",
+                kind="deposit",
+                issuer_type="patient",
+                outcome="complete",
+                method="cash",
+                tendered_amount=Decimal(100),
+                returned_amount=Decimal(0),
+                amount=Decimal(100),
+            ),
+        )
+
+    def queue(self):
+        from care.emr.models.scheduling import (
+            SchedulableResource,
+            Token,
+            TokenCategory,
+            TokenQueue,
+        )
+
+        w = self.w
+        resource = SchedulableResource.objects.get(
+            facility=w.facility, user=self.doctor
+        )
+        queue = self.name(
+            "token_queue",
+            self.make(
+                TokenQueue,
+                facility=w.facility,
+                resource=resource,
+                name="OPD queue",
+                date=self.now.date(),
+            ),
+        )
+        category = self.name(
+            "token_category",
+            self.make(
+                TokenCategory,
+                facility=w.facility,
+                resource_type="practitioner",
+                name="General",
+                shorthand="G",
+            ),
+        )
+        self.name(
+            "token",
+            self.make(
+                Token,
+                facility=w.facility,
+                patient=w.patient,
+                queue=queue,
+                category=category,
+                number=Token.get_next_number(queue, category),
+                status="CREATED",
+                note=marker("token-note"),
+            ),
+        )
+
+    def store(self):
+        """The store with stock, a dispense to the patient and a patient's return (Q-K43)."""
+        from decimal import Decimal
+
+        from care.emr.models import Product
+        from care.emr.models.charge_item_definition import ChargeItemDefinition
+        from care.emr.models.inventory_item import InventoryItem
+        from care.emr.models.medication_dispense import (
+            DispenseOrder,
+            MedicationDispense,
+        )
+        from care.emr.models.product_knowledge import ProductKnowledge
+        from care.emr.models.supply_delivery import DeliveryOrder, SupplyDelivery
+        from care.emr.models.supply_request import RequestOrder, SupplyRequest
+
+        w = self.w
+        place = self.store_place
+        knowledge = self.name(
+            "product_knowledge",
+            baker.make(
+                ProductKnowledge,
+                facility=w.facility,
+                slug=f"f-{w.facility.external_id}-tenofovir",
+                name="Tenofovir 300 mg",
+                status="active",
+                product_type="medication",
+            ),
+        )
+        definition = self.name(
+            "charge_item_definition",
+            baker.make(
+                ChargeItemDefinition,
+                facility=w.facility,
+                slug=f"f-{w.facility.external_id}-tenofovir-charge",
+                title="Tenofovir 300 mg",
+                status="active",
+                price_components=[
+                    {"amount": "100", "monetary_component_type": "base", "factor": None}
+                ],
+            ),
+        )
+        product = self.name(
+            "product",
+            baker.make(
+                Product,
+                facility=w.facility,
+                product_knowledge=knowledge,
+                charge_item_definition=definition,
+                status="active",
+                product_type="medication",
+            ),
+        )
+        item = self.name(
+            "inventory_item",
+            baker.make(
+                InventoryItem,
+                location=place,
+                product=product,
+                net_content=Decimal(500),
+                status="active",
+            ),
+        )
+        order = self.name(
+            "dispense_order",
+            self.make(
+                DispenseOrder,
+                name=f"Dispense - {w.patient.name}",
+                status="in_progress",
+                note=marker("dispense-order"),
+                location=place,
+                patient=w.patient,
+                facility=w.facility,
+            ),
+        )
+        self.name(
+            "medication_dispense",
+            self.make(
+                MedicationDispense,
+                status="in_progress",
+                category="inpatient",
+                note=marker("dispense"),
+                encounter=w.encounter,
+                patient=w.patient,
+                location=place,
+                authorizing_request=self.request,
+                item=item,
+                quantity=1,
+                order=order,
+            ),
+        )
+        # A request order at the store and its supply request: both deliveries below answer it,
+        # so CARE's delivery-order list (it needs ?request_order) shows the stock order and, to
+        # CARE's roles, the return (P1-T11b3 review M8; Q-K43 A)
+        request_order = self.name(
+            "request_order",
+            self.make(
+                RequestOrder,
+                name="Monthly indent",
+                status="pending",
+                priority="routine",
+                intent="order",
+                reason="ward_stock",
+                category="central",
+                destination=place,
+            ),
+        )
+        wanted = self.name(
+            "supply_request",
+            self.make(
+                SupplyRequest,
+                status="active",
+                quantity=Decimal(10),
+                supplied_item_condition="normal",
+                item=knowledge,
+                order=request_order,
+            ),
+        )
+        # The stock order is the default row (the Store Keeper's own work); the patient's
+        # return is named apart (Q-K43 A: absent for every restricted role)
+        stock = self.name(
+            "delivery_order",
+            self.make(
+                DeliveryOrder,
+                name="Stock from supplier",
+                status="pending",
+                destination=place,
+            ),
+        )
+        self.name(
+            "supply_delivery",
+            self.make(
+                SupplyDelivery,
+                status="in_progress",
+                supplied_item=product,
+                supplied_item_quantity=Decimal(1),
+                supplied_item_condition="normal",
+                delivery_type="product",
+                order=stock,
+                supply_request=wanted,
+            ),
+        )
+        returned = self.name(
+            "return_order",
+            self.make(
+                DeliveryOrder,
+                name=f"Medication return - {w.patient.name} {marker('return')}",
+                status="pending",
+                destination=place,
+                patient=w.patient,
+            ),
+        )
+        self.name(
+            "return_delivery",
+            self.make(
+                SupplyDelivery,
+                status="in_progress",
+                supplied_item=product,
+                supplied_item_quantity=Decimal(1),
+                supplied_item_condition="normal",
+                delivery_type="product",
+                order=returned,
+                supply_request=wanted,
+            ),
+        )
+
+    def records(self):
+        """Bed history, device histories, a resource request and an account report."""
+        from care.emr.models.device import (
+            DeviceEncounterHistory,
+            DeviceLocationHistory,
+            DeviceServiceHistory,
+        )
+        from care.emr.models.location import FacilityLocationEncounter
+        from care.emr.models.report.report_upload import ReportUpload
+        from care.emr.models.report.template import Template
+        from care.emr.models.resource_request import (
+            ResourceRequest,
+            ResourceRequestComment,
+        )
+
+        w = self.w
+        self.name(
+            "bed_association",
+            self.make(
+                FacilityLocationEncounter,
+                location=w.bed,
+                encounter=w.encounter,
+                status="active",
+                start_datetime=self.now,
+            ),
+        )
+        # A place the Lab Technician may list (can_list_facility_locations there), with the
+        # patient's earlier stop in it: the bed-history swap is what refuses it
+        self.make(
+            FacilityLocationEncounter,
+            location=self.lab,
+            encounter=w.encounter,
+            status="completed",
+            start_datetime=self.now - datetime.timedelta(hours=2),
+            end_datetime=self.now - datetime.timedelta(hours=1),
+        )
+        device = w.device
+        device.current_location = w.bed
+        device.save()
+        self.name(
+            "device_location_history",
+            self.make(
+                DeviceLocationHistory, device=device, location=w.bed, start=self.now
+            ),
+        )
+        self.name(
+            "device_encounter_history",
+            self.make(
+                DeviceEncounterHistory,
+                device=device,
+                encounter=w.encounter,
+                start=self.now,
+            ),
+        )
+        self.name(
+            "device_service_history",
+            self.make(
+                DeviceServiceHistory,
+                device=device,
+                serviced_on=self.now,
+                note=marker("device-service"),
+            ),
+        )
+        request = self.name(
+            "resource_request",
+            self.make(
+                ResourceRequest,
+                origin_facility=w.facility,
+                approving_facility=w.facility,
+                title=f"Oxygen for ward {marker('resource')}",
+                reason=marker("resource"),
+                status="pending",
+                category="patient_care",
+                priority=1,
+                related_patient=w.patient,
+            ),
+        )
+        self.name(
+            "resource_comment",
+            self.make(
+                ResourceRequestComment, request=request, comment=marker("resource")
+            ),
+        )
+        account = self.objects["account"]
+        template = self.name(
+            "template",
+            self.make(
+                Template,
+                facility=w.facility,
+                slug=f"f-{w.facility.external_id}-final-bill",
+                name="Final bill with diagnosis",
+                status="active",
+                template_type="account_report",
+                default_format="pdf",
+                template_data="<p>{{ encounter.diagnoses }}</p>",
+            ),
+        )
+        report = ReportUpload(
+            template=template,
+            name=f"Final bill {marker('account-report')}",
+            internal_name="final-bill.pdf",
+            associating_id=str(account.external_id),
+            upload_completed=True,
+            report_type="account_report",
+            meta={
+                "mime_type": "application/pdf",
+                "template_id": str(template.external_id),
+                "output_format": "pdf",
+            },
+            created_by=w.users["Facility Admin"],
+            updated_by=w.users["Facility Admin"],
+        )
+        report.save()
+        self.name("report", report)
+
+    def people(self):
+        """A Pharmacist at the store, and a Nurse once on the care team who moved to the front
+        desk (her PatientUser row stays; "After the attack" §3)."""
+        w = self.w
+        w.users["Pharmacist"] = w.user(
+            "acc-pharmacist", ("Pharmacist", w.departments["Stores"])
+        )
+        nurse = nurse_on_care_team(w)
+        move_to(w, nurse, "Receptionist")
+        w.users["Moved Nurse"] = nurse

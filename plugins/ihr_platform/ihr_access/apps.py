@@ -17,7 +17,7 @@ class IhrAccessConfig(AppConfig):
     def ready(self):
         from rest_framework.views import APIView
 
-        from ihr_access import authz, exceptions, guard, identifiers, state
+        from ihr_access import authz, exceptions, guard, identifiers, state, visits
         from ihr_access import checks as access_checks
 
         # The serializer guard on every patient, encounter, bed, device, booking and token shape
@@ -28,6 +28,8 @@ class IhrAccessConfig(AppConfig):
         exceptions.install()
         # Search and identifier writes keep to the identifier allow-list (review S2)
         identifiers.install()
+        # A visit named in the query must be the path patient's (P1-T11b3 review K1)
+        visits.install()
         checks.register(access_checks.guard_installed)
         checks.register(access_checks.filters_classified)
 

@@ -1682,3 +1682,342 @@ tenant-prefixed, both); CARE modules (the same 30): `Ran 1056 tests in 89.098s`
 - b4: MRD with a grant: `get_appointments`/`get_tokens` without `?facility` are left to CARE for
   a granted patient, and the encounter list `?patient` takes CARE's path (`can_view_patient_obj`
   through the hidden role); the grant authorizer's check takes `ihr_access.E023`.
+
+## P1-T11b3 as built (2026-11-15)
+
+**What exists now.** Every route of a hospital's URL configuration is requested as each of our
+eight roles (MRD without a records grant), the Nurse who moved to the front desk and still holds
+a `PatientUser` row, and CARE's Doctor and Facility Admin, on a full test world, and every answer
+is compared with the reviewed `ihr_access/tests/role_matrix.txt`; every non-GET method is sent,
+with an empty body, as each of our roles whose write row says `deny`. A named marker in every
+clinical field, and a reviewed exemption list, prove that no answer to one of our roles carries a
+field it must not see. The matrix found **three leaks to the Radiologist and one latent guard
+gap**, all fixed in `ihr_access` (below). No `apps/` file changed (no `UPSTREAM_PATCHES.md`
+entry), no migration, no new table, `batch_allowlist.txt` unchanged.
+
+### How the matrix enumerates, fills and classifies
+
+- **Routes.** The isolation crawl's own `routes.py`: a new `get_route_views()` walks the same
+  resolver with the same skips as `get_routes()` and also returns each route's methods (a
+  viewset's actions, a class view's handlers; `None` for a function view). CARE's switched-off
+  views (`Blocked`) are left out, as the isolation crawl does (ihr_identity tests them).
+- **Path parameters.** `routes.fill()` unchanged, given a tenant-like namespace
+  (`matrix.tenant_for`): for each model the world's first *named* row (`world.objects`, insertion
+  order: the first patient, the inpatient visit, the bed, the ward copy of the request, the
+  stock delivery order ...), else the first row by pk; the Doctor for `{username}` and users;
+  the latest audit entry for `<int:pk>`; PIN 411001 (not loaded: `unavailable` for everyone).
+- **Query and path variants** (`tests/list_params.txt`, item 12): one line per extra request of
+  a route, `?name=object`, `?name~literal`, or `?{param}=object` (that path parameter takes
+  another named row: the lab or imaging copy, the store, the Radiology patient, the return
+  order ...). The bare route is always requested too. The row's key in `role_matrix.txt` is the
+  route plus the line's assignments. 56 variant lines; 23 `none` lines. The static check
+  (`ListParams`) requires a line for every list whose `get_queryset` or `list` reads
+  `request.GET`/`query_params` (45 such lists at this pin) and refuses a line for no GET route.
+- **Viewers.** Real staff sessions (`identity.staff_client` under `fake_keycloak`), so every
+  view's own authentication runs; the write crawl uses the same sessions (a forced user made
+  CARE's patient-OTP permission class raise 500s that no staff session can reach).
+- **Each request runs in a savepoint that is rolled back**, so no answer (a token deleted, a
+  favourite added) changes the next. The guard's `project_instance` is wrapped for the crawl:
+  an answer in which it ran is `project`, else `allow`.
+- **Outcomes** (item 13): `allow` / `project` (200 with rows: a non-empty `results`, list or
+  body), `empty` (200, none), `deny` (401/403/404/405), `invalid` (400), `conflict` (409, a
+  username already taken), `unavailable` (503, the PIN directory), `redirect` (3xx, the
+  sign-in flow), `skip` (not requested). A 5xx matches no row. Rows are compact (item 17):
+  `all`, `ours`, `restricted`, `frontdesk`, `billing`, `clinical`, `care` and per-role
+  exceptions, later tokens winning; the moved Nurse is expected exactly as `rec`.
+- **Every method** (item 14): `W` (every non-GET method), or `POST`, `PUT`, `PATCH`, `DELETE`
+  rows; default `ours:deny care:care`. `deny` is sent with `{}` and must not answer 2xx or 5xx
+  (403/404 preferred, 400 accepted); `allow` is not sent and must name tests that exist
+  (`tests: a.b.C.test_x`, checked by `MatrixFiles`); `care` (CARE's roles) is never sent.
+- **Key snapshot** (item 15, `role_matrix_keys.txt`): every key of every `allow`/`project`
+  answer to a restricted role, nested dicts and lists of dicts walked (`a.b`, `a[].b`, `[].a`).
+  A nested body of a guarded shape or a staff card (recognised by its keys) is one entry
+  `a.b<patient>` (`<encounter>`, `<location>`, `<device>`, `<booking>`, `<user>`): the guard's
+  field lists classify those exactly (`test_fields`). Sections `[<route key>] <roles>`: 1,874
+  key paths in 94 sections. A new key, or one no longer seen, fails.
+- **Canary** (item 18): `testing.marker(name)` is `CANARY-<name>`; the unnamed `CANARY`
+  (`base`) is left only in the patient's extension and the visit's discharge advice. 46 named
+  markers (notes, problem list, allergy, consent, prescription, dosage, request, statement,
+  administration, answer, file, drawing, the bed, device service, resource request, account
+  report, dispense, return, charge, booking note and tag, schedule, token note, tags, the
+  programme number and its configuration, three copies of request, specimen, report and result,
+  and the Radiology patient's). `canary_exemptions.txt` (`<who> <marker> <key glob>
+  allow|never`): 24 `allow` lines, 31 `never` lines. Each `allow` line must be used, and have
+  a negative row (the same marker for any role, or the same role and routes); each `never` line
+  must be requested as its role, its marker must reach a care role on those routes, and no
+  `allow` line may cover it. A positive control requires every marker to reach the Doctor or the
+  Facility Admin somewhere. For the Owner no answer (any status) may hold either patient's name,
+  phone number or id.
+- **Spec walk** (item 16): every `EMRResource` subclass whose `__model__` is Patient or
+  Encounter (our `edit.DemographicsSpec` included) carries the guard marker or is in
+  `tests/spec_exemptions.txt` (`write`, `base`: never a viewset's read model and never
+  `.serialize(`d in CARE's or our source, both checked; `exempt`: `PatientPartialSpec`,
+  `PatientOTPReadSpec`, each with why).
+- **World coverage** (item 19): every class the guard sits on (with its subclasses) is projected
+  for a restricted role somewhere in the crawl, or is listed with why (`UNREACHED_SPECS`: the
+  device spec, since devices are closed to our roles; the booking base, retrieve and OTP specs).
+- **Batch** (item 20): Receptionist `PUT patient/{id}/` with a blood group (200, blood group
+  unchanged, the address written), Receptionist and Cashier `PUT encounter/{id}/` (403 inside),
+  Cashier `GET medication/dispense/{id}/` (403 inside, no marker or name); each asserts no
+  `ihr-batch: refused` line; a labelled case (an encounter GET off the list is refused,
+  `reason=not_listed`); the meta-test fails when `batch_allowlist.txt` gains a GET with no case
+  in `BATCH_GET_CASES`.
+
+### Files
+
+| Where | What |
+|---|---|
+| `ihr_access/testing.py` | `build_world(full=False)`; `full` adds `add_matrix_world` (places at Laboratory, Radiology and Stores; one row of each clinical kind; ward, lab and imaging copies of request, specimen, report and result; a second patient with a Radiology visit and its problem list; a finished visit; account, charge, bill and payment; queue, category and token; the store with stock, a dispense, a stock order and delivery, the patient's return and its delivery; bed history (bed and a lab place), device histories, a resource request and comment, an account report and its template; a Pharmacist; the moved Nurse). `marker()`, `MARKERS`; schedule, booking note, tags and the programme configuration and number got markers of their own |
+| `ihr_access/tests/matrix.py` | the crawl, the file readers, `tenant_for`, `classify`, `key_paths` |
+| `ihr_access/tests/test_role_matrix.py` | `RoleMatrix` (7 tests), `AllowedWrites` (2), `MatrixFiles`, `ListParams`, `SpecWalk`, `BatchCases` (5) |
+| `ihr_access/tests/role_matrix.txt`, `role_matrix_keys.txt`, `list_params.txt`, `canary_exemptions.txt`, `spec_exemptions.txt` | the reviewed files (263 GET rows, 105 write rows of which 31 `skip`) |
+| `ihr_platform/tests/isolation/routes.py` | `get_route_views()` (the isolation crawl itself is unchanged) |
+| `ihr_access/branches.py` | `ours_only()`, `closed()` |
+| `ihr_access/state.py` | `ours_only`, `chart_limited`, `may_read_chart()` |
+| `ihr_access/guard.py` | the chart rule (`Shape.chart`, `_chart_withheld`); `Shape.also` (the encounter shape also wraps `EncounterSpecBase`'s own `serialize`; E022 checks it) |
+| `ihr_access/views.py` | resource requests, devices, dispense orders and patient-linked delivery rows gated on `branches.closed` |
+| `ihr_access/tests/test_guard.py` | the Radiologist moved out of "CARE's roles see everything" into `test_the_radiologist_sees_a_chart_only_with_radiology`; expected marker strings |
+| `scripts/isolation-mutation.sh` | 3 new rows, 7 re-pointed (below) |
+| `docs/UPSTREAM.md`, `docs/QUESTIONS.md` (Q-K40), `CLAUDE.md` | the after-sync step, the CARE gaps, the project note |
+
+### Defects found by the matrix and fixed (fail closed)
+
+| # | What the matrix showed | Fix | Test (mutation row) |
+|---|---|---|---|
+| D1 | The **Radiologist** (not restricted: it holds clinical slugs) read every resource request and its comments, each embedding the first patient's unprojected body (blood group, extension; markers `base`, `resource`): CARE checks no right there and b2 gated restricted users only | `branches.closed(user)` = restricted, or every role held here is one of ours (`state.ours_only`; a CARE role held as well gives CARE's answer, Q-K35); the resource-request swap refuses `closed` users | `test_role_matrix`, the canary (`access-ours-only`) |
+| D2 | The Radiologist saw the patient's **medication return** (named after the patient, the patient's body embedded; markers `return`, `base`) in the delivery-order list without origin or destination | `_NoPatientRows` (list, update by id, create) and the dispense-order and device swaps use `closed` | as D1 |
+| D3 | The Radiologist reading an **imaging request or report** at the Radiology room for a patient whose visit has no Radiology got the whole patient (blood group, extension, programme number, tags) and visit (discharge advice, bed, tags) embedded: Q-K44 A says imaging requests and reports only, not the chart | **The chart rule** (guard): for a user of our roles only who holds a clinical one (`state.chart_limited`: the Radiologist), a patient or visit is projected unless CARE's `can_view_clinical_data` holds for that patient (`may_read_chart`, once per patient and request). The request's and report's own fields stay (exempted markers `request-xray`, `report-xray`, `result-xray`) | the canary, `test_guard.EncounterProjection.test_the_radiologist_sees_a_chart_only_with_radiology` (`access-chart-rule`) |
+| D4 (latent, spec walk) | CARE's medication-dispense spec embeds the visit through `EncounterSpecBase.serialize`, which the guard did not wrap. No role of ours reaches a dispense today (403/empty), so nothing leaked | the encounter shape also wraps `EncounterSpecBase`'s own `serialize` (`Shape.also`); E022 checks it | `SpecWalk` (`access-encounter-base`) |
+
+Every other cell was read before it was classified; the restricted roles' clinical routes all
+answer `deny`, their lists of patient data `empty` or `project`.
+
+### CARE-role gaps added to Q-K40's list (docs/QUESTIONS.md)
+
+- the delivery-order list with neither origin nor destination answers every order of the
+  hospital to any member (b2 had noted it as a limit);
+- a service request or diagnostic report read through its place embeds the patient's whole
+  record and visit, also for a department with no clinical right on that patient (D3 for CARE's
+  own roles);
+- `add_favorite` writes a favourite for an object the caller may not read (only the caller's own
+  list changes; nothing is shown).
+
+### Deviations from the design
+
+1. **Write rows** prove only that an empty write is not accepted: CARE validates most bodies
+   before it authorizes, so with `{}` every role gets 400 on those routes. The rows classify by
+   the design's grants: `allow` for each write one of our roles holds (named tests: b2's write
+   tests, `ihr_roles` `ExactGrants`, and the new `AllowedWrites` tests, which make the
+   empty-body writes CARE grants our roles and check a role without the grant is refused);
+   everything else is the default `deny`. A write that a role holds but no row names is still
+   sent and, answering 400, passes: whether a role holds a write is ExactGrants'.
+2. **Keys** are route plus `list_params.txt` assignments, and that file also overrides path
+   parameters (the design's table has query parameters only): the lab, ward and imaging copies,
+   the Radiology patient and the return order need their own path ids.
+3. **b2's fixtures stay in b2's tests.** `build_world(full=True)` builds their equivalents for
+   the matrix; moving them into the shared world would change the rows b2's exact-list
+   assertions see (`test_store_keeper_never_sees_a_patient_return` lists the store's orders).
+4. **Markers.** The world's tags, programme configuration and number, schedule, booking note and
+   tag got named markers (b1's expected strings in `test_guard` updated); the catalogues that
+   name them (tag and identifier settings, the facility's identifier configuration) are
+   exempted for our roles, each with a negative row on the patient routes.
+5. **Mutation rows.** `access-device-encounter` keeps b1's spec-level test only: devices are
+   closed to our roles, so no route shows the canary a device (the device spec is in
+   `UNREACHED_SPECS`). `access-guard-install` names the canary too, but E022 still stops the run
+   first (its signature row stands, as in b1).
+6. **The Radiologist is in the canary** (the task's list of our roles), with exemptions for
+   its own imaging copies and the Radiology patient.
+7. **Doctor and Facility Admin** answer as classified: where the world has no row of a settings
+   kind they get `empty`, and 15 GET and 31 write routes `fill()` cannot fill (settings with no
+   row in the access world: activity, specimen and observation definitions, valuesets, request
+   orders, sub-queues, schedule exceptions ...) are `skip` with that reason (the isolation
+   crawl seeds and crawls them).
+8. **Function views** (the sign-in flow, bootstrap, logo) are requested by GET only; their
+   methods cannot be read from the resolver (ihr_identity tests them).
+9. The key snapshot covers the restricted roles; the Radiologist's bodies are CARE's, under the
+   chart rule.
+10. `test_guard.EncounterProjection.test_care_roles_see_everything` no longer lists the
+    Radiologist: under the chart rule it sees the first patient's visit projected (intended).
+
+### The rules as built
+
+- `branches.closed(user)`: restricted, or holding only roles of ours (never a superuser);
+  resource requests, devices, dispense orders and patient-linked delivery rows are closed to
+  them. Bed history and account reports keep b2's `restricted` gate (the Radiologist reads a
+  Radiology place's history by CARE's location rule, Q-K44 A; it holds no account right).
+- The chart rule applies to the patient and encounter shapes only; a booking, token or account
+  embedding a patient is projected through the patient shape. It costs CARE's
+  `find_roles_on_patient` once per patient and request, for the Radiologist only; for CARE's
+  roles `chart_limited` reads the request's cached roles (no new query).
+- `Shape.also`: a base class CARE serializes directly is wrapped with the same shape and
+  field list, its own `serialize` only.
+- Q-K37a stays at option A (no bed for the Cashier and TPA Desk): the matrix's account rows are
+  `project`, and `test_guard.ThroughTheApi.test_billing_roles_see_no_bed_on_the_account_for_now`
+  is unchanged.
+
+### Mutation rows
+
+New: `access-ours-only` (closed() back to restricted only: `test_role_matrix` and the canary),
+`access-chart-rule` (the chart rule off: the canary and the guard test), `access-encounter-base`
+(no `also`: `SpecWalk`). Re-pointed (b3's tests added to b2's): `access-booking-note` (+ the
+canary and `test_canary_exemptions_are_narrow`), `access-delivery-patient` (+ the canary and
+`test_role_matrix`), `access-bed-history` and `access-resource-request` (+ `test_role_matrix`),
+`access-patient-user-roles` (+ `test_role_matrix` and the canary: the moved Nurse),
+`access-guard-install` (+ the canary; E022's signature), `access-dispense-order` (target now
+`branches.closed`).
+
+### Checks
+
+| Run | Result |
+|---|---|
+| Plugin suites, `IHR_DB_ROLES=test` (the nine labels) | `Ran 892 tests in 896.991s` `OK (skipped=45)`; Redis audit 947 keys, all tenant-prefixed (17 min 2 s with the test database) |
+| Plugin suites, roles off | `Ran 857 tests in 861.831s` `OK (skipped=49)`; Redis audit 947 keys, all tenant-prefixed (16 min 26 s) |
+| CARE modules in tenant mode, roles off, for every viewset or spec b3 touched (delivery order and its concurrency test, device, diagnostic report, dispense order and its concurrency test, encounter, location, medication dispense, patient, resource request, service request, specimen, supply delivery, supply request) | `Ran 506 tests in 45.001s` `OK` |
+| `scripts/isolation-mutation.sh check` | 135 rows (132 + 3 new), every target and named test found |
+| The 3 new and 7 re-pointed rows, each applied alone to a scratch copy of `plugins/` and run as CI runs them (roles off) | each named test FAILED (an assertion, never an ERROR): `access-ours-only` 12 failures, `access-chart-rule` 4, `access-encounter-base` 1, `access-booking-note` 5, `access-delivery-patient` 17, `access-bed-history` 2, `access-resource-request` 64, `access-patient-user-roles` 64 (the moved Nurse in the matrix and canary), `access-dispense-order` 7; `access-guard-install` stopped at E022 with its signature (the canary, now named too, cannot run before it) |
+| `python3 scripts/check-logs.py` | `Log pipeline OK.` (b3 adds no log line) |
+| `scripts/batch-allowlist.py --check` | `batch-allowlist: 37 routes, list current` |
+| `pre-commit run --all-files` (new files added with `git add -N` for the run, then reset) | 43 hooks passed |
+| `manage.py check` in the dev backend (restarted with Celery) | `System check identified no issues` (E022 with `Shape.also`) |
+| Manual, Alpha (dev, `APIClient` as the seeded users) | `care-radiologist`: resource requests 403 (was CARE's 200), delivery orders 200 with no patient-linked row; `care-receptionist` 403 and 200; `care-doctor` 200 and 200 (CARE's answers unchanged) |
+
+### Runtime
+
+The matrix module (`ihr_access.tests.test_role_matrix`, 17 tests) runs in about **62 s**
+alone (`Ran 17 tests in 61.7s`): the GET crawl, 2,739 requests (249 targets × 11 viewers: 248
+route keys, `/api/v1/users/` enumerated twice, by our invitation swap in `urls_tenant.py` and by
+CARE's router; review O6 removed the duplicate, see "Review fixes" for the numbers after the
+fixes), each in a rolled-back savepoint, **30-39 s**; the write crawl, 2,989 requests (the same
+duplicate), **25-34 s**; building
+the full world three times (one per database test class) a few seconds. It adds about 1.2 min to
+CI's plugin step (the plugin suites went from 810 s to 897 s in roles test mode, 786 s to 862 s
+roles off, with the other new test). With `IHR_MATRIX_DUMP=1` it prints every answer.
+
+### Known limits (for b4)
+
+- The write crawl's `deny` is weak where CARE validates first (deviation 1).
+- The matrix runs on one world: a cell holds for these rows (one facility, the departments named
+  above). Settings routes with no row here are skipped (the isolation crawl covers their
+  tenancy).
+- Staff cards (`<user>`) are not walked in the key snapshot: a new field on CARE's user card is
+  not flagged there.
+- The chart rule asks CARE's `can_view_clinical_data`, which counts open visits only: the
+  Radiologist sees a finished Radiology visit of a patient projected, like any other patient with
+  no open Radiology visit.
+- Booking notes, tags and the booked doctor stay visible on the Receptionist's own CARE booking
+  screens ("After the attack" §2.2; exempted with negative rows); the Owner's totals and MRD's
+  grants are b4's.
+- No write crawl with valid bodies (design item 14; review M3): `role_matrix_writes.txt` pins how
+  each denied write answered an empty body, and a `body` cell (400: CARE validated first) proves
+  only that nothing was written by that request, not that a valid body would be refused. Valid
+  bodies are sent, as every role of ours, only on the desk routes (`DeskWrites`: bookings, slots,
+  queues and tokens, accounts, invoices, payments) and the department routes (requests, specimens,
+  reports: `AllowedWrites.test_department_writes_keep_to_their_own_copy`); there each denied role
+  must be refused by authorization (401/403/404, or CARE's upsert 400 whose every datapoint is a
+  permission refusal). Elsewhere a `body` cell still leans on the grants (`ExactGrants`) and CARE's
+  own authorization after validation.
+- Charge-item writes (`charge_item/...`, Cashier) are checked by status in `test_writes.BillingWrites`
+  only, without a body canary (the answer names its service, which billing may see, Q-K38 A).
+- The health rows read CARE's queue check against an empty queue on the test Redis (review O3); a
+  Redis outage turns them into 500, which matches no row and fails the matrix. That is deliberate
+  (fail loud): the runner's own Redis audit and every cache need the same server, so the run could
+  not pass without it anyway.
+- The static `list_params` walk reads keys named literally (`.get("k")`, `["k"]`, `"k" in`); a
+  read of no literal key on a patient route only demands a line, not its keys (the runtime check
+  names them when the crawl executes that read).
+- The visit check refuses every objectless non-list action that names `?encounter=` for a closed
+  user without the chart (review NEW-5), creates included, although CARE's creates authorize on
+  the body's visit alone. A possible over-refusal, kept fail-closed: no web-app call sends a visit
+  in the query of a write (the note, questionnaire and report forms send it in the body); pinned by
+  `test_visits.VisitParam.test_a_create_naming_a_visit_is_refused`.
+
+### Open items handed to b4
+
+- MRD+g columns: add a records-grant viewer to the matrix (MRD with a live grant on the first
+  patient: `allow` on that patient's clinical reads through the grant authorizer, `deny` on the
+  Radiology patient) and its canary exemptions (each with a negative row on the other patient).
+- The Owner totals endpoint gets its matrix row (`owner:allow`, everyone else `deny`) and the
+  Owner identity rule already in the canary covers its body.
+- `ihr_access.E023` (grant authorizer) stays reserved. The chart rule applies only to users of
+  our roles who hold a clinical slug (the Radiologist); MRD stays restricted, so b4's grant
+  exemption (`state.granted_patients`) is untouched by it, and the grant authorizer must not
+  wrap `can_view_clinical_data` (the chart rule's question) without re-reading D3.
+- `branches.closed` also closes resource requests, devices and dispense orders to MRD with a
+  grant (they are not the patient's record); b4 decides if a grant should open any of them.
+- The visit check (`visits.py`) asks `may_read_chart` (CARE's `can_view_clinical_data`): MRD with
+  a records grant stays `closed`, so b4's grant authorizer decides whether a named visit opens
+  rows beyond that visit; re-read `visits.check` with the grant authorizer.
+
+### Review fixes (2026-11-15)
+
+An independent review of the uncommitted b3 change raised 18 findings (M1-M8, K1-K4, O1-O6; M1
+and K1 are the same hole, as are M2/K2/O1 in part and M7/O2); each was challenged against the
+code and fixed with a regression test that fails without the fix, and a mutation row where it is
+an access control. None needed an owner decision (no new Q-K): the CARE-role side of K1, the
+slots-for-day gap and the request-order list went to Q-K40's list. No `apps/` file changed.
+
+| Finding | Verdict | Fix | Test (mutation row) |
+|---|---|---|---|
+| K1 / M1 (high): the Radiologist read any patient's diagnoses, medicines, results, consents and notes, and `observation/analyse`, by naming another patient's Radiology visit in `?encounter=` (CARE's `authorize_read_encounter` and its copies in notes.py never check whose visit it is; a retrieve is not narrowed by the encounter filter) | confirmed | `ihr_access/visits.py`, in `APIView.initial` (every DRF view under a patient, batch sub-requests included): for `branches.closed` users a named visit must be the path patient's (else 403, a malformed or unknown id too); without the chart (`may_read_chart`) only that visit's rows open (the object and the note thread must be of it; a list is narrowed by CARE; any other action, `analyse`, is refused). E022 fails if the hook is missing or a patient view overrides `initial` outside our code. CARE's roles unchanged (Q-K40) | `test_visits.VisitParam` (6 tests: another patient's visit, restricted roles, the patient's own open Radiology visit, a finished Radiology visit opens its own rows only, CARE's roles unchanged, the check holds); the matrix's generated `?encounter=encounter_b` row on every patient route (27 rows) and `post_reads.txt` `analyse-cross`, with 13 canary `never` rows (`access-visit-patient`, `access-visit-rows`, `access-visit-install`) |
+| K2 / M2 / O1 (medium): the list_params static check read only the view's own `get_queryset`/`list` and skipped detail routes, so helper reads (`authorize_read_encounter`, `authorize_for_pharmacist`), parents behind our swaps (device, delivery orders) and retrieves were never required a row; thread and note were marked "an optional filter" | confirmed | (1) runtime: the crawl records every `QueryDict` read made from CARE's or our code per route (`matrix.QueryReads`), and every key read (paging, tags and favourites aside) must be named by a `list_params.txt` line or the route have a `none` line; (2) the static check walks the whole MRO under `care.`/`ihr_` and includes detail routes; (3) every patient route gets the generated cross-patient variant; new lines: `?encounter=encounter` on consent, symptom, diagnosis, medication request/statement/administration/prescription, thread and note; `?facility=facility` (the pharmacist branch) on medication request and prescription, list and retrieve; device `?location=ward`; delivery-order `?origin`; supply delivery `?order` and `?request_order`; patient `?facility`; 52 more reviewed `none` lines (75 in all); thread and note reasons corrected | `RoleMatrix.test_every_query_read_has_a_params_line`, `ListParams.test_every_list_reading_the_query_has_a_row`, `ListParams.test_the_walk_reaches_parents_and_helpers` (`access-list-params-pharmacist`) |
+| K3 (low): reads CARE makes by POST (search, search_retrieve, accession lookup, slots, `analyse`) were never crawled by the canary | confirmed | `tests/post_reads.txt`: 11 reviewed POST reads with bodies from the world, sent as every viewer, through the same outcome, canary, exemption, Owner and key-snapshot checks; each `role_matrix.txt` POST row whose reason says "a read by POST" must have a line. **It found a leak:** `slots/get_slots_for_day` checks no right (CARE's TODO), so every role of ours read any doctor's day and schedule; `IhrSlotViewSet` (SWAPS) asks `closed` users for the booking read right first, as `availability_stats` does (Q-K40 for CARE's roles) | `RoleMatrix.test_post_reads`, the canary (`access-slot-day`) |
+| M3 (low after challenge): write rows defaulted to `deny` and passed on 400, so a new upstream write route, or one turning from authorize-first to validate-first, needed no review | partly | `tests/role_matrix_writes.txt`: a snapshot of every denied write (355 method-route lines) as `auth` (401/403/404/405) or `body` (400) per viewer; a new or gone write route, or a moved cell, fails. No write crawl with valid bodies (design item 14) | `RoleMatrix.test_every_method_of_denied_routes` |
+| M4 (low): allowed writes on requests and reports named only ExactGrants, never sent to their endpoint | partly | `AllowedWrites.test_department_writes_keep_to_their_own_copy`: the Lab Technician's `create_specimen`, `create_specimen_from_definition`, report create, update and `upsert_observations`, and the Radiologist's report writes, answer 200 on the department's own copy (no marker of another copy or the chart in the answer) and 403/404 on the others; `MatrixFiles` refuses ExactGrants as the only named test on an allowed write whose route takes a request, report or patient id | that test, `MatrixFiles.test_the_files_parse_and_allowed_writes_name_their_tests` |
+| M5 (low): an `all:skip` row hid a route fill() can fill; the availability writes' skip reason was wrong | confirmed | `skip` means "fill() cannot fill" only: a skip row on a filled GET route is requested and fails, on a filled write route fails; `schedule_external_id` filled by the matrix's own overlay (`matrix.MATRIX_PARAMS`, the isolation crawl unchanged); the world's new request order and supply request fill four more routes; their skip rows became reviewed rows (the availability writes default `deny`; the store's indent writes `store:allow`) | `RoleMatrix.test_targets_are_unique_and_skip_means_unfilled`, `test_role_matrix`, `test_every_method_of_denied_routes` |
+| M6 (low): the matrix's roles were literals never checked against the registry | confirmed | `MatrixFiles.test_the_roles_are_the_registrys`: restricted group = `registry.RESTRICTED`, our roles = `registry.EIGHT`, the hidden role absent (b4), the comparison roles not ours | that test |
+| M7 / O2 (low): SpecWalk ignored CARE's `pydantic_model` fallback for reads and walked `api_router` only | confirmed | read models collected as CARE resolves them (`get_read_pydantic_model` / `get_retrieve_pydantic_model`, falling back to `pydantic_model`) for every view of every URL configuration and router | `SpecWalk.test_a_view_reading_with_a_write_spec_is_caught` (a viewset with only `pydantic_model = PatientCreateSpec`) |
+| M8 (low): the delivery-order list (it needs `?request_order`) answered 400 to everyone, so whether the Store Keeper sees the return's order there was never exercised | partly (the supply-request rows are settings kinds, deviation 7) | the world seeds a request order at the store and a supply request that both deliveries answer; row `delivery_orders/ ?request_order=request_order` is `all:deny admin:allow store:project` | `StoreRows.test_delivery_orders_of_a_request_order` (added to `access-delivery-patient`) |
+| K4 (low): the key snapshot left out the Radiologist and collapsed any patient-like dict whether the guard handled it or not | confirmed | the Radiologist in its own column; the crawl records every instance the guard decided on (`Shape.applies`), and `key_paths` collapses a guarded shape only for those, walking any other (staff cards still collapse: a known limit) | `MatrixFiles.test_an_unhandled_patient_like_body_is_walked`, `RoleMatrix.test_response_keys_match_the_snapshot` |
+| O3 (low): the health rows read the dev stack's live Celery queue | partly | the matrix classes point CARE's queue check at an empty queue on the test Redis (rows kept: they prove the probes show no hospital data) | `RoleMatrix.test_the_health_probe_reads_an_empty_test_queue` |
+| O4 (low): `IHR_MATRIX_DUMP=1` never reached the container | confirmed | `scripts/care-tenancy.sh` forwards it; docs/UPSTREAM.md gives the exact command and what each `@@` line holds | used for every rebuild of the reviewed files in this fix |
+| O5 (low): the batch meta-test was an undocumented after-sync failure | confirmed | kept strict; docs/UPSTREAM.md's batch step says each new GET needs a `BATCH_GET_CASES` entry and a `BatchCases` test; the assertion names the difference and the step | `BatchCases.test_every_listed_get_has_a_batch_case` |
+| O6 (low): `/api/v1/users/` was crawled (and written) twice under one key; the runtime figures did not add up | confirmed | targets and write targets keep one entry per key (Django's first); two routes giving one key with different paths raise; the Runtime paragraph above is corrected | `RoleMatrix.test_targets_are_unique_and_skip_means_unfilled` |
+
+**Matrix after the fixes:** the GET crawl sends 3,355 requests ((294 route keys + 11 POST reads) ×
+11 viewers), the write crawl 3,046; the matrix module (27 tests) with `test_visits` (6) runs in about **73-90 s** alone (`Ran 33 tests in 73.423s`); in the full suites the GET crawl takes 44-52 s and the write crawl 34-38 s. The plugin suites went from 897 s to 920 s (roles test mode) and from 862 s to 896 s (roles off): about half a minute more in CI's plugin step.
+
+**Checks after the review fixes (2026-11-15, backend and Celery restarted; no migration):**
+
+| Run | Result |
+|---|---|
+| Plugin suites, `IHR_DB_ROLES=test` (the nine labels) | `Ran 908 tests in 919.811s` `OK (skipped=45)`; Redis audit 952 keys, all tenant-prefixed (17 min 26 s with the test database) |
+| Plugin suites, roles off | `Ran 873 tests in 896.280s` `OK (skipped=49)`; Redis audit 952 keys, all tenant-prefixed (17 min 2 s) |
+| The 5 new rows and the re-pointed `access-delivery-patient`, each applied alone to a scratch copy of `plugins/` and run as CI runs them (roles off) | each named test FAILED (an assertion, never an ERROR): `access-visit-patient` 46 failures, `access-visit-rows` 11, `access-slot-day` 14, `access-list-params-pharmacist` 1, `access-delivery-patient` 20; `access-visit-install` stopped at E022 with its signature (`APIView.initial is not the visit check`) |
+| `scripts/isolation-mutation.sh check` | 140 rows (135 + 5 new), every target and named test found |
+| `python3 scripts/check-logs.py` | `Log pipeline OK.` (no new log line) |
+| `scripts/batch-allowlist.py --check` | `batch-allowlist: 37 routes, list current` |
+| `pre-commit run --all-files` (new files added with `git add -N` for the run, then reset) | 43 hooks passed (a first run fixed one trailing newline in this file) |
+| `manage.py check` in the dev backend (restarted with Celery) | `System check identified no issues (0 silenced).` (E020 with eleven swaps, E022 with the visit check) |
+
+### Second fix pass: the verifier's open items (2026-11-15)
+
+A verifier re-checked the review fixes and left four items partly open (M3, M4, M8, O3) and five
+new problems. Each was fixed with a regression test where one fits; what stays open is under
+"Known limits (for b4)" above. No `apps/` file, runtime code path, migration or log line changed
+(tests, reviewed files and one matrix row only); no new Q-K.
+
+| Item | Fix | Test (mutation row) |
+|---|---|---|
+| M4, specimen: `W specimen/{external_id}/ lab:allow` named only ExactGrants, and `MatrixFiles.SCOPED` missed it | `SCOPED` covers `/specimen/{external_id}/`; the department test sends PUT and PATCH as the Lab Technician to the lab copy's specimen (200, no marker of another copy) and the ward copy's (403/404); the report update is sent as PATCH too | `AllowedWrites.test_department_writes_keep_to_their_own_copy`, which now also asserts it sent every allowed cell of the rows naming it; `MatrixFiles` (cutting the row back to ExactGrants fails) |
+| M4, desk writes: invoice, payment, booking and token writes were status checks only | `DeskWrites.test_desk_writes_with_bodies`: 39 writes with valid bodies (bookings and slots, queues and tokens, accounts, invoices, payments) sent as every role of ours and the moved Nurse; each allowed role gets a 2xx whose answer holds no marker beyond its exemptions (plus `WRITE_EXEMPTIONS`: an invoice names its charges, Q-K38 A); `MatrixFiles` makes every allowed write on these routes name it, and the test asserts it sent every such cell. It found one misclassified row: `account/default_account/` creates nothing and checks `can_read_account` only, so the TPA Desk gets it as every reader of accounts does (`rec,billing:allow`; `role_matrix_writes.txt` drops `tpa` there) | that test (dropping `WRITE_EXEMPTIONS` fails it on the invoice attaches) |
+| M3: `body` write cells never proved a valid body is refused | on the desk and department routes every denied role of ours now sends the same valid body and must be refused by authorization (401/403/404, or CARE's upsert 400 whose every datapoint is a permission refusal: `refused()`); elsewhere a known limit (no valid-body crawl, item 14) | `DeskWrites`, `AllowedWrites.test_department_writes_keep_to_their_own_copy` |
+| M8: a stale reason; the mutation row not re-run | the `delivery_orders/` reason corrected; the Doctor's `deny` on the store rows is CARE's correct answer (no inventory right at the store) | `access-delivery-patient` re-run: 20 failures (`StoreRows` 1, canary 15, `test_role_matrix` 3, `PatientReturns` 1) |
+| O3: a Redis error would turn the health rows into 500 | the probe test also asserts the check answers `(200, {"queue_length": 0})` from the empty test queue; an outage stays a loud failure (known limit) | `RoleMatrix.test_the_health_probe_reads_an_empty_test_queue` |
+| NEW-1: the static `list_params` check skipped every patient route | for a route under a patient, every key its view's classes read by name besides `encounter` (and paging) must be named by a line, and a read of no literal key needs a line; 13 reviewed `none:` lines added (EncounterBasedAuthorizationBase's pharmacist `facility` on consent, diagnosis, symptom, observation, statement and administration; `service_request` on a report retrieve) and the questionnaire-response lines name their keys | `ListParams.test_every_list_reading_the_query_has_a_row`, `test_a_patient_route_reading_another_key_needs_a_line` (`access-list-params-patient-key`) |
+| NEW-2: a `none` line accepted every key; the POST reads recorded nothing | `none:key1,key2` names each reviewed optional key (a bare `none` names none) and the runtime check requires every read key to be named; the POST-read loop records under `POST <route>`, named by post_reads.txt assignments or a `none:` line (it surfaced `facility` on `search_retrieve`: CARE's tag context, dropped by the projection); 38 `none` lines now carry their keys | `RoleMatrix.test_every_query_read_has_a_params_line`, `MatrixFiles.test_a_new_optional_key_is_caught` (`access-list-params-none-keys`, `access-post-read-recorded`) |
+| NEW-3: nothing proved the Lab Technician cannot update the ward specimen | as M4, specimen | as M4 |
+| NEW-4: stale reason at role_matrix.txt:308 | corrected | — |
+| NEW-5: the visit check refuses a create that names `?encounter=` | kept fail-closed (no web-app call sends it); a known limit, pinned | `test_visits.VisitParam.test_a_create_naming_a_visit_is_refused` |
+
+**Checks after the second fix pass (2026-11-15; no runtime code changed, so no restart):**
+
+| Run | Result |
+|---|---|
+| Plugin suites, `IHR_DB_ROLES=test` (the nine labels) | `Ran 912 tests in 924.262s` `OK (skipped=45)`; Redis audit 970 keys, all tenant-prefixed (17 min 28 s with the test database); GET crawl 3,355 requests 45.7 s, write crawl 3,045 requests 38.6 s |
+| Plugin suites, roles off | `Ran 877 tests in 879.565s` `OK (skipped=49)`; Redis audit 970 keys, all tenant-prefixed (16 min 44 s); GET crawl 37.9 s, write crawl 26.6 s |
+| The matrix module alone (`ihr_access.tests.test_role_matrix`, 30 tests, `--keepdb`) | `Ran 30 tests in 86.090s` `OK` (DeskWrites and the department test add about 10 s) |
+| The 3 new rows and the re-run `access-delivery-patient` and `access-list-params-pharmacist`, each applied alone to a scratch copy of `plugins/` | each named test FAILED (an assertion, never an ERROR): `access-list-params-patient-key` 1, `access-list-params-none-keys` 1, `access-post-read-recorded` 1 ("the POST reads were not recorded"), `access-delivery-patient` 20, `access-list-params-pharmacist` 1 |
+| `scripts/isolation-mutation.sh check` | 143 rows (140 + 3 new), every target and named test found |
+| `python3 scripts/check-logs.py` | `Log pipeline OK.` |
+| `scripts/batch-allowlist.py --check` | `batch-allowlist: 37 routes, list current` |
+| `pre-commit run --all-files` | 43 hooks passed |

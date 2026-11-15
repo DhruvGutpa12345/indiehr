@@ -23,6 +23,9 @@ When a shape applies:
 - patient, encounter, location (bed occupant), device: the user is restricted, or our widening
   branch forced projection (P1-T11b2). A patient under one of the user's live records grants is
   not projected, nor are that patient's encounters (MRD, P1-T11b4);
+- patient, encounter (the chart rule, P1-T11b3): the user holds only roles of ours, one of them
+  clinical (the Radiologist, ``state.chart_limited``), and CARE gives them no clinical data on
+  that patient: an imaging request or report embeds the whole patient and visit (Q-K44 A);
 - booking, token: only under forced projection, so the Receptionist's own CARE-granted booking
   and token screens keep their notes and resources.
 
@@ -88,6 +91,12 @@ class Shape:
     exempt_by: str = (
         ""  # attribute of the CARE object naming its patient, for grant exemption
     )
+    # how to reach the object's patient for the chart rule ("" for the object itself), or None
+    # where the rule does not apply (P1-T11b3)
+    chart: str | None = None
+    # base classes CARE also serializes directly, wrapped with this shape too (P1-T11b3's spec
+    # walk: a medication dispense embeds its visit through EncounterSpecBase)
+    also: tuple = ()
     rules: dict = field(default_factory=dict)  # path -> verb
     fields: dict = field(
         default_factory=dict
@@ -108,12 +117,21 @@ class Shape:
         if self.forced_only:
             return current.forced
         if not (current.forced or current.restricted):
-            return False
+            return self._chart_withheld(current, obj)
         if self.exempt_by:
             patient = getattr(obj, self.exempt_by, None)
             if patient is not None and patient in current.granted_patients:
                 return False
         return True
+
+    def _chart_withheld(self, current, obj):
+        """The chart rule: a user of our roles only who holds a clinical one (the Radiologist)
+        sees a patient or visit unprojected only where CARE gives them that patient's clinical
+        data; an imaging request or report of another patient embeds both (Q-K44 A)."""
+        if self.chart is None or not current.chart_limited:
+            return False
+        patient = getattr(obj, self.chart) if self.chart else obj
+        return patient is not None and not current.may_read_chart(patient)
 
     def reset(self, name):
         info = self.fields.get(name)
@@ -126,12 +144,17 @@ class Shape:
 
 SHAPES = {
     "patient": Shape(
-        "patient", "care.emr.resources.patient.spec.PatientListSpec", exempt_by="pk"
+        "patient",
+        "care.emr.resources.patient.spec.PatientListSpec",
+        exempt_by="pk",
+        chart="",
     ),
     "encounter": Shape(
         "encounter",
         "care.emr.resources.encounter.spec.EncounterListSpec",
         exempt_by="patient_id",
+        chart="patient",
+        also=("care.emr.resources.encounter.spec.EncounterSpecBase",),
     ),
     "location": Shape(
         "location", "care.emr.resources.location.spec.FacilityLocationListSpec"
@@ -308,6 +331,10 @@ def install():
         original = base.serialize.__func__
         base.serialize = _wrapper(shape, original)
         _installed[shape.name] = base
+        for dotted in shape.also:
+            # its own serialize only: the shape's class above already has its own wrapper
+            extra = import_string(dotted)
+            extra.serialize = _wrapper(shape, extra.serialize.__func__)
 
 
 def problems():
@@ -320,7 +347,13 @@ def problems():
         except ImportError:
             found.append(f"{shape.base} no longer exists (moved upstream?)")
             continue
-        for cls in classes_of(base):
+        classes = classes_of(base)
+        for dotted in shape.also:
+            try:
+                classes = [*classes, *classes_of(import_string(dotted))]
+            except ImportError:
+                found.append(f"{dotted} no longer exists (moved upstream?)")
+        for cls in dict.fromkeys(classes):
             if getattr(cls.serialize, MARKER, None) != shape.name:
                 found.append(
                     f"{cls.__module__}.{cls.__qualname__}.serialize is not guarded"

@@ -1,0 +1,210 @@
+# Query and path parameters for the role matrix (P1-T11b3; design-b.md "After the attack" §10
+# item 12). The isolation crawl fills path parameters only (routes.fill()), so CARE's lists that
+# need a facility, a patient, an encounter or a place would answer every role alike (400 or
+# empty) and the branches behind them would go untested.
+#
+# One line per extra request of a route: <route> ?<name>=<world object>[&...]  # why
+#   name=obj        a query parameter: that object's id (ihr_access.testing world.objects)
+#   name=obj.attr   a query parameter: that attribute of the object
+#   name~text       a query parameter with a literal value
+#   {param}=obj     the path parameter takes that object's id instead of its model's default
+# The route with no parameters is always requested as well. Its key in role_matrix.txt is the
+# route plus the assignments, exactly as written here.
+# <route> none[:key1,key2]  # why: a route whose view reads the query string but needs no extra
+# request here; ``none:`` names each optional key reviewed (a bare ``none`` names none). Every
+# query key the crawl sees CARE's or our code read on a route (POST reads included, as
+# ``POST <route>``: their keys also come from post_reads.txt assignments) must be named by a
+# variant or a ``none:`` key of that route (RoleMatrix.test_every_query_read_has_a_params_line;
+# review NEW-2: a new key CARE starts to read fails until reviewed). A line is also required for
+# every route whose view class reads the query anywhere in its own or inherited code (ListParams,
+# a static walk of the MRO), detail routes and actions included. Every route under a patient is
+# also requested with ?encounter=encounter_b (matrix.CROSS, generated: another patient's visit,
+# review K1/K2); that covers its "encounter" key, and only that one: any other key its classes
+# read by name must be named by a line (ListParams, review NEW-1).
+
+# --- patients and encounters -------------------------------------------------------------
+/api/v1/patient/ ?organization=district  # CARE's geographic patient list (our roles: empty)
+/api/v1/patient/{external_id}/ ?{external_id}=patient_b  # the patient with Radiology on the visit (Q-K44 A)
+/api/v1/patient/{external_id}/get_appointments/ ?facility=facility  # restricted users must name the facility ("After the attack" §5.2)
+/api/v1/patient/{external_id}/get_tokens/ ?facility=facility  # as get_appointments
+/api/v1/encounter/ ?facility=facility  # the facility status view (b2's ?facility branch)
+/api/v1/encounter/ ?patient=patient  # a patient's visits (b2's ?patient branch)
+/api/v1/encounter/ ?patient=patient_b  # the Radiology visit (Q-K44 A)
+/api/v1/encounter/ ?facility=facility&location=location  # a filter off encounter_filters.txt (the bed): 400 on our branch
+/api/v1/encounter/{external_id}/ ?{external_id}=encounter_b  # the Radiology visit
+/api/v1/encounter/{external_id}/ ?{external_id}=encounter_done  # a finished visit
+/api/v1/patient/{patient_external_id}/diagnosis/ ?{patient_external_id}=patient_b  # the Radiology patient's problem list
+/api/v1/patient/{patient_external_id}/diagnosis/{external_id}/ ?{patient_external_id}=patient_b&{external_id}=condition_b  # one of them
+/api/v1/patient/{patient_external_id}/allergy_intolerance/ none  # encounter is an optional filter
+/api/v1/patient/{patient_external_id}/questionnaire_response/ none:only_unstructured,questionnaire_slugs  # optional filters after CARE's authorization (encounter: the generated cross-patient variant)
+/api/v1/patient/{patient_external_id}/thread/ ?encounter=encounter  # encounter decides who is authorized (CARE's copy of authorize_read_encounter) and filters the list; another patient's visit: the generated variant
+/api/v1/patient/{patient_external_id}/thread/{thread_external_id}/note/ ?encounter=encounter  # encounter decides who is authorized; the list is not filtered by it (by the thread only)
+/api/v1/patient/{patient_external_id}/consent/ ?encounter=encounter  # encounter decides who is authorized (authorize_read_encounter) and filters the list
+/api/v1/patient/{patient_external_id}/symptom/ ?encounter=encounter  # as consent
+/api/v1/patient/{patient_external_id}/diagnosis/ ?encounter=encounter  # as consent
+/api/v1/patient/{patient_external_id}/medication/statement/ ?encounter=encounter  # as consent
+/api/v1/patient/{patient_external_id}/medication/administration/ ?encounter=encounter  # as consent
+/api/v1/patient/{patient_external_id}/medication/request/ ?encounter=encounter  # as consent
+/api/v1/patient/{patient_external_id}/medication/request/ ?facility=facility  # CARE's pharmacist branch (authorize_for_pharmacist): no role here is a pharmacist of ours
+/api/v1/patient/{patient_external_id}/medication/request/{external_id}/ ?facility=facility  # the pharmacist branch on a retrieve
+/api/v1/patient/{patient_external_id}/medication/prescription/ ?encounter=encounter  # as consent
+/api/v1/patient/{patient_external_id}/medication/prescription/ ?facility=facility  # the pharmacist branch
+/api/v1/patient/{patient_external_id}/medication/prescription/{external_id}/ ?facility=facility  # the pharmacist branch on a retrieve
+/api/v1/form_submission/ ?encounter=encounter&patient=patient  # CARE needs both
+
+# Patient routes whose view's classes read a key besides encounter by name (ListParams' static
+# walk, review NEW-1), with no variant needed here
+/api/v1/patient/{patient_external_id}/consent/ none:facility  # EncounterBasedAuthorizationBase's pharmacist branch (authorize_for_pharmacist) reads facility; this viewset never calls it (in CARE only the medication request and prescription do, which have ?facility=facility lines)
+/api/v1/patient/{patient_external_id}/consent/{external_id}/ none:facility  # EncounterBasedAuthorizationBase's pharmacist branch (authorize_for_pharmacist) reads facility; this viewset never calls it (in CARE only the medication request and prescription do, which have ?facility=facility lines)
+/api/v1/patient/{patient_external_id}/diagnosis/ none:facility  # EncounterBasedAuthorizationBase's pharmacist branch (authorize_for_pharmacist) reads facility; this viewset never calls it (in CARE only the medication request and prescription do, which have ?facility=facility lines)
+/api/v1/patient/{patient_external_id}/diagnosis/{external_id}/ none:facility  # EncounterBasedAuthorizationBase's pharmacist branch (authorize_for_pharmacist) reads facility; this viewset never calls it (in CARE only the medication request and prescription do, which have ?facility=facility lines)
+/api/v1/patient/{patient_external_id}/medication/administration/ none:facility  # EncounterBasedAuthorizationBase's pharmacist branch (authorize_for_pharmacist) reads facility; this viewset never calls it (in CARE only the medication request and prescription do, which have ?facility=facility lines)
+/api/v1/patient/{patient_external_id}/medication/administration/{external_id}/ none:facility  # EncounterBasedAuthorizationBase's pharmacist branch (authorize_for_pharmacist) reads facility; this viewset never calls it (in CARE only the medication request and prescription do, which have ?facility=facility lines)
+/api/v1/patient/{patient_external_id}/medication/statement/ none:facility  # EncounterBasedAuthorizationBase's pharmacist branch (authorize_for_pharmacist) reads facility; this viewset never calls it (in CARE only the medication request and prescription do, which have ?facility=facility lines)
+/api/v1/patient/{patient_external_id}/medication/statement/{external_id}/ none:facility  # EncounterBasedAuthorizationBase's pharmacist branch (authorize_for_pharmacist) reads facility; this viewset never calls it (in CARE only the medication request and prescription do, which have ?facility=facility lines)
+/api/v1/patient/{patient_external_id}/observation/ none:facility  # EncounterBasedAuthorizationBase's pharmacist branch (authorize_for_pharmacist) reads facility; this viewset never calls it (in CARE only the medication request and prescription do, which have ?facility=facility lines)
+/api/v1/patient/{patient_external_id}/observation/{external_id}/ none:facility  # EncounterBasedAuthorizationBase's pharmacist branch (authorize_for_pharmacist) reads facility; this viewset never calls it (in CARE only the medication request and prescription do, which have ?facility=facility lines)
+/api/v1/patient/{patient_external_id}/symptom/ none:facility  # EncounterBasedAuthorizationBase's pharmacist branch (authorize_for_pharmacist) reads facility; this viewset never calls it (in CARE only the medication request and prescription do, which have ?facility=facility lines)
+/api/v1/patient/{patient_external_id}/symptom/{external_id}/ none:facility  # EncounterBasedAuthorizationBase's pharmacist branch (authorize_for_pharmacist) reads facility; this viewset never calls it (in CARE only the medication request and prescription do, which have ?facility=facility lines)
+/api/v1/patient/{patient_external_id}/diagnostic_report/{external_id}/ none:service_request  # read by the list's authorization only (get_queryset returns before it on a retrieve); the list has its ?service_request lines
+
+# --- orders, specimens, reports and results: the ward (default), lab and imaging copies ----
+/api/v1/facility/{facility_external_id}/service_request/ ?location=lab_location  # the Laboratory's queue
+/api/v1/facility/{facility_external_id}/service_request/ ?location=ward  # the ward's requests
+/api/v1/facility/{facility_external_id}/service_request/ ?location=xray_location  # the Radiology room's queue
+/api/v1/facility/{facility_external_id}/service_request/ ?encounter=encounter  # a visit's requests
+/api/v1/facility/{facility_external_id}/service_request/{external_id}/ ?{external_id}=lab_service_request  # the lab copy
+/api/v1/facility/{facility_external_id}/service_request/{external_id}/ ?{external_id}=xray_service_request  # the imaging copy
+/api/v1/facility/{facility_external_id}/specimen/{external_id}/ ?{external_id}=lab_specimen  # the lab copy
+/api/v1/patient/{patient_external_id}/diagnostic_report/ ?service_request=lab_service_request  # the lab copy's reports
+/api/v1/patient/{patient_external_id}/diagnostic_report/ ?service_request=xray_service_request  # the imaging copy's reports
+/api/v1/patient/{patient_external_id}/diagnostic_report/ ?encounter=encounter  # a visit's reports
+/api/v1/patient/{patient_external_id}/diagnostic_report/{external_id}/ ?{external_id}=lab_diagnostic_report  # the lab copy
+/api/v1/patient/{patient_external_id}/diagnostic_report/{external_id}/ ?{external_id}=xray_diagnostic_report  # the imaging copy
+/api/v1/patient/{patient_external_id}/observation/ ?encounter=encounter  # a visit's results
+/api/v1/patient/{patient_external_id}/observation/{external_id}/ ?{external_id}=lab_observation  # the lab copy
+
+# --- places, beds and devices ---------------------------------------------------------------
+/api/v1/facility/{facility_external_id}/device/ ?location=ward  # CARE's device list by place (review O1: read behind our swap); closed to our roles
+/api/v1/facility/{facility_external_id}/location/ none:mine,parent  # parent is an optional filter
+/api/v1/facility/{facility_external_id}/location/{external_id}/ ?{external_id}=lab_location  # a Laboratory place
+/api/v1/facility/{facility_external_id}/location/{external_id}/ ?{external_id}=store_location  # the Stores place
+/api/v1/facility/{facility_external_id}/location/{location_external_id}/association/ ?{location_external_id}=lab_location  # a place the Lab Technician may list, with the patient's earlier stop
+/api/v1/facility/{facility_external_id}/location/{location_external_id}/product/ none:include_children  # include_children is optional
+/api/v1/facility/{facility_external_id}/location/{location_external_id}/product/ ?{location_external_id}=store_location  # the store's stock
+
+# --- billing --------------------------------------------------------------------------------
+/api/v1/facility/{facility_external_id}/invoice/ ?account=account  # an account's bills
+/api/v1/template_reports/ ?report_type~account_report&associating_id=account  # an account's reports (Q-K41)
+/api/v1/facility/{facility_external_id}/charge_item_definition/ none:category  # category and include_children are optional
+/api/v1/facility/{facility_external_id}/charge_item_definition/favorite_lists/ none  # as the list
+
+# --- scheduling and queues ------------------------------------------------------------------
+/api/v1/facility/{facility_external_id}/schedule/ ?resource_type~practitioner&resource_id=doctor_user  # a doctor's schedules
+/api/v1/facility/{facility_external_id}/schedule_exceptions/ ?resource_type~practitioner&resource_id=doctor_user  # a doctor's leave
+/api/v1/facility/{facility_external_id}/appointments/ ?resource_type~practitioner&resource_ids=doctor_user  # a doctor's bookings
+/api/v1/facility/{facility_external_id}/appointments/available_users/ none:organization_ids  # optional filters
+/api/v1/facility/{facility_external_id}/token/queue/ ?resource_type~practitioner&resource_id=doctor_user  # a doctor's queues
+/api/v1/facility/{facility_external_id}/token/sub_queue/ ?resource_type~practitioner&resource_id=doctor_user  # a doctor's sub-queues
+
+# --- the store ------------------------------------------------------------------------------
+/api/v1/facility/{facility_external_id}/order/delivery/ ?destination=store_location  # the store's incoming orders
+/api/v1/facility/{facility_external_id}/order/delivery/{external_id}/ ?{external_id}=return_order  # the patient's return (Q-K43 A)
+/api/v1/facility/{facility_external_id}/order/dispense/ ?location=store_location  # the store's dispense orders
+/api/v1/facility/{facility_external_id}/order/request/ none:destination,include_children,origin  # origin, destination and include_children are optional
+/api/v1/supply_delivery/ ?destination=store_location  # deliveries into the store
+/api/v1/supply_delivery/{external_id}/ ?{external_id}=return_delivery  # the patient's return (Q-K43 A)
+/api/v1/supply_delivery/delivery_orders/ ?request_order=request_order  # the orders delivered against the store's request order: the stock order and the patient's return (review M8, Q-K43 A)
+/api/v1/supply_request/ ?destination=store_location  # requests to the store
+/api/v1/supply_request/request_orders/ ?delivery_order=delivery_order  # the request orders behind the stock order (CARE needs delivery_order)
+/api/v1/medication/dispense/ ?location=store_location  # medicines dispensed at the store
+/api/v1/medication/dispense/ ?encounter=encounter  # a visit's medicines
+/api/v1/medication/dispense/summary/ ?location=store_location  # as the list
+/api/v1/product_knowledge/ ?facility=facility  # the hospital's products
+/api/v1/product_knowledge/favorite_lists/ none:facility  # optional filters
+
+# --- records, files and settings ------------------------------------------------------------
+/api/v1/files/ ?file_type~patient&associating_id=patient  # a patient's files
+/api/v1/meta_artifacts/ ?associating_type~patient&associating_id=patient  # a patient's drawings
+/api/v1/tag_config/ ?facility=facility  # the hospital's tags
+/api/v1/patient_identifier_config/ ?facility=facility  # the hospital's identifier settings
+/api/v1/observation_definition/ ?facility=facility  # the hospital's result definitions
+/api/v1/observation_definition/metrics/ none  # facility is optional
+/api/v1/template/ ?facility=facility  # the hospital's report templates
+/api/v1/template/schema/ none  # facility is optional
+/api/v1/organization/ none:parent,permission  # parent and permission are optional
+/api/v1/organization/accessible_role_organizations/ none  # as the list
+/api/v1/organization/mine/ none  # as the list
+/api/v1/facility/{facility_external_id}/organizations/ none:containing_user,parent  # containing_user and parent are optional
+/api/v1/facility/{facility_external_id}/organizations/favorite_lists/ none  # as the list
+/api/v1/facility/{facility_external_id}/organizations/mine/ none  # as the list
+/api/v1/facility/{facility_external_id}/activity_definition/ none:category  # category and include_children are optional
+/api/v1/facility/{facility_external_id}/activity_definition/favorite_lists/ none  # as the list
+/api/v1/facility/{facility_external_id}/resource_category/ none:parent  # parent is optional
+
+# --- routes whose view reads an optional key (RoleMatrix.test_every_query_read_has_a_params_line
+# saw the read; nothing to vary here) ----------------------------------------------------------
+/api/ihr/auth/callback/ none:state  # the sign-in flow's own state (ihr_identity tests it); no hospital data
+/api/ihr/auth/login/ none:next,reauth  # next and reauth steer the sign-in redirect (ihr_identity tests them)
+/api/ihr/join/ none:t  # the invitation token of the join flow (ihr_identity tests it)
+/api/v1/facility/{facility_external_id}/device/{external_id}/ none:location  # CARE's queryset reads location on a retrieve too (optional); devices are closed to our roles
+/api/v1/facility/{facility_external_id}/invoice/{external_id}/ none:payment_reconciliation_present  # payment_reconciliation_present: an optional filter of the queryset, read on a retrieve too
+/api/v1/facility/{facility_external_id}/location/{external_id}/organizations/ none:mine,parent  # mine and parent: optional filters of the place queryset
+/api/v1/facility/{facility_external_id}/organizations/{external_id}/ none:containing_user,parent  # containing_user and parent: optional filters, read on a retrieve too
+/api/v1/govt/organization/ none:parent  # parent: an optional filter of the public government list (P1-T20a)
+/api/v1/govt/organization/{external_id}/ none:parent  # as the list
+/api/v1/organization/{external_id}/ none:parent,permission  # parent and permission: optional filters, read on a retrieve too
+/api/v1/patient/{external_id}/get_users/ none:organization  # organization: an optional filter of CARE's patient queryset
+/api/v1/patient/{patient_external_id}/questionnaire_response/{external_id}/ none:only_unstructured,questionnaire_slugs  # only_unstructured and questionnaire_slugs: optional filters; encounter decides nothing on a retrieve (the row's own visit), and the cross-patient variant is generated
+/api/v1/questionnaire/favorite_lists/ none:facility  # facility: optional
+
+# --- routes whose view class reads the query elsewhere (ListParams' static walk of the MRO;
+# the crawl saw no read on the route itself) --------------------------------------------------
+/api/ihr/audit/entries/ none  # the audit viewer's own filters (ihr_audit tests them); no one in this world may open it
+/api/ihr/audit/export/ none  # as entries
+/api/v1/encounter/{external_id}/organizations/ none  # static walk: EncounterViewSet reads facility and patient in its list; this action read none in the crawl
+/api/v1/facility/{facility_external_id}/appointments/{external_id}/ none  # static walk: TokenBookingViewSet reads its filters in the list; a retrieve read none in the crawl
+/api/v1/facility/{facility_external_id}/charge_item_definition/{slug}/ none  # static walk: the list's category and favourites filters; a retrieve read none
+/api/v1/facility/{facility_external_id}/location/{location_external_id}/product/{external_id}/ none  # static walk: the list's include_children; a retrieve read none
+/api/v1/facility/{facility_external_id}/order/dispense/{external_id}/ none  # static walk: the list's location; a retrieve read none (closed to our roles)
+/api/v1/facility/{facility_external_id}/schedule/{external_id}/ none  # static walk: the list's resource_type and resource_id; a retrieve read none
+/api/v1/facility/{facility_external_id}/token/queue/{external_id}/ none  # static walk: the list's resource_type and resource_id; a retrieve read none
+/api/v1/facility/{facility_external_id}/token/queue/{external_id}/summary/ none  # as the queue
+/api/v1/files/{external_id}/ none  # static walk: the list's file_type and associating_id; a retrieve read none
+/api/v1/form_submission/{external_id}/ none  # static walk: the list's encounter and patient; a retrieve read none
+/api/v1/medication/dispense/{external_id}/ none  # static walk: the list's location and encounter; a retrieve read none
+/api/v1/meta_artifacts/{external_id}/ none  # static walk: the list's associating_type and associating_id; a retrieve read none
+/api/v1/patient_identifier_config/{external_id}/ none  # static walk: the list's facility; a retrieve read none
+/api/v1/product_knowledge/{slug}/ none  # static walk: the list's facility and favourites; a retrieve read none
+/api/v1/questionnaire/ none  # static walk: the favourites mixin's favorite_list (narrows to the caller's own list)
+/api/v1/questionnaire/{slug}/ none  # as the list
+/api/v1/questionnaire/{slug}/get_organizations/ none  # as the list
+/api/v1/tag_config/{external_id}/ none  # static walk: the list's facility; a retrieve read none
+/api/v1/template/{slug}/ none  # static walk: the list's facility; a retrieve read none
+/api/v1/template_reports/{external_id}/ none  # static walk: the list's report_type and associating_id; a retrieve read none
+/api/v1/valueset/ none  # static walk: ValueSetViewSet's own actions; the list read none
+/api/v1/facility/{facility_external_id}/order/request/{external_id}/ none  # static walk: the list's origin, destination and include_children; a retrieve read none
+/api/v1/supply_request/{external_id}/ none  # static walk: the list's origin, destination and order; a retrieve read none
+
+# --- variants and optional keys the runtime read check surfaced (review M2/O1) -----------------
+/api/v1/patient/search_retrieve/ none:facility  # a POST read (post_reads.txt): CARE's serializer context reads ?facility (or the body's), asks can_list_facility_tag_config and adds that facility's tags, which the projection drops for our roles (patient.txt; the GET ?facility=facility variant of the patient proves it)
+/api/v1/patient/{external_id}/ ?facility=facility  # the web app's patient request names the facility (b2's C1: our branch only checks it exists)
+/api/v1/facility/{facility_external_id}/order/delivery/ ?origin=store_location  # orders leaving the store (none in this world)
+/api/v1/supply_delivery/ ?request_order=request_order  # deliveries against the store's request order: the stock delivery and the patient's return (Q-K43 A)
+/api/v1/supply_delivery/ ?order=delivery_order  # the stock order's deliveries
+/api/v1/facility/{facility_external_id}/appointments/ none:organization_ids  # organization_ids: an optional filter
+/api/v1/facility/{facility_external_id}/device/ none:include_children  # include_children: optional with location
+/api/v1/facility/{facility_external_id}/invoice/ none:payment_reconciliation_present  # payment_reconciliation_present: an optional filter
+/api/v1/facility/{facility_external_id}/location/{external_id}/ none:mine,parent  # mine and parent: optional filters of the place queryset, read on a retrieve too
+/api/v1/facility/{facility_external_id}/order/delivery/ none:include_children  # include_children: optional with destination or origin
+/api/v1/medication/dispense/ none:include_children  # include_children: optional with location
+/api/v1/medication/dispense/summary/ none:encounter,include_children  # encounter and include_children: optional with location
+/api/v1/patient/{external_id}/ none:organization  # organization: an optional filter of CARE's patient queryset
+/api/v1/patient/{external_id}/get_appointments/ none:organization  # organization: as the patient
+/api/v1/patient/{external_id}/get_tokens/ none:organization  # organization: as the patient
+/api/v1/product_knowledge/ none:category,include_instance  # category and include_instance: optional filters
+/api/v1/supply_delivery/ none:include_children,origin  # include_children and origin: optional with destination
+/api/v1/supply_delivery/delivery_orders/ none:destination,include_children,order,origin  # destination, origin, order and include_children: optional with request_order (which CARE needs)
+/api/v1/supply_request/ none:include_children,order,origin  # include_children, order and origin: optional with destination
+/api/v1/tag_config/ none:facility_only  # facility_only: optional with facility
+/api/v1/template/ none:facility_only  # facility_only: optional with facility

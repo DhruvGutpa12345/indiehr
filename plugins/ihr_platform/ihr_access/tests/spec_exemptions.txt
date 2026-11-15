@@ -1,0 +1,15 @@
+# CARE's (and our) specs of the Patient and Encounter models that do not carry the serializer
+# guard (P1-T11b3; design-b.md "After the attack" §10 item 16). Every other such spec must
+# serialize through the guard (SpecWalk). One line: <dotted class> write|base|exempt  # why
+#   write, base: never a viewset's read model and never serialized in CARE's or our code
+#   (checked); exempt: serialized, and why that is safe for our roles.
+care.emr.resources.encounter.spec.EncounterCreateSpec write  # the create body; answers are EncounterRetrieveSpec
+care.emr.resources.encounter.spec.EncounterUpdateSpec write  # the update body; answers are EncounterRetrieveSpec
+care.emr.resources.patient.spec.PatientBaseSpec base  # the fields CARE's patient specs share; serialized only through PatientListSpec and its subclass
+care.emr.resources.patient.spec.PatientCreateSpec write  # the registration body; answers are PatientRetrieveSpec
+care.emr.resources.patient.spec.PatientUpdateSpec write  # the update body; answers are PatientRetrieveSpec
+care.emr.resources.patient.spec.PatientPartialSpec exempt  # search's partial matches: name, gender, phone number and the first five characters of the id only (demographics); the search gate refuses Owner, Lab Technician and Store Keeper (Q-K40)
+care.emr.resources.patient.otp_based_flow.PatientOTPBaseSpec base  # the patient OTP flow's shared fields
+care.emr.resources.patient.otp_based_flow.PatientOTPWriteSpec write  # a patient's own registration over OTP
+care.emr.resources.patient.otp_based_flow.PatientOTPReadSpec exempt  # the patient OTP flow only: a patient reading their own record and bookings (public_routes.py trims the booking); a staff session is never an OTP caller
+ihr_access.edit.DemographicsSpec write  # our edit rule's narrow write spec (edit.py): validates and writes the edit-list fields, never serialized

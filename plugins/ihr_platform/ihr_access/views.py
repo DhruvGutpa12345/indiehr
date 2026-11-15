@@ -17,12 +17,14 @@ sub-requests; ihr_platform.E020 refuses to serve if a swap did not take.
   (``fields/encounter_filters.txt``: 400 on any other parameter). Retrieve: CARE's
   ``authorize_retrieve`` first, then our slug. Create: restricted users cannot set clinical
   fields.
-- **Refused to restricted users**: bed history (location associations), resource requests and
-  their comments, device retrieve and actions (the list is empty), account reports and every
-  report generation (Q-K41).
-- **Delivery orders and supply deliveries**: rows linked to a patient are absent for restricted
-  users, and they cannot make one (Q-K43). **Dispense orders** (each names its patient) are
-  closed to them: an empty list, 403 otherwise.
+- **Refused to restricted users**: bed history (location associations), account reports and
+  every report generation (Q-K41).
+- **Closed to restricted users and to users of our roles only** (``branches.closed``, the
+  Radiologist included; P1-T11b3's matrix found CARE's membership-only lists showing the
+  Radiologist other patients, Q-K44 A): resource requests and their comments, device retrieve
+  and actions (the list is empty); delivery orders and supply deliveries linked to a patient
+  are absent and cannot be made (Q-K43); **dispense orders** (each names its patient): an empty
+  list, 403 otherwise.
 
 Every widening branch calls ``branches.widen()``: the rest of the request is projected.
 """
@@ -42,6 +44,11 @@ from care.emr.api.viewsets.resource_request import (
     ResourceRequestCommentViewSet,
     ResourceRequestViewSet,
 )
+from care.emr.api.viewsets.scheduling.availability import (
+    SlotsForDayRequestSpec,
+    SlotViewSet,
+)
+from care.emr.api.viewsets.scheduling.schedule import get_schedulable_resource
 from care.emr.models import Patient
 from care.emr.models.device import Device
 from care.emr.models.medication_dispense import DispenseOrder
@@ -533,11 +540,11 @@ class IhrLocationEncounterViewSet(FacilityLocationEncounterViewSet):
 
 class _ResourceRequestGate:
     """CARE checks no permission on resource requests beyond membership, and they name the
-    related patient (resource_request.py)."""
+    related patient (resource_request.py): closed to ``branches.closed`` users."""
 
     def initial(self, request, *args, **kwargs):
         super().initial(request, *args, **kwargs)
-        if branches.restricted(request.user):
+        if branches.closed(request.user):
             raise PermissionDenied(RESOURCE_REQUESTS_REFUSED)
 
 
@@ -553,15 +560,16 @@ class IhrResourceRequestCommentViewSet(
 
 class IhrDeviceViewSet(DeviceViewSet):
     """CARE lists and opens devices for any member of the facility, with the patient on each
-    (A2). No restricted role has a device job: an empty list, 403 for everything else."""
+    (A2). None of our roles has a device job: for ``branches.closed`` users an empty list, 403
+    for everything else."""
 
     def initial(self, request, *args, **kwargs):
         super().initial(request, *args, **kwargs)
-        if self.action != "list" and branches.restricted(request.user):
+        if self.action != "list" and branches.closed(request.user):
             raise PermissionDenied(DEVICES_REFUSED)
 
     def get_queryset(self):
-        if branches.restricted(self.request.user):
+        if branches.closed(self.request.user):
             return Device.objects.none()
         return super().get_queryset()
 
@@ -606,7 +614,7 @@ class _NoPatientRows:
 
     def get_queryset(self):
         queryset = super().get_queryset()
-        if branches.restricted(self.request.user):
+        if branches.closed(self.request.user):
             queryset = without_patients(queryset, self.patient_path)
         return queryset
 
@@ -614,7 +622,7 @@ class _NoPatientRows:
         # CARE's upsert finds rows by id without get_queryset
         linked = instance.__class__.objects.filter(pk=instance.pk)
         if (
-            branches.restricted(self.request.user)
+            branches.closed(self.request.user)
             and not without_patients(linked, self.patient_path).exists()
         ):
             raise Http404
@@ -625,7 +633,7 @@ class _NoPatientRows:
         cannot make a patient-linked row either, whose answer would name the patient
         (review W5)."""
         data = super().clean_create_data(request_data)
-        if branches.restricted(self.request.user) and hasattr(data, "get"):
+        if branches.closed(self.request.user) and hasattr(data, "get"):
             self.refuse_patient_link(data)
         return data
 
@@ -661,7 +669,7 @@ class IhrDispenseOrderViewSet(DispenseOrderViewSet):
 
     def _closed(self):
         user = self.request.user
-        return branches.restricted(user)
+        return branches.closed(user)
 
     def initial(self, request, *args, **kwargs):
         super().initial(request, *args, **kwargs)
@@ -672,3 +680,26 @@ class IhrDispenseOrderViewSet(DispenseOrderViewSet):
         if self._closed():
             return DispenseOrder.objects.none()
         return super().get_queryset()
+
+
+class IhrSlotViewSet(SlotViewSet):
+    """CARE's ``get_slots_for_day`` checks no right ("TODO: Add Authorization"): every member of
+    the hospital read any doctor's or room's day, its schedule included, though only the front
+    desk holds the booking right (P1-T11b3 review fixes: the matrix's POST reads). For
+    ``branches.closed`` users it now answers as its sibling ``availability_stats`` does: the
+    resource's read right (CARE's ``authorize_resource_read``, ``can_list_booking``) first.
+    CARE's own roles are unchanged (Q-K40's list)."""
+
+    def initial(self, request, *args, **kwargs):
+        super().initial(request, *args, **kwargs)
+        if self.action == "get_slots_for_day" and branches.closed(request.user):
+            data = SlotsForDayRequestSpec(**request.data)
+            facility = get_object_or_404(
+                Facility, external_id=self.kwargs["facility_external_id"]
+            )
+            resource = get_schedulable_resource(
+                data.resource_type, data.resource_id, facility
+            )
+            if not resource:
+                raise ValidationError("No schedules found for this resource")
+            self.authorize_resource_read(resource)

@@ -76,6 +76,10 @@ SWAPS = {
     "care.emr.api.viewsets.inventory.dispense_order.DispenseOrderViewSet": (
         "ihr_access.views.IhrDispenseOrderViewSet"
     ),
+    # CARE's slots-for-day read checks no right (P1-T11b3 review fixes)
+    "care.emr.api.viewsets.scheduling.availability.SlotViewSet": (
+        "ihr_access.views.IhrSlotViewSet"
+    ),
 }
 # {CARE's class: ours}, filled as CARE registers them
 swapped = {}

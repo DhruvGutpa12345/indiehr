@@ -1,0 +1,103 @@
+# Where a role of ours may see a canary marker (P1-T11b3; design-b.md "After the attack" §10
+# item 18). The world (ihr_access.testing) puts a named marker (testing.marker) in every field
+# our roles must not see; test_role_matrix.RoleMatrix.test_clinical_canary_never_reaches_restricted_roles
+# fails on any marker in any answer to Receptionist, Cashier, TPA Desk, Owner, MRD (no grant),
+# Lab Technician, Store Keeper or Radiologist, except where a line below allows it.
+#
+# <who> <marker> <route key glob> allow|never  # why
+#   who: a role or a group of role_matrix.txt; the glob matches role_matrix.txt's keys ("*")
+#   allow: that marker may appear there, for that role; the line must be used by the crawl
+#   never: the negative row: that marker never appears there for that role, though a care
+#     role sees it on those routes. Every allow line has one (the same role and marker
+#     elsewhere, the same role and routes with another copy's marker, or another role on the
+#     same routes): test_canary_exemptions_are_narrow.
+# "base" is the unnamed CANARY (a patient's extension, a visit's discharge advice).
+
+# --- settings catalogues: a configuration is not a patient's ----------------------------------
+ours programme-config /api/v1/facility/{external_id}/  allow  # the facility's identifier settings name the programme configuration (a setting); a patient's programme number is dropped (identifier_configs.txt)
+ours programme-config /api/v1/patient_identifier_config/*  allow  # the identifier catalogue (a setting)
+ours programme-config /api/v1/patient/{external_id}/*  never  # a patient's programme identifier, config and all, is dropped for our roles
+ours programme-number /api/v1/patient/{external_id}/*  never  # nor its number
+ours tag-patient /api/v1/tag_config/*  allow  # the tag catalogue (instance tags; a setting): which patient carries a tag is what the guard hides
+ours tag-patient /api/v1/patient/{external_id}/*  never  # a patient's tags are dropped (patient.txt)
+rec tag-encounter /api/v1/tag_config/*  allow  # the hospital's tag catalogue (can_read_tag_config)
+rec tag-encounter /api/v1/encounter/*  never  # a visit's tags are dropped (encounter.txt)
+rec tag-patient-facility /api/v1/tag_config/*  allow  # the hospital's tag catalogue
+rec tag-patient-facility /api/v1/patient/{external_id}/*  never  # a patient's facility tags are dropped
+rec booking-tag /api/v1/tag_config/*  allow  # the hospital's tag catalogue
+
+# --- the Receptionist's own CARE booking and queue screens ("After the attack" §2.2) ------------
+rec booking-note /api/v1/facility/{facility_external_id}/appointments/*  allow  # the booking's note on the front desk's own booking screen (can_list_booking; projected only under our branch)
+rec booking-tag /api/v1/facility/{facility_external_id}/appointments/*  allow  # the booking's tags there
+rec schedule /api/v1/facility/{facility_external_id}/appointments/*  allow  # the booked doctor's schedule there
+rec schedule /api/v1/facility/{facility_external_id}/schedule/*  allow  # the doctors' schedules (can_list_schedule)
+rec schedule /api/v1/facility/{facility_external_id}/slots/*  allow  # a slot names its schedule
+rec token-note /api/v1/facility/{facility_external_id}/token/queue/*  allow  # the token's note on the front desk's queue screen (can_list_token)
+rec booking-note /api/v1/patient/{external_id}/get_appointments/*  never  # through our branch (a patient's bookings) the booking is projected: no note
+rec booking-tag /api/v1/patient/{external_id}/get_appointments/*  never  # nor tags
+rec schedule /api/v1/patient/{external_id}/get_appointments/*  never  # nor the booked doctor
+rec token-note /api/v1/patient/{external_id}/get_tokens/*  never  # nor a token's note
+
+# --- billing names the service (Q-K38 A) -----------------------------------------------------
+billing charge /api/v1/facility/{facility_external_id}/charge_item/*  allow  # a charge names its service, which billing needs (Q-K38 A)
+rec charge /api/v1/facility/{facility_external_id}/charge_item/*  never  # the Receptionist reads no charge items
+
+# --- a department's own requests, specimens, reports and results -------------------------------
+lab request-lab /api/v1/facility/{facility_external_id}/service_request/*  allow  # the Laboratory's own request (at its place)
+lab request-lab /api/v1/facility/{facility_external_id}/specimen/*  allow  # a specimen names its request
+lab request-lab /api/v1/patient/{patient_external_id}/diagnostic_report/*  allow  # a report names its request
+lab specimen-lab /api/v1/facility/{facility_external_id}/service_request/*  allow  # a request lists its specimens
+lab specimen-lab /api/v1/facility/{facility_external_id}/specimen/*  allow  # the Laboratory's own specimen
+lab report-lab /api/v1/facility/{facility_external_id}/service_request/*  allow  # a request lists its reports
+lab report-lab /api/v1/patient/{patient_external_id}/diagnostic_report/*  allow  # the Laboratory's own report
+lab result-lab /api/v1/patient/{patient_external_id}/diagnostic_report/*  allow  # its results
+lab request-ward /api/v1/facility/{facility_external_id}/service_request/*  never  # the ward copy never reaches the Laboratory
+lab specimen-ward /api/v1/facility/{facility_external_id}/specimen/*  never  # nor its specimen
+lab report-ward /api/v1/patient/{patient_external_id}/diagnostic_report/*  never  # nor its report
+lab result-ward /api/v1/patient/{patient_external_id}/diagnostic_report/*  never  # nor its results
+lab request-xray /api/v1/facility/{facility_external_id}/service_request/*  never  # nor the imaging copy
+rad request-xray /api/v1/facility/{facility_external_id}/service_request/*  allow  # the Radiology room's own request (Q-K44 A: imaging requests and reports)
+rad request-xray /api/v1/patient/{patient_external_id}/diagnostic_report/*  allow  # a report names its request
+rad report-xray /api/v1/facility/{facility_external_id}/service_request/*  allow  # a request lists its reports
+rad report-xray /api/v1/patient/{patient_external_id}/diagnostic_report/*  allow  # the imaging report
+rad result-xray /api/v1/patient/{patient_external_id}/diagnostic_report/*  allow  # its results
+rad request-ward /api/v1/facility/{facility_external_id}/service_request/*  never  # the ward copy never reaches the Radiologist
+rad report-ward /api/v1/patient/{patient_external_id}/diagnostic_report/*  never  # nor its report
+rad result-ward /api/v1/patient/{patient_external_id}/diagnostic_report/*  never  # nor its results
+rad base /api/v1/facility/{facility_external_id}/service_request/*  never  # the chart rule: the imaging copy's visit and patient (another department's) are projected
+rad base /api/v1/patient/{patient_external_id}/diagnostic_report/*  never  # likewise in a report
+
+# --- the Radiologist reads a chart with Radiology on the visit (Q-K44 A) ------------------------
+rad rad-advice /api/v1/encounter/*  allow  # the Radiology visit's discharge advice
+rad rad-extension /api/v1/encounter/*  allow  # the Radiology patient's extension, in the visit
+rad rad-extension /api/v1/patient/{external_id}/*  allow  # and on the patient
+rad rad-condition /api/v1/patient/{patient_external_id}/diagnosis/*  allow  # the Radiology patient's problem list
+rad base /api/v1/encounter/*  never  # never the Paediatrics patient's visit
+rad base /api/v1/patient/{external_id}/*  never  # nor that patient
+rad condition /api/v1/patient/{patient_external_id}/diagnosis/*  never  # nor that patient's problem list
+
+# --- another patient's visit named (review K1): the Radiologist reads nothing of the first patient
+# through the second patient's Radiology visit; each line's marker reaches the Doctor on the same
+# routes (CARE does not check whose visit it is: Q-K40's list) --------------------------------
+rad condition /api/v1/patient/{patient_external_id}/*?encounter=encounter_b  never  # the problem list (diagnosis, symptom)
+rad allergy /api/v1/patient/{patient_external_id}/*?encounter=encounter_b  never  # allergies
+rad consent /api/v1/patient/{patient_external_id}/*?encounter=encounter_b  never  # consents
+rad medication-request /api/v1/patient/{patient_external_id}/*?encounter=encounter_b  never  # medicines ordered
+rad dosage /api/v1/patient/{patient_external_id}/*?encounter=encounter_b  never  # their dosage
+rad medication-statement /api/v1/patient/{patient_external_id}/*?encounter=encounter_b  never  # medicines taken
+rad medication-administration /api/v1/patient/{patient_external_id}/*?encounter=encounter_b  never  # medicines given
+rad result-ward /api/v1/patient/{patient_external_id}/*?encounter=encounter_b  never  # results
+rad answer /api/v1/patient/{patient_external_id}/*?encounter=encounter_b  never  # questionnaire answers
+rad note-thread /api/v1/patient/{patient_external_id}/*?encounter=encounter_b  never  # notes
+rad note-message /api/v1/patient/{patient_external_id}/*?encounter=encounter_b  never  # their messages
+rad result-ward POST*analyse-cross  never  # observation/analyse naming that visit
+rad result-lab POST*analyse-cross  never  # the lab copy's results there
+
+# --- reads by POST (post_reads.txt, review K3) ---------------------------------------------------
+rec schedule POST*/slots/get_slots_for_day/*  allow  # a doctor's day names its schedule (the booking read right, as the GET slot rows)
+lab request-lab POST*/specimen/retrieve_by_accession_identifier/*  allow  # the lab copy's specimen names its request
+lab specimen-lab POST*/specimen/retrieve_by_accession_identifier/*  allow  # the Laboratory's own specimen
+lab request-ward POST*/specimen/retrieve_by_accession_identifier/*  never  # the ward copy's specimen never reaches the Laboratory
+lab specimen-ward POST*/specimen/retrieve_by_accession_identifier/*  never  # nor the specimen itself
+rad rad-extension POST*/patient/search_retrieve/*  allow  # the Radiology patient's chart (Q-K44 A)
+rad base POST*/patient/search_retrieve/*  never  # the first patient's record is projected by the chart rule
