@@ -6,12 +6,16 @@ import datetime
 import json
 
 from care.emr.models.account import Account
+from care.emr.models.charge_item import ChargeItem
+from care.emr.models.charge_item_definition import ChargeItemDefinition
+from care.emr.models.location import FacilityLocation, FacilityLocationEncounter
 from care.emr.resources.device.spec import DeviceRetrieveSpec
 from care.emr.resources.encounter.spec import EncounterListSpec, EncounterRetrieveSpec
 from care.emr.resources.location.spec import FacilityLocationListSpec
 from care.emr.resources.patient.spec import PatientListSpec, PatientRetrieveSpec
 from care.emr.resources.scheduling.slot.spec import TokenBookingReadSpec
 from care.emr.resources.scheduling.token.spec import TokenRetrieveSpec
+from care.facility.models import Facility
 from care.users.models import User
 from django.db import connection
 from django.test import TestCase
@@ -21,6 +25,7 @@ from ihr_identity import testing as identity
 from ihr_platform.models import Hospital
 from ihr_platform.test_runner import TEST_SCHEMA
 from ihr_roles.registry import NEVER_RESTRICTED
+from model_bakery import baker
 from rest_framework.test import APIClient
 
 from ihr_access import guard, state
@@ -420,22 +425,201 @@ class ThroughTheApi(AccessCase):
         )
         self.assertEqual(connection.schema_name, TEST_SCHEMA)
 
-    def test_billing_roles_see_no_bed_on_the_account_for_now(self):
-        """Pins Q-K37 as it stands (review C4; Q-K37a awaits the owner): the Cashier and TPA
-        Desk get no ward, bed or bed history on the account's encounter, so CARE's bed-charge
-        table and printed bill show no bed for them. Change this test with the owner's answer."""
+    def add_bed_stays(self):
+        """The visit's bed stays: the bed now, and an earlier stop elsewhere (CARE's room-rent
+        table lists every stay of the account's visit)."""
         w = self.world
+        now = timezone.now()
+        earlier = FacilityLocation.objects.create(
+            facility=w.facility,
+            name="Casualty bay",
+            description="casualty",
+            status="active",
+            operational_status="O",
+            mode="instance",
+            form="bd",
+        )
+        return [
+            FacilityLocationEncounter.objects.create(
+                location=w.bed, encounter=w.encounter, status="active",
+                start_datetime=now,
+            ),
+            FacilityLocationEncounter.objects.create(
+                location=earlier, encounter=w.encounter, status="completed",
+                start_datetime=now - datetime.timedelta(days=2),
+                end_datetime=now,
+            ),
+        ]  # fmt: skip
+
+    def get_encounter(self, client, encounter):
+        return client.get(f"/api/v1/encounter/{encounter.external_id}/")
+
+    def test_billing_roles_see_the_bed_for_room_rent(self):
+        """Q-K37a B (owner, 2026-11-15): the Cashier and TPA Desk see the bed's id and name,
+        each stay's id, times and status (what BedChargeItemsTable.tsx reads from the account's
+        visit), and nothing more of the place: no ward, no occupant. The treating doctor and
+        the departments stay hidden."""
+        w = self.world
+        stays = self.add_bed_stays()
+        expected = sorted(str(stay.external_id) for stay in stays)
         for role in ("Cashier", "TPA Desk"):
-            with self.subTest(role=role):
-                body = self.get_account(self.api(w.users[role])).json()
-                encounter = body["primary_encounter"]
-                self.assertEqual(encounter["location_history"], [])
-                self.assertIsNone(encounter["current_location"])
-                self.assertEqual(encounter["care_team"], [])
+            client = self.api(w.users[role])
+            bodies = {
+                "account": self.get_account(client).json()["primary_encounter"],
+                "encounter": self.get_encounter(client, w.encounter).json(),
+            }
+            for where, encounter in bodies.items():
+                with self.subTest(role=role, where=where):
+                    self.assertNotIn(CANARY, json.dumps(encounter))
+                    self.assertEqual(
+                        encounter["current_location"],
+                        {"id": str(w.bed.external_id), "name": "Bed 1"},
+                    )
+                    history = encounter["location_history"]
+                    self.assertEqual(sorted(h["id"] for h in history), expected)
+                    for stay in history:
+                        self.assertEqual(
+                            set(stay),
+                            {"id", "start_datetime", "end_datetime", "status",
+                             "location"},
+                        )  # fmt: skip
+                        self.assertEqual(set(stay["location"]), {"id", "name"})
+                    names = {h["location"]["name"]: h for h in history}
+                    self.assertEqual(set(names), {"Bed 1", "Casualty bay"})
+                    self.assertEqual(names["Bed 1"]["status"], "active")
+                    self.assertIsNotNone(names["Casualty bay"]["end_datetime"])
+                    self.assertEqual(encounter["care_team"], [])
+                    self.assertEqual(encounter["organizations"], [])
+                    self.assertEqual(encounter["tags"], [])
+                    self.assertIsNone(encounter["discharge_summary_advice"])
+                    self.assertNotIn("Ward A", json.dumps(encounter))
         doctor = self.get_account(self.api(w.users["Doctor"])).json()
         self.assertEqual(
-            doctor["primary_encounter"]["current_location"]["name"], "Bed 1"
+            doctor["primary_encounter"]["current_location"]["parent"]["name"], "Ward A"
         )
+        self.assertTrue(doctor["primary_encounter"]["care_team"])
+
+    def test_the_cashier_adds_room_rent_with_the_projected_stay(self):
+        """Review C-C1, the flow B was built for: the Cashier takes a stay's id from the
+        projected account body, adds a room-rent charge for it (CARE checks the stay is the
+        visit's) and lists it back as CARE's room-rent table does. The TPA Desk reads the stays
+        but cannot add one (no can_create_charge_item)."""
+        w = self.world
+        self.add_bed_stays()
+        definition = baker.make(
+            ChargeItemDefinition,
+            facility=w.facility,
+            slug=f"f-{w.facility.external_id}-room-rent",
+            title="Room rent (general ward)",
+            status="active",
+            price_components=[
+                {"amount": "1500", "monetary_component_type": "base", "factor": None}
+            ],
+        )
+        base = f"/api/v1/facility/{w.facility.external_id}/charge_item/"
+
+        def add(client):
+            encounter = self.get_account(client).json()["primary_encounter"]
+            stay = next(
+                h for h in encounter["location_history"] if h["status"] == "active"
+            )
+            request = {
+                "charge_item_definition": definition.slug,
+                "quantity": 1,
+                "encounter": str(w.encounter.external_id),
+                "account": str(self.account.external_id),
+                "service_resource": "bed_association",
+                "service_resource_id": stay["id"],
+            }
+            response = client.post(
+                f"{base}apply_charge_item_defs/", {"requests": [request]}, format="json"
+            )
+            return stay["id"], response
+
+        cashier = self.api(w.users["Cashier"])
+        stay_id, response = add(cashier)
+        self.assertEqual(response.status_code, 200, response.content[:300])
+        item = ChargeItem.objects.get(
+            encounter=w.encounter, service_resource="bed_association"
+        )
+        self.assertEqual(item.service_resource_id, stay_id)
+        self.assertEqual(item.account_id, self.account.id)
+        listed = cashier.get(
+            base,
+            {
+                "account": str(self.account.external_id),
+                "service_resource": "bed_association",
+            },
+        )
+        self.assertEqual(listed.status_code, 200, listed.content[:300])
+        self.assertEqual(
+            [r["service_resource_id"] for r in listed.json()["results"]], [stay_id]
+        )
+        _stay, response = add(self.api(w.users["TPA Desk"]))
+        self.assertEqual(response.status_code, 403, response.content[:300])
+        self.assertEqual(
+            ChargeItem.objects.filter(service_resource="bed_association").count(), 1
+        )
+
+    def test_other_desk_roles_still_see_no_bed(self):
+        """Q-K37 A stays for the Receptionist and MRD (and every other restricted role): no
+        ward, bed or bed history on a visit they reach."""
+        w = self.world
+        self.add_bed_stays()
+        receptionist = self.api(w.users["Receptionist"])
+        bodies = {
+            ("Receptionist", "account"): self.get_account(receptionist).json()[
+                "primary_encounter"
+            ],
+        }
+        for role in ("Receptionist", "MRD"):
+            response = self.get_encounter(self.api(w.users[role]), w.encounter)
+            self.assertEqual(response.status_code, 200, response.content[:300])
+            bodies[role, "encounter"] = response.json()
+        for (role, where), encounter in bodies.items():
+            with self.subTest(role=role, where=where):
+                self.assertIsNone(encounter["current_location"])
+                self.assertEqual(encounter["location_history"], [])
+                self.assertNotIn("Bed 1", json.dumps(encounter))
+
+    def test_the_bed_needs_the_billing_role_in_the_visits_facility(self):
+        """A Receptionist here who is a Cashier in another facility of the hospital sees no bed
+        on this facility's visits; nor does a Cashier of that other facility reach them."""
+        w = self.world
+        self.add_bed_stays()
+        other = baker.make(Facility, created_by=w.admin, name="Other Facility")
+        both = w.user(
+            "acc-rec-cash-elsewhere",
+            ("Receptionist", w.root),
+            ("Cashier", other.default_internal_organization),
+        )
+        cashier_there = w.user(
+            "acc-cash-elsewhere", ("Cashier", other.default_internal_organization)
+        )
+        encounter = self.get_account(self.api(both)).json()["primary_encounter"]
+        self.assertIsNone(encounter["current_location"])
+        self.assertEqual(encounter["location_history"], [])
+        client = self.api(cashier_there)
+        url = f"/api/v1/facility/{w.facility.external_id}/account/{self.account.external_id}/"
+        for response in (client.get(url), self.get_encounter(client, w.encounter)):
+            with self.subTest(url=response.request["PATH_INFO"]):
+                self.assertIn(response.status_code, (403, 404), response.content[:300])
+                self.assertNotIn("Bed 1", response.content.decode())
+
+    def test_bed_history_route_stays_refused_to_the_billing_roles(self):
+        """B opens the bed on the visit only: a place's history (every visit on the bed) stays
+        refused (b2)."""
+        w = self.world
+        self.add_bed_stays()
+        url = (
+            f"/api/v1/facility/{w.facility.external_id}/location/"
+            f"{w.bed.external_id}/association/"
+        )
+        for role in ("Cashier", "TPA Desk"):
+            with self.subTest(role=role):
+                response = self.api(w.users[role]).get(url)
+                self.assertEqual(response.status_code, 403, response.content[:300])
+                self.assertNotIn(w.patient.name, response.content.decode())
 
     def test_each_request_starts_afresh(self):
         """A restricted request's state never leaks into the next one on the thread."""

@@ -1,0 +1,18 @@
+# The billing overlay on fields/encounter.txt (Q-K37a B, owner 2026-11-15; guard.py): what the
+# Cashier and TPA Desk see besides, on a visit in a facility where they hold one of those roles
+# (registry.BED_FOR_BILLING, state.bills_at). CARE's account screen builds its room-rent table
+# from location_history (BedChargeItemsTable.tsx: the stay's id, its place's name, start, end and
+# status), and a room-rent charge names the stay's id (charge_item service_resource_id). Every
+# line here replaces that path's line in fields/encounter.txt; everything else stays as there
+# (no ward, no department, no treating doctor: care_team until P2-T15). Format: patient.txt.
+current_location keep  # the current bed (Q-K37a B): its id and name only
+current_location.id keep  # the bed's id
+current_location.name keep  # the bed's name
+location_history keep  # the bed stays, for room rent (Q-K37a B)
+location_history.id keep  # the stay's id: a room-rent charge item names it
+location_history.start_datetime keep  # when the stay began
+location_history.end_datetime keep  # when it ended (the days billed)
+location_history.status keep  # planned, active, reserved or completed (the table's badge)
+location_history.location keep  # the place stayed in: its id and name only, not its ward
+location_history.location.id keep  # the bed's id
+location_history.location.name keep  # the bed's name

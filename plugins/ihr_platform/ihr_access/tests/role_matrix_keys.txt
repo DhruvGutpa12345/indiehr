@@ -5,6 +5,7 @@
 # a.b<shape>, only where the guard decided on that very instance in that answer (the guard's
 # field lists classify those exactly, test_fields); a patient-like body the guard did not handle
 # is walked, so its keys show here. Staff cards are always one entry, a.b<user> (a known limit).
+# A key that is a date (availability_stats: one per asked day) is <date> (review C-C3).
 # test_role_matrix.RoleMatrix.test_response_keys_match_the_snapshot fails on a key not here
 # (upstream added a field to a body our roles see: review it, then add it) and on an entry no
 # longer seen. Rebuild candidates with IHR_MATRIX_DUMP=1 (docs/UPSTREAM.md). MRD with a records
@@ -136,6 +137,17 @@ status_history.history[].moved_at
 status_history.history[].status
 tags
 updated_by
+
+[/api/v1/encounter/{external_id}/] cash,tpa
+current_location.id
+current_location.name
+location_history[].end_datetime
+location_history[].id
+location_history[].location
+location_history[].location.id
+location_history[].location.name
+location_history[].start_datetime
+location_history[].status
 
 [/api/v1/encounter/{external_id}/ ?{external_id}=encounter_b] cash,mrd,rad,rec,tpa
 appointment
@@ -3040,27 +3052,9 @@ health.title
 status
 
 [POST /api/v1/facility/{facility_external_id}/slots/availability_stats/ slots-stats] rec
-2026-11-15
-2026-11-15.booked_slots
-2026-11-15.total_slots
-2026-11-16
-2026-11-16.booked_slots
-2026-11-16.total_slots
-2026-11-17
-2026-11-17.booked_slots
-2026-11-17.total_slots
-2026-11-18
-2026-11-18.booked_slots
-2026-11-18.total_slots
-2026-11-19
-2026-11-19.booked_slots
-2026-11-19.total_slots
-2026-11-20
-2026-11-20.booked_slots
-2026-11-20.total_slots
-2026-11-21
-2026-11-21.booked_slots
-2026-11-21.total_slots
+<date>
+<date>.booked_slots
+<date>.total_slots
 
 [POST /api/v1/facility/{facility_external_id}/slots/get_slots_for_day/ slots-day] rec
 results

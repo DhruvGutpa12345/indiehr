@@ -31,6 +31,14 @@ def _is_container(annotation):
     return isinstance(annotation, type) and issubclass(annotation, BaseModel)
 
 
+def _rule_sets():
+    """(shape, rules) for each shape's list, and for each billing overlay laid on it."""
+    for shape in guard.SHAPES.values():
+        yield shape, shape.rules
+        if shape.billing:
+            yield shape, shape.billing_rules
+
+
 class FieldLists(SimpleTestCase):
     def test_each_list_classifies_exactly_the_shapes_fields(self):
         for shape in guard.SHAPES.values():
@@ -50,8 +58,7 @@ class FieldLists(SimpleTestCase):
                 )
 
     def test_every_kept_container_names_its_nested_keys(self):
-        for shape in guard.SHAPES.values():
-            rules = shape.rules
+        for shape, rules in _rule_sets():
             for name, info in shape.fields.items():
                 verb = rules.get(name)
                 if verb not in ("keep", "identifiers") or not _is_container(
@@ -65,25 +72,42 @@ class FieldLists(SimpleTestCase):
                     )
 
     def test_nested_rules_hang_off_kept_containers_and_wildcards_stand_alone(self):
-        for shape in guard.SHAPES.values():
-            for path, verb in shape.rules.items():
+        for shape, rules in _rule_sets():
+            for path, verb in rules.items():
                 if "." not in path:
                     continue
                 parent, _, key = path.rpartition(".")
                 top = parent.split(".", 1)[0]
                 with self.subTest(shape=shape.name, path=path):
-                    self.assertIn(shape.rules.get(top), ("keep", "identifiers"))
-                    self.assertNotIn(shape.rules.get(parent, "keep"), ("drop",))
+                    self.assertIn(rules.get(top), ("keep", "identifiers"))
+                    self.assertNotIn(rules.get(parent, "keep"), ("drop",))
                     if key == "*":
                         siblings = [
                             p
-                            for p in shape.rules
+                            for p in rules
                             if p.rpartition(".")[0] == parent and p != path
                         ]
                         self.assertEqual(
                             siblings, [], "a wildcard keeps the card whole"
                         )
                         self.assertEqual(verb, "keep")
+
+    def test_the_billing_overlay_opens_the_bed_only(self):
+        """Q-K37a B: the Cashier and TPA Desk overlay names the bed fields and nothing else; no
+        wildcard (a whole location card would carry its ward and occupant)."""
+        overlay = guard.read_list(guard.FIELDS / "encounter_billing.txt")
+        self.assertEqual(
+            {path.split(".", 1)[0] for path in overlay},
+            {"current_location", "location_history"},
+        )
+        self.assertTrue(all(verb == "keep" for verb, _r in overlay.values()))
+        self.assertFalse([p for p in overlay if p.endswith("*")])
+        shapes = [s for s in guard.SHAPES.values() if s.billing]
+        self.assertEqual([s.name for s in shapes], ["encounter"])
+        rules = shapes[0].billing_rules
+        for name in ("care_team", "organizations", "tags", "extensions"):
+            with self.subTest(field=name):
+                self.assertEqual(rules[name], "drop")
 
     def test_the_patient_edit_list_classifies_the_update_spec(self):
         rules = guard.read_list(guard.FIELDS / "patient_edit.txt", verbs=EDIT_VERBS)

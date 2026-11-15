@@ -99,6 +99,10 @@ RESTRICTED = frozenset(
         "MRD",
     }
 )
+# Q-K37a B (owner, 2026-11-15): of the restricted roles only these see the bed on a visit, in a
+# facility where they hold one of them, for room rent (ihr_access/fields/encounter_billing.txt);
+# the others keep Q-K37 A
+BED_FOR_BILLING = frozenset({"Cashier", "TPA Desk"})
 # Placed in a department, never at the facility root (the placement trigger): at the root they
 # would read every patient with an active encounter (emr/models/encounter.py:39-54).
 DEPARTMENT_ONLY = frozenset({"Lab Technician", "Radiologist", "Store Keeper"})

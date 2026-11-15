@@ -2382,3 +2382,93 @@ the `records-grant-scope` mutation); none needed a change.
 | `python3 scripts/check-logs.py` | `Log pipeline OK.` |
 | `scripts/batch-allowlist.py --check` | `batch-allowlist: 37 routes, list current` |
 | `pre-commit run --all-files` (new files staged with `git add`, not committed) | 43 hooks passed |
+
+### Q-K37a B (2026-11-15)
+
+The owner answered Q-K37a with B: the Cashier and TPA Desk see the bed on the visits they already
+reach, so CARE's room-rent table works for them. Everyone else keeps Q-K37 A.
+
+**What CARE's web app reads.** `BedChargeItemsTable.tsx` (account screen) builds its rows from
+`account.primary_encounter.location_history` in the account retrieve: each stay's `id`,
+`start_datetime`, `end_datetime`, `status` and `location.name`. It also lists the charges with
+`service_resource=bed_association` and adds one with the stay's id as `service_resource_id`. The
+list route was already open to both billing roles; the add route
+(`charge_item/apply_charge_item_defs/`) is open to the **Cashier only** (`role_matrix.txt`
+`cash:allow`; the TPA Desk holds no `can_create_charge_item` and gets 403). So the Cashier reads
+and adds room rent, and the TPA Desk only reads it. CARE's account screen still shows the TPA Desk
+the "Add charge items" button (`AccountShow.tsx` passes `canAddChargeItems` with no role check):
+hiding it is P1-T11c's (Q-K45 list). No location or bed-history route is called, so the
+bed-history swap (b2) stays closed to every restricted role.
+
+**What changed.**
+- `ihr_roles/registry.py`: `BED_FOR_BILLING = {"Cashier", "TPA Desk"}`.
+- `ihr_access/state.py`: `RequestState.bills_at(facility_id)`. The user holds one of those roles
+  in an organisation of that facility. It runs one query per facility per request, and only for
+  projected users.
+- `ihr_access/guard.py`: `Shape.billing` names an overlay list and `Shape.rules_for(current, obj)`
+  picks it. The wrapper passes the chosen rules to `project_instance(cls, instance, shape, rules)`.
+  Only the encounter shape has an overlay. An encounter body re-projected inside a booking or
+  token (`project_body`) keeps A.
+- `ihr_access/fields/encounter_billing.txt` (new): `current_location` with its `id` and `name`, and
+  `location_history` with each stay's `id`, `start_datetime`, `end_datetime`, `status` and its
+  place's `id` and `name`. There is no wildcard, no ward (`parent`) and no occupant. `care_team`,
+  `organizations`, `tags`, `extensions` and the clinical fields keep `encounter.txt`'s `drop`.
+
+**Tests.**
+- `test_guard.ThroughTheApi`: the A pin is replaced by four tests:
+  - `test_billing_roles_see_the_bed_for_room_rent`: account and encounter retrieve; exact keys;
+    no ward, doctor or canary;
+  - `test_other_desk_roles_still_see_no_bed`: the Receptionist and MRD;
+  - `test_the_bed_needs_the_billing_role_in_the_visits_facility`: a Receptionist here who is a
+    Cashier in another facility sees no bed, and that other facility's Cashier reaches neither
+    the account nor the visit;
+  - `test_bed_history_route_stays_refused_to_the_billing_roles`.
+- `test_fields`: `test_the_billing_overlay_opens_the_bed_only`. The container and nesting tests
+  also walk the overlay.
+- `test_encounter_swap.StatusList`: the billing roles' list rows show the bed's id and name only.
+- Matrix: `role_matrix.txt` and `role_matrix_writes.txt` are unchanged. `role_matrix_keys.txt`
+  gains one `[/api/v1/encounter/{external_id}/] cash,tpa` section with the nine bed keys.
+  `canary_exemptions.txt` allows the `bed` marker to `billing` on `/api/v1/encounter/*` and
+  `…/account/*`, with negative rows for `rec` (both) and `mrd` (encounters). `tests/matrix.py`'s
+  projection counter passes the new `rules` argument through.
+
+**Mutation rows.**
+
+| Name | Mutation | Test that must fail |
+|---|---|---|
+| `access-billed-bed-roles` | `BED_FOR_BILLING` also names the Receptionist and MRD | `ThroughTheApi.test_other_desk_roles_still_see_no_bed` |
+| `access-billed-bed-facility` | `bills_at` ignores the facility | `ThroughTheApi.test_the_bed_needs_the_billing_role_in_the_visits_facility` |
+| `access-billed-bed-ward` | the overlay also keeps the stay's ward (`location.parent`) | `ThroughTheApi.test_billing_roles_see_the_bed_for_room_rent` |
+
+`access-guard-applies` and `access-guard-keeplist` were retargeted to the new lines in `guard.py`.
+
+| Run | Result |
+|---|---|
+| `ihr_access`, `IHR_DB_ROLES=test` | `Ran 177 tests in 210.437s` `OK` |
+| Plugin suites, `IHR_DB_ROLES=test` (the nine labels) | `Ran 948 tests in 997.116s` `OK (skipped=45)`; Redis audit 991 keys, all tenant-prefixed |
+| Plugin suites, roles off (the nine labels; the run crossed midnight IST) | `Ran 913 tests in 938.363s` `FAILED (failures=6, skipped=49)`: all six are the Receptionist's slot reads (`get_slots_for_day`, `availability_stats`). The matrix alone, re-run after midnight: `Ran 30 tests` `FAILED (failures=1)`, three `availability_stats` keys dated 2026-11-22. `role_matrix_keys.txt` stores literal dates (2026-11-15 to 2026-11-21) for that read, so the snapshot fails on any later day. This was already the case before this change and is not related to the bed. **Open: normalise date keys in the key walk** |
+| The three new rows and the two retargeted guard rows, each applied alone (file backed up and restored) | each named test FAILED by an assertion (`{'id': …, 'name': 'Bed 1'} is not None`; `Items in the first set but not the second`), never an ERROR |
+| `scripts/isolation-mutation.sh check` | 156 rows (153 + 3), every target and named test found |
+| `scripts/batch-allowlist.py --check` | `batch-allowlist: 37 routes, list current` |
+| `pre-commit run --all-files` (new file `git add -N`, then reset) | 43 hooks passed |
+
+`check-logs.py` was not run because no log shape changed. CLAUDE.md's "Restricted roles' access"
+line should name `fields/encounter_billing.txt` (the Cashier and TPA Desk overlay, Q-K37a B).
+That edit is left to the owner.
+
+**Review fixes (2026-11-16).**
+
+| Finding | Fix | Proof |
+|---|---|---|
+| C-C1 (low): this section said both billing roles can add room rent; only the Cashier can | "What CARE's web app reads" corrected (Cashier reads and adds, TPA Desk reads only); the TPA Desk's "Add charge items" button added to P1-T11c's list (QUESTIONS.md Q-K45). ADR-018 item 3 only says both roles see the bed, so it is unchanged. New test `ThroughTheApi.test_the_cashier_adds_room_rent_with_the_projected_stay`: the Cashier takes the active stay's id from the projected account body, `apply_charge_item_defs` with `service_resource=bed_association` answers 200, the charge item carries that stay id and the account, and the list (`?account=&service_resource=bed_association`) returns it; the TPA Desk's same request answers 403 and adds nothing. New mutation row `access-billed-bed-tpa-add` (the TPA Desk granted `can_create_charge_item`) | test OK; the row applied alone: `FAIL: test_the_cashier_adds_room_rent_with_the_projected_stay` `AssertionError: 200 != 403 : b'{}'` |
+| C-C2 (low): QUESTIONS.md Q-K37a still said the build keeps A; CLAUDE.md does not name the overlay | Q-K37a's recommendation paragraph now says B is built (2026-11-15), the A-pinning test was replaced by the four B tests, and the review fixes. CLAUDE.md is the orchestrator's (a subagent may not edit it): its "Restricted roles' access" line should gain "`fields/encounter_billing.txt` is laid over the encounter for a Cashier or TPA Desk in the visit's own facility (`state.bills_at`, Q-K37a B): bed id/name and bed stays only" | documentation only; no test applies |
+| C-C3 (low, before this change): `role_matrix_keys.txt` held literal dates for `availability_stats`, so the matrix failed every day after 2026-11-15 | `tests/matrix.py` `key_paths` records a key that is a calendar date (`DATE_KEY_RE`, `\d{4}-\d{2}-\d{2}`, whole key) as `<date>`; the 21 dated lines of the `slots-stats` section became `<date>`, `<date>.booked_slots`, `<date>.total_slots`; header note added. New test `MatrixFiles.test_date_keys_are_one_placeholder` (two different weeks walk to the same keys; a datetime-like or undashed key keeps its name). Not an access control, so no mutation row | see the runs below |
+
+| Run (2026-11-16, after midnight IST) | Result |
+|---|---|
+| `ihr_access`, `IHR_DB_ROLES=test` (matrix included; the `<date>` snapshot matched with no dump needed) | `Ran 179 tests in 204.064s` `OK` |
+| Plugin suites, `IHR_DB_ROLES=test` (the nine labels) | `Ran 950 tests in 992.131s` `OK (skipped=45)`; Redis audit 996 keys, all tenant-prefixed |
+| Plugin suites, roles off (the nine labels) | `Ran 915 tests in 940.412s` `OK (skipped=49)`; Redis audit 995 keys, all tenant-prefixed (the six slot-read failures of the earlier run are gone) |
+| `access-billed-bed-tpa-add` applied alone (file backed up and restored) | `FAIL: test_the_cashier_adds_room_rent_with_the_projected_stay`, `AssertionError: 200 != 403`, never an ERROR |
+| `scripts/isolation-mutation.sh check` | 157 rows (156 + 1), every target and named test found |
+| `pre-commit run --all-files` (untracked files `git add -N`, then reset) | 43 hooks passed |

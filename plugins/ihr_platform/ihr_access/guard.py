@@ -29,6 +29,12 @@ When a shape applies:
 - booking, token: only under forced projection, so the Receptionist's own CARE-granted booking
   and token screens keep their notes and resources.
 
+The billing overlay (Q-K37a B, owner 2026-11-15): for a user who holds the Cashier or TPA Desk
+role (``registry.BED_FOR_BILLING``) in an organisation of the encounter's own facility,
+``fields/encounter_billing.txt`` is laid over ``fields/encounter.txt``: the bed's id and name, the
+bed stays' ids and times, for CARE's room-rent table. Everyone else, and an encounter body
+re-projected inside another shape (``project_body``), keeps Q-K37 A.
+
 Field lists: ``fields/<shape>.txt``, one ``<path> <verb>  # reason`` per line (tests check they
 classify exactly the shape's fields and name the nested keys of every kept container).
 """
@@ -97,7 +103,11 @@ class Shape:
     # base classes CARE also serializes directly, wrapped with this shape too (P1-T11b3's spec
     # walk: a medication dispense embeds its visit through EncounterSpecBase)
     also: tuple = ()
+    # a field list laid over this one for users who hold a billing role in the object's
+    # facility (state.bills_at; Q-K37a B: the encounter's bed for room rent), or ""
+    billing: str = ""
     rules: dict = field(default_factory=dict)  # path -> verb
+    billing_rules: dict = field(default_factory=dict)  # rules with the overlay laid on
     fields: dict = field(
         default_factory=dict
     )  # name -> pydantic FieldInfo, all classes
@@ -106,6 +116,13 @@ class Shape:
         self.rules = {
             p: v for p, (v, _r) in read_list(FIELDS / f"{self.name}.txt").items()
         }
+        self.billing_rules = {}
+        if self.billing:
+            overlay = read_list(FIELDS / f"{self.billing}.txt")
+            self.billing_rules = {
+                **self.rules,
+                **{p: v for p, (v, _r) in overlay.items()},
+            }
         self.fields = {}
         for cls in classes_of(import_string(self.base)):
             for name, info in cls.model_fields.items():
@@ -123,6 +140,13 @@ class Shape:
             if patient is not None and patient in current.granted_patients:
                 return False
         return True
+
+    def rules_for(self, current, obj):
+        """The rules for this object in this request: the billing overlay only for a holder of
+        a billing role in the object's own facility (Q-K37a B), else the shape's list."""
+        if self.billing_rules and current.bills_at(getattr(obj, "facility_id", None)):
+            return self.billing_rules
+        return self.rules
 
     def _chart_withheld(self, current, obj):
         """The chart rule: a user of our roles only who holds a clinical one (the Radiologist)
@@ -155,6 +179,7 @@ SHAPES = {
         exempt_by="patient_id",
         chart="patient",
         also=("care.emr.resources.encounter.spec.EncounterSpecBase",),
+        billing="encounter_billing",
     ),
     "location": Shape(
         "location", "care.emr.resources.location.spec.FacilityLocationListSpec"
@@ -295,25 +320,28 @@ def project_body(shape, value):
     return out
 
 
-def project_instance(cls, instance, shape):
-    """The projected copy of a constructed spec: every field present, dropped ones reset."""
+def project_instance(cls, instance, shape, rules=None):
+    """The projected copy of a constructed spec: every field present, dropped ones reset.
+    ``rules``: the shape's rules for this object (``Shape.rules_for``), by default its list."""
+    rules = shape.rules if rules is None else rules
     values = {}
     held = instance.__dict__
     for name in cls.model_fields:
-        verb = shape.rules.get(name)
+        verb = rules.get(name)
         value = held.get(name, _MISSING)
         if verb is None or verb == "drop" or value is _MISSING:
             values[name] = shape.reset(name)
         else:
-            values[name] = _apply(verb, value, name, shape.rules)
+            values[name] = _apply(verb, value, name, rules)
     return cls.model_construct(**values)
 
 
 def _wrapper(shape, original):
     def serialize(cls, obj, user=None, *args, **kwargs):
         result = original(cls, obj, user, *args, **kwargs)
-        if shape.applies(state.current(), obj):
-            return project_instance(cls, result, shape)
+        current = state.current()
+        if shape.applies(current, obj):
+            return project_instance(cls, result, shape, shape.rules_for(current, obj))
         return result
 
     setattr(serialize, MARKER, shape.name)

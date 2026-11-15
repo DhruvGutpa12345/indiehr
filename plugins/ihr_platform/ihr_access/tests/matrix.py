@@ -655,13 +655,26 @@ def _shape_of(value, handled):
     return None
 
 
+# A dict key that is a calendar date (CARE's availability_stats answers one key per day of
+# the asked range) is recorded as ``<date>``, so the snapshot does not go stale overnight
+# (review C-C3).
+DATE_KEY_RE = re.compile(r"\d{4}-\d{2}-\d{2}")
+
+
+def _key_name(key):
+    key = str(key)
+    return "<date>" if DATE_KEY_RE.fullmatch(key) else key
+
+
 def key_paths(value, prefix="", handled=frozenset()):
     """Every key of a JSON body, nested dicts and lists of dicts walked (``a[].b``); a guarded
-    shape the guard handled, or a staff card, below the top level is ``a.b<shape>``."""
+    shape the guard handled, or a staff card, below the top level is ``a.b<shape>``; a
+    date-valued key is ``<date>``."""
     found = set()
     if isinstance(value, dict):
         for key, item in value.items():
-            path = f"{prefix}.{key}" if prefix else str(key)
+            name = _key_name(key)
+            path = f"{prefix}.{name}" if prefix else name
             shape = _shape_of(item, handled) if isinstance(item, dict) else None
             if shape is None and isinstance(item, list) and item:
                 shapes = {
@@ -847,9 +860,9 @@ class Crawl:
         original = guard.project_instance
         applies = guard.Shape.applies
 
-        def counting(cls, instance, shape):
+        def counting(cls, instance, shape, rules=None):
             projected.append((shape.name, cls.__name__))
-            return original(cls, instance, shape)
+            return original(cls, instance, shape, rules)
 
         def deciding(shape, current, obj):
             handled.add((shape.name, str(getattr(obj, "external_id", ""))))

@@ -579,6 +579,21 @@ class MatrixFiles(SimpleTestCase):
         handled = matrix.key_paths(body, handled=frozenset({("patient", "p-1")}))
         self.assertEqual(handled, {"subject<patient>", "staff<user>"})
 
+    def test_date_keys_are_one_placeholder(self):
+        """Review C-C3: availability_stats answers one key per asked day; the walk records
+        ``<date>`` so the snapshot holds on any day. Other keys keep their names."""
+        today = {"2026-11-15": {"booked_slots": 0}, "2026-11-16": {"total_slots": 1}}
+        later = {"2026-11-22": {"booked_slots": 0}, "2026-11-23": {"total_slots": 1}}
+        self.assertEqual(
+            matrix.key_paths(today),
+            {"<date>", "<date>.booked_slots", "<date>.total_slots"},
+        )
+        self.assertEqual(matrix.key_paths(today), matrix.key_paths(later))
+        self.assertEqual(
+            matrix.key_paths({"x": {"2026-11-15T10:00": 1, "20261115": 2}}),
+            {"x", "x.2026-11-15T10:00", "x.20261115"},
+        )
+
     def test_the_roles_are_the_registrys(self):
         """Review M6: the matrix crawls every role of ours the registry defines (a new one
         fails here until it has a world user, a short name and a group), its restricted group is

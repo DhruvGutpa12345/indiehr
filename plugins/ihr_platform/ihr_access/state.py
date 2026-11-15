@@ -19,6 +19,7 @@ _state = ContextVar("ihr_access_state", default=None)
 
 class RequestState:
     __slots__ = (
+        "_billing",
         "_chart",
         "_granting",
         "_grants",
@@ -44,6 +45,7 @@ class RequestState:
         self._role_ids = None
         self._ours_only = None
         self._chart = {}
+        self._billing = {}
 
     def is_for(self, user):
         return user is not None and getattr(self.user, "pk", None) == getattr(
@@ -95,6 +97,27 @@ class RequestState:
                 )
             )
         return self._chart[patient.pk]
+
+    def bills_at(self, facility_id):
+        """Holds a role of ``registry.BED_FOR_BILLING`` (Cashier, TPA Desk) in an organisation
+        of this facility: the guard then shows them the visit's bed (Q-K37a B), once per
+        facility and request."""
+        if facility_id is None or not _signed_in(self.user):
+            return False
+        if facility_id not in self._billing:
+            from care.emr.models.organization import FacilityOrganizationUser
+            from ihr_roles.registry import BED_FOR_BILLING
+
+            ids = {self.role_ids[n] for n in BED_FOR_BILLING if n in self.role_ids}
+            self._billing[facility_id] = (
+                bool(ids)
+                and FacilityOrganizationUser.objects.filter(
+                    user=self.user,
+                    role_id__in=ids,
+                    organization__facility_id=facility_id,
+                ).exists()
+            )
+        return self._billing[facility_id]
 
     @property
     def grants(self):

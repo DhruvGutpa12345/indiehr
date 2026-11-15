@@ -15,6 +15,7 @@ from care.emr.models.encounter import EncounterOrganization
 from django.db import connection
 from django.utils import timezone
 from ihr_identity import testing as identity
+from ihr_roles.registry import BED_FOR_BILLING
 
 from ihr_access import views
 from ihr_access.testing import CANARY
@@ -72,7 +73,13 @@ class StatusList(SwapCase):
                     for row in response.json()["results"]:
                         self.assertIsNone(row["discharge_summary_advice"])
                         self.assertIsNone(row["patient"]["blood_group"])
-                        self.assertIsNone(row["current_location"])
+                        if role in BED_FOR_BILLING and row["current_location"]:
+                            # Q-K37a B: the bed's id and name only, never its ward
+                            self.assertEqual(
+                                set(row["current_location"]), {"id", "name"}
+                            )
+                        else:
+                            self.assertIsNone(row["current_location"])
         for role in NO_PATIENTS:
             with self.subTest(role=role):
                 by_patient = self.api(role).get(

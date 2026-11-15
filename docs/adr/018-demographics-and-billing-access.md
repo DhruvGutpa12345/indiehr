@@ -2,7 +2,7 @@
 
 - **Status:** Proposed (written by Claude at the end of P1-T11b4, 2026-11-15; for the owner's
   review with Q-K34 to Q-K45, which are auto-accepted and await confirmation, and Q-K37a, which
-  is open)
+  the owner answered B, built 2026-11-15)
 - **Date:** 2026-11-15
 - **Decided by:** Claude, from the owner's answer to Q-K21 (2026-11-14). Evidence: CARE's
   authorization code at the pinned upstream (docs/reviews/p1-t11/design-b.md §2), a design attack
@@ -50,7 +50,15 @@ narrow branches of ours, and everything they see of a patient or a visit is proj
 3. **Serializer guard** (`ihr_access/guard.py`, `fields/*.txt`, check `ihr_access.E022`): the
    `serialize` of every patient, encounter, location, device, booking and token shape is wrapped;
    for a restricted user, or under forced projection, every field not kept is reset (keys stay).
-   Identifiers keep to a reviewed list; a programme number is never shown.
+   Identifiers keep to a reviewed list; a programme number is never shown. **The billing roles
+   and the bed (Q-K37a B, owner 2026-11-15):** for a user who holds the Cashier or TPA Desk role
+   (`registry.BED_FOR_BILLING`) in an organisation of the visit's own facility
+   (`state.bills_at`), `fields/encounter_billing.txt` is laid over the encounter list: the
+   current bed's id and name, and each bed stay's id, start, end and status with its place's id
+   and name (no ward, no occupant). That is what CARE's room-rent table reads from the
+   account's visit. The treating doctor, departments and tags stay hidden (care_team until
+   P2-T15); a place's own bed history stays closed; the Receptionist, MRD and the other
+   restricted roles keep Q-K37 A.
 4. **Placement trigger** (`ihr_access/placement.py`, `ihr_role_placement_guard`): refuses the
    hidden role in any organisation, our roles in government organisations, department-only
    roles at the facility root, a `PatientUser` row for a restricted person, and a hidden-role
@@ -106,9 +114,8 @@ Q-K38 (billing sees service names), Q-K39 (no small-number suppression), Q-K40 (
 logged for P1-T11d), Q-K41 (no account reports for restricted roles until P2-T15), Q-K42 (the
 Receptionist reads the department list), Q-K43 (store rows linked to a patient hidden), Q-K44
 (the Radiologist reads a chart with Radiology on the visit), Q-K45 (the web-app screens are
-P1-T11c's), all auto-accepted and awaiting the owner; **Q-K37a (the billing roles and the bed)
-is open**, and until it is answered the build keeps option A (no bed for the Cashier and TPA
-Desk). **Q-K46 (adjustments in "collected") is open**; the build leaves them out.
+P1-T11c's), all auto-accepted and awaiting the owner; **Q-K37a (the billing roles and the bed):
+owner B, 2026-11-15, built the same day** (item 3). **Q-K46 (adjustments in "collected") is open**; the build leaves them out.
 
 ## Alternatives rejected
 
@@ -132,7 +139,8 @@ Desk). **Q-K46 (adjustments in "collected") is open**; the build leaves them out
   authorizer: the grant then opens less, never more (fail closed), and E023 names it.
 - **`ihr_access` stays a tenant app**, loaded after CARE's apps (design-b.md B15); moving it
   earlier fails at start-up.
-- **Known residual exposures.** Billing roles see service names (Q-K38); MRD with a grant sees
+- **Known residual exposures.** Billing roles see service names (Q-K38) and the names and times
+  of the beds and other places a visit stayed in (Q-K37a B; a bed's name may name its ward); MRD with a grant sees
   the whole of that patient's record, its care-team list and its booking notes, for the grant's
   time (Q-K36); a signed file link issued under a grant may outlive the grant by up to five
   minutes; a two-job person (clinician and front desk) keeps CARE's own reach through CARE's

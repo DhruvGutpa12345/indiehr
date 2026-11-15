@@ -105,6 +105,13 @@ rad note-message /api/v1/patient/{patient_external_id}/*?encounter=encounter_b  
 rad result-ward POST*analyse-cross  never  # observation/analyse naming that visit
 rad result-lab POST*analyse-cross  never  # the lab copy's results there
 
+# --- the bed the Cashier and TPA Desk bill for (Q-K37a B, owner 2026-11-15) -------------------
+billing bed /api/v1/encounter/*  allow  # the visit's bed and bed stays (id and name only, no ward), for room rent (fields/encounter_billing.txt)
+billing bed /api/v1/facility/{facility_external_id}/account/*  allow  # the account's visit carries them, for CARE's room-rent table
+rec bed /api/v1/encounter/*  never  # the Receptionist keeps Q-K37 A: no bed on a visit
+mrd bed /api/v1/encounter/*  never  # nor MRD without a grant
+rec bed /api/v1/facility/{facility_external_id}/account/*  never  # the Receptionist reads the same account without the bed
+
 # --- reads by POST (post_reads.txt, review K3) ---------------------------------------------------
 rec schedule POST*/slots/get_slots_for_day/*  allow  # a doctor's day names its schedule (the booking read right, as the GET slot rows)
 lab request-lab POST*/specimen/retrieve_by_accession_identifier/*  allow  # the lab copy's specimen names its request

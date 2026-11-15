@@ -510,14 +510,16 @@ the three alert thresholds are the numbers in `deploy/logs/alerts/records.yml` (
 - do not see who is on a device;
 - see no booking notes and no booked doctor.
 
-### Q-K37a — Do the Cashier and TPA Desk see the bed they bill for? (P1-T11b1 review C4, 2026-11-15; **owner: B, 2026-11-15**. Built as A until the next run applies B first, as its own commit)
+### Q-K37a — Do the Cashier and TPA Desk see the bed they bill for? (P1-T11b1 review C4, 2026-11-15; **owner: B, 2026-11-15**; built as B, 2026-11-15)
 
 Under Q-K37 A, every encounter the Cashier and TPA Desk see has no ward, bed, bed history or treating doctor, also the one inside a billing account. CARE's account screen builds its room-rent (bed charge) table from the bed history, so for these two roles it shows "no locations" and they cannot add a room-rent charge there. Their printed bill shows no ward, bed or treating doctor. Room rent is the main inpatient charge, and the GST rule above ₹5,000 a day applies to it.
 
 - A. Keep A for them too. Room-rent charges are added by other staff, or wait for a billing screen in P1-T11c that groups bed charges from the charge-item list.
 - **B ⭐ (recommended). The two billing roles see the bed.** They get the bed's id and name, with its start and end times, and the current bed. The Receptionist and MRD keep A. The treating doctor stays hidden until the TPA claim layout (P2-T15, with Q-K41).
 
-*Recommendation B.* Under Q-K38 these roles already see service names such as "chemotherapy cycle", so hiding the bed protects little and breaks the main inpatient charge. **Until the owner answers, the build keeps A (nothing more is shown).** A test pins the current behaviour, and B would be built in P1-T11b2.
+*Recommendation B.* Under Q-K38 these roles already see service names such as "chemotherapy cycle", so hiding the bed protects little and breaks the main inpatient charge.
+
+*Built as B (2026-11-15; review fixes 2026-11-16):* `fields/encounter_billing.txt` is laid over the encounter for a Cashier or TPA Desk in the visit's own facility (`state.bills_at`): the bed's id and name and each bed stay, no ward, no occupant, no treating doctor. The test that pinned A was replaced by four B tests in `ihr_access.tests.test_guard.ThroughTheApi`. The Cashier reads and adds room rent; the TPA Desk only reads it (it has no right to add charges), and hiding its add button is P1-T11c's. Details: design-b.md "Q-K37a B".
 
 ### Q-K38 — Charge-item names seen by Cashier and TPA Desk (P1-T11b; auto-accepted by Claude, 2026-11-14; **confirmed by the owner, 2026-11-15**)
 
@@ -600,6 +602,7 @@ CARE's web app opens the patient tabs, the encounter list and the edit form only
   - the redirect after creating an encounter;
   - a records-access page (patient, reason, reference, active grants, end now);
   - an Owner totals page (lakh/crore).
+  - (added 2026-11-16, Q-K37a B review C-C1) hide the room-rent table's "Add charge items" button from the TPA Desk, which may read room rent but not add it (the add answers 403).
 
   P1-T11b's own click-through is checked partly through the API.
 - B. Keep P1-T11c to menus and add a new task for the screens.
