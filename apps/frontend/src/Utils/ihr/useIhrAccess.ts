@@ -29,7 +29,8 @@ export function useIhrAccess(): IhrAccess {
     useCurrentFacilitySilently();
   const isSuperuser = user.is_superuser;
 
-  const { data, isError } = useQuery({
+  // explicit type: the refetchInterval callback otherwise leaves `data` inferred as unknown
+  const { data, isError } = useQuery<MyAccess>({
     queryKey: ["ihr", "my-access", facilityId],
     queryFn: query(ihrAccessApi.myAccess, {
       queryParams: { facility: facilityId },
