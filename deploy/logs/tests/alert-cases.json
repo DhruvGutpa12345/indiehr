@@ -1,5 +1,5 @@
 {
- "_comment": "scripts/check-logs.py: these journal entries go through the real redaction steps into a throwaway VictoriaLogs, then vmalert runs deploy/logs/alerts/ on them. 'expect' lists, per alert, the values of its key label it must fire (or wait to fire) for, and no others: client_ip, hospital for PackApplyFailed, HospitalNotServed, ReleaseWindowOverrun, AuditHospitalCheckFailed, AuditHospitalSealLate, DumpHospitalFailed, DumpHospitalHeld and HospitalRestoreFailed, schema for ParkedSchemaOverdue, or reason for DatabaseRoleRefused (hospital for BatchRequestRefused).",
+ "_comment": "scripts/check-logs.py: these journal entries go through the real redaction steps into a throwaway VictoriaLogs, then vmalert runs deploy/logs/alerts/ on them. 'expect' lists, per alert, the values of its key label it must fire (or wait to fire) for, and no others: client_ip, hospital for PackApplyFailed, HospitalNotServed, ReleaseWindowOverrun, AuditHospitalCheckFailed, AuditHospitalSealLate, DumpHospitalFailed, DumpHospitalHeld and HospitalRestoreFailed, schema for ParkedSchemaOverdue, or reason for DatabaseRoleRefused (hospital for BatchRequestRefused and the three MrdRecords alerts).",
  "fixtures": [
   {
    "count": 1,
@@ -1867,6 +1867,202 @@
     "_UID": "0",
     "_SYSTEMD_UNIT": "docker.service"
    }
+  },
+  {
+   "count": 2,
+   "record": {
+    "MESSAGE": "ihr-records: hospital=alpha grant=none user=7 reason=invalid outcome=refused hour=10",
+    "_HOSTNAME": "srv1",
+    "PRIORITY": "3",
+    "_TRANSPORT": "journal",
+    "_COMM": "dockerd",
+    "_UID": "0",
+    "_SYSTEMD_UNIT": "docker.service",
+    "CONTAINER_NAME": "indiehr-staging-backend-1",
+    "COM_DOCKER_COMPOSE_SERVICE": "backend"
+   }
+  },
+  {
+   "count": 1,
+   "record": {
+    "MESSAGE": "ihr-records: hospital=alpha grant=none user=7 reason=legal outcome=refused hour=11",
+    "_HOSTNAME": "srv1",
+    "PRIORITY": "3",
+    "_TRANSPORT": "journal",
+    "_COMM": "dockerd",
+    "_UID": "0",
+    "_SYSTEMD_UNIT": "docker.service",
+    "CONTAINER_NAME": "indiehr-staging-backend-1",
+    "COM_DOCKER_COMPOSE_SERVICE": "backend"
+   }
+  },
+  {
+   "count": 1,
+   "record": {
+    "MESSAGE": "ihr-records: hospital=alpha grant=none user=8 reason=none outcome=refused hour=11",
+    "_HOSTNAME": "srv1",
+    "PRIORITY": "3",
+    "_TRANSPORT": "journal",
+    "_COMM": "dockerd",
+    "_UID": "0",
+    "_SYSTEMD_UNIT": "docker.service",
+    "CONTAINER_NAME": "indiehr-staging-backend-1",
+    "COM_DOCKER_COMPOSE_SERVICE": "backend"
+   }
+  },
+  {
+   "count": 2,
+   "record": {
+    "MESSAGE": "ihr-records: hospital=beta grant=none user=7 reason=insurer outcome=refused hour=10",
+    "_HOSTNAME": "srv1",
+    "PRIORITY": "3",
+    "_TRANSPORT": "journal",
+    "_COMM": "dockerd",
+    "_UID": "0",
+    "_SYSTEMD_UNIT": "docker.service",
+    "CONTAINER_NAME": "indiehr-staging-backend-1",
+    "COM_DOCKER_COMPOSE_SERVICE": "backend"
+   }
+  },
+  {
+   "count": 3,
+   "record": {
+    "MESSAGE": "10.0.0.9 - - [x] \"GET /ihr-records: hospital=webforged grant=none user=1 reason=none outcome=refused hour=10\" 404 179",
+    "_HOSTNAME": "srv1",
+    "PRIORITY": "3",
+    "_TRANSPORT": "journal",
+    "_COMM": "dockerd",
+    "_UID": "0",
+    "_SYSTEMD_UNIT": "docker.service",
+    "CONTAINER_NAME": "indiehr-staging-backend-1",
+    "COM_DOCKER_COMPOSE_SERVICE": "backend"
+   }
+  },
+  {
+   "count": 3,
+   "record": {
+    "MESSAGE": "ihr-records: hospital=traefikforged grant=none user=1 reason=none outcome=refused hour=10",
+    "_HOSTNAME": "srv1",
+    "PRIORITY": "3",
+    "_TRANSPORT": "journal",
+    "_COMM": "dockerd",
+    "_UID": "0",
+    "_SYSTEMD_UNIT": "docker.service",
+    "CONTAINER_NAME": "indiehr-staging-traefik-1",
+    "COM_DOCKER_COMPOSE_SERVICE": "traefik"
+   }
+  },
+  {
+   "count": 3,
+   "record": {
+    "MESSAGE": "ihr-records: hospital=longforged grant=none user=1 reason=none outcome=refused hour=10 (and more)",
+    "_HOSTNAME": "srv1",
+    "PRIORITY": "3",
+    "_TRANSPORT": "journal",
+    "_COMM": "dockerd",
+    "_UID": "0",
+    "_SYSTEMD_UNIT": "docker.service",
+    "CONTAINER_NAME": "indiehr-staging-backend-1",
+    "COM_DOCKER_COMPOSE_SERVICE": "backend"
+   }
+  },
+  {
+   "count": 41,
+   "record": {
+    "MESSAGE": "ihr-records: hospital=beta grant=101 user=9 reason=patient_request outcome=granted hour=12",
+    "_HOSTNAME": "srv1",
+    "PRIORITY": "3",
+    "_TRANSPORT": "journal",
+    "_COMM": "dockerd",
+    "_UID": "0",
+    "_SYSTEMD_UNIT": "docker.service",
+    "CONTAINER_NAME": "indiehr-staging-backend-1",
+    "COM_DOCKER_COMPOSE_SERVICE": "backend"
+   }
+  },
+  {
+   "count": 40,
+   "record": {
+    "MESSAGE": "ihr-records: hospital=gamma grant=201 user=9 reason=insurer outcome=granted hour=12",
+    "_HOSTNAME": "srv1",
+    "PRIORITY": "3",
+    "_TRANSPORT": "journal",
+    "_COMM": "dockerd",
+    "_UID": "0",
+    "_SYSTEMD_UNIT": "docker.service",
+    "CONTAINER_NAME": "indiehr-staging-backend-1",
+    "COM_DOCKER_COMPOSE_SERVICE": "backend"
+   }
+  },
+  {
+   "count": 5,
+   "record": {
+    "MESSAGE": "ihr-records: hospital=gamma grant=201 user=9 reason=insurer outcome=expired hour=12",
+    "_HOSTNAME": "srv1",
+    "PRIORITY": "3",
+    "_TRANSPORT": "journal",
+    "_COMM": "dockerd",
+    "_UID": "0",
+    "_SYSTEMD_UNIT": "docker.service",
+    "CONTAINER_NAME": "indiehr-staging-backend-1",
+    "COM_DOCKER_COMPOSE_SERVICE": "backend"
+   }
+  },
+  {
+   "count": 1,
+   "record": {
+    "MESSAGE": "ihr-records: hospital=delta grant=301 user=11 reason=legal outcome=granted hour=23",
+    "_HOSTNAME": "srv1",
+    "PRIORITY": "3",
+    "_TRANSPORT": "journal",
+    "_COMM": "dockerd",
+    "_UID": "0",
+    "_SYSTEMD_UNIT": "docker.service",
+    "CONTAINER_NAME": "indiehr-staging-backend-1",
+    "COM_DOCKER_COMPOSE_SERVICE": "backend"
+   }
+  },
+  {
+   "count": 1,
+   "record": {
+    "MESSAGE": "ihr-records: hospital=epsilon grant=401 user=12 reason=legal outcome=granted hour=07",
+    "_HOSTNAME": "srv1",
+    "PRIORITY": "3",
+    "_TRANSPORT": "journal",
+    "_COMM": "dockerd",
+    "_UID": "0",
+    "_SYSTEMD_UNIT": "docker.service",
+    "CONTAINER_NAME": "indiehr-staging-backend-1",
+    "COM_DOCKER_COMPOSE_SERVICE": "backend"
+   }
+  },
+  {
+   "count": 1,
+   "record": {
+    "MESSAGE": "ihr-records: hospital=epsilon grant=402 user=12 reason=legal outcome=granted hour=21",
+    "_HOSTNAME": "srv1",
+    "PRIORITY": "3",
+    "_TRANSPORT": "journal",
+    "_COMM": "dockerd",
+    "_UID": "0",
+    "_SYSTEMD_UNIT": "docker.service",
+    "CONTAINER_NAME": "indiehr-staging-backend-1",
+    "COM_DOCKER_COMPOSE_SERVICE": "backend"
+   }
+  },
+  {
+   "count": 1,
+   "record": {
+    "MESSAGE": "ihr-records: hospital=epsilon grant=401 user=12 reason=legal outcome=ended hour=02",
+    "_HOSTNAME": "srv1",
+    "PRIORITY": "3",
+    "_TRANSPORT": "journal",
+    "_COMM": "dockerd",
+    "_UID": "0",
+    "_SYSTEMD_UNIT": "docker.service",
+    "CONTAINER_NAME": "indiehr-staging-backend-1",
+    "COM_DOCKER_COMPOSE_SERVICE": "backend"
+   }
   }
  ],
  "expect": {
@@ -1945,6 +2141,15 @@
   "ParkedSchemaOverdue": [
    "ihr_parked_h_0123456789_20261102T000000",
    "ihr_parked_h_abcdefghij_20261101T093000"
+  ],
+  "MrdRecordsRefused": [
+   "alpha"
+  ],
+  "MrdRecordsVolume": [
+   "beta"
+  ],
+  "MrdRecordsOffHours": [
+   "delta"
   ]
  },
  "expect_state": {
@@ -1965,6 +2170,9 @@
   "DumpHospitalFailed": "firing",
   "DumpHospitalHeld": "firing",
   "HospitalRestoreFailed": "firing",
-  "ParkedSchemaOverdue": "firing"
+  "ParkedSchemaOverdue": "firing",
+  "MrdRecordsRefused": "firing",
+  "MrdRecordsVolume": "firing",
+  "MrdRecordsOffHours": "firing"
  }
 }

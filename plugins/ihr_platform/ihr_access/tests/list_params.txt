@@ -24,6 +24,7 @@
 
 # --- patients and encounters -------------------------------------------------------------
 /api/v1/patient/ ?organization=district  # CARE's geographic patient list (our roles: empty)
+/api/v1/patient/ none:facility  # CARE's list context: a facility's tags on the rows shown (P1-T11b4: MRD with a grant lists its patient, read only through CARE's list)
 /api/v1/patient/{external_id}/ ?{external_id}=patient_b  # the patient with Radiology on the visit (Q-K44 A)
 /api/v1/patient/{external_id}/get_appointments/ ?facility=facility  # restricted users must name the facility ("After the attack" §5.2)
 /api/v1/patient/{external_id}/get_tokens/ ?facility=facility  # as get_appointments
@@ -81,6 +82,15 @@
 /api/v1/patient/{patient_external_id}/diagnostic_report/ ?encounter=encounter  # a visit's reports
 /api/v1/patient/{patient_external_id}/diagnostic_report/{external_id}/ ?{external_id}=lab_diagnostic_report  # the lab copy
 /api/v1/patient/{patient_external_id}/diagnostic_report/{external_id}/ ?{external_id}=xray_diagnostic_report  # the imaging copy
+# the Radiology patient's own orders and prescription (P1-T11b4 review C1): the grant authorizer's
+# reads on a patient other than the granted one
+/api/v1/facility/{facility_external_id}/service_request/ ?encounter=encounter_b  # the Radiology visit's requests
+/api/v1/facility/{facility_external_id}/service_request/{external_id}/ ?{external_id}=service_request_b  # the Radiology patient's request
+/api/v1/facility/{facility_external_id}/specimen/{external_id}/ ?{external_id}=specimen_b  # its specimen
+/api/v1/patient/{patient_external_id}/diagnostic_report/ ?{patient_external_id}=patient_b&encounter=encounter_b  # the Radiology visit's reports
+/api/v1/patient/{patient_external_id}/diagnostic_report/{external_id}/ ?{patient_external_id}=patient_b&{external_id}=diagnostic_report_b  # its report
+/api/v1/patient/{patient_external_id}/medication/prescription/{external_id}/ ?{patient_external_id}=patient_b&{external_id}=prescription_b  # its prescription
+/api/v1/encounter/{external_id}/organizations/ ?{external_id}=encounter_b  # the Radiology visit's departments
 /api/v1/patient/{patient_external_id}/observation/ ?encounter=encounter  # a visit's results
 /api/v1/patient/{patient_external_id}/observation/{external_id}/ ?{external_id}=lab_observation  # the lab copy
 
@@ -208,3 +218,5 @@
 /api/v1/supply_request/ none:include_children,order,origin  # include_children, order and origin: optional with destination
 /api/v1/tag_config/ none:facility_only  # facility_only: optional with facility
 /api/v1/template/ none:facility_only  # facility_only: optional with facility
+/api/ihr/owner/totals/ ?facility=facility&from~01-01-2026&to~31-12-2026  # the Owner's totals of a year (P1-T11b4): the facility and the IST days are required
+/api/ihr/owner/totals/ none:by  # day (the default) or month: how the series is grouped, never who sees it

@@ -136,6 +136,9 @@ def apply_tenancy(settings):  # noqa: PLR0915 (one flat list of settings)
     settings["MIDDLEWARE"] = [
         *settings["MIDDLEWARE"],
         "ihr_identity.middleware.StaffSessionMiddleware",
+        # Records grants a request found expired end after its view, outside CARE's
+        # per-request transaction (P1-T11b4 review C3)
+        "ihr_access.middleware.RecordsExpiryMiddleware",
     ]
     settings["CORS_ALLOW_CREDENTIALS"] = False
     settings.setdefault("IHR_SESSION_IDLE_SECONDS", 1800)

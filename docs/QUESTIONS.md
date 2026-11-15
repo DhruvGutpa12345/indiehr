@@ -492,6 +492,13 @@ TENANCY §7.5 and §7.7 are corrected (amendment, Proposed):
 
 *Recommendation A.* Records work is frequent and B would stall it. C would give a records clerk every patient's record at all times. A stated reason plus the trail and the alerts meets NABH access-control expectations at small-hospital scale. After the attack: under A, a grant also opens that patient's lab and imaging requests, specimens, reports and prescriptions, read only. CARE checks these by department, not by `PatientUser`. File links issued during a grant last at most 5 minutes (CARE's last 60). Until a records screen exists (Q-K45), MRD uses the grant through the API only.
 
+*Built in P1-T11b4 (2026-11-15) as A.* The length and the link cap are settings
+(`IHR_RECORDS_GRANT_MINUTES` 30, `IHR_RECORDS_LINK_SECONDS` 300), the codes are
+`RecordsGrant.Reason`, the reference rule `IHR_RECORDS_REFERENCE_REQUIRED` (legal, insurer), and
+the three alert thresholds are the numbers in `deploy/logs/alerts/records.yml` (night grants are
+`info`, mailed at once). To change any, say so. Details: docs/reviews/p1-t11/design-b.md
+"P1-T11b4 as built", ADR-018 (Proposed).
+
 ### Q-K37 — Does the front desk see where an inpatient is? (P1-T11b; auto-accepted by Claude, 2026-11-14, awaiting owner confirmation)
 
 - **A ⭐ (taken). No.** Encounters shown to Receptionist, Cashier, TPA Desk and MRD carry no location and no department. Visitors' "which ward?" questions go to the nursing station.
@@ -525,6 +532,8 @@ Under Q-K37 A, every encounter the Cashier and TPA Desk see has no ward, bed, be
 - B. Hide any count under 5 in per-day figures.
 
 *Recommendation A.* Without a clinical dimension, a small count does not point to a patient's condition. Suppression would make daily figures wrong for small hospitals. The question comes back with MIS breakdowns.
+
+*Built in P1-T11b4 (2026-11-15) as A:* `GET /api/ihr/owner/totals/` (visits by class and status, admissions and discharges, inpatients now, beds, bills, payments and outstanding balance; per IST day or month, at most 366 days), nothing suppressed and nothing broken down. The Owner's screen is P1-T11c's (Q-K45).
 
 ### Q-K40 — CARE's own access gaps found on the way (P1-T11b; auto-accepted by Claude, 2026-11-14, awaiting owner confirmation)
 
@@ -596,6 +605,15 @@ CARE's web app opens the patient tabs, the encounter list and the edit form only
 - B. Keep P1-T11c to menus and add a new task for the screens.
 
 *Recommendation A.* The screens and the menus are one patch to the same web app and one CI build. Until then the eight roles can be seeded and tested, but the front desk, MRD and the Owner cannot use them day to day.
+
+### Q-K46 — Do adjustments count as "collected" in the Owner's totals? (P1-T11b4 review A1, 2026-11-15; open, awaiting the owner)
+
+A payment record can be a payment, an advance, or an adjustment (a write-off or correction, no money moves). CARE's own "total paid" on an account counts all three, so the outstanding balance the Owner sees already allows for adjustments.
+- **A ⭐ (built for now). "Collected" counts only money received:** completed payments and advances. Adjustments stay out of "collected" but still lower "outstanding now" (CARE's balance).
+- B. Count adjustments as collected too, so "collected" matches CARE's "total paid".
+- C. Show adjustments as their own figure next to "collected" and "refunded".
+
+*Recommendation A, with C later if you want it.* "Collected" should mean cash in the bank; an adjustment is not. The two figures then answer different questions, and the totals page (P1-T11c) can say so. Pinned by `ihr_access.tests.test_totals.OwnerTotals.test_owner_totals_count_and_sum` (an adjustment of ₹999 is not collected); the choice is `RECEIVED_TYPES` in `ihr_access/totals.py`. Failed, queued and partial payments are never counted (review A1, not a choice: CARE does not count them either).
 
 **Still open:** Q-B4 (final MVP module list: assumed as in PLAN.md Phase 2) and Q-B6/B7 (pricing, timeline). Q-F2 is moot while AI is deferred.
 

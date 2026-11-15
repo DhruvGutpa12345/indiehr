@@ -2021,3 +2021,364 @@ new problems. Each was fixed with a regression test where one fits; what stays o
 | `python3 scripts/check-logs.py` | `Log pipeline OK.` |
 | `scripts/batch-allowlist.py --check` | `batch-allowlist: 37 routes, list current` |
 | `pre-commit run --all-files` | 43 hooks passed |
+
+## P1-T11b4 as built (2026-11-15)
+
+**What exists now.** MRD asks for a records grant on one patient (`POST /api/ihr/records-access/`,
+a reason code, a reference for legal and insurer requests), reads that patient's whole clinical
+record for 30 minutes, read only, and every request that shows that patient while the grant is
+live is in the trail with `purpose: records` and the grant id (only that grant's id; review A3). The grant also opens that patient's requests, specimens,
+reports and prescriptions through a narrow authorizer of CARE's read checks. A grant ends early
+(DELETE, the holder or a hospital-wide admin), at the first request after its time, or by a
+per-minute beat job, always through one end routine; each event writes one log line, with three
+log alerts. The Owner gets `GET /api/ihr/owner/totals/` (aggregates only). The matrix crawls MRD
+with a grant as its own column (`mrdg`) and the canary reads it; the Owner totals route has its
+row. ADR-018 (Proposed) records the whole mechanism. No `apps/` file changed (no
+`UPSTREAM_PATCHES.md` entry), no migration, no new table, `batch_allowlist.txt` unchanged.
+
+### The pieces and the CARE code each hooks (confirmed in `apps/backend/care` at this pin)
+
+| Piece | CARE code it hooks | How |
+|---|---|---|
+| Grant authorizer `ihr_access.authz.RecordsGrantAuthorizer` | `security/authorization/base.py` `AuthorizationController.register_override_controller` (l.116-117), lazy map `build_cache` (l.86-93); `service_request.py` `ServiceRequestAccess.can_read_service_request`, `can_read_specimen`, `can_read_diagnostic_report` (l.53-93); `encounter.py` `EncounterAccess.can_view_encounter_obj` (l.36-47), `can_view_service_request_for_encounter` (l.132-138), `can_read_diagnostic_report_in_encounter` (l.148-154) | registered in `IhrAccessConfig.ready()`; each of the six names returns CARE's answer (the class CARE resolved it to before us, called as CARE calls it), else True for a live grant on the object's `patient_id`; a map already built is rebuilt. Callers (all reads, or behind a write check): `service_request.py:215,252`, `specimen.py:58,84`, `diagnostic_report.py:107,127,140`, `file_upload.py:80,96`, `medication_request_prescription.py:102`, `encounter.py:161,435` (after `authorize_update`), `reports/authorizers/encounter.py:12` |
+| Grant and end routine `ihr_access/records.py` | `emr/models/patient.py` `PatientUser.save` re-saves the patient (l.157-159), `Patient.save`/`rebuild_users_cache` (l.99-132); `PatientViewSet.delete_user`'s hard delete (`patient.py:330`) | `create_grant`: the grant row, then `PatientUser.objects.create(..., role=MRD Records Access)` (CARE's save); `end_grant`: row lock, `ended_at`, hard delete of the hidden-role row, `patient.save(update_fields=["users_cache"])` (CARE's save rebuilds both caches) |
+| Per-request expiry and audit mark | DRF `APIView.perform_authentication` (as P1-T11b1's state hook) | `records.on_request(user)` after `state.begin`: one query on the partial index `ihr_records_grant_live`; expired grants ended in the request's transaction; live ones fill the request state and call `ihr_audit.context.annotate_patients("grants", {patient: grant id}, purpose="records")` (review A3: kept for the entry only, never on the connection) |
+| Audit request entry | `ihr_audit/middleware.py` (ours) | `context.current_context()` read back after `resync()`, plus `context.patient_fields(<every patient shown, uncapped>)`: `purpose: records` and the ids of the grants whose patients the request showed, nothing when it showed none of them (review A3); the `audit` purpose decision stays on the path's own purpose |
+| Signed-link cap | `emr/utils/file_manager.py` `S3FilesManager.read_signed_url` (l.65, `duration=60 * 60`); callers `file_upload/spec.py:117`, `report/report_upload/spec.py:54` | wrapped in `records.install()`: under a live grant, `min(duration, seconds left on the file's patient's grant, IHR_RECORDS_LINK_SECONDS)` |
+| MRD with a grant and the web app's `?facility` | `emr/api/viewsets/patient.py` `get_serializer_list_context` (l.508-518: `can_list_facility_tag_config`) | `IhrPatientViewSet.get_serializer_retrieve_context`: when CARE refuses, a retrieve of a patient under the user's own live grant gets that facility's context where the user holds `ihr_request_records_access` there (`_granted_facility`) |
+| Beat job | `ihr_platform/beat.py` `ActiveTenantScheduler` (ours) | `ihr_access/tasks.py`: `ihr_access.expire_grants` every 60 s, no `PLATFORM_ONCE` header: sent once per active, servable hospital in its schema (as `ihr_audit.seal`) |
+| Owner totals `ihr_access/totals.py` | models `Encounter` (`period` JSON, `encounter_class`, `status`), `FacilityLocation` (`form="bd"`, `current_encounter`), `Invoice` (`status`, `total_gross`, `issue_date`), `PaymentReconciliation` (`status`, `reconciliation_type`, `method`, `amount`, `is_credit_note`, `payment_datetime`), `Account` (`status`, `total_balance`) | `aggregate()` and `values().annotate()` only; days by `Trunc(..., tzinfo=Asia/Kolkata)` |
+
+### Files
+
+| Where | What |
+|---|---|
+| `ihr_access/records.py` (new) | `create_grant`, `end_grant`, `expire_due`, `on_request`, `annotate`, `seconds_left`, `link_cap`, `install` (link cap), `problems`, `log_line`/`emit`; settings `IHR_RECORDS_GRANT_MINUTES` (30), `IHR_RECORDS_LINK_SECONDS` (300), `IHR_RECORDS_REFERENCE_REQUIRED` (legal, insurer) |
+| `ihr_access/authz.py` | `GRANT_READS`, `granted()`, `care_handler()`, `RecordsGrantAuthorizer` (built from `GRANT_READS`), `install_grant_authorizer()`, `grant_problems()` |
+| `ihr_access/endpoints.py`, `urls.py` (new) | `RecordsAccessView` (GET own live grants, POST), `RecordsAccessEndView` (DELETE), `OwnerTotalsView`; mounted at `/api/ihr/` in `ihr_platform/urls_tenant.py` |
+| `ihr_access/totals.py` (new) | `parse_range`, `compute` |
+| `ihr_access/tasks.py` (new) | `ihr_access.expire_grants` and its beat entry |
+| `ihr_access/management/commands/ihr_records_access.py` (new), `scripts/care-dev.sh records-access` | the dev command: a demo Keycloak login or a CARE username, the same `create_grant` / `end_grant`; refuses unless `DEBUG` and the `localhost` suffix |
+| `ihr_access/state.py` | `grants` ({patient: (grant id, expires)}), `set_grants`; `live_grants()` replaces `granted_patients()` (kept as a wrapper) |
+| `ihr_access/apps.py`, `checks.py` | the authorizer, the link cap and `records.on_request` installed; `ihr_access.E023` (`records_grants`) |
+| `ihr_access/views.py` | `IhrPatientViewSet`: `ihr_object`, `_granted_facility` (above) |
+| `ihr_audit/context.py`, `middleware.py`, `views.py` | `current_context()`, `annotate_request()`, `annotate_patients()` / `patient_fields()` (review A3); the request entry written from the current context and the per-patient fields; purpose `records` for `/api/ihr/records-access/`; the viewer's list shows `grants` |
+| `ihr_access/testing.py` | `grant_records()`; the full world's "MRD Granted" clerk with a 24-hour grant on the first patient |
+| `ihr_access/tests/test_records.py`, `test_totals.py` (new) | tests 21-23 and the b3 list of §9 test 14 and 15 (below) |
+| `ihr_access/tests/matrix.py`, `test_role_matrix.py` | the `mrdg` viewer (`GRANTED`, `CANARY_ROLES`, `user_name`, `expand(..., inherit=)`); the write crawl's records lines silenced |
+| `ihr_access/tests/role_matrix.txt`, `post_reads.txt`, `list_params.txt`, `canary_exemptions.txt`, `role_matrix_keys.txt`, `role_matrix_writes.txt` | 65 GET rows and 5 POST reads with an `mrdg` cell; the Owner totals and records-access rows; `mrdg` canary exemptions with their negative rows; the totals keys; `mrdg` write cells (only additions, checked line by line against the b3 file) |
+| `deploy/logs/alerts/records.yml` (new); `deploy/logs/tests/redaction-cases.json`, `alert-cases.json`; `scripts/check-logs.py`; `scripts/test_staging_logs.py`; `deploy/staging/README.md` | the three alerts, three redaction cases (first), fixtures with forged lines, the key labels, the static rule checks, the runbook table |
+| `scripts/isolation-mutation.sh` | 10 rows (below) |
+| `docs/adr/018-demographics-and-billing-access.md` (new, Proposed); `docs/UPSTREAM.md` (after-sync step); `docs/QUESTIONS.md` (Q-K36, Q-K39: "built as A") | |
+
+### Deviations from the design
+
+1. **The log line has two fields more**: `ihr-records: hospital=<slug> grant=<id|none>
+   user=<id|none> reason=<code|invalid|none> outcome=<granted|ended|expired|refused>
+   hour=<00-23>`. `MrdRecordsVolume` ("more than 40 grants a day **by one user**") and
+   `MrdRecordsRefused` need the person, so the line names the staff user's id in that hospital
+   (a number, never a name); `MrdRecordsOffHours` needs the IST hour, and a rule on `_time` would
+   make `scripts/check-logs.py` depend on the clock it runs at, so the backend writes the hour.
+   A refusal has `grant=none`; a reason that is not a code is `invalid` (never the text sent).
+   Lines for granted, ended and expired are written on commit; refused at once (nothing is
+   written, and a 4xx rolls the request back).
+2. **The authorizer subclasses CARE's base `AuthorizationHandler`, not CARE's handlers.**
+   Subclassing `ServiceRequestAccess` and `EncounterAccess` would make every `can_`/`get_` name
+   they define resolve to our class (the controller maps names to the last registered class) and
+   let Python's MRO choose between duplicates. Ours defines only the six names, each delegating to
+   the class CARE resolved before us; E023 checks that each resolves to ours, that CARE still
+   defines it, and that ours answers nothing else (no write, never `can_view_clinical_data`).
+3. **The per-request expiry runs for every signed-in staff request**, not only MRD's: telling an
+   MRD user apart costs more queries than the check (one query on the partial index); it also
+   fills the request's grant cache, so MRD's later checks need none. Skipped in `public`.
+4. **`ihr_records_grant` keeps the hospital default class (`dml`)** (b1 deviation 2 left the
+   decision here). A grant-only class (no DELETE, UPDATE of `ended_at` only) would list the table
+   in `hospital_tables.txt`, and the role check would then report it missing in every hospital
+   not yet migrated to b1, archived ones included (gated and alerted). What it would stop is the
+   app deleting or editing a grant: a delete or an earlier end only closes access (the read-time
+   rule needs a live row), and a compromised app could forge grants or `PatientUser` rows in any
+   class; every change is in the trail. No migration and no new column in b4 (who ended a grant
+   is the trail's actor; how, the log line).
+5. **One live grant per person and patient**: a second request answers 400 ("end it first").
+   Each grant keeps its own reason and time box.
+6. **DELETE by a hospital-wide admin too** (P1-T6b's audit-viewer admins): removing the MRD role
+   does not end a live grant, so an admin can end one at once. `GET /api/ihr/records-access/`
+   lists the caller's own live grants (the P1-T11c records page needs it).
+7. **Purpose `records` for `/api/ihr/records-access/`** (ihr_audit's path rule) as well as for
+   every request under a live grant: asking for a grant, refused or not, is marked records; the
+   viewer's list shows each entry's `grants`.
+8. **MRD with a grant and `?facility`**: CARE's patient retrieve refuses the web app's
+   `?facility` without `can_read_tag_config`, so MRD could not open the granted patient in the
+   web app (found by the matrix: mrdg answered 403 there). A retrieve of a patient under the
+   user's own grant gets that facility's context (its tags and facility identifiers, as a
+   clinician sees them) where the user holds the records right there.
+9. **MRD+g cells re-derived from the code** (item 8.1), where they differ from §6/§9: the
+   granted patient's care team (`get_users`: A; §6 said F; CARE's `can_view_patient_obj` through
+   the hidden role, staff names only), bookings and tokens without `?facility` (A, CARE's
+   answer; with `?facility` F: no booking rights), the encounter's departments (A), files and
+   drawings (A, links capped), `observation/analyse` (A). Requests, specimens, reports and the
+   prescription retrieve are `project` (the bed's occupant link dropped by the location shape).
+   **`branches.closed` stays as it is for MRD with a grant** (the b3 hand-over): resource
+   requests, devices, dispense orders and patient-linked store rows are not the patient's
+   record, and bed history and account reports stay refused to restricted users.
+10. **`visits.check` needed no change**: with a grant, `may_read_chart` (CARE's
+    `can_view_clinical_data` through the hidden role) holds for the granted patient, so a named
+    visit of that patient opens CARE's rows; another patient's visit under the granted path is
+    still 403 (`test_grant_does_not_open_other_patient_reports`).
+11. **The matrix's granted viewer** is a second MRD clerk ("MRD Granted") whose grant is made by
+    `records.create_grant` and extended to 24 hours (a crawl that outlasts 30 minutes would see
+    it end). Its column inherits MRD's outcome unless a row names `mrdg`; it is not in any group.
+    The key snapshot does not walk it (under a grant it reads CARE's own bodies of that patient,
+    as a clinician does; elsewhere it answers as MRD). Its canary exemptions allow each marker of
+    the first patient's record on any route (`*`), each with the shared negative rows: the other
+    patient's extension, visit advice and problem list never reach it anywhere.
+12. **Writes under a grant**: `role_matrix_writes.txt` shows 21 cells where MRD with a grant
+    gets 400 and MRD 403 (CARE found the granted patient's row, then validated the empty body
+    before authorizing). `test_updates_under_a_grant_are_refused_by_authorization` calls CARE's
+    own `authorize_update` (and `file_authorizer` for `archive`) on each such row as MRD with a
+    grant: refused. `CheckedWrites` sends the desk and department writes with valid bodies as
+    MRD with a grant too: refused by authorization.
+13. **Owner totals definitions** (the design names the measures, not their rules): a visit
+    starts at `period.start`, else its creation (CARE's demo data has no period); admissions and
+    discharges are inpatient (`imp`) visits starting or ending in the range (a discharge needs
+    `period.end`); inpatients now are `imp` visits `in_progress` or `on_hold`; beds are bed
+    instances not `inactive`, occupied when they hold a visit; invoiced is issued and balanced
+    bills by issue date (`total_gross`); bills by status are dated by issue date, else creation;
+    collected is active payments and advances (not adjustments) by payment time, else creation,
+    credit notes apart as `refunded`; outstanding is the balance of active and on-hold accounts
+    now (no history). `by=day|month` (default day). The facility is checked, never echoed; the
+    body has a fixed set of keys. Order of checks: the right anywhere (403), the parameters
+    (400), the facility (403 for one not theirs, unknown or malformed).
+14. **Four more mutation rows** than the task named: `records-expiry` and `owner-aggregates`
+    (§9's table), `records-link-cap`, `records-authorizer-install`.
+15. **The audit step of the click-through is at Beta**: no Alpha admin has a Keycloak sign-in
+    (`care-admin` is a CARE account; CARE's own password sign-in is off on hospital addresses,
+    ADR-009), and the audit viewer needs a hospital-wide admin. Beta's `admin.bhavesh` is one.
+
+### The rules as built
+
+- **Asking** (`create_grant`): signed-in, not a superuser, holds `ihr_request_records_access` in
+  a facility organisation of this hospital (else 403); a reason code of `RecordsGrant.Reason`;
+  a reference (letters, digits, space and `. / _ : -`, at most 100) for the codes in
+  `IHR_RECORDS_REFERENCE_REQUIRED`; an existing patient; no live grant of theirs on that patient
+  (else 400). Then, in one transaction: the grant (`expires_at = now + 30 min`), a stale
+  hidden-role row removed, the hidden-role `PatientUser` row (the placement trigger checks the
+  grant), the `granted` line on commit; the request is marked `records` with the new id.
+- **What a grant opens**: everything CARE gives a holder of `can_list_patients`,
+  `can_view_clinical_data` and `can_view_questionnaire_responses` on that patient (the hidden
+  role through `PatientUser`, counted only under a live grant at read time), plus the six reads
+  of `GRANT_READS` on that patient's rows; the guard does not project that patient or its visits
+  (a bed's occupant link stays projected). Never a write; never another patient.
+- **Ending**: `end_grant(grant, "ended"|"expired")` under a row lock, once; DELETE (the holder,
+  or a hospital-wide admin; else 404), the beat (`expire_due`, every minute, per hospital), the
+  first request after the time (`on_request`). A refused request rolls its ending back; the
+  read-time rule refuses meanwhile and the beat ends it within a minute: one `expired` line per
+  grant either way.
+- **Links**: under a live grant, a signed read link lives at most the seconds left on the file's
+  patient's grant (a file whose patient is not found: the soonest grant's), and never more than
+  300 s; CARE's hour otherwise.
+- **Owner totals**: `ihr_view_hospital_totals` in a facility organisation of that facility;
+  `from`/`to` DD-MM-YYYY, IST days, both included, at most 366; amounts two-decimal strings;
+  no patient loaded (the trail's read log stays empty, so a totals request leaves no request
+  entry).
+- **Q-K37a stays at option A** (no bed for the Cashier and TPA Desk; unchanged).
+
+### Tests added
+
+`test_records.GrantFlow` (small world): `test_mrd_asks_reads_and_ends` (POST, list, DELETE,
+`users_cache`, lines), `test_reasons_and_references` (Q-K36 A's rules, one refused line each,
+nothing echoed), `test_only_the_records_role_may_ask` (every other role 403),
+`test_only_its_holder_or_a_hospital_admin_ends_a_grant`,
+`test_grant_and_patient_user_changes_are_in_the_trail` (I/U on the grant, I/D on the
+`PatientUser` row, purpose `records`, the request entries' `grants`),
+`test_the_dev_command_calls_the_same_code`, `test_the_line_names_no_one`.
+`test_records.GrantedReads` (full world; test 21): `test_every_wrapped_read_is_a_route`,
+`test_a_grant_opens_its_patients_requests_reports_and_prescriptions`,
+`test_grant_does_not_open_other_patient_reports`, `test_an_ended_or_expired_grant_opens_nothing`,
+`test_writes_stay_refused_with_a_grant`, `test_updates_under_a_grant_are_refused_by_authorization`,
+`test_expired_grant_is_refused_before_the_beat`, `test_the_beat_ends_each_grant_once` (with
+`ATOMIC_REQUESTS` as deployed: CARE's test settings leave it out), `test_the_beat_job_runs_per_hospital`.
+`test_records.FileLinks.test_links_under_a_grant_are_short` (test 22: 3600 s for the Doctor, 300 s
+under a fresh grant, at most 120 s with two minutes left). `test_records.RecordsAudit.test_records_request_entry_has_purpose`
+(test 23). `test_totals.OwnerTotals` (6 tests: counts and sums, months, no patient loaded, no
+id or name, every other role 403 and the Owner's search 403, range rules).
+The matrix (`test_role_matrix`): the `mrdg` column in every GET row, POST read and write cell;
+`MatrixFiles.test_the_roles_are_the_registrys` checks the granted viewer's rules.
+
+### Mutation rows
+
+| Name | Mutation | Test that must fail |
+|---|---|---|
+| `records-grant-scope` | the grant authorizer ignores which patient the grant is for | `GrantedReads.test_grant_does_not_open_other_patient_reports`, `RoleMatrix.test_role_matrix` (review C1: the seven `mrdg:deny` rows on the Radiology patient) |
+| `records-annotate` | the middleware leaves the per-patient fields (the grant's purpose and id) out of the request entry (retargeted by the A3 fix) | `RecordsAudit.test_records_request_entry_has_purpose`, `RecordsAudit.test_only_reads_of_a_granted_patient_say_records` |
+| `records-annotate-scope` | every live grant's id goes on every entry that showed any patient, whichever patient (review A3) | `RecordsAudit.test_only_reads_of_a_granted_patient_say_records` |
+| `records-expiry` | the per-request expiry no longer ends the grant (since review C3: `end_due`, after the view) | `GrantedReads.test_expired_grant_is_refused_before_the_beat`, `GrantedReads.test_a_refused_request_still_ends_its_expired_grants` |
+| `records-expiry-after-view` | `RecordsExpiryMiddleware` removed from the settings (review C3) | `GrantedReads.test_a_refused_request_still_ends_its_expired_grants` |
+| `records-lapsed-first` | a new grant no longer ends the lapsed one first (review G1) | `GrantedReads.test_a_new_grant_ends_the_lapsed_one_first` |
+| `records-row-still-needed` | `end_grant` removes the hidden-role row although another live grant needs it (review G1) | `GrantedReads.test_ending_a_grant_keeps_the_row_another_live_grant_needs` |
+| `records-link-cap` | the signed link keeps CARE's hour under a grant | `FileLinks.test_links_under_a_grant_are_short` |
+| `records-authorizer-install` | the grant authorizer is not registered | `GrantedReads.test_a_grant_opens_its_patients_requests_reports_and_prescriptions` (E023 stops the run first: signature "records grants do not hold") |
+| `owner-aggregates` | the totals load the inpatient visits as rows | `OwnerTotals.test_owner_totals_load_no_patient` |
+
+### Checks
+
+| Run | Result |
+|---|---|
+| Plugin suites, `IHR_DB_ROLES=test` (the nine labels) | `Ran 936 tests in 982.482s` `OK (skipped=45)`; Redis audit 989 keys, all tenant-prefixed; GET crawl 3,696 requests (297 route keys + 11 POST reads, × 12 viewers) 59.6 s, write crawl 3,415 requests 45.8 s. (Three small edits came after this run started: the log line's slug lookup outside requests, one refusal message, the dev command's hint; `ihr_access` alone was run again, below) |
+| `ihr_access` alone, `IHR_DB_ROLES=test`, on the final code | `Ran 166 tests in 204.863s` `OK`; Redis audit 340 keys, all tenant-prefixed |
+| Plugin suites, roles off (final code) | `Ran 901 tests in 918.765s` `OK (skipped=49)`; Redis audit 989 keys, all tenant-prefixed; GET crawl 46.1 s, write crawl 39.7 s |
+| CARE modules in tenant mode, roles off, for each CARE check the grant authorizer answers or our code wraps (service request, specimen, diagnostic report, medication request prescription, medication request, encounter, patient, file upload) | `Ran 188 tests in 40.785s` `FAILED (failures=1, errors=4)`: the same five `test_file_upload_api` storage round trips as on b1 and b2 (`Failed to resolve 'minio'` from the one-off container); the other 183 pass |
+| `scripts/isolation-mutation.sh check` | 149 rows (143 + 6), every target and named test found |
+| The 6 new rows, each applied alone to a scratch copy of `plugins/` and run as CI runs them (roles off) | each named test FAILED (an assertion, never an ERROR): `records-grant-scope`, `records-annotate`, `records-expiry`, `records-link-cap`, `owner-aggregates` 1 failure each; `records-authorizer-install` stopped at E023 with its signature ("records grants do not hold: the records grant authorizer is not registered") |
+| `python3 scripts/check-logs.py` | `Log pipeline OK.` (101 checks: the three new redaction cases kept exactly; the three alerts fire for exactly alpha, beta and delta; forged, Traefik and longer lines raise nothing). A first run fired `MrdRecordsOffHours` for a redaction case's own night line too; that case now uses a day hour |
+| `python3 -m unittest scripts/test_staging_logs.py` | `Ran 41 tests` `OK` (the records rules' shape, severity, labels and the forged lines) |
+| `scripts/batch-allowlist.py --check` | `batch-allowlist: 37 routes, list current` |
+| `pre-commit run --all-files` (new files added with `git add -N` for the run, then reset) | 43 hooks passed (the first run failed `staging-dashboards-static`: the server dashboard counts the log rules, 18 → 21; regenerated with `deploy/grafana/build_dashboards.py`) |
+| `manage.py check` in the dev backend (restarted with Celery) | `System check identified no issues (0 silenced).` (E020, E021, E022, E023, E024); the Celery worker ran `ihr_access.expire_grants` per hospital (`succeeded`) |
+
+**Manual check (Alpha and Beta dev hospitals, 2026-11-15; no migration; `APIClient` signed in as
+the seeded users in `manage.py shell`, grants through `scripts/care-dev.sh records-access`):**
+- Alpha patient `4afe7e25-…` (a synthetic condition, request and report added for the check):
+  `care-mrd` without a grant: diagnosis 403, report 403, the patient with the web app's
+  `?facility` 200 projected (blood group `null`).
+- `scripts/care-dev.sh records-access mrd.farah <patient> --reason insurer --reference TEST-1`:
+  grant 1, line `ihr-records: hospital=alpha grant=1 user=21 reason=insurer outcome=granted
+  hour=17`; `--reason legal` without a reference refused (`outcome=refused`), and
+  `reception.ravi` refused ("Your role cannot ask for records access").
+- Under the grant: diagnosis 200 ("B4 manual check condition"), the service request 200, the
+  report 200, the patient with `?facility` 200 unprojected (blood group `AB_negative`); another
+  patient's diagnosis 403; a report write 403; `GET /api/ihr/records-access/` lists grant 1.
+  Each request entry: `purpose: records`, `grants: [1]`, the patient shown (the refused other
+  patient's read too, with its own patient: before the A3 fix; that read now keeps `care` and
+  names no grant).
+- `--end 1`: line `outcome=ended`; `ended_at` set, no hidden-role row left, MRD out of the
+  patient's `users_cache`; diagnosis and report 403 again, the patient projected again. The
+  trail holds the grant's I and U and the `PatientUser` row's I and D (actor
+  `system:manage:ihr_records_access`).
+- `care-owner`: totals for 01-11-2026 to 14-11-2026 200 with the fixed keys only and no id
+  (visits by class and status, 5 beds, 0 occupied, outstanding 2189.42, 14 daily rows); 367
+  days 400; patient search 403; opening the patient 404. `care-receptionist`: totals 403.
+- `care-admin` (Alpha, `APIClient`): the audit viewer lists 7 `records` entries with
+  `grants: [1]`. At Beta, `care-fac-admin` (Keycloak `admin.bhavesh`) sees the `records` read
+  with `grants: [1]` after a grant on patient `9dd3638c-…` (ended afterwards).
+
+### Known limits (for P1-T11c and later)
+
+- **No screens**: MRD asks, lists and ends grants through the API (or the dev command), and the
+  Owner reads totals as JSON, until P1-T11c (Q-K45: a records-access page, an Owner totals page
+  in lakh and crore).
+- Two requests for the same patient at the same moment by the same clerk can both make a grant
+  (no unique index: it would need a migration); ending either keeps the shared `PatientUser`
+  row while the other is live (review G1), and the row goes with the last of them.
+- A `records` request entry names only the grants whose patients it showed (review A3, fixed):
+  a read of another patient, or a search, made while a grant is live keeps its path's purpose
+  and no `grants`. An entry that showed a granted patient together with others (a search that
+  matched both) is marked `records` with that grant's id and lists every patient it showed, as
+  every entry does; the grant's reason applies only to the patient its id names (the grant's
+  own `ihr_records_grant` entry). Rows changed by a request do not carry `grants` (a grant
+  opens reads only; asking for and ending a grant are on the `records` path).
+- A live grant survives the removal of the MRD role until it ends (at most 30 minutes) unless the
+  clerk or a hospital-wide admin ends it.
+- A link issued under a grant can be used for up to 5 minutes after the grant ends (A14).
+- Under a grant MRD sees that patient's care team, booking and token notes and booked doctor
+  (CARE's answers; part of the patient's file).
+- The dev command acts as the process (`system:manage:ihr_records_access`): its grant rows are
+  in the trail without `purpose: records`; only staff requests carry it.
+- Only `granted` and `refused` lines are alerted on; `ended` and `expired` are logged (backend,
+  Celery) for the record. The alert thresholds live in `records.yml` only.
+- Owner totals: per facility (a hospital with two facilities asks twice); discharges need a
+  period end; outstanding is a snapshot; amounts are tax-inclusive (`total_gross`); a visit
+  without a period start counts from its creation; "collected" leaves out adjustments, which
+  CARE's balance behind "outstanding now" includes (Q-K46, open, awaiting the owner).
+- The per-request query costs every staff request one indexed query.
+- Owner totals start no earlier than `totals.MIN_DAY` (01-01-2000): a hospital whose migrated
+  history goes back further cannot ask about those years until the constant is moved (a
+  constant, like `MAX_DAYS` and `MAX_DAYS_AHEAD`; it exists only to refuse absurd dates, review
+  A2).
+- `OwnerTotals.test_owner_totals_range_rules` uses fixed past ranges (01-01-2025 to 01-01-2026,
+  02-01-2026); a past date always stays within `MAX_DAYS_AHEAD` of today, so they stay valid.
+- Under the `records-grant-scope` mutation most of the `mrdg` `rad-*` cells on the Radiology
+  patient answer `project` rather than `allow`; the mutation is caught because the reviewed
+  outcome is `deny`. A later change that makes those routes `project` for `mrdg` on purpose
+  must re-review those rows (they guard the grant's scope).
+
+### The owner's click-through
+
+One-click URL: **http://alpha.localhost:8080**. Logins (synthetic; passwords and authenticator
+keys only in the git-ignored `deploy/seed/TEST_USERS.md`, Keycloak section; current code:
+`scripts/care-dev.sh keycloak otp <login>`): `reception.ravi`, `owner.vikram`, `mrd.farah`, and
+for the audit step Beta's `admin.bhavesh`. Start Keycloak first: `scripts/care-dev.sh keycloak up`.
+The alpha patient `4afe7e25-9d26-4976-9af5-ed223d3e40b5` carries a synthetic condition, request
+and report made for this check ("B4 manual check").
+
+1. Sign in at http://alpha.localhost:8080 as `reception.ravi` and search a patient by phone:
+   identity and contact only (the clinical tabs are hidden; the screens are P1-T11c's).
+2. Sign in as `owner.vikram` and open
+   `http://alpha.localhost:8080/api/ihr/owner/totals/?facility=168099bf-42a6-4b94-93ea-f67bb346ac29&from=01-11-2026&to=14-11-2026`:
+   counts and rupee amounts only, no names or ids. Then
+   `http://alpha.localhost:8080/api/v1/patient/4afe7e25-9d26-4976-9af5-ed223d3e40b5/`: refused.
+3. Sign in as `mrd.farah` and open
+   `http://alpha.localhost:8080/api/v1/patient/4afe7e25-9d26-4976-9af5-ed223d3e40b5/diagnosis/`:
+   403. Run `scripts/care-dev.sh records-access mrd.farah 4afe7e25-9d26-4976-9af5-ed223d3e40b5 --reason insurer --reference TEST-1`
+   and reload: the "B4 manual check condition" shows; the report
+   `.../diagnostic_report/6baa55ee-eb21-4ab8-9788-9bc726307c07/` opens too.
+4. Run `scripts/care-dev.sh records-access mrd.farah --end <grant id it printed>` and reload:
+   403 again (or wait 30 minutes).
+5. At Beta: `scripts/care-dev.sh records-access mrd.farah 9dd3638c-d23a-4049-b434-d43f4c2df5b2 --slug beta --reason legal --reference CASE-1`,
+   sign in at http://beta.localhost:8080 as `mrd.farah`, open
+   `http://beta.localhost:8080/api/v1/patient/9dd3638c-d23a-4049-b434-d43f4c2df5b2/diagnosis/`,
+   then sign in as `admin.bhavesh` and open `http://beta.localhost:8080/api/ihr/audit/entries/?size=20`:
+   the read is there with `purpose: records` and `grants: [<id>]`.
+
+### Review fixes (2026-11-15)
+
+Eight findings of the b4 review (two confirmed twice: G1 and C2 are one defect), each fixed with a
+regression test that fails without the fix (checked by applying the old code alone to a scratch
+copy of `plugins/` and running the test: an assertion FAIL, or for A2 the 500 itself).
+
+| ID | Finding | Fix | Regression test | Mutation row |
+|---|---|---|---|---|
+| G1 / C2 | A new grant skipped an expired-but-open older grant; ending that older grant later deleted the new grant's hidden-role `PatientUser` row (grant listed live, patient-level reads refused) | `create_grant` locks and ends (`expired`, its own line) the user's lapsed open grants on the patient before its live check; `end_grant` deletes the shared row only when no other live grant of that user on that patient remains | `GrantedReads.test_a_new_grant_ends_the_lapsed_one_first`, `GrantedReads.test_ending_a_grant_keeps_the_row_another_live_grant_needs` | `records-lapsed-first`, `records-row-still-needed` |
+| G2 | `create_grant` saved the whole patient from an instance loaded before its transaction (CARE's `PatientUser.save` → `patient.save()`), which could write back a demographics edit made in between | the hidden-role row goes in with `bulk_create` (the placement trigger still checks it); then only `users_cache` (and CARE's rebuilt caches) is saved, from `Patient.objects.select_for_update().get(pk)` | `GrantedReads.test_a_grant_never_writes_back_a_stale_patient` | none (not an access control) |
+| A1 | Owner totals counted queued, partial and failed payments as collected (CARE's `total_paid` and an invoice's `total_payments` count only `outcome=complete`) | `RECEIVED_OUTCOME = "complete"` filters collected, by method and refunded; adjustments stay out of "collected" (they move no money) though CARE's balance has them: **Q-K46, open, awaiting the owner** (built as its recommended A) | `OwnerTotals.test_owner_totals_count_and_sum` (an error, a queued and a partial payment and a failed credit note, ₹999 each, counted nowhere; the ₹999 adjustment pins Q-K46 A) | none |
+| A2 | `to=31-12-9999` (or `from=01-01-0001`) passed the 366-day check and overflowed the date arithmetic: 500 | `parse_range` refuses a start before `MIN_DAY` (01-01-2000) on `from` and an end more than `MAX_DAYS_AHEAD` (366) days after today (IST) on `to` | `OwnerTotals.test_owner_totals_range_rules` (year 9999 by day and by month, year 0001, 31-12-1999: 400 on the right field; 01-01-2000 and a range ending 366 days ahead: 200) | none |
+| A3 | Every request made while a grant is live is marked `records` with the grant ids, also reads of other patients | first pass: wording only. Second fixer: fixed. `records.annotate` hands `ihr_audit.context.annotate_patients` a {patient: grant id} map kept for the entry only (not on the connection); the middleware adds `purpose: records` and the ids of the grants whose patients the request showed (all shown patients, before the 1,000 cap), nothing otherwise; `state.grant_ids` removed | `RecordsAudit.test_only_reads_of_a_granted_patient_say_records` (two grants on two patients, a third patient under none: each read names only its own grant; the third read stays `care` with no `grants`) | `records-annotate` (retargeted), `records-annotate-scope` (new) |
+| A4 | The CSV audit export dropped the grant ids | `grants` appended as the CSV's last column (ids joined by `; `), earlier columns unmoved; `verify_export.py` checks only the JSON export and needs no change | `ihr_audit.tests.test_device_time_zone.RecordsGrantExportTests.test_the_csv_export_names_the_grants` | none |
+| C1 | The matrix's `mrdg` rows could not see a grant-scope leak: the Radiology patient had no request, specimen, report or prescription | the full world gives that patient (`second_patient_orders`) an imaging request, a specimen, a report and a prescription at no place, markers `rad-request`, `rad-specimen`, `rad-report`, `rad-prescription`; seven new matrix keys (list_params.txt): the facility request list `?encounter=encounter_b`, the request, specimen, report and prescription by id under the Radiology patient, that visit's reports, `/encounter/{encounter_b}/organizations/`, each `mrdg:deny`; `mrdg rad-* * never` canary rows for the four markers; the Radiologist reads them (Q-K44 A: Radiology on the visit; twelve `rad` allow lines, 175 new `rad` keys in role_matrix_keys.txt), except the specimen (CARE's check needs a place) | `RoleMatrix.test_role_matrix` (the seven rows), `RoleMatrix.test_clinical_canary_never_reaches_restricted_roles` | `records-grant-scope` now names `RoleMatrix.test_role_matrix` too: under it the seven `mrdg` cells answer 200 and fail |
+| C3 | The per-request expiry ended grants inside CARE's per-request transaction: grant and patient row locks held for the whole view, parallel requests queued, a refused request rolled the end back, and an unordered query could deadlock two requests | `on_request` takes no lock and writes nothing: it notes the expired grants (ordered by id); `ihr_access.middleware.RecordsExpiryMiddleware` (in `tenancy.py`, after `StaffSessionMiddleware`) ends them after the view, each in its own short transaction, in id order, after `ihr_audit.context.resync()`; a database error is logged and left to the beat. `expire_due` orders by id | `GrantedReads.test_a_refused_request_still_ends_its_expired_grants` (a 403 under `ATOMIC_REQUESTS` still ends both grants, two `expired` lines in id order), `GrantedReads.test_the_request_hook_ends_nothing_itself` (`on_request` issues only `SELECT`s, no `FOR UPDATE`); `test_the_beat_ends_each_grant_once` now drives the beat alone | `records-expiry` (retargeted at `end_due`), `records-expiry-after-view` |
+
+ADR-018 item 8 and item 9 describe the changed mechanism (the after-view end, the row's lifetime,
+the CSV column, "collected" and the date bounds) and name Q-K46.
+
+Checks after the review fixes (final code):
+
+| Run | Result |
+|---|---|
+| Plugin suites, `IHR_DB_ROLES=test` (the nine labels) | `Ran 942 tests in 1000.939s` `OK (skipped=45)`; Redis audit 991 keys, all tenant-prefixed |
+| Plugin suites, roles off | `Ran 907 tests in 929.834s` `OK (skipped=49)`; Redis audit 989 keys, all tenant-prefixed |
+| `ihr_access.tests.test_role_matrix` with `IHR_MATRIX_DUMP=1` (the new rows written from the answers) | `Ran 30 tests in 99.858s` `OK` |
+| CARE modules in tenant mode, roles off (service request, specimen, diagnostic report, medication request prescription, medication request, encounter, patient, file upload) | `Ran 188 tests in 22.081s` `FAILED (failures=1, errors=4)`: the same five `test_file_upload_api` storage round trips as before (`Failed to resolve 'minio'` from the one-off container); the other 183 pass |
+| `scripts/isolation-mutation.sh check` | 152 rows (149 + 3), every target and named test found |
+| Rows `records-grant-scope`, `records-expiry`, `records-expiry-after-view`, `records-lapsed-first`, `records-row-still-needed`, each applied alone to a scratch copy of `plugins/` | each named test FAILED by an assertion, never an ERROR (`records-grant-scope`: the test_records test and the seven new `mrdg` cells of `test_role_matrix`) |
+| G2, A1, A4 fixes reverted alone in a scratch copy | their tests FAILED by an assertion; A2 reverted: the far-date cases raise the OverflowError (the 500 itself), the year-0001 and 1999 cases FAIL |
+| `python3 scripts/check-logs.py` | `Log pipeline OK.` |
+| `scripts/batch-allowlist.py --check` | `batch-allowlist: 37 routes, list current` |
+| `pre-commit run --all-files` (new files added with `git add -N` for the run, then reset) | 43 hooks passed |
+| `manage.py check` in the dev backend (backend and Celery restarted) | `System check identified no issues (0 silenced).`; `RecordsExpiryMiddleware` in the served middleware |
+
+### Second fixer (2026-11-15)
+
+Review A3 is fixed (row above): a records grant names itself, with `purpose: records`, only on the
+request entries that showed its own patient. Three further notes of the verifier are known limits
+above (`totals.MIN_DAY`, the fixed past ranges of the range test, the `mrdg` `rad-*` cells under
+the `records-grant-scope` mutation); none needed a change.
+
+| Run | Result |
+|---|---|
+| Plugin suites, `IHR_DB_ROLES=test` (the nine labels) | `Ran 943 tests in 1012.888s` `OK (skipped=45)`; Redis audit 992 keys, all tenant-prefixed |
+| Plugin suites, roles off | `Ran 908 tests in 925.308s` `OK (skipped=49)`; Redis audit 989 keys, all tenant-prefixed |
+| `records-annotate` (retargeted) and `records-annotate-scope` (new), each applied alone to a scratch copy of `plugins/` | each named test FAILED by an assertion (`'care' != 'records'`; `Lists differ: [1, 2] != [1]`), never an ERROR |
+| `scripts/isolation-mutation.sh check` | 153 rows (152 + 1), every target and named test found |
+| `python3 scripts/check-logs.py` | `Log pipeline OK.` |
+| `scripts/batch-allowlist.py --check` | `batch-allowlist: 37 routes, list current` |
+| `pre-commit run --all-files` (new files staged with `git add`, not committed) | 43 hooks passed |

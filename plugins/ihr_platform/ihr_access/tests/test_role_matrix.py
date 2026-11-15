@@ -23,7 +23,7 @@ from django.test import SimpleTestCase
 from ihr_identity import testing as identity
 from ihr_roles import registry
 
-from ihr_access import guard, testing
+from ihr_access import guard, records, testing
 from ihr_access.testing import build_world
 from ihr_access.tests import matrix
 from ihr_access.tests.base import SwapCase
@@ -90,6 +90,10 @@ class MatrixCase(SwapCase):
         users |= {
             short: self.world.users[name] for short, name in matrix.ALIAS_USERS.items()
         }
+        # MRD with a live records grant on the first patient (P1-T11b4)
+        users |= {
+            short: self.world.users[name] for short, name in matrix.GRANTED.items()
+        }
         return users
 
     def crawl(self):
@@ -133,7 +137,11 @@ class MatrixCase(SwapCase):
             rows = matrix.read_matrix()
             answers, unfilled, skip_filled, requests = {}, set(), set(), 0
             start = time.monotonic()
-            with identity.fake_keycloak():
+            # a refused records grant writes its log line (records.emit): not into the test log
+            with (
+                identity.fake_keycloak(),
+                mock.patch.object(records, "emit", lambda line: None),
+            ):
                 clients = {
                     role: self.signed_in(user) for role, user in self.viewers().items()
                 }
@@ -289,12 +297,14 @@ class RoleMatrix(MatrixCase):
         """No answer to any of our roles (MRD without a grant included) holds a marker of the
         world's clinical fields, except where canary_exemptions.txt allows that marker on that
         route; the Owner sees no patient's name, phone number or id anywhere either. GET and
-        POST-read answers alike."""
+        POST-read answers alike. MRD with a grant on the first patient (mrdg, P1-T11b4) is
+        read too: its exemptions are that patient's own records, each with a negative row on
+        the other patient's."""
         crawl = self.crawl()
         exemptions = matrix.read_exemptions()
         for (key, viewer), answer in sorted(crawl.every_answer().items()):
             role = alias(viewer)
-            if role not in matrix.OURS:
+            if role not in matrix.CANARY_ROLES:
                 continue
             allowed = {
                 e.marker
@@ -583,6 +593,20 @@ class MatrixFiles(SimpleTestCase):
         for short in matrix.CARE:
             self.assertNotIn(matrix.ROLES[short], registry.PERMANENT_NAMES)
         self.assertEqual(set(matrix.GROUPS["all"]), set(matrix.ROLES))
+        # The hidden role is crawled as MRD with a live grant (P1-T11b4): its own column,
+        # never in a group, expecting mrd's answer where a row does not name it
+        self.assertEqual(set(matrix.GRANTED), {"mrdg"})
+        for members in matrix.GROUPS.values():
+            self.assertNotIn("mrdg", members)
+        self.assertEqual(
+            matrix.expand(["all:deny", "care:allow"], "test"),
+            {**dict.fromkeys(matrix.GROUPS["all"], "deny"), "doctor": "allow",
+             "admin": "allow", "mrdg": "deny"},
+        )  # fmt: skip
+        self.assertEqual(
+            matrix.expand(["all:deny", "mrdg:allow"], "test")["mrdg"], "allow"
+        )
+        self.assertNotIn("mrdg", matrix.expand(["restricted:x"], "test", inherit=False))
 
 
 class ListParams(SimpleTestCase):
@@ -817,10 +841,11 @@ class CheckedWrites(MatrixCase):
         return found
 
     def viewers_of_ours(self):
-        return (*matrix.OURS, *matrix.ALIASES)
+        # MRD with a grant too (P1-T11b4): a grant opens reads only, never these writes
+        return (*matrix.OURS, *matrix.ALIASES, *matrix.GRANTED)
 
     def send(self, viewer, method, url, body):
-        user = self.world.users[matrix.ALIAS_USERS.get(viewer) or matrix.ROLES[viewer]]
+        user = self.world.users[matrix.user_name(viewer)]
         with transaction.atomic():
             answer = getattr(self.api(user), method)(url, body, format="json")
             text = answer.content.decode(errors="replace")

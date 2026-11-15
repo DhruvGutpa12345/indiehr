@@ -114,8 +114,15 @@ ROLES = {
 # front desk keeps a PatientUser row, which must count for nothing ("After the attack" §3)
 ALIASES = {"moved": "rec"}
 ALIAS_USERS = {"moved": "Moved Nurse"}
+# MRD with a live records grant on the first patient (P1-T11b4, design §6's "MRD+g"): crawled as
+# its own user, in a column of its own. A row that does not name it (directly: "mrdg:<outcome>")
+# expects of it what it expects of mrd, so the file names only where a grant changes an answer;
+# every cell is still requested and compared. Never in a group.
+GRANTED = {"mrdg": "MRD Granted"}
 RESTRICTED = ("rec", "cash", "tpa", "owner", "mrd", "lab", "store")
 OURS = (*RESTRICTED, "rad")
+# Every viewer the canary reads: our roles, and MRD with a grant (P1-T11b4)
+CANARY_ROLES = (*OURS, *GRANTED)
 CARE = ("doctor", "admin")
 GROUPS = {
     "all": (*OURS, *CARE),
@@ -171,8 +178,9 @@ def _lines(path):
             yield number, body.split(), reason.strip()
 
 
-def expand(tokens, where):
-    """{role: outcome} from ``group:outcome`` tokens (later ones win)."""
+def expand(tokens, where, inherit=True):
+    """{role: outcome} from ``group:outcome`` tokens (later ones win). ``inherit``: a granted
+    viewer (``GRANTED``) not named expects its base role's outcome (mrdg: mrd's)."""
     out = {}
     for token in tokens:
         names, _, outcome = token.rpartition(":")
@@ -182,14 +190,23 @@ def expand(tokens, where):
         for name in names.split(","):
             if name in GROUPS:
                 roles = GROUPS[name]
-            elif name in ROLES:
+            elif name in ROLES or name in GRANTED:
                 roles = (name,)
             else:
                 msg = f"{where}: unknown role or group {name!r}"
                 raise ValueError(msg)
             for role in roles:
                 out[role] = outcome
+    if inherit:
+        for granted in GRANTED:
+            if granted not in out and "mrd" in out:
+                out[granted] = out["mrd"]
     return out
+
+
+def user_name(viewer):
+    """The world user a viewer short name signs in as."""
+    return ALIAS_USERS.get(viewer) or GRANTED.get(viewer) or ROLES[viewer]
 
 
 @dataclass
@@ -309,7 +326,7 @@ def read_exemptions(path=EXEMPTIONS):
             msg = f"{where}: expected '<who> <marker> <key glob> allow|never  # why'"
             raise ValueError(msg)
         who, marker, pattern, verb = parts
-        for role in expand([f"{who}:x"], where):
+        for role in expand([f"{who}:x"], where, inherit=False):
             found.append(Exemption(role, marker, pattern, verb, reason, number))
     return found
 

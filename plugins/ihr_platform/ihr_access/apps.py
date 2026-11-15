@@ -17,7 +17,15 @@ class IhrAccessConfig(AppConfig):
     def ready(self):
         from rest_framework.views import APIView
 
-        from ihr_access import authz, exceptions, guard, identifiers, state, visits
+        from ihr_access import (
+            authz,
+            exceptions,
+            guard,
+            identifiers,
+            records,
+            state,
+            visits,
+        )
         from ihr_access import checks as access_checks
 
         # The serializer guard on every patient, encounter, bed, device, booking and token shape
@@ -30,8 +38,14 @@ class IhrAccessConfig(AppConfig):
         identifiers.install()
         # A visit named in the query must be the path patient's (P1-T11b3 review K1)
         visits.install()
+        # A records grant opens its patient's requests, specimens, reports and prescriptions
+        # (reads only), before CARE's controller builds its lazy map; and file links issued
+        # under a grant live at most 5 minutes (P1-T11b4)
+        authz.install_grant_authorizer()
+        records.install()
         checks.register(access_checks.guard_installed)
         checks.register(access_checks.filters_classified)
+        checks.register(access_checks.records_grants)
 
         # Each DRF view starts with a fresh state for the person it authenticated (after the
         # audit actor is bound: ihr_audit wraps first); each request starts and ends with none
@@ -40,6 +54,8 @@ class IhrAccessConfig(AppConfig):
         def perform_authentication(view, request):
             authenticate(view, request)
             state.begin(request.user)
+            # Expired records grants end now; live ones mark the request (P1-T11b4)
+            records.on_request(request.user)
 
         APIView.perform_authentication = perform_authentication
         request_started.connect(state.end, weak=False, dispatch_uid="ihr_access_start")

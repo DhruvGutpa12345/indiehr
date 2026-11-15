@@ -380,6 +380,22 @@ def ext_id():
     return str(uuid.uuid4())
 
 
+def grant_records(
+    world, user, patient, reason="insurer", reference="TEST-1", hours=None
+):
+    """A records grant made through the real path (records.create_grant: the grant row, then
+    the hidden-role PatientUser row); ``hours``: live that long instead of the setting's
+    30 minutes (a crawl that outlasts it would see it expire)."""
+    from ihr_access import records
+    from ihr_access.models import RecordsGrant
+
+    grant = records.create_grant(user, patient, reason, reference)
+    if hours is not None:
+        grant.expires_at = timezone.now() + datetime.timedelta(hours=hours)
+        RecordsGrant.objects.filter(pk=grant.pk).update(expires_at=grant.expires_at)
+    return grant
+
+
 # --- the role matrix's world (P1-T11b3) ----------------------------------------------------
 
 LAB = {
@@ -532,6 +548,7 @@ class _MatrixWorld:
                 note=marker("rad-condition"),
             ),
         )
+        self.second_patient_orders(patient, encounter)
         # And a finished outpatient visit of the first patient (Paediatrics)
         done = Encounter.objects.create(
             patient=w.patient,
@@ -551,6 +568,73 @@ class _MatrixWorld:
         )
         done.save()
         self.name("encounter_done", done)
+
+    def second_patient_orders(self, patient, encounter):
+        """The Radiology patient's own request, specimen, report and prescription, at no place
+        (only the visit's rights reach them), each with its own marker: the grant authorizer's
+        six read checks are crawled on another patient than the granted one, and must refuse
+        MRD with a grant there (P1-T11b4 review C1; mutation records-grant-scope)."""
+        from care.emr.models.diagnostic_report import DiagnosticReport
+        from care.emr.models.medication_request import MedicationRequestPrescription
+        from care.emr.models.service_request import ServiceRequest
+        from care.emr.models.specimen import Specimen
+
+        w = self.w
+        common = {"patient": patient, "encounter": encounter}
+        request = self.name(
+            "service_request_b",
+            self.make(
+                ServiceRequest,
+                facility=w.facility,
+                title=f"Chest X-ray {marker('rad-request')}",
+                category="imaging",
+                status="active",
+                intent="order",
+                priority="routine",
+                note=marker("rad-request"),
+                code=IMAGING,
+                requester=self.doctor,
+                locations=[],
+                **common,
+            ),
+        )
+        self.name(
+            "specimen_b",
+            self.make(
+                Specimen,
+                facility=w.facility,
+                accession_identifier=f"ACC-rad-{_tag()}",
+                status="available",
+                specimen_type=BLOOD,
+                service_request=request,
+                note=marker("rad-specimen"),
+                **common,
+            ),
+        )
+        self.name(
+            "diagnostic_report_b",
+            self.make(
+                DiagnosticReport,
+                facility=w.facility,
+                status="final",
+                category=IMAGING,
+                service_request=request,
+                note=marker("rad-report"),
+                conclusion=marker("rad-report"),
+                **common,
+            ),
+        )
+        self.name(
+            "prescription_b",
+            self.make(
+                MedicationRequestPrescription,
+                name=f"Paracetamol {marker('rad-prescription')}",
+                note=marker("rad-prescription"),
+                status="active",
+                prescribed_by=self.doctor,
+                **common,
+            ),
+        )
 
     def clinical(self):
         """One row of each clinical kind on the first patient's inpatient visit."""
@@ -1215,8 +1299,9 @@ class _MatrixWorld:
         self.name("report", report)
 
     def people(self):
-        """A Pharmacist at the store, and a Nurse once on the care team who moved to the front
-        desk (her PatientUser row stays; "After the attack" §3)."""
+        """A Pharmacist at the store, a Nurse once on the care team who moved to the front
+        desk (her PatientUser row stays; "After the attack" §3), and a second MRD clerk with a
+        live records grant on the first patient (P1-T11b4: the matrix's "mrdg" viewer)."""
         w = self.w
         w.users["Pharmacist"] = w.user(
             "acc-pharmacist", ("Pharmacist", w.departments["Stores"])
@@ -1224,3 +1309,7 @@ class _MatrixWorld:
         nurse = nurse_on_care_team(w)
         move_to(w, nurse, "Receptionist")
         w.users["Moved Nurse"] = nurse
+        w.users["MRD Granted"] = w.user("acc-mrd-granted", ("MRD", w.root))
+        w.extra["records_grant"] = grant_records(
+            w, w.users["MRD Granted"], w.patient, hours=24
+        )

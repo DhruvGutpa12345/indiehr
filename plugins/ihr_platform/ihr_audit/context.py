@@ -27,6 +27,9 @@ _EMPTY = ("", "")
 _current = ContextVar("ihr_audit_current", default=_EMPTY)  # (ctx JSON, actor)
 # Values saved while a task runs inside a request (eager tasks), restored after it
 _outer = ContextVar("ihr_audit_outer", default=())
+# Fields this request adds to its entry only for the patients it turns out to show:
+# (fields, key, {patient pk: id}), see ``annotate_patients`` (P1-T11b4, review A3)
+_by_patient = ContextVar("ihr_audit_by_patient", default=None)
 
 
 def _apply(conn, values):
@@ -173,6 +176,7 @@ def request_context(request, purpose):
 
 
 def begin_request(ctx):
+    _by_patient.set(None)
     _set(ctx, "")
 
 
@@ -190,7 +194,60 @@ def bind_actor(user):
     _set(json.loads(ctx), name)
 
 
+def current_context():
+    """This request's (or task's) context as it stands now, with whatever ``annotate_request``
+    added after the middleware built it; None outside any. The middleware writes the request
+    entry from this (P1-T11b4, design-b.md "After the attack" §8.3)."""
+    ctx = _current.get()[0]
+    return json.loads(ctx) if ctx else None
+
+
+def annotate_request(**fields):
+    """Add fields to the current request's context for the rest of the request, keeping its
+    actor: the request entry and every row the request changes carry them (a records grant
+    names itself with ``annotate_patients`` instead). Not restored on exit, like ``bind_actor``
+    (``extend`` restores). Outside a request or task it does nothing."""
+    ctx, actor = _current.get()
+    if not ctx:
+        return
+    _set({**json.loads(ctx), **fields}, actor)
+
+
+def annotate_patients(key, by_patient, **fields):
+    """For the rest of this request, a note kept for its entry only: when the entry is written
+    (middleware.py), if the request showed any patient in ``by_patient`` (patient pk -> an id),
+    the entry gets ``fields`` and ``key``: the sorted ids of the patients it showed, and only
+    theirs. A records grant names itself this way, so a read of another patient made while a
+    grant is live never carries that grant's purpose or id (P1-T11b4, review A3). Not put on the
+    connection: rows the request changes do not carry it. Later calls add to the mapping (a
+    grant ended during the request still names the reads made under it). Outside a request it
+    does nothing."""
+    if not _current.get()[0]:
+        return
+    held = _by_patient.get()
+    known = held[2] if held and held[0] == fields and held[1] == key else {}
+    _by_patient.set((dict(fields), key, {**known, **by_patient}))
+
+
+def patient_fields(patients, path_purpose="care"):
+    """The fields ``annotate_patients`` asked for, for these shown patients (pks); {} when the
+    request showed none of the patients it named. A path with a purpose of its own (audit,
+    billing, admin: ``middleware.PURPOSES``) keeps it: only the ids are added there (P1-T11b4,
+    check of review A3's fix)."""
+    held = _by_patient.get()
+    if not held:
+        return {}
+    fields, key, by_patient = held
+    ids = sorted({by_patient[p] for p in patients if p in by_patient})
+    if not ids:
+        return {}
+    if path_purpose != "care":
+        fields = {k: v for k, v in fields.items() if k != "purpose"}
+    return {**fields, key: ids}
+
+
 def end():
+    _by_patient.set(None)
     _set(None, "")
 
 

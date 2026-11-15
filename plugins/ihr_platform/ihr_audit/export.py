@@ -62,6 +62,9 @@ CSV_HEADER = (
     "patients_total",
     "patient_ids",
     "patient_names",
+    # the records grants a request was made under (purpose "records", P1-T11b4 review A4);
+    # last, so earlier columns keep their places; a grant's reason is its ihr_records_grant entry
+    "grants",
 )
 FORMULA_START = ("=", "+", "-", "@", "\t", "\r")
 IST = ZoneInfo("Asia/Kolkata")
@@ -242,6 +245,7 @@ class Export:
                                 total or len(patients or []),
                                 "; ".join(k[0] for k in known),
                                 "; ".join(k[1] for k in known),
+                                "; ".join(str(g) for g in context.get("grants") or ()),
                             )
                         ]
                     )

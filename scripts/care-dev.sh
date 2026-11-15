@@ -2,7 +2,7 @@
 # Run upstream CARE locally with the IndieHR low-memory override (P0-T5), in tenant mode with
 # two synthetic demo hospitals at http://alpha.localhost:8080 and http://beta.localhost:8080
 # (P1-T2b), and Keycloak on demand (P1-T3: `scripts/care-dev.sh keycloak help`).
-# Usage: scripts/care-dev.sh <up|down|ps|logs|seed|reset-passwords|migrate-hospitals|frontend|shell|keycloak|provision|provision-demo|audit-anchors|s3-check|pincodes|locale-preview>
+# Usage: scripts/care-dev.sh <up|down|ps|logs|seed|reset-passwords|migrate-hospitals|frontend|shell|keycloak|provision|provision-demo|audit-anchors|s3-check|pincodes|locale-preview|records-access>
 set -euo pipefail
 ROOT="$(git -C "$(dirname "$0")" rev-parse --show-toplevel)"
 BACKEND="$ROOT/apps/backend"
@@ -391,6 +391,15 @@ case "${1:-}" in
     "${COMPOSE[@]}" exec -T backend rm -f "$tmp"
     [[ $status -eq 0 ]] || exit "$status"
     "${COMPOSE[@]}" exec -T backend python manage.py ihr_load_geography --all
+    ;;
+  records-access)
+    # MRD's records grant without the web app (P1-T11b4; its screen is P1-T11c): the same
+    # grant code as POST /api/ihr/records-access/. Development only (the command refuses
+    # elsewhere). Hospital: --slug (default alpha).
+    #   records-access mrd.farah <patient id> --reason insurer --reference TEST-1
+    #   records-access mrd.farah --end <grant id>
+    [[ -n "${2:-}" ]] || { echo "Usage: scripts/care-dev.sh records-access <user> <patient id> --reason <code> [--reference R] [--slug S] | <user> --end <grant id>" >&2; exit 1; }
+    "${COMPOSE[@]}" exec -T backend python manage.py ihr_records_access "${@:2}"
     ;;
   locale-preview)
     # Our translations (deploy/locale, P1-T7c) in the running web app, without a rebuild:

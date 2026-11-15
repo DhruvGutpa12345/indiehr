@@ -1069,5 +1069,68 @@
    "_SYSTEMD_UNIT": "docker.service"
   },
   "expect_msg": "\"GET /api/v1/users/getcurrentuser/ HTTP/1.1\" then \"GET /api/v1/users/<user>/check_availability/ HTTP/1.1\""
+ },
+ {
+  "name": "records grants (P1-T11b4): the line is kept exactly, its numbers too; it names no patient (granted)",
+  "record": {
+   "MESSAGE": "ihr-records: hospital=alpha grant=17 user=42 reason=insurer outcome=granted hour=14",
+   "_HOSTNAME": "srv1",
+   "PRIORITY": "3",
+   "_CMDLINE": "/usr/bin/dockerd --secret-flag Hunter2Cmdline",
+   "_CAP_EFFECTIVE": "1ff",
+   "_BOOT_ID": "b1",
+   "CONTAINER_NAME": "indiehr-staging-backend-1",
+   "COM_DOCKER_COMPOSE_SERVICE": "backend",
+   "IMAGE_NAME": "img:1",
+   "CONTAINER_ID_FULL": "abc",
+   "SYSLOG_IDENTIFIER": "indiehr/x",
+   "_TRANSPORT": "journal",
+   "_COMM": "dockerd",
+   "_UID": "0",
+   "_SYSTEMD_UNIT": "docker.service"
+  },
+  "expect_msg": "ihr-records: hospital=alpha grant=17 user=42 reason=insurer outcome=granted hour=14"
+ },
+ {
+  "name": "records grants (P1-T11b4): the line is kept exactly, its numbers too; it names no patient (refused)",
+  "record": {
+   "MESSAGE": "ihr-records: hospital=alpha grant=none user=42 reason=invalid outcome=refused hour=09",
+   "_HOSTNAME": "srv1",
+   "PRIORITY": "3",
+   "_CMDLINE": "/usr/bin/dockerd --secret-flag Hunter2Cmdline",
+   "_CAP_EFFECTIVE": "1ff",
+   "_BOOT_ID": "b1",
+   "CONTAINER_NAME": "indiehr-staging-backend-1",
+   "COM_DOCKER_COMPOSE_SERVICE": "backend",
+   "IMAGE_NAME": "img:1",
+   "CONTAINER_ID_FULL": "abc",
+   "SYSLOG_IDENTIFIER": "indiehr/x",
+   "_TRANSPORT": "journal",
+   "_COMM": "dockerd",
+   "_UID": "0",
+   "_SYSTEMD_UNIT": "docker.service"
+  },
+  "expect_msg": "ihr-records: hospital=alpha grant=none user=42 reason=invalid outcome=refused hour=09"
+ },
+ {
+  "name": "records grants (P1-T11b4): the line is kept exactly, its numbers too; it names no patient (expired)",
+  "record": {
+   "MESSAGE": "ihr-records: hospital=alpha grant=123456789 user=9876543 reason=legal outcome=expired hour=00",
+   "_HOSTNAME": "srv1",
+   "PRIORITY": "3",
+   "_CMDLINE": "/usr/bin/dockerd --secret-flag Hunter2Cmdline",
+   "_CAP_EFFECTIVE": "1ff",
+   "_BOOT_ID": "b1",
+   "CONTAINER_NAME": "indiehr-staging-backend-1",
+   "COM_DOCKER_COMPOSE_SERVICE": "backend",
+   "IMAGE_NAME": "img:1",
+   "CONTAINER_ID_FULL": "abc",
+   "SYSLOG_IDENTIFIER": "indiehr/x",
+   "_TRANSPORT": "journal",
+   "_COMM": "dockerd",
+   "_UID": "0",
+   "_SYSTEMD_UNIT": "docker.service"
+  },
+  "expect_msg": "ihr-records: hospital=alpha grant=123456789 user=9876543 reason=legal outcome=expired hour=00"
  }
 ]

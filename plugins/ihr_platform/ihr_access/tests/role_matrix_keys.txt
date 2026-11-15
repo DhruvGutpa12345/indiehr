@@ -7,10 +7,43 @@
 # is walked, so its keys show here. Staff cards are always one entry, a.b<user> (a known limit).
 # test_role_matrix.RoleMatrix.test_response_keys_match_the_snapshot fails on a key not here
 # (upstream added a field to a body our roles see: review it, then add it) and on an entry no
-# longer seen. Rebuild candidates with IHR_MATRIX_DUMP=1 (docs/UPSTREAM.md).
+# longer seen. Rebuild candidates with IHR_MATRIX_DUMP=1 (docs/UPSTREAM.md). MRD with a records
+# grant (mrdg, P1-T11b4) is not walked: under a grant it reads CARE's own bodies of that patient
+# (as a clinician does); elsewhere it answers as MRD, whose column this is.
 #
 # [<route key as in role_matrix.txt>] <roles who see the keys below>
 
+
+[/api/ihr/owner/totals/ ?facility=facility&from~01-01-2026&to~31-12-2026] owner
+beds
+beds.occupied
+beds.total
+by
+collected_by_method
+collected_by_method[].amount
+collected_by_method[].count
+collected_by_method[].method
+currency
+encounters
+encounters[].count
+encounters[].encounter_class
+encounters[].status
+from
+inpatients_now
+invoices_by_status
+invoices_by_status[].amount
+invoices_by_status[].count
+invoices_by_status[].status
+outstanding_now
+refunded
+series
+series[].admissions
+series[].collected
+series[].discharges
+series[].invoiced
+series[].period
+time_zone
+to
 
 [/api/ihr/auth/session/] cash,lab,mrd,owner,rad,rec,store,tpa
 access_token_expires_in
@@ -175,6 +208,21 @@ status
 status_history
 tags
 updated_by
+
+[/api/v1/encounter/{external_id}/organizations/ ?{external_id}=encounter_b] rad
+results
+results[].active
+results[].created_by
+results[].description
+results[].has_children
+results[].id
+results[].level_cache
+results[].metadata
+results[].name
+results[].org_type
+results[].parent
+results[].system_generated
+results[].updated_by
 
 [/api/v1/extensions/] cash,lab,mrd,owner,rad,rec,store,tpa
 account
@@ -1152,6 +1200,30 @@ updated_by
 valid_from
 valid_to
 
+[/api/v1/facility/{facility_external_id}/service_request/ ?encounter=encounter_b] rad
+count
+results
+results[].body_site
+results[].category
+results[].code
+results[].code.code
+results[].code.display
+results[].code.system
+results[].created_date
+results[].do_not_perform
+results[].encounter<encounter>
+results[].id
+results[].intent
+results[].modified_date
+results[].note
+results[].occurance
+results[].patient_instruction
+results[].priority
+results[].requester<user>
+results[].status
+results[].tags
+results[].title
+
 [/api/v1/facility/{facility_external_id}/service_request/ ?location=lab_location] lab
 count
 results
@@ -1244,6 +1316,75 @@ healthcare_service
 id
 intent
 locations<location>
+modified_date
+note
+occurance
+patient_instruction
+priority
+requester<user>
+specimens
+specimens[].accession_identifier
+specimens[].collection
+specimens[].condition
+specimens[].id
+specimens[].note
+specimens[].processing
+specimens[].received_time
+specimens[].specimen_definition
+specimens[].specimen_type
+specimens[].specimen_type.code
+specimens[].specimen_type.display
+specimens[].specimen_type.system
+specimens[].status
+status
+tags
+title
+updated_by<user>
+
+[/api/v1/facility/{facility_external_id}/service_request/{external_id}/ ?{external_id}=service_request_b] rad
+activity_definition
+body_site
+category
+code
+code.code
+code.display
+code.system
+created_by<user>
+created_date
+diagnostic_reports
+diagnostic_reports[].category
+diagnostic_reports[].category.code
+diagnostic_reports[].category.display
+diagnostic_reports[].category.system
+diagnostic_reports[].code
+diagnostic_reports[].conclusion
+diagnostic_reports[].created_date
+diagnostic_reports[].id
+diagnostic_reports[].modified_date
+diagnostic_reports[].note
+diagnostic_reports[].service_request
+diagnostic_reports[].service_request.body_site
+diagnostic_reports[].service_request.category
+diagnostic_reports[].service_request.code
+diagnostic_reports[].service_request.code.code
+diagnostic_reports[].service_request.code.display
+diagnostic_reports[].service_request.code.system
+diagnostic_reports[].service_request.do_not_perform
+diagnostic_reports[].service_request.id
+diagnostic_reports[].service_request.intent
+diagnostic_reports[].service_request.note
+diagnostic_reports[].service_request.occurance
+diagnostic_reports[].service_request.patient_instruction
+diagnostic_reports[].service_request.priority
+diagnostic_reports[].service_request.status
+diagnostic_reports[].service_request.title
+diagnostic_reports[].status
+do_not_perform
+encounter<encounter>
+healthcare_service
+id
+intent
+locations
 modified_date
 note
 occurance
@@ -1810,6 +1951,37 @@ results[].service_request.status
 results[].service_request.title
 results[].status
 
+[/api/v1/patient/{patient_external_id}/diagnostic_report/ ?{patient_external_id}=patient_b&encounter=encounter_b] rad
+count
+results
+results[].category
+results[].category.code
+results[].category.display
+results[].category.system
+results[].code
+results[].conclusion
+results[].created_date
+results[].id
+results[].modified_date
+results[].note
+results[].service_request
+results[].service_request.body_site
+results[].service_request.category
+results[].service_request.code
+results[].service_request.code.code
+results[].service_request.code.display
+results[].service_request.code.system
+results[].service_request.do_not_perform
+results[].service_request.id
+results[].service_request.intent
+results[].service_request.note
+results[].service_request.occurance
+results[].service_request.patient_instruction
+results[].service_request.priority
+results[].service_request.status
+results[].service_request.title
+results[].status
+
 [/api/v1/patient/{patient_external_id}/diagnostic_report/{external_id}/ ?{external_id}=lab_diagnostic_report] lab
 category
 category.code
@@ -1928,6 +2100,54 @@ service_request.priority
 service_request.status
 service_request.title
 status
+updated_by<user>
+
+[/api/v1/patient/{patient_external_id}/diagnostic_report/{external_id}/ ?{patient_external_id}=patient_b&{external_id}=diagnostic_report_b] rad
+category
+category.code
+category.display
+category.system
+code
+conclusion
+created_by<user>
+created_date
+encounter<encounter>
+id
+modified_date
+note
+observations
+requester<user>
+service_request
+service_request.body_site
+service_request.category
+service_request.code
+service_request.code.code
+service_request.code.display
+service_request.code.system
+service_request.do_not_perform
+service_request.id
+service_request.intent
+service_request.note
+service_request.occurance
+service_request.patient_instruction
+service_request.priority
+service_request.status
+service_request.title
+status
+updated_by<user>
+
+[/api/v1/patient/{patient_external_id}/medication/prescription/{external_id}/ ?{patient_external_id}=patient_b&{external_id}=prescription_b] rad
+created_by<user>
+created_date
+encounter<encounter>
+id
+medications
+modified_date
+name
+note
+prescribed_by<user>
+status
+tags
 updated_by<user>
 
 [/api/v1/patient_identifier_config/] cash,lab,mrd,owner,rad,rec,store,tpa

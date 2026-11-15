@@ -18,6 +18,10 @@ SAFE_METHODS = frozenset(("GET", "HEAD", "OPTIONS"))
 # Purpose is inferred from the screen's API until staff are asked (owner: inferred now).
 PURPOSES = (
     (re.compile(r"^/api/ihr/audit/"), "audit"),
+    # Asking for, listing or ending a records grant (P1-T11b4); a read under a live grant is
+    # marked "records", with the grant's id, when it showed that grant's patient (whatever its
+    # path; records.annotate, context.annotate_patients)
+    (re.compile(r"^/api/ihr/records-access/"), "records"),
     (re.compile(r"/(invoice|charge_item|account|payment_reconciliation)"), "billing"),
     (
         re.compile(r"^/api/(v1/(users|role|organization|facility_organization)|ihr/)"),
@@ -51,11 +55,18 @@ class AuditMiddleware:
             try:
                 context.resync()  # the view's rollback may have undone the actor
                 # Every look at the trail is recorded, with or without patients, and
-                # with every patient it showed (an export can show thousands).
+                # with every patient it showed (an export can show thousands). Decided on the
+                # path's own purpose, never on one a view added later
                 audit = ctx["purpose"] == "audit"
-                patients, total = reads.finish(
-                    token, None if audit else reads.MAX_PATIENTS
-                )
+                everyone, total = reads.finish(token, None)
+                patients = everyone if audit else everyone[: reads.MAX_PATIENTS]
+                # The entry carries what the request added to its context after this
+                # middleware built it, and a records grant's purpose and id only when the
+                # request showed that grant's patient (P1-T11b4, review A3)
+                written = {
+                    **(context.current_context() or ctx),
+                    **context.patient_fields(everyone, ctx["purpose"]),
+                }
                 if patients or request.method not in SAFE_METHODS or audit:
                     actor = context.current_actor() or "anonymous"
                     data = {"status": status}
@@ -68,7 +79,7 @@ class AuditMiddleware:
                     for number, part in enumerate(parts or [[]], 1):
                         if len(parts) > 1:
                             data = {**data, "part": number, "parts": len(parts)}
-                        _record(actor, ctx, part, data)
+                        _record(actor, written, part, data)
             finally:
                 context.end()
         return response

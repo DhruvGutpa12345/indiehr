@@ -162,7 +162,7 @@ class IhrPatientViewSet(PatientViewSet):
 
     def get_object(self):
         try:
-            return super().get_object()
+            found = super().get_object()
         except Http404:
             if not branches.holds(self.request.user, branches.DEMOGRAPHICS):
                 raise
@@ -177,16 +177,46 @@ class IhrPatientViewSet(PatientViewSet):
             self.ihr_opened = True
             branches.widen()
             return patient
+        self.ihr_object = found
+        return found
 
     def get_serializer_retrieve_context(self):
         """CARE's retrieve refuses ``?facility`` (which the web app always sends) without
         ``can_read_tag_config``; the projection drops facility tags anyway, so our branch
-        checks only that the facility exists (review C1)."""
+        checks only that the facility exists (review C1). MRD reading a patient under its own
+        live records grant (CARE's path, unprojected) gets that facility's tags and numbers
+        as a clinician does, where it holds the records right (P1-T11b4)."""
         if self.ihr_opened:  # our branch: no facility tags to show
             if facility := self.request.GET.get("facility"):
                 get_object_or_404(Facility, external_id=facility)
             return {"facility": None}
-        return super().get_serializer_retrieve_context()
+        try:
+            return super().get_serializer_retrieve_context()
+        except PermissionDenied:
+            facility = self._granted_facility()
+            if facility is None:
+                raise
+            return {"facility": facility}
+
+    def _granted_facility(self):
+        """The ``?facility`` of a retrieve of a patient under this user's own live records
+        grant, where the user holds the records right; else None."""
+        from ihr_access import records
+
+        patient = getattr(self, "ihr_object", None)
+        user = self.request.user
+        value = self.request.GET.get("facility")
+        if (
+            self.action != "retrieve"
+            or patient is None
+            or not value
+            or patient.pk not in state.for_user(user).granted_patients
+        ):
+            return None
+        facility = get_object_or_404(Facility, external_id=value)
+        if not branches.holds(user, records.REQUEST_SLUG, facility=facility):
+            return None
+        return facility
 
     def _edits_demographics(self, patient):
         """Our edit rule serves this write (computed once per patient and request)."""

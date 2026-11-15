@@ -1,0 +1,56 @@
+# MRD records grants (P1-T11b4; plugins/ihr_platform/ihr_access/records.py; design-b.md §7; owner
+# decision Q-K36 A, auto-accepted and awaiting confirmation). A records clerk (MRD) reads one
+# patient's clinical record at a time, for a stated reason, for 30 minutes. The web backend writes
+# one fixed line for each grant asked for (granted or refused), ended early (ended) or ended at its
+# time (expired: the first request after it, or the Celery worker's per-minute job):
+#   "ihr-records: hospital=<slug> grant=<id|none> user=<id|none> reason=<code|invalid|none>
+#    outcome=<granted|ended|expired|refused> hour=<00-23, IST>"
+# Numbers and our own words only: the grant's and the clerk's ids in that hospital (never the
+# patient's: the grant id leads to it inside the hospital's audit trail), a reason code (anything
+# else is "invalid", never the text sent), the hour of the day in India.
+# MrdRecordsRefused: one person refused 3 or more times in 10 minutes (no right to ask, a wrong
+#   reason or reference, a patient that does not exist): someone probing, or a clerk who needs
+#   help with the screen.
+# MrdRecordsVolume: one person given more than 40 grants in 24 hours: a records clerk's normal
+#   day is far less; look at the reasons in the hospital's audit trail.
+# MrdRecordsOffHours: a grant between 22:00 and 07:00 India time (info: mailed at once, to be
+#   looked at; night work can be real).
+# What to do: as that hospital's admin, open /api/ihr/audit/entries/ (purpose "records", the
+#   grant ids) and ask the clerk; end a live grant at once with DELETE /api/ihr/records-access/<id>/
+#   (a hospital-wide admin may end anyone's).
+# Thresholds (Q-K36 A): the numbers in the three expressions below; change them here.
+# Forgery (as batch.yml): only the web backend's container lines (source:=container), and only a
+# whole line that is exactly ours with a slug-shaped hospital. Its access log lines begin with an
+# address, a method or a path, never with "ihr-records:". A forged line can at most raise a false
+# alert naming a slug and a number; the labels are never put into the action's command. Tests:
+# scripts/check-logs.py (cases in deploy/logs/tests/alert-cases.json) and
+# scripts/test_staging_logs.py.
+groups:
+  - name: records-access
+    type: vlogs
+    interval: 1m
+    rules:
+      - alert: MrdRecordsRefused
+        expr: '_time:10m source:=container service:in(backend) "ihr-records: hospital=" | extract_regexp "^ihr-records: hospital=(?P<hospital>[a-z][a-z0-9-]{2,30}) grant=none user=(?P<user>[0-9]{1,18}) reason=(?:patient_request|legal|insurer|internal_audit|nabh_review|continuity_of_care|invalid|none) outcome=refused hour=(?:[01][0-9]|2[0-3])$" | filter hospital:~"^[a-z][a-z0-9-]{2,30}$" | stats by (hospital, user) count() as refusals | filter refusals:>=3'
+        labels:
+          severity: warning
+          service: records
+        annotations:
+          summary: 'Hospital {{ $labels.hospital }}: staff user {{ $labels.user }} was refused records access {{ $value }} times in 10 minutes'
+          action: 'As that hospital''s admin, read its audit trail (/api/ihr/audit/entries/, path /api/ihr/records-access/) for that user, and ask them; if it was not them, end their sign-in and reset their authenticator (P1-T5e2)'
+      - alert: MrdRecordsVolume
+        expr: '_time:24h source:=container service:in(backend) "ihr-records: hospital=" | extract_regexp "^ihr-records: hospital=(?P<hospital>[a-z][a-z0-9-]{2,30}) grant=[0-9]{1,18} user=(?P<user>[0-9]{1,18}) reason=(?:patient_request|legal|insurer|internal_audit|nabh_review|continuity_of_care) outcome=granted hour=(?:[01][0-9]|2[0-3])$" | filter hospital:~"^[a-z][a-z0-9-]{2,30}$" | stats by (hospital, user) count() as grants | filter grants:>40'
+        labels:
+          severity: warning
+          service: records
+        annotations:
+          summary: 'Hospital {{ $labels.hospital }}: staff user {{ $labels.user }} was given {{ $value }} records grants in 24 hours (more than 40)'
+          action: 'As that hospital''s admin, read the grants'' reasons and references in its audit trail (purpose "records") and ask the records clerk; remove the MRD role if it is not their work'
+      - alert: MrdRecordsOffHours
+        expr: '_time:1h source:=container service:in(backend) "ihr-records: hospital=" | extract_regexp "^ihr-records: hospital=(?P<hospital>[a-z][a-z0-9-]{2,30}) grant=[0-9]{1,18} user=(?P<user>[0-9]{1,18}) reason=(?:patient_request|legal|insurer|internal_audit|nabh_review|continuity_of_care) outcome=granted hour=(?:22|23|0[0-6])$" | filter hospital:~"^[a-z][a-z0-9-]{2,30}$" | stats by (hospital, user) count() as grants'
+        labels:
+          severity: info
+          service: records
+        annotations:
+          summary: 'Hospital {{ $labels.hospital }}: staff user {{ $labels.user }} was given {{ $value }} records grants between 22:00 and 07:00 India time'
+          action: 'Look at the grant in that hospital''s audit trail (purpose "records") the next working day; night work can be real (an emergency transfer, a legal request)'

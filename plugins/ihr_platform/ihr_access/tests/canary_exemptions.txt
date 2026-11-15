@@ -72,6 +72,18 @@ rad rad-advice /api/v1/encounter/*  allow  # the Radiology visit's discharge adv
 rad rad-extension /api/v1/encounter/*  allow  # the Radiology patient's extension, in the visit
 rad rad-extension /api/v1/patient/{external_id}/*  allow  # and on the patient
 rad rad-condition /api/v1/patient/{patient_external_id}/diagnosis/*  allow  # the Radiology patient's problem list
+rad rad-request /api/v1/facility/{facility_external_id}/service_request/*  allow  # the Radiology patient's own imaging request (Q-K44 A: Radiology on the visit; P1-T11b4 review C1's rows)
+rad rad-report /api/v1/facility/{facility_external_id}/service_request/*  allow  # a request lists its reports
+rad rad-specimen /api/v1/facility/{facility_external_id}/service_request/*  allow  # and its specimens
+rad rad-advice /api/v1/facility/{facility_external_id}/service_request/*  allow  # a request names its visit (the Radiology visit, read whole)
+rad rad-extension /api/v1/facility/{facility_external_id}/service_request/*  allow  # and its patient (the Radiology patient's chart)
+rad rad-report /api/v1/patient/{patient_external_id}/diagnostic_report/*  allow  # the Radiology patient's own report
+rad rad-request /api/v1/patient/{patient_external_id}/diagnostic_report/*  allow  # a report names its request
+rad rad-advice /api/v1/patient/{patient_external_id}/diagnostic_report/*  allow  # and its visit
+rad rad-extension /api/v1/patient/{patient_external_id}/diagnostic_report/*  allow  # and its patient
+rad rad-prescription /api/v1/patient/{patient_external_id}/medication/prescription/*  allow  # the Radiology patient's own prescription (CARE's clinical rights on the visit)
+rad rad-advice /api/v1/patient/{patient_external_id}/medication/prescription/*  allow  # a prescription names its visit
+rad rad-extension /api/v1/patient/{patient_external_id}/medication/prescription/*  allow  # and its patient
 rad base /api/v1/encounter/*  never  # never the Paediatrics patient's visit
 rad base /api/v1/patient/{external_id}/*  never  # nor that patient
 rad condition /api/v1/patient/{patient_external_id}/diagnosis/*  never  # nor that patient's problem list
@@ -101,3 +113,55 @@ lab request-ward POST*/specimen/retrieve_by_accession_identifier/*  never  # the
 lab specimen-ward POST*/specimen/retrieve_by_accession_identifier/*  never  # nor the specimen itself
 rad rad-extension POST*/patient/search_retrieve/*  allow  # the Radiology patient's chart (Q-K44 A)
 rad base POST*/patient/search_retrieve/*  never  # the first patient's record is projected by the chart rule
+
+# --- MRD with a records grant on the first patient (P1-T11b4; role_matrix.txt's mrdg) --------
+# A grant opens that patient's whole record wherever CARE shows it (the hidden role through
+# PatientUser; the grant authorizer for requests, specimens, reports and prescriptions), read
+# only, for its time; so each marker of that patient's record is allowed on any route ("*"),
+# and none of anything else (bills, stores, devices, resource requests, account reports). The
+# negative rows: the other patient's record (the Radiology patient's extension, visit advice
+# and problem list) never reaches it anywhere; every allow line here shares their "*".
+mrdg allergy *  allow  # the granted patient's allergies
+mrdg answer *  allow  # the granted patient's questionnaire answers
+mrdg artifact *  allow  # the granted patient's drawings (meta artifacts)
+mrdg base *  allow  # the granted patient's extension and visit advice
+mrdg bed *  allow  # the granted patient's bed, in the visit (its occupant link is projected)
+mrdg booking-note *  allow  # the granted patient's booking note (the visit's appointment, the patient's bookings)
+mrdg booking-tag *  allow  # the granted patient's booking tags
+mrdg condition *  allow  # the granted patient's problem list and symptoms
+mrdg condition-code *  allow  # their codes
+mrdg consent *  allow  # the granted patient's consents
+mrdg done-advice *  allow  # the granted patient's finished visit's advice
+mrdg dosage *  allow  # the granted patient's dosage instructions
+mrdg medication-administration *  allow  # medicines given to the granted patient
+mrdg medication-request *  allow  # medicines ordered for the granted patient
+mrdg medication-statement *  allow  # medicines the granted patient takes
+mrdg note-message *  allow  # the granted patient's note messages
+mrdg note-thread *  allow  # the granted patient's note threads
+mrdg patient-file *  allow  # the granted patient's files (links capped at 5 minutes)
+mrdg prescription *  allow  # the granted patient's prescriptions (prescription retrieve through the grant authorizer)
+mrdg programme-config *  allow  # the granted patient's programme identifier's configuration, and the identifier settings catalogues every role of ours reads
+mrdg programme-number *  allow  # the granted patient's programme number
+mrdg report-lab *  allow  # the granted patient's lab report (the grant authorizer)
+mrdg report-ward *  allow  # the granted patient's ward report (the grant authorizer)
+mrdg report-xray *  allow  # the granted patient's imaging report (the grant authorizer)
+mrdg request-lab *  allow  # the granted patient's lab request (the grant authorizer)
+mrdg request-ward *  allow  # the granted patient's ward request (the grant authorizer)
+mrdg request-xray *  allow  # the granted patient's imaging request (the grant authorizer)
+mrdg result-lab *  allow  # the granted patient's lab results
+mrdg result-ward *  allow  # the granted patient's ward results
+mrdg result-xray *  allow  # the granted patient's imaging results
+mrdg schedule *  allow  # the granted patient's booked doctor (the visit's appointment)
+mrdg specimen-lab *  allow  # the granted patient's lab specimen (the grant authorizer)
+mrdg specimen-ward *  allow  # the granted patient's ward specimen (the grant authorizer)
+mrdg tag-encounter *  allow  # the granted patient's visit tags
+mrdg tag-patient *  allow  # the granted patient's tags, and the tag catalogue
+mrdg tag-patient-facility *  allow  # the granted patient's facility tags (views.IhrPatientViewSet._granted_facility)
+mrdg token-note *  allow  # the granted patient's token note (the patient's tokens)
+mrdg rad-extension *  never  # the other patient's extension: no grant on that patient
+mrdg rad-advice *  never  # nor that patient's visit advice
+mrdg rad-condition *  never  # nor that patient's problem list
+mrdg rad-request *  never  # nor the Radiology patient's request (P1-T11b4 review C1: the grant authorizer keys on the object's patient)
+mrdg rad-specimen *  never  # nor its specimen
+mrdg rad-report *  never  # nor its report
+mrdg rad-prescription *  never  # nor its prescription

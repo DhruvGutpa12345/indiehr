@@ -845,6 +845,22 @@ call sites generate (`batch_allowlist.txt`); anything else refuses the whole bat
 |---|---|---|
 | BatchRequestRefused | `ihr-batch: refused hospital=<slug> reason=<code> method=<METHOD> route=<URL name>` from the web backend, in the last hour: the web app batched a route the list lacks (regenerate it with `scripts/batch-allowlist.py`, review, release) or someone sent a batch by hand (the access log of that minute names the address) | warning |
 
+**Records grants** (P1-T11b4, `deploy/logs/alerts/records.yml`; Q-K36 A): MRD reads one
+patient's clinical record at a time, for a reason code, for 30 minutes. The web backend writes
+`ihr-records: hospital=<slug> grant=<id|none> user=<id|none> reason=<code|invalid|none>
+outcome=<granted|ended|expired|refused> hour=<IST hour>` (ids only: the patient is found from the
+grant id in the hospital's audit trail).
+
+| Alert | When | Severity |
+|---|---|---|
+| MrdRecordsRefused | one staff user refused 3 or more times in 10 minutes (no right, a wrong reason or reference, no such patient) | warning |
+| MrdRecordsVolume | one staff user given more than 40 grants in 24 hours | warning |
+| MrdRecordsOffHours | a grant between 22:00 and 07:00 India time (mailed at once) | info |
+
+Runbook: as that hospital's admin, `/api/ihr/audit/entries/` shows each read with purpose
+`records` and its grant ids; `DELETE /api/ihr/records-access/<id>/` ends a live grant at once (a
+hospital-wide admin may end anyone's). The thresholds are the numbers in `records.yml`.
+
 **Database roles** (P1-T19a, `deploy/logs/alerts/db-roles.yml`; `IHR_DB_ROLES=required` on
 every app container since P1-T19b, see "Moving to split roles"):
 

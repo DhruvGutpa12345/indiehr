@@ -97,11 +97,20 @@ class RequestState:
         return self._chart[patient.pk]
 
     @property
+    def grants(self):
+        """{patient pk: (grant id, expires_at)} of this user's live records grants, read once
+        per request (records.on_request fills it at the start of the request, P1-T11b4)."""
+        if self._grants is None:
+            self._grants = live_grants(self.user)
+        return self._grants
+
+    def set_grants(self, grants):
+        self._grants = dict(grants)
+
+    @property
     def granted_patients(self):
         """Patient pks under this user's live records grants."""
-        if self._grants is None:
-            self._grants = granted_patients(self.user)
-        return self._grants
+        return frozenset(self.grants)
 
     @property
     def held_role_ids(self):
@@ -242,13 +251,28 @@ def restricted_only(user, role_ids=None):
     return bool(held) and held <= {role_ids[n] for n in RESTRICTED if n in role_ids}
 
 
-def granted_patients(user):
+def live_grants(user, rows=None, now=None):
+    """{patient pk: (grant id, expires_at)} of ``user``'s live records grants (ended_at null,
+    expires_at after now: the placement trigger's rule). ``rows``: (id, patient, expires_at) of
+    the user's open grants, already read (records.on_request: one query per request). Two live
+    grants for one patient (never made by records.create_grant) keep the later end."""
     from ihr_access.models import RecordsGrant
 
     if not _signed_in(user):
-        return frozenset()
-    return frozenset(
-        RecordsGrant.objects.filter(
-            user=user, ended_at__isnull=True, expires_at__gt=timezone.now()
-        ).values_list("patient_id", flat=True)
-    )
+        return {}
+    now = now or timezone.now()
+    if rows is None:
+        rows = RecordsGrant.objects.filter(
+            user=user, ended_at__isnull=True, expires_at__gt=now
+        ).values_list("pk", "patient_id", "expires_at")
+    found = {}
+    for grant_id, patient_id, expires_at in rows:
+        if expires_at <= now:
+            continue
+        if patient_id not in found or found[patient_id][1] < expires_at:
+            found[patient_id] = (grant_id, expires_at)
+    return found
+
+
+def granted_patients(user):
+    return frozenset(live_grants(user))

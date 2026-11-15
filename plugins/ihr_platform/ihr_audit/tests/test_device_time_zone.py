@@ -122,3 +122,37 @@ class DeviceZoneExportTests(ViewerCase):
         rows = list(csv.DictReader(io.StringIO(body.lstrip("\ufeff"))))
         [row] = [r for r in rows if r["entry_id"] == str(entry["id"])]
         self.assertEqual(row["device_tz"], "UTC-03:30")
+
+
+class RecordsGrantExportTests(ViewerCase):
+    def test_the_csv_export_names_the_grants(self):
+        """P1-T11b4 review A4: a request made under records grants (purpose "records", the
+        grant ids in its context: ihr_access/records.py) carries the ids in the CSV export's
+        last column, as the viewer and the JSON export do."""
+        from unittest.mock import patch
+
+        from rest_framework.views import APIView
+
+        from ihr_audit import context
+
+        initial = APIView.initial
+
+        def annotated(view, request, *args, **kwargs):
+            context.annotate_request(purpose="records", grants=[41, 42])
+            return initial(view, request, *args, **kwargs)
+
+        since = mark()
+        with patch.object(APIView, "initial", annotated):
+            response = APIClient(HTTP_HOST=HOST).post(
+                "/api/v1/patient/", {}, format="json"
+            )
+        self.assertIn(response.status_code, (401, 403))
+        [entry] = entries_since(since, kind="request")
+        self.assertEqual(entry["context"]["grants"], [41, 42])
+        response = self.get("export/", **{"from": today(), "to": today()})
+        self.assertEqual(response.status_code, 200)
+        body = b"".join(response.streaming_content).decode()
+        rows = list(csv.DictReader(io.StringIO(body.lstrip("\ufeff"))))
+        self.assertEqual(list(rows[0])[-1], "grants")
+        [row] = [r for r in rows if r["entry_id"] == str(entry["id"])]
+        self.assertEqual((row["purpose"], row["grants"]), ("records", "41; 42"))

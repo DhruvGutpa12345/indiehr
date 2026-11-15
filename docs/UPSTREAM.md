@@ -112,7 +112,20 @@ After each sync, before pushing:
      shapes; `@@K` key paths; `@@R` query keys read; `@@S` write-snapshot lines; `@@U`/`@@WU`
      unfilled routes) and read every changed cell: one of our roles reaching clinical data
      (the Radiologist outside Q-K44 A included) is a defect to fix in `ihr_access`, never a
-     row;
+     row. MRD with a records grant on the first patient is its own column (`mrdg`; a row that
+     does not name it expects MRD's answer): a grant opens that patient's record only, never
+     another patient's, a bill, a store row or a write;
+   - changes to CARE's read checks on requests, specimens, reports and visits
+     (`care/security/authorization/service_request.py`: `can_read_service_request`,
+     `can_read_specimen`, `can_read_diagnostic_report`; `encounter.py`:
+     `can_read_diagnostic_report_in_encounter`, `can_view_service_request_for_encounter`,
+     `can_view_encounter_obj`), to `AuthorizationController`, or to
+     `S3FilesManager.read_signed_url` (`care/emr/utils/file_manager.py`) → re-read
+     `ihr_access/authz.py`'s records grant authorizer and `ihr_access/records.py` (P1-T11b4). A
+     renamed or removed check stops the start at `ihr_access.E023` (the grant would open less,
+     never more); a new read check on these rows is not answered for a grant until it is added
+     to `authz.GRANT_READS` (and never a write, `can_view_clinical_data` or a place-wide list);
+     run `ihr_access.tests.test_records`;
    - new Playwright specs → check them against our India date formats;
    - new browser storage keys (localStorage, sessionStorage, `atomWithStorage`) → classify them
      in `apps/frontend/tests-ihr/storage-keys.json` or clear them in `clearStaffStorage`

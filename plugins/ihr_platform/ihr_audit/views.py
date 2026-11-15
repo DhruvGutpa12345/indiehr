@@ -174,6 +174,8 @@ def summary(row, patients, limit=PATIENTS_PER_ROW):
         "kind": row["kind"],
         "actor": row["actor"],
         "purpose": ctx.get("purpose"),
+        # the records grants a request was served under (purpose "records", P1-T11b4)
+        "grants": ctx.get("grants"),
         "via": ctx.get("via"),
         "ip": ctx.get("ip"),
         "method": ctx.get("method"),
