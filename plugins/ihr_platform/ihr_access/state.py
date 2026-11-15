@@ -138,7 +138,14 @@ def _held_role_ids(user):
 
 
 def _signed_in(user):
-    return user is not None and getattr(user, "is_authenticated", False) and user.pk
+    # Staff only: CARE's OTP sign-in gives a PatientOtpObject, which is authenticated but
+    # has no pk and holds no role; such a caller is never restricted (CI mutation run of
+    # public-otp-booking-from-model, 15-11: AttributeError instead of a projection check)
+    return (
+        user is not None
+        and getattr(user, "is_authenticated", False)
+        and getattr(user, "pk", None) is not None
+    )
 
 
 def restricted(user, role_ids=None):
