@@ -828,8 +828,39 @@ class Fleet:
 
     def _already_current(self, entry):
         settle(entry.hospital)
+        # The placement guard first, whatever becomes of the grants: a hospital the grant
+        # repair holds still gets its guard back in this run (second review of C1)
+        self._repair_placement(entry)
         if self._repair_grants(entry):
             self._note(entry, "migrate", "done", note="already this build's")
+
+    def _repair_placement(self, entry):
+        """The role placement guard of a hospital already on this build's schema (P1-T11b1,
+        review C1): post_migrate puts it right in a migrated one; this puts back one disabled,
+        dropped or re-created by hand. A failure is reported and the run goes on (check names
+        it again; an app process that started with the guard broken does not serve the
+        hospital: db_roles' "controls" gate, placement.runtime_problems_by_schema)."""
+        from django.db import DatabaseError
+        from ihr_access import placement
+
+        slug = entry.hospital.slug
+        try:
+            if placement.ensure(connection, entry.hospital.schema_name):
+                self.out(f"{slug}: role placement guard repaired")
+        except DatabaseError as exc:
+            connection.set_schema_to_public()
+            self.out(f"{slug}: role placement guard: {release.safe_error(exc)}"[:300])
+
+    def _placement_findings(self, entry):
+        """Report only (ihr_fleet_run check): why this hospital's role placement guard does not
+        hold (P1-T11b1, review C1). A migrate run repairs it."""
+        from ihr_access import placement
+
+        with connection.cursor() as cursor:
+            found = placement.problems(cursor, entry.hospital.schema_name)
+        for problem in found[:10]:
+            self.out(f"{entry.hospital.slug}: role placement guard: {problem}")
+        return len(found)
 
     def _fallback(self, entry, result):
         code = result.get("exit_code")
@@ -1026,6 +1057,7 @@ class Fleet:
         for entry in self._alive():
             hospital = entry.hospital
             grants = self._grant_findings(entry)
+            placement_problems = self._placement_findings(entry)
             if self.record_found:
                 # Only a current schema is written: never "" while the previous build may
                 # still serve this hospital (S4)
@@ -1035,7 +1067,14 @@ class Fleet:
             row = release.recorded(hospital)
             fingerprint = row[0] if row else ""
             if state.current and fingerprint == code:
-                details = {"grants_differ": grants} if grants else {}
+                details = {
+                    name: count
+                    for name, count in (
+                        ("grants_differ", grants),
+                        ("placement_problems", placement_problems),
+                    )
+                    if count
+                }
                 self._note(entry, "check", "done", **details)
                 continue
             problem = (

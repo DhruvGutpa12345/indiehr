@@ -10,6 +10,7 @@ from unittest.mock import patch
 
 from django.core.management.base import CommandError
 from django.test import override_settings
+from django.urls import reverse
 from django_tenants.utils import schema_context
 from rest_framework.test import APIClient
 
@@ -54,9 +55,19 @@ def load_demo_data(schema_name, domain):
             return None
         return care_call_command(name, *args, **kwargs)
 
+    def get_roles(base):
+        # CARE's loader reads one page (14) of roles; with ours (P1-T11b) its own Doctor,
+        # Nurse, Staff and Administrator would fall off that page (ADR-017)
+        data = base.get(reverse("role-list"), params={"limit": 200})
+        if data["count"] > len(data["results"]):
+            msg = "more roles than one page of the role list holds"
+            raise CommandError(msg)
+        return {role.name: role for role in data["results"]}
+
     with (
         schema_context(schema_name),
         override_settings(DEBUG=True),
+        patch("care.fixtures.base.CareFixtureBase.get_roles", get_roles),
         patch("care.fixtures.context.APIClient", client_for_tenant),
         patch("care.fixtures.context.call_command", call_command),
         # CARE's demo users are created with passwords, not invited (P1-T5e1)

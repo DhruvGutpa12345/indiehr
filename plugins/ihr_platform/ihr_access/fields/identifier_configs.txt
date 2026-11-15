@@ -1,0 +1,7 @@
+# Patient identifier systems restricted users may see, search and write ("After the attack" §2.4).
+# Reviewed. A system not listed here is hidden from them, e.g. a programme registration (ART,
+# Nikshay), whose very presence reveals the illness. One system per line, with the reason.
+# UHID/MRN and ABHA number and address join this list when their configurations ship (the core-in
+# reference pack, P2 registration and ABDM M1), with their exact system strings.
+system.care.ohc.network/patient-phone-number  # CARE's phone-based identifier: contact data the front desk already sees
+system.care.ohc.network/patient-name  # CARE's name-based identifier: identity the front desk already sees

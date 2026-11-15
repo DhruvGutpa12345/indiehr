@@ -62,7 +62,23 @@ After each sync, before pushing:
      without the hospital prefix);
    - new settings → `ihr_platform/settings/secure.py` if deployment must pin them;
    - INSTALLED_APPS changes → `ihr_platform/settings/tenancy.py`;
-   - permission or role changes → the guarded role sync and `ihr_roles`;
+   - permission or role changes → the guarded role sync and `ihr_roles`.
+     `ihr_roles.tests.test_grants.CarePermissionsReviewed` fails on any new, removed or changed
+     CARE permission (slug, context or CARE's role names) until its line in
+     `plugins/ihr_platform/ihr_roles/care_permissions.txt` is reviewed: classify a new slug
+     (`clinical` goes into `registry.CLINICAL_SLUGS`, `opening` into `PATIENT_OPENING`), then
+     re-check our roles' grants (`registry.GRANTS`) against the change. The other grant tests
+     prove only that our grants left CARE's lists alone (`registry.ORIGINAL` is rebuilt from
+     the new code) and fail when a CARE permission names one of our roles;
+   - new or changed fields on the patient, encounter, location, device, booking or token specs
+     (`care/emr/resources/{patient,encounter,location,device}/spec.py`,
+     `scheduling/{slot,token}/spec.py`) → classify each in
+     `plugins/ihr_platform/ihr_access/fields/<shape>.txt` (`ihr_access.tests.test_fields`
+     fails until you do; meanwhile the field is hidden from the restricted roles), and new
+     `PatientUpdateSpec` fields in `fields/patient_edit.txt`. A moved spec, or a subclass with
+     its own `serialize`, fails `manage.py check` (`ihr_access.E022`). Changes to
+     `PatientAccess.find_roles_on_patient` / `get_filtered_patients`
+     (`care/security/authorization/patient.py`) → re-read `ihr_access/authz.py` (P1-T11b1);
    - new Playwright specs → check them against our India date formats;
    - new browser storage keys (localStorage, sessionStorage, `atomWithStorage`) → classify them
      in `apps/frontend/tests-ihr/storage-keys.json` or clear them in `clearStaffStorage`

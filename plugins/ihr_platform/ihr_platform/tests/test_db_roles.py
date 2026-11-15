@@ -22,6 +22,7 @@
   role-changing SQL (C8).
 """
 
+import contextlib
 import inspect
 import json
 import os
@@ -965,6 +966,61 @@ class GrantsTests(AppRoleCase):
                     {"controls"} if gated else set(),
                     found_gated,
                 )
+                self.assertEqual(fetch("SELECT current_user")[0], db_roles.APP)
+
+    def test_a_broken_placement_guard_gates_its_hospital(self):
+        """P1-T11b1, second review of C1: the role placement guard is a control. Disabled,
+        re-created with fewer columns or dropped by hand, or its function changed since it
+        was installed, gates that hospital (reason controls, so DatabaseSchemaGated and
+        HospitalNotServed fire); an older build's guard, unchanged as installed, does not."""
+        from ihr_access import placement
+
+        function = f'"{TEST_SCHEMA}".ihr_role_placement_guard()'
+        table = f'"{TEST_SCHEMA}".emr_patientuser'
+        older_build = mock.patch.object(placement, "VERSION", "0" * 64)
+        for statements, gated, patch in (
+            ([], False, None),
+            (
+                [f"ALTER TABLE {table} DISABLE TRIGGER ihr_role_placement_guard"],
+                True,
+                None,
+            ),
+            ([f"DROP TRIGGER ihr_role_placement_guard ON {table}"], True, None),
+            (
+                [
+                    "CREATE OR REPLACE TRIGGER ihr_role_placement_guard BEFORE INSERT OR "
+                    f"UPDATE OF role_id ON {table} FOR EACH ROW EXECUTE FUNCTION {function}"
+                ],
+                True,
+                None,
+            ),
+            ([f"ALTER FUNCTION {function} SET work_mem = '64kB'"], True, None),
+            ([], False, older_build),
+        ):
+            with self.subTest(statements=statements, older_build=bool(patch)):
+                found_gated = {}
+                with transaction.atomic():
+                    with as_owner(), connection.cursor() as cursor:
+                        for statement in statements:
+                            cursor.execute(statement)
+                    with (
+                        mock.patch.object(db_roles, "app_problems", return_value=[]),
+                        mock.patch.object(db_roles, "_emit"),
+                        patch or contextlib.nullcontext(),
+                    ):
+                        if patch:  # what the fleet check would name and migrate repair
+                            with connection.cursor() as cursor:
+                                self.assertTrue(placement.problems(cursor, TEST_SCHEMA))
+                        db_roles.check_connection(connection, "app", gated=found_gated)
+                    transaction.set_rollback(True)
+                texts = [t for _, t in found_gated.get(TEST_SCHEMA, [])]
+                self.assertEqual(
+                    any("ihr_role_placement_guard" in t for t in texts), gated, texts
+                )
+                if gated:
+                    self.assertIn(
+                        "controls", {r for r, _ in found_gated[TEST_SCHEMA]}, texts
+                    )
                 self.assertEqual(fetch("SELECT current_user")[0], db_roles.APP)
 
     def test_required_mode_needs_large_objects_closed(self):

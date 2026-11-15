@@ -503,6 +503,15 @@ TENANCY §7.5 and §7.7 are corrected (amendment, Proposed):
 - do not see who is on a device;
 - see no booking notes and no booked doctor.
 
+### Q-K37a — Do the Cashier and TPA Desk see the bed they bill for? (P1-T11b1 review C4, 2026-11-15; open, awaiting the owner)
+
+Under Q-K37 A, every encounter the Cashier and TPA Desk see has no ward, bed, bed history or treating doctor, also the one inside a billing account. CARE's account screen builds its room-rent (bed charge) table from the bed history, so for these two roles it shows "no locations" and they cannot add a room-rent charge there. Their printed bill shows no ward, bed or treating doctor. Room rent is the main inpatient charge, and the GST rule above ₹5,000 a day applies to it.
+
+- A. Keep A for them too. Room-rent charges are added by other staff, or wait for a billing screen in P1-T11c that groups bed charges from the charge-item list.
+- **B ⭐ (recommended). The two billing roles see the bed.** They get the bed's id and name, with its start and end times, and the current bed. The Receptionist and MRD keep A. The treating doctor stays hidden until the TPA claim layout (P2-T15, with Q-K41).
+
+*Recommendation B.* Under Q-K38 these roles already see service names such as "chemotherapy cycle", so hiding the bed protects little and breaks the main inpatient charge. **Until the owner answers, the build keeps A (nothing more is shown).** A test pins the current behaviour, and B would be built in P1-T11b2.
+
 ### Q-K38 — Charge-item names seen by Cashier and TPA Desk (P1-T11b; auto-accepted by Claude, 2026-11-14, awaiting owner confirmation)
 
 - **A ⭐ (taken). Accept.** Billing lines name the service ("HIV test", "chemotherapy cycle"), which billing needs.

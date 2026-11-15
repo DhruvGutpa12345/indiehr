@@ -1,0 +1,39 @@
+# What restricted users (Receptionist, Cashier, TPA Desk, MRD; design-b.md §5.2) see of a patient.
+# Every field of PatientListSpec, PatientRetrieveSpec and their subclasses, one line each:
+#   <path> keep|drop|identifiers|permissions  # reason
+# A field CARE adds upstream is reset (fail closed) and fails ihr_access.tests until classified here.
+# A kept container (dict, list of dicts, model) must name its nested keys ("a.b keep"); "a.* keep"
+# keeps a reviewed staff, place or configuration card whole.
+meta drop  # internal store; to_json never shows it
+id keep  # the patient's id, needed to open the record and make visits
+name keep  # identity (Q-K21)
+gender keep  # identity
+phone_number keep  # contact
+emergency_phone_number keep  # contact
+address keep  # contact
+permanent_address keep  # contact
+pincode keep  # address
+date_of_birth keep  # identity
+year_of_birth keep  # identity (when only the age is known)
+deceased_datetime keep  # the front desk must not book a deceased patient; recording a death stays clinical
+created_date keep  # registration date
+modified_date keep  # last change
+blood_group drop  # clinical
+extensions drop  # plugin data of any kind, possibly clinical
+instance_tags drop  # tags can carry clinical labels; registration tags such as MLC come back in P2-T2
+facility_tags drop  # as instance_tags
+permissions permissions  # only ihr_* slugs and CARE slugs that open nothing clinical (P1-T11c's per-patient signal)
+geo_organization keep  # the patient's district or local body: part of the address
+geo_organization.* keep  # a government organisation card (name, type, parent): no patient data
+created_by keep  # who registered the patient
+created_by.* keep  # a staff user card: no patient data
+updated_by keep  # who last changed the record
+updated_by.* keep  # a staff user card: no patient data
+instance_identifiers identifiers  # only systems on identifier_configs.txt: a programme number reveals the illness
+instance_identifiers.config keep  # the identifier's setting
+instance_identifiers.config.* keep  # the hospital's identifier configuration card: no patient data
+instance_identifiers.value keep  # the identifier itself (UHID, phone-based id)
+facility_identifiers identifiers  # as instance_identifiers
+facility_identifiers.config keep  # the identifier's setting
+facility_identifiers.config.* keep  # the hospital's identifier configuration card: no patient data
+facility_identifiers.value keep  # the identifier itself

@@ -1141,3 +1141,265 @@ unit, and their projection already limits them.
   that `ihr_access` must stay a tenant app; moving it earlier fails loudly at start-up.
 - **§5.2 "the guard is off in Celery":** stays. The one Celery path that rendered clinical data
   for a restricted user (account reports, A1) is closed at the report swap.
+
+## P1-T11b1 as built (2026-11-14)
+
+**What exists now.** The eight roles and the hidden `MRD Records Access` are registered with
+their exact grants; our five `ihr_*` permissions are registered with CARE; the serializer guard
+projects six shapes for restricted users; `PatientUser` rows follow the person's current job;
+the placement trigger guards the three membership tables; the demo seed has one user per role.
+Nothing widens access yet: until P1-T11b2 the front-desk roles cannot open a patient by id
+(CARE answers 404), and their patient list is empty.
+
+### Build risk: the classmethod wrap (proven first)
+
+Setting `serialize = classmethod(wrapper)` on a pydantic 2.12.5 model class works: the
+attribute is accepted, resolves through every subclass (also one defined later), carries the
+marker through the bound method, and leaves `model_fields` alone. Neither fallback was needed.
+One finding shaped the projection: `model_dump` silently omits a required field that
+`model_construct` was not given, so a dropped required field (`extensions` on the retrieve
+specs, a booking's `note`) is reset to an empty value of its own type (`{}`, `[]`, `""`) rather
+than left out. Keys therefore always stay present.
+
+### Files
+
+| Where | What |
+|---|---|
+| `ihr_roles/permissions.py` | `IhrPermissions`: the five slugs (contexts PATIENT, PATIENT, ENCOUNTER, FACILITY, FACILITY), no roles of their own |
+| `ihr_roles/registry.py` | `ROLES` (9), `PERMANENT_NAMES`, `GRANTS` (§4 plus Q-K42's `can_view_facility_organization` for the Receptionist), `RESTRICTED`, `DEPARTMENT_ONLY`, `HIDDEN`, `CLINICAL_SLUGS`, `PATIENT_OPENING`, `NEVER_RESTRICTED`, and `ORIGINAL` (CARE's role lists, recorded before the first grant) |
+| `ihr_roles/apps.py`, `checks.py` | handler registered and CARE's permission cache cleared before `install()`; check `ihr_roles.E021` (registration only: a system check does not read the database, so "has a row after the sync" is a test) |
+| `ihr_access/` (new tenant app, last of ours) | `state.py` (per-request state), `guard.py` + `fields/*.txt`, `authz.py` (PatientUser rule, patient list), `placement.py` (trigger), `models.py` + migration `0001` (`ihr_records_grant`), `checks.py` (`ihr_access.E022`), command `ihr_patient_user_check`, `testing.py` (the test world; its encounter, patient and booking carry canary tags, review C7) |
+| `ihr_platform/settings/tenancy.py` | `ihr_access` added to the tenant apps |
+| `ihr_platform/seeding.py` | CARE's demo loader asks for every role (`limit=200`; refuses if there were more) |
+| `ihr_seed_demo.py`, `ihr_keycloak_demo_users.py`, `scripts/care-dev.sh` | the eight seeded users, their Keycloak people and the TEST_USERS.md role table |
+| `ihr_platform/restore/package.py` | the placement guard's function and trigger added to `OUR_FUNCTIONS` / `OUR_TRIGGERS`: a hospital dump may hold them and they are never exported; the restore's migrate reinstalls them after the data, so restored memberships are not re-judged (the first full run failed the three restore classes on this) |
+| `scripts/isolation-mutation.sh` | 28 new rows (14 at first, 9 from the review fixes, 5 from the second review) |
+| `ihr_access/exceptions.py` | the placement refusal as a 400: wraps CARE's `emr_exception_handler`, and rebinds the name in the CARE modules that import it (batch, password; second review of C3) |
+| `ihr_access/identifiers.py` | the identifier allow-list on `patient/search` (403) and `update_identifier` (400) for restricted users (second review of S2; deviation 10) |
+| `ihr_access/migrations/0002_placement_fingerprint.py` | `PLACEMENT_SHA256` (review C1) |
+| `ihr_roles/care_permissions.py`, `care_permissions.txt` | CARE's permissions as reviewed (slug, context, class, CARE's roles), checked against the code by `CarePermissionsReviewed` (review C6; mutation `care-permissions-snapshot`) |
+| `ihr_platform/fleet.py` | the placement guard reported by `check`, repaired by `migrate` for a current hospital, also when its grant repair fails (review C1 and its second review) |
+| `ihr_platform/db_roles.py` | a broken placement guard is a hospital "control": an app process gates that hospital (second review of C1) |
+| `.github/workflows/apps.yml` | `ihr_access` in the plugin test labels |
+| docs | `docs/UPSTREAM.md` after-sync step, `TENANCY_DESIGN.md` §6.3 note, `CLAUDE.md`, TRACKER test credentials (usernames only) |
+
+No file under `apps/` changed, so there is no `UPSTREAM_PATCHES.md` entry.
+
+### Deviations from the design
+
+1. **`ihr_records_grant` is built in b1, not b4.** The trigger and the read-time rule both read
+   it (§5.1, "After the attack" §3.1), so the table (patient, user, reason, reference,
+   created/expires/ended) ships now with no endpoint, beat or end routine; b4 adds those and any
+   further columns by migration. Its foreign keys are PROTECT (a grant is part of the record).
+2. **`hospital_tables.txt` is unchanged.** The table takes the hospital default (`dml`), which is
+   what §12 asks for. Listing it explicitly would make every hospital not yet migrated a
+   classification gap during a release. b4 should decide whether the app may DELETE grants (it
+   should only insert and end them); that needs a new class in `db_roles.CLASSES`.
+3. **Field-list grammar.** Lines are `<path> <verb>  # reason` with verbs `keep`, `drop`,
+   `patient`, `encounter`, `location` (re-project an embedded body with that shape's list),
+   `identifiers` and `permissions`. A kept container must name its nested keys; `a.* keep` keeps
+   a reviewed **staff, place or configuration card** whole (user cards, the facility card, the
+   identifier configuration, a device's vendor contacts). No patient or clinical container uses
+   a wildcard. Nested keys a list does not name are removed; nested `drop` keys are kept as
+   `null`.
+4. **Fields §5.2 names that CARE's specs lack.** `class_history`, `version` and `age` named in §5.2 are
+   not fields of CARE's specs at this pin (`version` is set in the mapping and discarded by
+   `model_construct`), so they are not in the lists; the tests hold the lists to CARE's actual
+   `model_fields` (union over the shape's class and all its subclasses).
+5. **Location parent.** A location's `parent` body is re-projected (`parent location`): CARE
+   caches it in the database for 15 days (`FacilityLocation.get_parent_json`), so a parent
+   cached from a doctor's request would otherwise carry its occupant to a restricted user.
+6. **Identifier allow-list.** `fields/identifier_configs.txt` holds CARE's two systems in use
+   (`…/patient-phone-number`, `…/patient-name`). UHID/MRN and ABHA number and address join when
+   their configurations ship (core-in pack, P2 registration, ABDM M1) with their exact system
+   strings; until then a hospital-made UHID config is hidden from the restricted roles (fail
+   closed).
+7. **Patient edit list** (`fields/patient_edit.txt`, verbs `edit|hidden|visible`) ships with its
+   drift test now; P1-T11b2 uses it. Every field the patient list drops is `hidden` there (a test
+   checks it).
+8. **Mutation rows.** b1 adds the rows whose tests exist in b1. `access-guard-install` is caught
+   by `ihr_access.E022` before any test runs, so its row carries that check's message as its
+   signature (as `public-route-swap` does). The canary-based rows of §9/§10 (and `records-*`
+   beyond the two here) come with b2–b4.
+9. **Keycloak.** `DEMO_STAFF` has the eight new people (TOTP pre-set, linked in both hospitals),
+   seeded live (see "Checks"). Their passwords and keys are only in the git-ignored
+   `deploy/seed/TEST_USERS.md`.
+10. **The identifier allow-list on search and writes is built in b1** (review S2, second
+    review). "After the attack" §2.4 puts `update_identifier`, `search` and `search_retrieve`
+    under the allow-list. `ihr_access/identifiers.py` wraps CARE's `PatientViewSet.search` and
+    `update_identifier` (on the class, so b2's swap subclass inherits them; E022 checks every
+    subclass): a restricted user naming a configuration whose system is not on
+    `fields/identifier_configs.txt` gets 403 from search (nothing searched, the same answer
+    whether or not the number matches) and 400 from `update_identifier` (before the patient is
+    read). A missing, malformed or absent configuration (`phone_number` search) is left to CARE.
+    `search_retrieve` names no configuration (phone number, year of birth, start of the id); its
+    answer is a patient body, which the guard projects. Tests
+    `test_patient_user.IdentifierAllowListOnSearchAndWrites`, mutation row
+    `access-identifier-write-search`. The general search gate (who may search at all, Q-K40)
+    stays with b2.
+11. **The PatientUser rule keys on "restricted", not "restricted only"** (review S1). "After the
+    attack" §3 says "holds only restricted roles"; taken literally, a front-desk worker who also
+    holds any other non-clinical role (CARE's role-organisation "Member", a hospital's own role)
+    kept every stale care-team row, so a former Nurse could still read diagnoses. The read-time
+    rule, the patient list, the trigger and `ihr_patient_user_check` now all use
+    `state.restricted` (one of our restricted roles and no clinical slug through any
+    membership). Q-K35 holds: a clinician is never restricted.
+
+### The rules as built
+
+- **Restricted** (guard): the user holds one of `RESTRICTED` in this hospital (facility or
+  government/role organisation) and no `CLINICAL_SLUGS` through any membership; a superuser
+  never is. The PatientUser rule, the patient list, the trigger and `ihr_patient_user_check`
+  key on it too (deviation 11). **Restricted-only** (every role held is in `RESTRICTED`) is kept
+  in `state` for tests and the mutation `access-patient-user-gate` only. Both are computed once
+  per request (`state.RequestState`), never cached across requests.
+- **When a shape applies**: patient, encounter, location, device when restricted or forced;
+  booking and token only when forced (`state.force_projection()`, for b2's branches). A patient
+  under the user's own live grant is not projected, nor its encounters.
+- **Request state** is set in DRF's `perform_authentication` (after the audit actor), so batch
+  sub-requests each start afresh; Django's `request_started`/`request_finished` clear it; outside
+  a request the guard is off.
+- **PatientUser rule** (deviation 11): for a restricted user, a role that reached
+  `find_roles_on_patient` only through a `PatientUser` row survives only if it is a restricted
+  role (a role they also hold through a membership stays: it holds no clinical slug); the
+  hidden role survives only under a live grant (for anyone). The patient list of a restricted
+  user is CARE's organisation branch (patients of an organisation where a role of theirs holds
+  `can_list_patients`: none of ours can be there) plus the patients of their own live grants,
+  never CARE's `users_cache` branch.
+- **Trigger** (`SQLSTATE 23514`, Django `IntegrityError`): on INSERT and on UPDATE OF role,
+  person, organisation/patient and `deleted`; soft-deleted rows and hard deletes pass. A
+  `PatientUser` row other than the hidden role is refused for a restricted person (the same
+  test as `state.restricted`, in SQL over the memberships and their role permissions; a role
+  permission or permission that is `deleted` or `temp_deleted` is not counted, as CARE's own
+  lookups skip `temp_deleted`: second review of S1). Because
+  Django's `save()` names every column, any full save of a stale row of a restricted person
+  (other than marking it deleted) is refused, which is intended. Over the API a refusal answers
+  **400 with the trigger's reason** (review C3): `ihr_access/exceptions.py` wraps CARE's
+  `emr_exception_handler`, which every view that writes these rows uses (organisation users,
+  `add_user`; E022 checks the wrap); any other `IntegrityError` is still a 500, and so would be
+  a refusal through a non-EMR view (none writes these rows at this pin). CARE's batch and
+  password views import the handler by name; `install()` rebinds those names too, and E022
+  fails if any other `care.*` module holds the unwrapped handler (second review of C3; at this
+  pin both modules are first imported after the wrap, so the rebinding is for a module imported
+  earlier: `test_a_handler_bound_by_name_before_the_wrap_is_rebound`, mutation
+  `access-placement-batch-handler`). A
+  refusal inside a batch is the sub-request's own 400 (its EMR view handles it), and the whole
+  batch is rolled back (`PlacementRefusalsOverTheApi.test_a_refusal_inside_a_batch_answers_400_not_500`,
+  with a membership route listed for the test only; none is on `batch_allowlist.txt`).
+- **Keeping the trigger current** (reviews C1, C2): `placement.fingerprint()` (its SQL and the
+  registry lists it is written from) must equal `PLACEMENT_SHA256` in the latest ihr_access
+  migration (`0002_placement_fingerprint`, no operations); a test fails otherwise, so a change
+  migrates every hospital and post_migrate reinstalls the guard. `problems()` also compares the
+  installed trigger's events and columns with this build's, and `ensure()` re-creates all three
+  triggers every time it runs (mutations `access-placement-trigger-shape`,
+  `access-placement-ensure-replaces`, `access-placement-fingerprint`,
+  `access-placement-fleet-repair`). `ihr_fleet_run check` names a hospital whose guard is missing,
+  disabled or changed (`<slug>: role placement guard: …`, report only, detail
+  `placement_problems`); `ihr_fleet_run migrate` puts it back for a hospital already current
+  (`<slug>: role placement guard repaired`), before and whatever the outcome of its grant
+  repair (a hospital whose grants cannot be repaired is held and still gets its guard back).
+  **Alert (second review of C1):** the guard is a hospital control of the run-time role check
+  (`db_roles.check_connection`, `placement.runtime_problems_by_schema`): an app process
+  (`IHR_DB_ROLES=required` or `test`) that starts while a hospital's guard function is missing
+  or changed since it was installed, or one of its triggers is missing, disabled, pointing
+  elsewhere or not BEFORE ROW on INSERT and UPDATE (or, for this build's guard, on other
+  columns), does not serve that hospital and writes `ihr-db-role: gated schema=<schema>
+  reason=controls` (the worker every minute), so DatabaseSchemaGated and HospitalNotServed
+  fire. An older build's guard, unchanged as installed, is not gated (as the sealing
+  functions): the hospital is behind and not served anyway, and an archived one must not
+  alert. Mutation rows `access-placement-gate`, `access-placement-fleet-repair`.
+- **`ihr_patient_user_check`** (reviews S1, C5): lists `stale` rows (any row but the hidden role
+  of a restricted person; exit 1) and, apart, `grant-ended` hidden-role rows (exit 0; the grant
+  end routine of b4 removes them). A hidden-role row under a live grant is never listed.
+
+### Checks
+
+| Run | Result |
+|---|---|
+| b1 suites only (`ihr_roles ihr_access`, `IHR_DB_ROLES=test`) | 64 tests OK (37.8 s; 2 m 39 s with the test database) |
+| Plugin suites, `IHR_DB_ROLES=test` (the nine labels, `ihr_access` added) | `Ran 805 tests in 773.904s` `OK (skipped=45)`; Redis audit 671 keys, all tenant-prefixed. The first run, before the restore allow-list change, ran 742 with 3 `setUpClass` errors in `test_restore` |
+| Plugin suites, roles off | `Ran 771 tests in 755.072s` `OK (skipped=49)`; Redis audit 671 keys, all tenant-prefixed (first run: 708, the same 3 errors) |
+| CARE modules in tenant mode, roles off as in CI's tenant job (patient, encounter, location, device, booking, token, account, roles, identifier configs, schedule, managing organisations) | `Ran 419 tests in 22.538s` `OK` |
+| `scripts/isolation-mutation.sh check` | 102 rows, every target and named test found |
+| The 14 new mutations, applied locally on a scratch copy (5 runs) | each named test FAILED (`access-guard-install`: E022 stopped the run with its message) |
+| `python3 scripts/check-logs.py` | `Log pipeline OK.` (92 checks; b1 adds no log line) |
+| `pre-commit run --all-files` | 43 hooks passed |
+| Keycloak: `care-dev.sh keycloak up`, `keycloak seed`, `scripts/keycloak-test.sh` | the eight people created and linked in Alpha and Beta (8 staff links each); live tests `Ran 45 tests in 211.149s` `OK`; Keycloak stopped again afterwards |
+| After the review fixes (S1, C1–C7; 2026-11-15): plugin suites, `IHR_DB_ROLES=test` | `Ran 819 tests in 789.022s` `OK (skipped=45)`; Redis audit 691 keys, all tenant-prefixed |
+| After the review fixes: plugin suites, roles off | `Ran 785 tests in 772.324s` `OK (skipped=49)`; Redis audit 691 keys, all tenant-prefixed |
+| After the review fixes: CARE modules in tenant mode (the eleven above plus facility organisations and organisations) | `Ran 468 tests in 24.672s` `OK` |
+| After the review fixes: the 11 new mutation rows (S1, C1, C2, C3, C5, C6, C7) and the 3 changed ones (`access-patient-user-roles`, `access-patient-list`, `access-restricted-patient-user`), each applied alone on a scratch copy | each named test FAILED |
+| After the review fixes: `check-logs.py`, `pre-commit run --all-files` | `Log pipeline OK.`; 43 hooks passed |
+| After the second review (S2, C1 alert and repair order, C3 batch, S1 temp_deleted; 2026-11-15): plugin suites, `IHR_DB_ROLES=test` | `Ran 827 tests in 834.835s` `OK (skipped=45)`; Redis audit 694 keys, all tenant-prefixed |
+| After the second review: plugin suites, roles off | `Ran 792 tests in 775.751s` `OK (skipped=49)`; Redis audit 694 keys, all tenant-prefixed |
+| After the second review: CARE modules in tenant mode (the thirteen above plus token category, queue and sub-queue) | `Ran 590 tests in 31.234s` `OK` |
+| After the second review: the 5 new mutation rows (`access-placement-gate`, `access-placement-batch-handler`, `access-identifier-write-search`, `access-placement-temp-deleted`, `access-restricted-temp-deleted`) and the changed `access-placement-fleet-repair`, each applied alone | each named test FAILED; `isolation-mutation.sh check`: 107 rows |
+| After the second review: `check-logs.py`, `pre-commit run --all-files` | `Log pipeline OK.`; 43 hooks passed |
+| Manual, Alpha (dev stack, `APIClient` signed in as each seeded user) | see below |
+
+**Manual check (Alpha, after `care-dev.sh migrate-hospitals` and `seed`).** Account
+`/api/v1/facility/<id>/account/<id>/` (it embeds the full patient and primary encounter):
+- `care-doctor`: blood group `AB_negative`, `extensions {"core": {}}`, the encounter's
+  department listed: CARE's body unchanged;
+- `care-receptionist`, `care-cashier`, `care-tpa`: same patient name and phone, blood group
+  `null`, `extensions {}`, encounter departments `[]`, the phone-based identifier only; 23 patient
+  keys, as for the doctor;
+- `care-owner`, `care-labtech`: 403 (no account rights).
+
+`/api/v1/patient/<id>/`: Receptionist 404, Doctor 200; patient list: Receptionist empty. Placing
+`care-labtech` at the facility root: refused by the trigger ("Lab Technician is held in a
+department, never at the facility root").
+
+### Known limits (for b2–b4)
+
+- No widening yet: the front desk cannot open a patient or list encounters (b2's swaps).
+  Search (`patient/search`) is still open to every signed-in user as in CARE (Q-K40; b2's gate),
+  except that a restricted user cannot search by an identifier off the allow-list (deviation 10).
+- **Bed and room-rent billing for the Cashier and TPA Desk** (review C4; Q-K37a, awaiting the
+  owner). Q-K37 A drops `current_location`, `location_history` and `care_team` from every
+  encounter these roles see, including the account's `primary_encounter`. CARE's account screen
+  builds its bed-charge table only from `location_history`, so these two roles see "no
+  locations" there and cannot add a room-rent charge from it, and the printed bill shows no
+  ward, bed or treating doctor. Pinned by
+  `test_guard.ThroughTheApi.test_billing_roles_see_no_bed_on_the_account_for_now`. The owner's
+  answer decides: a per-role encounter list that keeps the bed (`id`, `name`) and its dates for
+  these two roles (b2), or a P1-T11c billing screen that groups bed charges from the
+  charge-item list.
+- The guard is off outside requests (Celery, commands), as designed; the account-report PDF is
+  the one such path and b2 closes it at the report swap (Q-K41).
+- A location's parent cached by a restricted request is stored projected (only its occupant
+  differs, and a parent is a "kind" location that holds no encounter in CARE).
+- `RecordsGrant` rows may be deleted by the app (default class), see deviation 2.
+- `ihr_patient_user_check` runs per hospital schema (`tenant_command`); no fleet-wide wrapper
+  or alert yet.
+- The placement guard is judged when an app process starts (its first connection), as the
+  sealing functions are: a guard broken while the processes run is named by the next
+  `ihr_fleet_run check` (report only) and gates the hospital only after the app containers
+  restart; the audit watch does not probe it. With `IHR_DB_ROLES=off` (dev) nothing gates.
+  A guard removed whole (`DROP FUNCTION ... CASCADE` takes the triggers with it) looks like a
+  schema ihr_access has not reached yet, so it is not gated either; `ihr_fleet_run check`
+  names it and migrate puts it back. Only the owner can do either.
+- There is no admin guide yet: where each role is placed (§4), that a stale `PatientUser` row
+  of a restricted person is to be removed, and that the trigger refuses the wrong places.
+  It belongs with ADR-018 (b4) or the P1-T11c screens.
+
+### Open items handed to b2–b4
+
+- b2: (review C4) the bed projection for the billing roles if the owner answers Q-K37a with B.
+  When b2 widens `update_identifier` for the front desk, the allow-list check of
+  `ihr_access/identifiers.py` already runs first (deviation 10).
+- b2: the four swaps and `force_projection()` calls; the search gate; `add_user` gate; patient
+  edit rule using `fields/patient_edit.txt`; encounter filter allow-list
+  (`fields/encounter_filters.txt`); device, report-upload and delivery swaps; the named write
+  tests; the remaining mutation rows (`access-forced-projection`, `access-search-gate`,
+  `access-add-user-gate`, `access-bed-history`, `access-resource-request`,
+  `encounter-create-fields`, `access-encounter-filters`, `access-retrieve-scope`,
+  `access-update-action-allowlist`, `access-edit-hidden-fields`, `access-account-report`,
+  `access-delivery-patient`, `access-booking-note`).
+- b3: the matrix reuses `ihr_access.testing.build_world()` (extend it: lab and ward copies of
+  requests and reports, a resource request, a return order, an account report, a world-coverage
+  check) and the canary word `testing.CANARY`; the spec walk's exemption list
+  (`PatientOTPReadSpec`, `PatientPartialSpec`).
+- b4: the grant endpoint, `records.end_grant`, the beat and per-request expiry, audit
+  annotation, the signed-link cap, the grant authorizer, Owner totals, ADR-018, the
+  click-through; decide the grant table's privilege class.

@@ -1,4 +1,5 @@
 from django.apps import AppConfig
+from django.core import checks
 
 
 class IhrRolesConfig(AppConfig):
@@ -7,8 +8,16 @@ class IhrRolesConfig(AppConfig):
     verbose_name = "IndieHR roles"
 
     def ready(self):
-        # Indian hospital roles are registered here in P1-T11b (registry.ROLES, registry.GRANTS);
-        # until then the registry is empty and only the guarded sync is active.
-        from ihr_roles import registry
+        from care.security.permissions.base import PermissionController
 
+        from ihr_roles import checks as role_checks
+        from ihr_roles import registry
+        from ihr_roles.permissions import IhrPermissions
+
+        # Our permissions first (design-b.md §3), so grant() finds them. CARE builds its
+        # permission cache lazily, once: one built before this point would miss our slugs.
+        PermissionController.register_permission_handler(IhrPermissions)
+        PermissionController.cache.clear()
+        # The eight roles, the hidden one and their grants (P1-T11b1)
         registry.install()
+        checks.register(role_checks.permissions_registered)

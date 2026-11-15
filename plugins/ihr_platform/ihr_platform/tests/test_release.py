@@ -760,6 +760,69 @@ class FleetTests(SimpleTestCase):
         self.assertEqual(extras(), [])  # ... but its grants are the model's
         self.assertTrue(any(line.startswith(f"{schema} (not migrated") for line in out))
 
+    def test_check_reports_and_migrate_repairs_a_disabled_placement_guard(self):
+        """The role placement guard of a hospital already current (P1-T11b1, review C1): a
+        trigger disabled by hand is named by check and put back by a migrate run, which
+        reaches it although no migration is new to the hospital."""
+        from ihr_access import placement
+
+        def guard_problems():
+            with connection.cursor() as cursor:
+                return placement.problems(cursor, TEST_SCHEMA)
+
+        self.assertEqual(guard_problems(), [])
+        self.addCleanup(placement.ensure, connection, TEST_SCHEMA)
+        with connection.cursor() as cursor:
+            cursor.execute(
+                f'ALTER TABLE "{TEST_SCHEMA}".emr_patientuser '
+                "DISABLE TRIGGER ihr_role_placement_guard"
+            )
+        self.assertEqual(len(guard_problems()), 1)
+        _, out, _, _ = self._run(["check"], slugs=["testhosp"], record=True)
+        self.assertTrue(
+            any(
+                line.startswith("testhosp: role placement guard: ")
+                and "emr_patientuser" in line
+                and "disabled" in line
+                for line in out
+            ),
+            out,
+        )
+        self.assertEqual(len(guard_problems()), 1)  # check only reports
+        with mock.patch.object(fleet, "needs_migrate", return_value=False):
+            _, out, _, _ = self._run(["migrate"], slugs=["testhosp"])
+        self.assertIn("testhosp: role placement guard repaired", out)
+        self.assertEqual(guard_problems(), [])
+
+    def test_a_failed_grant_repair_still_repairs_the_placement_guard(self):
+        """Second review of C1: a hospital already current whose grant repair fails is held,
+        and its placement guard is still put back in the same run."""
+        from ihr_access import placement
+
+        from ihr_platform import db_roles
+
+        def guard_problems():
+            with connection.cursor() as cursor:
+                return placement.problems(cursor, TEST_SCHEMA)
+
+        self.addCleanup(placement.ensure, connection, TEST_SCHEMA)
+        with connection.cursor() as cursor:
+            cursor.execute(
+                f'ALTER TABLE "{TEST_SCHEMA}".emr_facilityorganizationuser '
+                "DISABLE TRIGGER ihr_role_placement_guard"
+            )
+        self.assertEqual(len(guard_problems()), 1)
+        refused = db_roles.RolesError("database roles: a grant to a dropped role")
+        with (
+            mock.patch.object(fleet, "needs_migrate", return_value=False),
+            mock.patch.object(db_roles, "ensure_grants", side_effect=refused),
+        ):
+            run, out, err, _ = self._run(["migrate"], slugs=["testhosp"])
+        self.assertEqual(self._ops(run)["testhosp"].result["outcome"], "held")
+        self.assertIn("ihr-fleet: hospital=testhosp outcome=held", err)
+        self.assertIn("testhosp: role placement guard repaired", out)
+        self.assertEqual(guard_problems(), [])
+
     def test_a_hospital_held_elsewhere_is_retried_then_deferred(self):
         a = self._hospital("fleet-lock")
         with runner.exclusive(

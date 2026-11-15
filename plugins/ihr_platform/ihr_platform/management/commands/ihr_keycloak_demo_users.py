@@ -34,6 +34,20 @@ DEMO_STAFF = [
     ("nurse.asha", "Asha", "Nair", {"alpha": "care-nurse"}, True),
     ("admin.bhavesh", "Bhavesh", "Rao", {"beta": "care-fac-admin"}, True),
     ("new.neha", "Neha", "Kulkarni", {"alpha": "care-staff"}, False),
+    # Our eight roles (P1-T11b1), each in both hospitals
+    *(
+        (username, first, last, {"alpha": care_user, "beta": care_user}, True)
+        for username, first, last, care_user in (
+            ("reception.ravi", "Ravi", "Kumar", "care-receptionist"),
+            ("cashier.kavya", "Kavya", "Menon", "care-cashier"),
+            ("lab.imran", "Imran", "Shaikh", "care-labtech"),
+            ("radiology.sunita", "Sunita", "Rao", "care-radiologist"),
+            ("tpa.joseph", "Joseph", "Mathew", "care-tpa"),
+            ("mrd.farah", "Farah", "Khan", "care-mrd"),
+            ("store.gopal", "Gopal", "Yadav", "care-storekeeper"),
+            ("owner.vikram", "Vikram", "Singh", "care-owner"),
+        )
+    ),
 ]
 
 

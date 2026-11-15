@@ -1,0 +1,33 @@
+# What a token shows under forced projection only ("After the attack" §2.2).
+# Every field of TokenRetrieveSpec and its subclasses.
+meta drop  # internal store; to_json never shows it
+id keep  # the token's id
+number keep  # the token number
+status keep  # waiting, called...
+category keep  # the token category
+category.* keep  # a category card (name, default)
+queue keep  # the queue: when only
+queue.id keep  # its id
+queue.date keep  # its day
+queue.is_primary keep  # flag
+queue.system_generated keep  # flag
+queue.name drop  # a queue is named after its doctor
+resource_type keep  # practitioner, location or service (not which)
+booking keep  # the booking: when and status only
+booking.id keep  # its id
+booking.status keep  # its status
+booking.booked_on keep  # when it was booked
+booking.created_date keep  # when it was made
+booking.modified_date keep  # last change
+booking.token_slot.start_datetime keep  # slot start
+booking.token_slot.end_datetime keep  # slot end
+booking.note drop  # free text, possibly clinical
+created_by keep  # who issued it
+created_by.* keep  # a staff user card: no patient data
+updated_by keep  # who last changed it
+updated_by.* keep  # a staff user card: no patient data
+patient patient  # projected with fields/patient.txt
+encounter encounter  # projected with fields/encounter.txt
+note drop  # free text, possibly clinical
+sub_queue drop  # the room or doctor's sub-queue
+resource drop  # the doctor, room or service (Q-K37)

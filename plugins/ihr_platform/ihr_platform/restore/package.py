@@ -42,8 +42,10 @@ from pathlib import Path
 
 FORMAT = "ihr-restore-package/1"
 SCHEMA_RE = re.compile(r"^h_[a-z0-9]{10}$")
-# Our functions and triggers in a hospital schema (ihr_audit 0001, install.py, seal.py): the
-# only ones a dump may hold. None of them is ever exported (this build's code installs them).
+# Our functions and triggers in a hospital schema (ihr_audit 0001, install.py, seal.py; the role
+# placement guard, ihr_access/placement.py, P1-T11b1): the only ones a dump may hold. None of them
+# is ever exported (this build's code installs them: the trail's in the load, the placement guard
+# by the restore's migrate, after the data, so restored memberships are never re-judged).
 OUR_FUNCTIONS = frozenset(
     {
         "ihr_audit_row",
@@ -53,6 +55,7 @@ OUR_FUNCTIONS = frozenset(
         "ihr_audit_seal_run",
         "ihr_audit_seal_next",
         "ihr_audit_stamp",
+        "ihr_role_placement_guard",
     }
 )
 OUR_TRIGGERS = {
@@ -61,6 +64,7 @@ OUR_TRIGGERS = {
     "ihr_audit_append_only": "ihr_audit_refuse",
     "ihr_audit_no_truncate": "ihr_audit_refuse",
     "ihr_audit_stamp": "ihr_audit_stamp",
+    "ihr_role_placement_guard": "ihr_role_placement_guard",
 }
 TABLE_KINDS = ("r",)
 CHUNK = 1 << 20

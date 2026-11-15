@@ -1,0 +1,45 @@
+# What a booking shows under forced projection only ("After the attack" §2.2): our widening
+# branches (P1-T11b2). The Receptionist's own CARE-granted booking screens are not projected.
+# Every field of TokenBookingBaseReadSpec and its subclasses.
+meta drop  # internal store; to_json never shows it
+id keep  # the booking's id
+status keep  # booked, checked in...
+booked_on keep  # when it was booked
+created_date keep  # when it was made
+modified_date keep  # last change
+resource_type keep  # practitioner, location or service (not which)
+token_slot keep  # the slot: when only
+token_slot.id keep  # the slot's id
+token_slot.start_datetime keep  # start
+token_slot.end_datetime keep  # end
+token_slot.allocated keep  # how many are booked
+token_slot.availability drop  # the schedule's name names the doctor (Q-K37)
+booked_by keep  # who booked it
+booked_by.* keep  # a staff user card: no patient data
+facility keep  # the hospital
+facility.* keep  # the facility card: no patient data
+created_by keep  # who made it
+created_by.* keep  # a staff user card: no patient data
+updated_by keep  # who last changed it
+updated_by.* keep  # a staff user card: no patient data
+token keep  # the queue token for the booking
+token.id keep  # its id
+token.number keep  # the token number
+token.status keep  # waiting, called...
+token.category keep  # the token category
+token.category.* keep  # a category card (name, default)
+token.queue keep  # the queue: when only
+token.queue.id keep  # its id
+token.queue.date keep  # its day
+token.queue.is_primary keep  # flag
+token.queue.system_generated keep  # flag
+token.queue.name drop  # a queue is named after its doctor
+token.note drop  # free text, possibly clinical
+token.sub_queue drop  # the room or doctor's sub-queue
+token.patient patient  # projected with fields/patient.txt
+patient patient  # the patient, projected with fields/patient.txt
+associated_encounter encounter  # the visit, projected with fields/encounter.txt
+note drop  # free text, possibly clinical (Q-K37)
+resource drop  # the booked doctor, room or service (Q-K37)
+tags drop  # tags can carry clinical labels
+charge_item drop  # the billed service names the care

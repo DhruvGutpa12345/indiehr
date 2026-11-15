@@ -4,8 +4,9 @@
     TEST_PASSWORD=... manage.py ihr_seed_demo --slug alpha --passwords-only
 
 Creates the hospital if it is missing, loads CARE's synthetic demo data into it once, sets its
-profile, adds a pharmacist and a billing user, and sets every test user's password to
-$TEST_PASSWORD (CARE's fixture passwords are public). Prints one JSON line.
+profile, adds a pharmacist and a billing user, adds one user for each of our eight roles placed as
+design-b.md §4 says (P1-T11b1), and sets every test user's password to $TEST_PASSWORD (CARE's
+fixture passwords are public). Prints one JSON line.
 Run through ``scripts/care-dev.sh seed``.
 """
 
@@ -62,6 +63,46 @@ EXTRA_USERS = [
     ("care-pharmacist", "Pharmacist", "Pooja", "Pharmacist", "+919999900011"),
     ("care-billing", "Staff", "Bharat", "Billing", "+919999900012"),
 ]
+# Our eight roles (P1-T11b1): username, role, first name, last name, synthetic phone, department
+# (None: the facility root). Placed explicitly, never by copying care-staff's memberships, which
+# include a government organisation (the placement trigger refuses our roles there).
+ROLE_USERS = [
+    (
+        "care-receptionist",
+        "Receptionist",
+        "Ravi",
+        "Receptionist",
+        "+919999900013",
+        None,
+    ),
+    ("care-cashier", "Cashier", "Kavya", "Cashier", "+919999900014", None),
+    (
+        "care-labtech",
+        "Lab Technician",
+        "Imran",
+        "Labtech",
+        "+919999900015",
+        "Laboratory",
+    ),
+    (
+        "care-radiologist",
+        "Radiologist",
+        "Sunita",
+        "Radiologist",
+        "+919999900016",
+        "Radiology",
+    ),
+    ("care-tpa", "TPA Desk", "Joseph", "Tpa", "+919999900017", None),
+    ("care-mrd", "MRD", "Farah", "Records", "+919999900018", None),
+    ("care-storekeeper", "Store Keeper", "Gopal", "Stores", "+919999900019", "Stores"),
+    ("care-owner", "Owner", "Vikram", "Owner", "+919999900020", None),
+]
+# Department -> a location linked to it (lab queues, imaging rooms and stores are per location)
+DEPARTMENT_LOCATIONS = {
+    "Laboratory": "Sample Collection Room",
+    "Radiology": "X-Ray Room",
+    "Stores": "Main Store",
+}
 
 
 class Command(BaseCommand):
@@ -101,6 +142,7 @@ class Command(BaseCommand):
                     setattr(current, field, value)
                 current.save()
             created = _add_extra_users()
+            created += _add_role_users()
             reset = _set_passwords(password)
 
         self.stdout.write(
@@ -158,10 +200,85 @@ def _add_extra_users():
 def _set_passwords(password):
     from care.users.models import User
 
-    names = FIXTURE_USERS + [user[0] for user in EXTRA_USERS]
+    names = FIXTURE_USERS + [u[0] for u in EXTRA_USERS] + [u[0] for u in ROLE_USERS]
     reset = 0
     for user in User.objects.filter(username__in=names):
         user.set_password(password)
         user.save(update_fields=["password"])
         reset += 1
     return reset
+
+
+def _department(facility, name):
+    """The facility's department ``name`` (CARE's demo makes Laboratory and Radiology; Stores is
+    ours), with one location linked to it."""
+    from care.emr.models.location import FacilityLocation, FacilityLocationOrganization
+    from care.emr.models.organization import FacilityOrganization
+
+    department = FacilityOrganization.objects.filter(
+        facility=facility, name=name
+    ).first()
+    if department is None:
+        department = FacilityOrganization.objects.create(
+            facility=facility, name=name, org_type="team"
+        )
+    location_name = DEPARTMENT_LOCATIONS[name]
+    location = FacilityLocation.objects.filter(
+        facility=facility, name=location_name
+    ).first()
+    if location is None:
+        location = FacilityLocation.objects.create(
+            facility=facility,
+            name=location_name,
+            description=f"{name} (synthetic demo)",
+            status="active",
+            operational_status="O",
+            mode="kind",
+            form="ro",
+        )
+    FacilityLocationOrganization.objects.get_or_create(
+        location=location, organization=department
+    )
+    return department
+
+
+@transaction.atomic
+def _add_role_users():
+    from care.emr.models.organization import FacilityOrganizationUser
+    from care.security.models import RoleModel
+    from care.users.models import User
+
+    template = User.objects.get(username="care-staff")
+    # The facility the demo's staff work in (CARE's "FACILITY WITH PATIENTS")
+    facility = (
+        FacilityOrganizationUser.objects.filter(user=template)
+        .select_related("organization__facility")
+        .first()
+        .organization.facility
+    )
+    created = []
+    for username, role_name, first, last, phone, department in ROLE_USERS:
+        role = RoleModel.objects.get(name=role_name, is_system=True)
+        user, was_created = User.objects.get_or_create(
+            username=username,
+            defaults={
+                "first_name": first,
+                "last_name": last,
+                "email": f"{username}@care.test",
+                "phone_number": phone,
+                "user_type": template.user_type,
+                "gender": template.gender,
+                "geo_organization": template.geo_organization,
+            },
+        )
+        organization = (
+            _department(facility, department)
+            if department
+            else facility.default_internal_organization
+        )
+        FacilityOrganizationUser.objects.get_or_create(
+            organization=organization, user=user, defaults={"role": role}
+        )
+        if was_created:
+            created.append(username)
+    return created

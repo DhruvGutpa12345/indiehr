@@ -1,0 +1,43 @@
+# What restricted users see of an encounter (design-b.md §5.2, "After the attack" §2.3; Q-K37).
+# Every field of EncounterListSpec, EncounterRetrieveSpec and their subclasses. Format: patient.txt.
+meta drop  # internal store; to_json never shows it
+id keep  # the encounter's id
+status keep  # encounter status (Q-K21)
+status_history keep  # when the status changed
+status_history.history keep  # the list of changes
+status_history.history.status keep  # a past status
+status_history.history.moved_at keep  # when it changed
+encounter_class keep  # OPD, IPD, emergency...
+period keep  # when the visit started and ended
+period.start keep  # start
+period.end keep  # end
+priority keep  # priority
+external_identifier keep  # the hospital's own visit number
+patient patient  # the patient, projected with fields/patient.txt
+facility keep  # the hospital
+facility.* keep  # the facility card: no patient data
+appointment keep  # the booking the visit came from: when, and its status only
+appointment.id keep  # the booking's id
+appointment.status keep  # booked, checked in...
+appointment.booked_on keep  # when it was booked
+appointment.token_slot.start_datetime keep  # the slot's start
+appointment.token_slot.end_datetime keep  # the slot's end
+hospitalization keep  # admission details: how the patient came only
+hospitalization.admit_source keep  # referral, walk-in, transfer
+hospitalization.re_admission keep  # readmission flag
+hospitalization.discharge_disposition drop  # where the patient went (home, hospice, died...): clinical outcome
+hospitalization.diet_preference drop  # clinical
+created_date keep  # when the encounter was made
+modified_date keep  # last change
+created_by keep  # who made the encounter
+created_by.* keep  # a staff user card: no patient data
+updated_by keep  # who last changed it
+updated_by.* keep  # a staff user card: no patient data
+permissions permissions  # only ihr_* slugs and CARE slugs that open nothing clinical
+discharge_summary_advice drop  # clinical (Q-K21)
+care_team drop  # the treating doctors name the specialty
+organizations drop  # department names reveal the specialty (Q-K37)
+current_location drop  # ward and bed (Q-K37)
+location_history drop  # ward and bed history (Q-K37)
+tags drop  # tags can carry clinical labels
+extensions drop  # plugin data of any kind, possibly clinical

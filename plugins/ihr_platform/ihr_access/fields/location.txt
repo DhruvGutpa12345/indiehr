@@ -1,0 +1,24 @@
+# What restricted users see of a location (design-b.md §5.2): everything but the bed's occupant.
+# Every field of FacilityLocationListSpec, FacilityLocationRetrieveSpec and their subclasses.
+meta drop  # internal store; to_json never shows it
+id keep  # the location's id
+status keep  # active or not
+operational_status keep  # open, closed, contaminated...
+system_availability_status keep  # free or occupied (no who)
+name keep  # the location's name
+description keep  # its description
+location_type keep  # a coded location type
+location_type.* keep  # a coding (system, code, display): no patient data
+form keep  # bed, room, ward...
+mode keep  # instance or kind
+inventory_usage keep  # whether it holds stock
+sort_index keep  # display order
+has_children keep  # tree shape
+parent location  # the parent location, projected the same way (CARE caches its body for 15 days)
+tags keep  # location tags (design-b.md §5.2: every field but the occupant)
+tags.* keep  # a tag card
+created_by keep  # who made the location
+created_by.* keep  # a staff user card: no patient data
+updated_by keep  # who last changed it
+updated_by.* keep  # a staff user card: no patient data
+current_encounter drop  # the bed's occupant (Q-K21)

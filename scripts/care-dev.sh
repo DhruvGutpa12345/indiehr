@@ -174,6 +174,14 @@ EOT
 | care-fac-admin | Facility Admin | Facility settings, billing accounts, tariffs, users |
 | care-admin | Administrator | Organisation-level admin |
 | care-volunteer | Volunteer | Read-mostly |
+| care-receptionist | Receptionist | Front desk: patient demographics only (P1-T11b) |
+| care-cashier | Cashier | Billing counter: accounts, charges, invoices, payments |
+| care-tpa | TPA Desk | Insurance desk: reads bills, updates billing accounts |
+| care-mrd | MRD | Medical records: demographics; clinical read only by a records grant |
+| care-owner | Owner | Totals only; approves nothing |
+| care-labtech | Lab Technician | Laboratory department: specimens, lab reports |
+| care-radiologist | Radiologist | Radiology department: imaging reports |
+| care-storekeeper | Store Keeper | Stores department: stock, supply requests and deliveries |
 | admin | Superuser | Not for the web app |
 EOT
     if [[ -n "$kc" ]]; then printf '\n%s\n' "$kc"; fi

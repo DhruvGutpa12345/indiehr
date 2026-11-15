@@ -30,6 +30,9 @@ IHR_TENANT_APPS = [
     "ihr_audit",
     # Reference packs applied to this hospital (P1-T15a)
     "ihr_refdata",
+    # What the restricted roles see (P1-T11b): the serializer guard, the PatientUser rule,
+    # the placement trigger and records grants. Last: it wraps CARE's specs and authorizers
+    "ihr_access",
 ]
 
 

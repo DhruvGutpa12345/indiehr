@@ -1282,7 +1282,8 @@ REASONS = (
 )
 # Why a hospital schema is gated (C2): a right beyond the model for the app or PUBLIC there, or
 # a broken control there (its sealing functions: security, search path, owner, missing or
-# changed by hand, the stamp trigger off). The worse one first
+# changed by hand, the stamp trigger off; the role placement guard of P1-T11b1: its function
+# or a trigger missing, disabled or changed by hand). The worse one first
 GATED_REASONS = ("controls", "extra_privileges")
 # What a container's pre-start check (ihr_db_role_check --for) may guard (S5). Only these may
 # run as the owner: the migrate one-shot, the admin one-offs and the onboarding provisioner
@@ -1587,8 +1588,9 @@ def check_connection(  # noqa: PLR0912 (one flat list of verdicts)
 
     For the app role: its attributes, memberships, stored settings, CREATE and TEMPORARY
     anywhere, ownership, its effective rights on public tables, ensure_grants' report and
-    the sealing functions of every hospital schema. A right beyond the model for the app or
-    PUBLIC, or a control problem (the queue guard, the sealing functions, large objects:
+    the sealing functions and the role placement guard of every hospital schema. A right
+    beyond the model for the app or PUBLIC, or a control problem (the queue guard, the sealing
+    functions, the placement guard, large objects:
     ``Finding.control``), refuses the process when it is the database's or the public
     schema's; when it is in one hospital's schema, that hospital alone is gated (C2): it goes
     into ``gated`` {schema: [(reason, text)]}, and the process still serves the others. A
@@ -1613,10 +1615,16 @@ def check_connection(  # noqa: PLR0912 (one flat list of verdicts)
         # A sealing function missing or changed by hand, or the stamp trigger off: what the
         # hospital's chain rests on (second review, S1/S3 at run time; an older build's,
         # unchanged as installed, is not: its next migrate brings it up to date)
-        sealing = sealing_problems_by_schema(cursor, hospital_schemas(cursor))
+        schemas = hospital_schemas(cursor)
+        sealing = sealing_problems_by_schema(cursor, schemas)
+        # The role placement guard (P1-T11b1, second review of C1): a hospital whose guard is
+        # disabled, dropped or changed by hand would take a front-desk or lab role where it
+        # reads clinical data; that hospital alone is gated, and DatabaseSchemaGated fires
+        guards = _placement_problems(cursor, schemas)
     findings.items += [
         Finding("problem", text, schema=schema, control=True)
-        for schema, texts in sorted(sealing.items())
+        for problems_by_schema in (sealing, guards)
+        for schema, texts in sorted(problems_by_schema.items())
         for text in texts
     ]
     other = 0
@@ -1647,6 +1655,18 @@ def check_connection(  # noqa: PLR0912 (one flat list of verdicts)
             other,
         )
     return found
+
+
+def _placement_problems(cursor, schemas):
+    """{schema: [problem]} of the role placement guard (ihr_access/placement.py), when
+    ihr_access is installed (it is in every tenant-mode setting)."""
+    from django.apps import apps
+
+    if not apps.is_installed("ihr_access"):
+        return {}
+    from ihr_access import placement
+
+    return placement.runtime_problems_by_schema(cursor, schemas)
 
 
 def _refuse(connection, declared_role, found):

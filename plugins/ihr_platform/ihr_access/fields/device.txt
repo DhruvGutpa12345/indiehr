@@ -1,0 +1,29 @@
+# What restricted users see of a device ("After the attack" §2.1): everything but who is on it.
+# Every field of DeviceRetrieveSpec and its subclasses.
+meta drop  # internal store; to_json never shows it
+id keep  # the device's id
+identifier keep  # asset tag
+status keep  # active or not
+availability_status keep  # available, lost, damaged...
+manufacturer keep  # vendor
+manufacture_date keep  # vendor data
+expiration_date keep  # vendor data
+lot_number keep  # vendor data
+serial_number keep  # vendor data
+registered_name keep  # the device's name
+user_friendly_name keep  # its short name
+model_number keep  # vendor data
+part_number keep  # vendor data
+contact keep  # the vendor's contact points
+contact.* keep  # a contact point (system, value, use): no patient data
+care_type keep  # CARE's device type
+care_metadata keep  # the device type's settings
+care_metadata.* keep  # device settings (no patient: the patient is current_encounter)
+managing_organization keep  # the department managing the device
+managing_organization.* keep  # a department card
+current_location location  # where the device is, projected with fields/location.txt
+created_by keep  # who registered the device
+created_by.* keep  # a staff user card: no patient data
+updated_by keep  # who last changed it
+updated_by.* keep  # a staff user card: no patient data
+current_encounter drop  # the patient on the device (Q-K21, "After the attack" A2)

@@ -1,0 +1,21 @@
+# What a restricted user with ihr_edit_patient_demographics may change on a patient (P1-T11b2
+# uses it; "After the attack" §5.3). Every field of PatientUpdateSpec, one line each:
+#   <field> edit|hidden|visible  # reason
+# edit: written; hidden: never shown to them, always ignored, never written; visible: shown,
+# ignored when sent unchanged, refused (400) when changed. A field CARE adds fails the tests.
+name edit  # identity
+gender edit  # identity
+phone_number edit  # contact
+emergency_phone_number edit  # contact
+address edit  # contact
+permanent_address edit  # contact
+pincode edit  # address
+date_of_birth edit  # identity
+age edit  # identity (when the date is unknown)
+geo_organization edit  # address; a district move is checked by P1-T11b2's geo rule
+identifiers edit  # only identifier_configs.txt systems, through update_identifier
+blood_group hidden  # clinical
+extensions hidden  # plugin data, possibly clinical
+meta hidden  # internal store
+id visible  # never changes
+deceased_datetime visible  # recording a death stays with CARE's clinical write path

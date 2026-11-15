@@ -216,7 +216,7 @@ jobs:
       - name: Plugin suites + isolation suite as the app role (IHR_DB_ROLES=test)
         run: |
           set +e
-          $COMPOSE exec -T -e IHR_DB_ROLES=test backend python manage.py test --settings=ihr_platform.settings.test --noinput -v 2 ihr_platform ihr_tenant_settings ihr_identity ihr_audit ihr_terminology ihr_roles ihr_refdata ihr_refdata_registry > plugin-tests.log 2>&1
+          $COMPOSE exec -T -e IHR_DB_ROLES=test backend python manage.py test --settings=ihr_platform.settings.test --noinput -v 2 ihr_platform ihr_tenant_settings ihr_identity ihr_audit ihr_terminology ihr_roles ihr_refdata ihr_refdata_registry ihr_access > plugin-tests.log 2>&1
           status=$?
           grep -vE "\.\.\. ok$" plugin-tests.log | tail -400
           exit $status

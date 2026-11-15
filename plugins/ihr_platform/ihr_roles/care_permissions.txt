@@ -1,0 +1,124 @@
+# CARE's permissions as reviewed at the pinned upstream (P1-T11b1, review C6; ihr_roles/care_permissions.py).
+# One line each: <slug> | <context> | <class> | <CARE's role names, sorted; ours are left out>
+# class: clinical (registry.CLINICAL_SLUGS), opening (registry.PATIENT_OPENING) or other.
+# ihr_roles.tests.test_grants.CarePermissionsReviewed fails on a new, removed or changed slug
+# until its line here is reviewed: decide its class first (a clinical slug goes into
+# CLINICAL_SLUGS), then re-check our roles' grants (registry.GRANTS) against the change.
+# Department-scoped requests, specimens and reports (can_read_service_request, can_read_specimen,
+# can_read_diagnostic_report, ...) are "other" on purpose: the lab and imaging roles hold them in
+# their own department only (design-b.md §4, DEPARTMENT_ONLY).
+can_apply_tag_config | FACILITY | other | Admin, Doctor, Facility Admin, Nurse, Pharmacist, Staff
+can_archive_questionnaire | QUESTIONNAIRE | other | Admin, Facility Admin
+can_cancel_charge_item | FACILITY | other | Admin, Facility Admin
+can_create_account | FACILITY | other | Admin, Facility Admin
+can_create_charge_item | FACILITY | other | Admin, Doctor, Facility Admin, Nurse, Pharmacist, Staff
+can_create_encounter | ENCOUNTER | other | Admin, Doctor, Facility Admin, Nurse
+can_create_facility | FACILITY | other | Admin, Administrator, Facility Admin
+can_create_facility_location_organizations | FACILITY | other | Admin, Facility Admin, Staff
+can_create_facility_organization | FACILITY_ORGANIZATION | other | Facility Admin
+can_create_facility_organization_root | FACILITY_ORGANIZATION | other | Facility Admin
+can_create_negative_charge_item | FACILITY | other | Admin, Facility Admin
+can_create_organization | ORGANIZATION | other | Admin
+can_create_patient | PATIENT | other | Admin, Administrator, Doctor, Facility Admin, Nurse, Staff
+can_create_service_account | FACILITY | other | Admin, Administrator, Facility Admin
+can_create_user | FACILITY | other | Admin, Administrator, Facility Admin
+can_delete_facility_organization | FACILITY_ORGANIZATION | other | Facility Admin
+can_delete_organization | ORGANIZATION | other | Admin
+can_destroy_invoice | FACILITY | other | Admin, Facility Admin
+can_destroy_payment_reconciliation | FACILITY | other | Admin, Facility Admin
+can_generate_report_for_completed_encounter | FACILITY | other | Admin, Facility Admin
+can_generate_report_from_template | FACILITY | other | Admin, Administrator, Doctor, Facility Admin, Nurse, Pharmacist, Staff, Volunteer
+can_list_booking | FACILITY | other | Admin, Administrator, Doctor, Facility Admin, Nurse, Staff
+can_list_devices | FACILITY | other | Admin, Doctor, Facility Admin, Nurse, Pharmacist, Staff
+can_list_encounter | ENCOUNTER | opening | Admin, Doctor, Facility Admin, Nurse
+can_list_facility_location_organizations | FACILITY | other | Admin, Facility Admin, Staff
+can_list_facility_locations | FACILITY | other | Admin, Administrator, Doctor, Facility Admin, Nurse, Pharmacist, Staff
+can_list_facility_organization_users | FACILITY_ORGANIZATION | other | Admin, Administrator, Doctor, Facility Admin, Nurse, Staff
+can_list_organization_users | ORGANIZATION | other | Admin, Admin, Administrator, Doctor, Facility Admin, Manager, Nurse, Pharmacist, Staff, Volunteer
+can_list_patients | PATIENT | opening | Admin, Administrator, Doctor, Facility Admin, Nurse, Pharmacist, Staff, Volunteer
+can_list_schedule | FACILITY | other | Admin, Administrator, Doctor, Facility Admin, Nurse, Staff
+can_list_token | FACILITY | other | Admin, Administrator, Doctor, Facility Admin, Nurse, Staff
+can_list_token_category | FACILITY | other | Admin, Administrator, Doctor, Facility Admin, Nurse, Staff
+can_list_user | FACILITY | other | Admin, Administrator, Doctor, Facility Admin, Nurse, Pharmacist, Staff, Volunteer
+can_manage_connected_role_organizations | ORGANIZATION | other | Admin, Manager
+can_manage_device_associations_to_encounters | FACILITY | other | Admin, Doctor, Facility Admin, Nurse, Staff
+can_manage_devices | FACILITY | other | Admin, Facility Admin, Pharmacist, Staff
+can_manage_facility_organization | FACILITY_ORGANIZATION | other | Administrator, Facility Admin
+can_manage_facility_organization_users | FACILITY_ORGANIZATION | other | Administrator, Facility Admin
+can_manage_locked_invoice | FACILITY | other | Admin, Facility Admin
+can_manage_organization | ORGANIZATION | other | Admin, Admin
+can_manage_organization_users | ORGANIZATION | other | Admin, Admin, Administrator, Facility Admin
+can_manage_questionnaire | QUESTIONNAIRE | other | Admin, Admin, Facility Admin
+can_preview_template | FACILITY | other | Admin, Facility Admin
+can_read_account | FACILITY | other | Admin, Administrator, Doctor, Facility Admin, Nurse, Pharmacist, Staff, Volunteer
+can_read_activity_definition | FACILITY | other | Admin, Administrator, Doctor, Facility Admin, Nurse, Staff, Volunteer
+can_read_charge_item | FACILITY | other | Admin, Administrator, Doctor, Facility Admin, Nurse, Pharmacist, Staff, Volunteer
+can_read_charge_item_definition | FACILITY | other | Admin, Administrator, Doctor, Facility Admin, Nurse, Pharmacist, Staff, Volunteer
+can_read_diagnostic_report | FACILITY | other | Admin, Administrator, Doctor, Facility Admin, Nurse, Staff, Volunteer
+can_read_encounter | ENCOUNTER | opening | Admin, Doctor, Facility Admin, Nurse
+can_read_encounter_clinical_data | ENCOUNTER | clinical | Admin, Doctor, Facility Admin, Nurse
+can_read_facility | FACILITY | other | Admin, Administrator, Doctor, Facility Admin, Nurse, Staff, Volunteer
+can_read_healthcare_service | FACILITY | other | Admin, Administrator, Doctor, Facility Admin, Nurse, Pharmacist, Staff, Volunteer
+can_read_inventory_item | FACILITY | other | Admin, Administrator, Doctor, Facility Admin, Nurse, Pharmacist, Staff, Volunteer
+can_read_invoice | FACILITY | other | Admin, Administrator, Doctor, Facility Admin, Nurse, Pharmacist, Staff, Volunteer
+can_read_observation_definition | FACILITY | other | Admin, Administrator, Doctor, Facility Admin, Nurse, Pharmacist, Staff, Volunteer
+can_read_patient_identifier_config | FACILITY | other | Admin, Administrator, Doctor, Facility Admin, Nurse, Pharmacist, Staff, Volunteer
+can_read_payment_reconciliation | FACILITY | other | Admin, Administrator, Doctor, Facility Admin, Nurse, Pharmacist, Staff, Volunteer
+can_read_product | FACILITY | other | Admin, Administrator, Doctor, Facility Admin, Nurse, Pharmacist, Staff, Volunteer
+can_read_product_knowledge | FACILITY | other | Admin, Administrator, Doctor, Facility Admin, Nurse, Pharmacist, Staff, Volunteer
+can_read_questionnaire | QUESTIONNAIRE | other | Admin, Admin, Administrator, Doctor, Facility Admin, Manager, Member, Nurse, Pharmacist, Staff, Volunteer
+can_read_questionnaire_response_template | QUESTIONNAIRE | other | Admin, Administrator, Doctor, Facility Admin, Nurse, Pharmacist, Staff, Volunteer
+can_read_resource_category | FACILITY | other | Admin, Administrator, Doctor, Facility Admin, Nurse, Pharmacist, Staff, Volunteer
+can_read_service_request | FACILITY | other | Admin, Administrator, Doctor, Facility Admin, Nurse, Pharmacist, Staff, Volunteer
+can_read_specimen | FACILITY | other | Admin, Administrator, Doctor, Facility Admin, Nurse, Pharmacist, Staff
+can_read_specimen_definition | FACILITY | other | Admin, Administrator, Doctor, Facility Admin, Nurse, Pharmacist, Staff, Volunteer
+can_read_supply_delivery | FACILITY | other | Admin, Administrator, Doctor, Facility Admin, Nurse, Pharmacist, Staff, Volunteer
+can_read_supply_request | FACILITY | other | Admin, Administrator, Doctor, Facility Admin, Nurse, Pharmacist, Staff, Volunteer
+can_read_tag_config | FACILITY | other | Admin, Administrator, Doctor, Facility Admin, Nurse, Pharmacist, Staff, Volunteer
+can_read_template | FACILITY | other | Admin, Administrator, Doctor, Facility Admin, Nurse, Pharmacist, Staff, Volunteer
+can_reschedule_booking | FACILITY | other | Admin, Administrator, Doctor, Facility Admin, Nurse, Staff
+can_set_charge_item_definition | FACILITY | other | Admin, Facility Admin
+can_submit_encounter_questionnaire | PATIENT | clinical | Admin, Doctor, Facility Admin, Nurse, Staff
+can_submit_patient_questionnaire | PATIENT | clinical | Admin, Administrator, Doctor, Facility Admin, Nurse, Staff, Volunteer
+can_submit_questionnaire | QUESTIONNAIRE | other | Admin, Admin, Administrator, Doctor, Facility Admin, Manager, Member, Nurse, Staff, Volunteer
+can_update_account | FACILITY | other | Admin, Facility Admin
+can_update_charge_item | FACILITY | other | Admin, Facility Admin
+can_update_facility | FACILITY | other | Admin, Administrator, Facility Admin, Staff
+can_view_clinical_data | PATIENT | clinical | Admin, Doctor, Facility Admin, Nurse, Staff
+can_view_facility_organization | FACILITY_ORGANIZATION | other | Admin, Administrator, Doctor, Facility Admin, Nurse, Staff, Volunteer
+can_view_organization | ORGANIZATION | other | Admin, Admin, Administrator, Doctor, Facility Admin, Manager, Member, Nurse, Pharmacist, Staff, Volunteer
+can_view_questionnaire_responses | PATIENT | clinical | Admin, Administrator, Doctor, Facility Admin, Nurse, Pharmacist, Staff, Volunteer
+can_view_template_schema | FACILITY | other | Admin, Facility Admin
+can_write_activity_definition | FACILITY | other | Admin, Facility Admin
+can_write_booking | FACILITY | other | Admin, Doctor, Facility Admin, Nurse, Staff
+can_write_charge_item_definition | FACILITY | other | Admin, Facility Admin
+can_write_diagnostic_report | FACILITY | other | Admin, Doctor, Facility Admin, Nurse
+can_write_encounter | ENCOUNTER | opening | Admin, Doctor, Facility Admin, Nurse
+can_write_encounter_clinical_data | ENCOUNTER | clinical | Admin, Doctor, Facility Admin, Nurse
+can_write_external_supply_delivery | FACILITY | other | Admin, Facility Admin
+can_write_facility_locations | FACILITY | other | Admin, Facility Admin, Staff
+can_write_healthcare_service | FACILITY | other | Admin, Facility Admin
+can_write_invoice | FACILITY | other | Admin, Doctor, Facility Admin, Nurse, Pharmacist, Staff
+can_write_observation_definition | FACILITY | other | Admin, Facility Admin
+can_write_patient | PATIENT | opening | Admin, Administrator, Doctor, Facility Admin, Nurse, Staff
+can_write_patient_identifier_config | FACILITY | other | Admin, Facility Admin
+can_write_payment_reconciliation | FACILITY | other | Admin, Doctor, Facility Admin, Nurse, Pharmacist, Staff
+can_write_product | FACILITY | other | Admin, Facility Admin
+can_write_product_knowledge | FACILITY | other | Admin, Facility Admin
+can_write_questionnaire | QUESTIONNAIRE | other | Admin, Facility Admin
+can_write_questionnaire_response_template | QUESTIONNAIRE | other | Admin, Administrator, Doctor, Facility Admin, Nurse, Pharmacist, Staff, Volunteer
+can_write_resource_category | FACILITY | other | Admin, Facility Admin
+can_write_schedule | FACILITY | other | Admin, Doctor, Facility Admin, Nurse, Staff
+can_write_service_request | FACILITY | other | Admin, Doctor, Facility Admin, Nurse
+can_write_specimen | FACILITY | other | Admin, Doctor, Facility Admin, Nurse
+can_write_specimen_definition | FACILITY | other | Admin, Facility Admin
+can_write_supply_delivery | FACILITY | other | Admin, Facility Admin
+can_write_supply_request | FACILITY | other | Admin, Doctor, Facility Admin, Nurse, Staff
+can_write_tag_config | FACILITY | other | Admin, Facility Admin
+can_write_template | FACILITY | other | Admin, Doctor, Facility Admin, Nurse
+can_write_token | FACILITY | other | Admin, Administrator, Doctor, Facility Admin, Nurse, Staff
+can_write_token_category | FACILITY | other | Admin, Facility Admin, Staff
+is_geo_admin | ORGANIZATION | other |
+is_pharmacist | FACILITY | clinical | Admin, Facility Admin, Pharmacist
+read_medication_dispense | FACILITY | clinical | Admin, Doctor, Facility Admin, Nurse, Pharmacist, Staff
+write_medication_dispense | FACILITY | clinical | Admin, Doctor, Facility Admin, Nurse, Pharmacist, Staff
