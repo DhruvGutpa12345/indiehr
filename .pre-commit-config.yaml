@@ -48,7 +48,7 @@ repos:
         name: translations match English (placeholders, tags)
         entry: python3 scripts/merge-locale.py --check
         language: system
-        files: ^(deploy/locale/|scripts/(merge-locale|test_merge_locale)\.py$)
+        files: ^(deploy/locale/|apps/frontend/public/locale/en\.json$|scripts/(merge-locale|test_merge_locale)\.py$)
         pass_filenames: false
       - id: locale-overlay-tests
         name: merge-locale tests

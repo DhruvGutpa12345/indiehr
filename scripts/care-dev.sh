@@ -403,7 +403,7 @@ case "${1:-}" in
     ;;
   locale-preview)
     # Our translations (deploy/locale, P1-T7c) in the running web app, without a rebuild:
-    # the merged files replace the bundle's own until the container is recreated.
+    # the merged files (Hindi, and English with our ihr_* keys) replace the bundle's own until the container is recreated.
     out="$(mktemp -d)"
     python3 "$ROOT/scripts/merge-locale.py" --out-dir "$out"
     for file in "$out"/*.json; do

@@ -9,7 +9,14 @@ owner-approved corrections in deploy/locale/<lang>.corrections.json.
     scripts/merge-locale.py                          # write apps/frontend/public/locale/<lang>.json
     scripts/merge-locale.py --out-dir DIR            # write merged files to DIR instead
 
-Checks: every key exists in English; {{placeholders}}, $t(...) references and <tags> match
+English: our own strings (keys starting "ihr_") live in deploy/locale/en.json and are added to the
+web app's en.json at merge time, so upstream's en.json stays upstream's exact text (P1-T11c0).
+Refused: a key upstream's en.json also has, a key without the "ihr_" prefix, a non-string value.
+Also refused: any "ihr_" key in upstream's en.json itself (ours never go there).
+Merge once per checkout: a second run finds our keys already in en.json and refuses (restore it
+with `git checkout apps/frontend/public/locale/en.json`).
+
+Checks: every key exists in English (upstream's plus ours); {{placeholders}}, $t(...) references and <tags> match
 the English exactly; no empty strings; plural pairs complete (_one with _other).
 Stdlib only.
 """
@@ -39,6 +46,35 @@ def _leaves(value, path=""):
             yield from _leaves(inner, f"{path}.{key}" if path else key)
     else:
         yield path, value
+
+
+OUR_PREFIX = "ihr_"
+
+
+def check_english(ours, upstream):
+    """Problems with deploy/locale/en.json: prefix, string values, collisions with upstream."""
+    problems = []
+    for key, value in ours.items():
+        where = f"en.json: {key}"
+        if not key.startswith(OUR_PREFIX):
+            problems.append(f"{where}: key must start with {OUR_PREFIX!r}")
+        if not isinstance(value, str):
+            problems.append(f"{where}: value must be a string")
+        elif not value.strip():
+            problems.append(f"{where}: empty")
+        if key in upstream:
+            problems.append(f"{where}: upstream en.json already has this key")
+    return problems
+
+
+def check_upstream_english(upstream):
+    """Upstream's en.json must hold no "ihr_" key: ours belong in deploy/locale/en.json (Q-K47 A)."""
+    return [
+        f"upstream en.json: {key}: our key must live in deploy/locale/en.json, "
+        "not in apps/frontend/public/locale/en.json"
+        for key in upstream
+        if key.startswith(OUR_PREFIX)
+    ]
 
 
 def check(lang, ours, english, corrections, upstream):
@@ -97,10 +133,25 @@ def main():
     parser.add_argument("--out-dir", type=Path, help="write merged files here")
     args = parser.parse_args()
 
-    english = _load(UPSTREAM / "en.json")
+    upstream_english = _load(UPSTREAM / "en.json")
+    our_english = _load(OURS / "en.json")
     failed = False
+    problems = check_upstream_english(upstream_english) + check_english(
+        our_english, upstream_english
+    )
+    for problem in problems:
+        print(problem, file=sys.stderr)
+    failed |= bool(problems)
+    english = {**upstream_english, **our_english}
+    print(f"en: {len(upstream_english)} upstream + {len(our_english)} ours = {len(english)}")
+    if not args.check and not problems:
+        out = (args.out_dir or UPSTREAM) / "en.json"
+        out.parent.mkdir(parents=True, exist_ok=True)
+        out.write_text(
+            json.dumps(english, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
+        )
     for path in sorted(OURS.glob("*.json")):
-        if path.name.endswith(".corrections.json"):
+        if path.name.endswith(".corrections.json") or path.name == "en.json":
             continue
         lang = path.stem
         ours = _load(path)

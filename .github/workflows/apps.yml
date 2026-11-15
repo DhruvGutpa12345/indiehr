@@ -409,6 +409,11 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
+      # Before type check and lint: eslint's i18next rule reads public/locale/en.json (P1-T11c0)
+      - name: Our translations (deploy/locale, P1-T7c, P1-T11c0)
+        working-directory: .
+        run: python3 scripts/merge-locale.py
+
       - name: Generate supported browsers
         run: npm run supported-browsers
 
@@ -434,10 +439,6 @@ jobs:
         run: npm run test:unit
       - name: IndieHR unit tests (src/Utils/ihr)
         run: node --import tsx --test src/Utils/ihr/*.test.ts
-
-      - name: Our translations (deploy/locale, P1-T7c)
-        working-directory: .
-        run: python3 scripts/merge-locale.py
 
       - name: Production build (IndieHR settings, not OHC defaults)
         run: |
