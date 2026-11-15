@@ -42,16 +42,34 @@ interface Fixtures {
   newContext: (options?: BrowserContextOptions) => Promise<BrowserContext>;
 }
 
+/**
+ * Lines of `withIhrRoutes` (src/components/ihr/IhrRoutes.tsx) reporting a route key CARE no
+ * longer defines: "ihr-routes: missing key …" (design-c.md §13.2 FF6). Every context of every
+ * spec is watched, from before sign-in, and the test fails on any such line.
+ */
+export function watchRouteErrors(context: BrowserContext, seen: string[]) {
+  context.on("console", (message) => {
+    const text = message.text();
+    if (text.includes("ihr-routes")) seen.push(text);
+  });
+  context.on("weberror", (error) => {
+    const text = String(error.error());
+    if (text.includes("ihr-routes")) seen.push(text);
+  });
+}
+
 export const test = base.extend<Fixtures>({
   newContext: async ({ browser }: { browser: Browser }, use, testInfo) => {
     const evidence = new Evidence();
     const contexts: BrowserContext[] = [];
+    const routeErrors: string[] = [];
     await use(async (options?: BrowserContextOptions) => {
       const context = await browser.newContext({
         ...CONTEXT_OPTIONS,
         ...options,
       });
       evidence.watch(context);
+      watchRouteErrors(context, routeErrors);
       contexts.push(context);
       return context;
     });
@@ -59,6 +77,8 @@ export const test = base.extend<Fixtures>({
       await evidence.save(testInfo);
     }
     for (const context of contexts) await context.close();
+    // every spec fails on a missing route key (asserted after clean-up, so contexts close)
+    expect(routeErrors, "ihr-routes console lines").toEqual([]);
   },
 });
 

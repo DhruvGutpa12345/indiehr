@@ -62,6 +62,14 @@ After each sync, before pushing:
      without the hospital prefix);
    - new settings → `ihr_platform/settings/secure.py` if deployment must pin them;
    - INSTALLED_APPS changes → `ihr_platform/settings/tenancy.py`;
+   - new or renamed sidebar items, wrapped route keys or patient routes (P1-T11c) → classify them
+     in `apps/frontend/src/Utils/ihr/menu.ts` (sidebar) and `src/Utils/ihr/routeKeys.ts` (routes).
+     `scripts/check-ihr-frontend.py` (pre-commit) fails on a renamed or removed anchor, on any new
+     `${baseUrl}/…` url in facility-nav.tsx or location-nav.tsx that menu.ts does not classify, and
+     on a changed facility `baseUrl`. It does **not** list new patient or encounter routes: those are
+     gated by prefix and fail closed (IhrNotForRole for the demographics view and for roles without
+     patient screens) until a person adds one to `DEMOGRAPHICS_KEYS`; `tests-ihr/roles-menus.spec.ts`
+     (Browser job) also pins each role's exact sidebar;
    - permission or role changes → the guarded role sync and `ihr_roles`.
      `ihr_roles.tests.test_grants.CarePermissionsReviewed` fails on any new, removed or changed
      CARE permission (slug, context or CARE's role names) until its line in

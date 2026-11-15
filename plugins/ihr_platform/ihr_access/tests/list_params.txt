@@ -218,5 +218,6 @@
 /api/v1/supply_request/ none:include_children,order,origin  # include_children, order and origin: optional with destination
 /api/v1/tag_config/ none:facility_only  # facility_only: optional with facility
 /api/v1/template/ none:facility_only  # facility_only: optional with facility
+/api/ihr/my-access/ ?facility=facility  # the web app's mode (P1-T11c1): bills_here is for that facility; restricted never depends on it
 /api/ihr/owner/totals/ ?facility=facility&from~01-01-2026&to~31-12-2026  # the Owner's totals of a year (P1-T11b4): the facility and the IST days are required
 /api/ihr/owner/totals/ none:by  # day (the default) or month: how the series is grouped, never who sees it

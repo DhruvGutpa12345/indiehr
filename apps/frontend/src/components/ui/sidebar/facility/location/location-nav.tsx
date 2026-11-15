@@ -2,7 +2,7 @@ import { useTranslation } from "react-i18next";
 
 import CareIcon from "@/CAREUI/icons/CareIcon";
 
-import { NavMain } from "@/components/ui/sidebar/nav-main";
+import { IhrLocationNavMain } from "@/components/ihr/IhrNavMain"; // IndieHR P1-T11c
 
 import useCurrentLocation from "@/pages/Facility/locations/utils/useCurrentLocation";
 import useCurrentFacility from "@/pages/Facility/utils/useCurrentFacility";
@@ -17,7 +17,8 @@ export function LocationNav() {
   const baseUrl = `/facility/${facilityId}/locations/${locationId}`;
 
   return (
-    <NavMain
+    <IhrLocationNavMain
+      baseUrl={baseUrl} // IndieHR P1-T11c: restricted roles see only the pages they can use
       links={[
         {
           name: t("beds"),

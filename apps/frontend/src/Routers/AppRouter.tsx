@@ -25,6 +25,7 @@ import ScheduleRoutes from "@/Routers/routes/ScheduleRoutes";
 import UserRoutes from "@/Routers/routes/UserRoutes";
 import AdminRoutes from "@/Routers/routes/adminRoutes";
 import { ShortcutCommandDialog } from "@/components/Facility/ShortcutCommandDialog";
+import { withIhrRoutes } from "@/components/ihr/IhrRoutes";
 import { PermissionProvider } from "@/context/PermissionContext";
 import { useShortcuts } from "@/context/ShortcutContext";
 import { LicensesPage } from "@/pages/Licenses/Licenses";
@@ -71,7 +72,8 @@ export type AppRoutes = {
   [K in string]: RouteFunction<K>;
 };
 
-const Routes: AppRoutes = {
+// IndieHR P1-T11c: our routes and the gates around some of CARE's (src/components/ihr/IhrRoutes.tsx)
+const Routes: AppRoutes = withIhrRoutes({
   "/": () => <UserDashboard />,
   ...ConsultationRoutes,
   ...FacilityRoutes,
@@ -88,7 +90,7 @@ const Routes: AppRoutes = {
 
   // Only include the icon route in development environment
   ...(import.meta.env.PROD ? { "/icons": () => <IconIndex /> } : {}),
-};
+});
 
 const AdminRouter: AppRoutes = {
   ...AdminRoutes,

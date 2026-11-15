@@ -130,6 +130,21 @@ repos:
         language: system
         files: ^scripts/(batch-allowlist|test_batch_allowlist)\.py$
         pass_filenames: false
+      # Menus and gates by role (P1-T11c1): the upstream text our web-app hooks depend on is still
+      # there, and the slug sets match the backend's (scripts/check-ihr-frontend.py). Always runs
+      # (<1 s): apps/ is excluded above.
+      - id: ihr-frontend-anchors
+        name: web-app menu and route anchors, slug sets
+        entry: python3 -I scripts/check-ihr-frontend.py
+        language: system
+        always_run: true
+        pass_filenames: false
+      - id: ihr-frontend-anchors-tests
+        name: check-ihr-frontend tests
+        entry: python3 -m unittest scripts/test_check_ihr_frontend.py
+        language: system
+        files: ^scripts/(check-ihr-frontend|test_check_ihr_frontend)\.py$
+        pass_filenames: false
       - id: ci-mask-dev-secrets-tests
         name: CI dev-secret mask tests
         entry: python3 -m unittest scripts/test_ci_mask_dev_secrets.py

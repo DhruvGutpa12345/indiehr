@@ -4,10 +4,13 @@
     GET    /api/ihr/records-access/          the caller's own live grants
     DELETE /api/ihr/records-access/<id>/     end one early: its holder, or a hospital-wide admin
     GET    /api/ihr/owner/totals/            the Owner's totals (totals.py)
+    GET    /api/ihr/my-access/?facility=<id> the web app's mode for the caller (P1-T11c1)
 
 Staff sign-in only (the default authentication classes); every request is in the audit trail
 (a records request with ``purpose: records``). The web-app screens are P1-T11c's (Q-K45).
 """
+
+import uuid
 
 from care.facility.models import Facility
 from django.core.exceptions import ValidationError as DjangoValidationError
@@ -17,11 +20,12 @@ from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
-from ihr_access import branches, records, totals
+from ihr_access import branches, records, state, totals
 
 TOTALS_SLUG = "ihr_view_hospital_totals"
 TOTALS_REFUSED = "Only the hospital's owner sees its totals."
 NO_GRANT = "No such records access of yours."
+NOT_A_FACILITY = "Not a facility id."
 
 
 def grant_body(grant, now=None):
@@ -108,3 +112,49 @@ class OwnerTotalsView(APIView):
         if facility is None or not branches.holds(user, TOTALS_SLUG, facility=facility):
             return Response({"detail": TOTALS_REFUSED}, status=403)
         return Response(totals.compute(facility, start, end, by))
+
+
+class MyAccessView(APIView):
+    """The web app's mode for the signed-in person (P1-T11c1; design-c.md §13.2, Q-K49 A').
+
+    ``GET /api/ihr/my-access/[?facility=<uuid>]`` answers
+    ``{"restricted": <bool>, "bills_here": <bool>}``:
+
+    - ``restricted``: the backend's own rule (``state.restricted``, this request's state), the
+      one the guard and the swaps act on; a superuser is never restricted;
+    - ``bills_here``: holds Cashier or TPA Desk in an organisation of that facility
+      (``RequestState.bills_at``, Q-K37a B: the guard then shows them the visit's bed). False
+      without ``facility``, for a facility id this hospital does not have (the schema is the
+      hospital, so another hospital's facility is simply unknown here and answers as any
+      facility where one does not bill: existence is never told), and for a superuser.
+
+    A ``facility`` that is not a UUID is 400. Staff sign-in only (IsAuthenticated, like every
+    /api/ihr/ staff route); no patient data, no database write.
+    """
+
+    permission_classes = (IsAuthenticated,)
+
+    def get(self, request):
+        user = request.user
+        value = request.query_params.get("facility")
+        facility_pk = None
+        if value:
+            try:
+                key = uuid.UUID(str(value))
+            except ValueError:
+                return Response({"facility": NOT_A_FACILITY}, status=400)
+            facility_pk = (
+                Facility.objects.filter(external_id=key)
+                .values_list("pk", flat=True)
+                .first()
+            )
+        current = state.for_user(user)
+        superuser = bool(getattr(user, "is_superuser", False))
+        return Response(
+            {
+                "restricted": False if superuser else bool(current.restricted),
+                "bills_here": False
+                if superuser or facility_pk is None
+                else bool(current.bills_at(facility_pk)),
+            }
+        )

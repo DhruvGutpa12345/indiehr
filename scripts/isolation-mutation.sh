@@ -182,6 +182,9 @@ records-row-still-needed|plugins/ihr_platform/ihr_access/records.py|        if n
 records-link-cap|plugins/ihr_platform/ihr_access/records.py|            duration = min(duration, cap)|            pass|ihr_access.tests.test_records.FileLinks.test_links_under_a_grant_are_short|
 records-authorizer-install|plugins/ihr_platform/ihr_access/apps.py|        authz.install_grant_authorizer()|        pass|ihr_access.tests.test_records.GrantedReads.test_a_grant_opens_its_patients_requests_reports_and_prescriptions|records grants do not hold
 owner-aggregates|plugins/ihr_platform/ihr_access/totals.py|        "inpatients_now": inpatients.count(),|        "inpatients_now": len(list(inpatients)),|ihr_access.tests.test_totals.OwnerTotals.test_owner_totals_load_no_patient|
+my-access-restricted|plugins/ihr_platform/ihr_access/endpoints.py|                "restricted": False if superuser else bool(current.restricted),|                "restricted": False,|ihr_access.tests.test_my_access.MyAccess.test_restricted_is_the_backends_rule|
+my-access-bills-facility|plugins/ihr_platform/ihr_access/endpoints.py|                else bool(current.bills_at(facility_pk)),|                else bool(current.held_role_ids & {current.role_ids.get(n) for n in ("Cashier", "TPA Desk")}),|ihr_access.tests.test_my_access.MyAccess.test_bills_here_only_where_they_bill|
+my-access-superuser|plugins/ihr_platform/ihr_access/endpoints.py|                if superuser or facility_pk is None|                if facility_pk is None|ihr_access.tests.test_my_access.MyAccess.test_superuser_is_never_in_our_modes|
 care-permissions-snapshot|plugins/ihr_platform/ihr_roles/care_permissions.txt|can_apply_tag_config |can_apply_tag_config_unreviewed |ihr_roles.tests.test_grants.CarePermissionsReviewed.test_care_permissions_match_the_reviewed_snapshot|
 TABLE
 )

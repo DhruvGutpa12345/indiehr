@@ -36,6 +36,8 @@ import {
   DashboardLinkContext,
   processCustomDashboardLinks,
 } from "@/Utils/dashboardLinks";
+import { ihrShowsServices } from "@/Utils/ihr/menu"; // IndieHR P1-T11c
+import { useIhrAccess } from "@/Utils/ihr/useIhrAccess"; // IndieHR P1-T11c
 import query from "@/Utils/request/query";
 import { usePermissions } from "@/context/PermissionContext";
 import facilityApi from "@/types/facility/facilityApi";
@@ -51,6 +53,7 @@ export function FacilityOverview({ facilityId }: FacilityOverviewProps) {
   const { hasPermission } = usePermissions();
   const { customLinks, resetCustomLinks, removeCustomLink } =
     useUserPreferences();
+  const ihr = useIhrAccess(); // IndieHR P1-T11c
 
   const { data: facilityData } = useQuery({
     queryKey: ["facility", facilityId],
@@ -85,7 +88,7 @@ export function FacilityOverview({ facilityId }: FacilityOverviewProps) {
       description: t("view_services"),
       icon: Box,
       href: `/facility/${facilityId}/services`,
-      visible: true,
+      visible: ihrShowsServices(ihr), // IndieHR P1-T11c: never for restricted roles
     },
   ];
 

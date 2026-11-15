@@ -61,6 +61,7 @@ jobs:
               - 'scripts/check-bundle-egress.sh'
               - 'scripts/*check-storage-keys.py'
               - 'scripts/*batch-allowlist.py'
+              - 'scripts/*check-ihr-frontend.py'
               - '.github/workflows/apps.yml'
             # Mutation runs cost one full-stack job per row (35 today: scripts/isolation-mutation.sh
             # list), so they run only when an isolation control or its tests change
@@ -431,6 +432,12 @@ jobs:
         run: |
           python3 -m unittest scripts/test_batch_allowlist.py
           python3 -I scripts/batch-allowlist.py --check
+
+      - name: Menu and route anchors match CARE's source, slug sets match the backend (P1-T11c1)
+        working-directory: .
+        run: |
+          python3 -m unittest scripts/test_check_ihr_frontend.py
+          python3 -I scripts/check-ihr-frontend.py
 
       - name: Lint
         run: npm run lint -- --quiet

@@ -1,0 +1,140 @@
+{
+  "bedForBilling": [
+    "Cashier",
+    "TPA Desk"
+  ],
+  "clinical": [
+    "can_read_encounter_clinical_data",
+    "can_submit_encounter_questionnaire",
+    "can_submit_patient_questionnaire",
+    "can_view_clinical_data",
+    "can_view_questionnaire_responses",
+    "can_write_encounter_clinical_data",
+    "is_pharmacist",
+    "read_medication_dispense",
+    "write_medication_dispense"
+  ],
+  "grants": {
+    "Cashier": [
+      "can_create_account",
+      "can_create_charge_item",
+      "can_read_account",
+      "can_read_charge_item",
+      "can_read_charge_item_definition",
+      "can_read_healthcare_service",
+      "can_read_invoice",
+      "can_read_payment_reconciliation",
+      "can_set_charge_item_definition",
+      "can_update_account",
+      "can_update_charge_item",
+      "can_write_invoice",
+      "can_write_payment_reconciliation",
+      "ihr_view_encounter_status",
+      "ihr_view_patient_demographics"
+    ],
+    "Lab Technician": [
+      "can_list_facility_locations",
+      "can_read_activity_definition",
+      "can_read_diagnostic_report",
+      "can_read_inventory_item",
+      "can_read_observation_definition",
+      "can_read_service_request",
+      "can_read_specimen",
+      "can_read_specimen_definition",
+      "can_write_diagnostic_report",
+      "can_write_specimen"
+    ],
+    "MRD": [
+      "ihr_request_records_access",
+      "ihr_view_encounter_status",
+      "ihr_view_patient_demographics"
+    ],
+    "MRD Records Access": [
+      "can_list_patients",
+      "can_view_clinical_data",
+      "can_view_questionnaire_responses"
+    ],
+    "Owner": [
+      "ihr_view_hospital_totals"
+    ],
+    "Radiologist": [
+      "can_list_encounter",
+      "can_list_facility_locations",
+      "can_list_patients",
+      "can_read_activity_definition",
+      "can_read_diagnostic_report",
+      "can_read_encounter",
+      "can_read_encounter_clinical_data",
+      "can_read_observation_definition",
+      "can_read_service_request",
+      "can_view_clinical_data",
+      "can_view_questionnaire_responses",
+      "can_write_diagnostic_report"
+    ],
+    "Receptionist": [
+      "can_create_account",
+      "can_create_encounter",
+      "can_create_patient",
+      "can_list_booking",
+      "can_list_schedule",
+      "can_list_token",
+      "can_list_token_category",
+      "can_read_account",
+      "can_read_charge_item_definition",
+      "can_read_healthcare_service",
+      "can_read_patient_identifier_config",
+      "can_read_tag_config",
+      "can_reschedule_booking",
+      "can_view_facility_organization",
+      "can_write_booking",
+      "can_write_token",
+      "ihr_edit_patient_demographics",
+      "ihr_view_encounter_status",
+      "ihr_view_patient_demographics"
+    ],
+    "Store Keeper": [
+      "can_list_facility_locations",
+      "can_read_inventory_item",
+      "can_read_product",
+      "can_read_product_knowledge",
+      "can_read_supply_delivery",
+      "can_read_supply_request",
+      "can_write_external_supply_delivery",
+      "can_write_supply_delivery",
+      "can_write_supply_request"
+    ],
+    "TPA Desk": [
+      "can_read_account",
+      "can_read_charge_item",
+      "can_read_charge_item_definition",
+      "can_read_invoice",
+      "can_read_payment_reconciliation",
+      "can_update_account",
+      "ihr_view_encounter_status",
+      "ihr_view_patient_demographics"
+    ]
+  },
+  "ours": [
+    "ihr_edit_patient_demographics",
+    "ihr_request_records_access",
+    "ihr_view_encounter_status",
+    "ihr_view_hospital_totals",
+    "ihr_view_patient_demographics"
+  ],
+  "patientOpening": [
+    "can_list_encounter",
+    "can_list_patients",
+    "can_read_encounter",
+    "can_write_encounter",
+    "can_write_patient"
+  ],
+  "restricted": [
+    "Cashier",
+    "Lab Technician",
+    "MRD",
+    "Owner",
+    "Receptionist",
+    "Store Keeper",
+    "TPA Desk"
+  ]
+}

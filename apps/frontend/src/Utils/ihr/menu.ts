@@ -1,0 +1,284 @@
+// IndieHR P1-T11c1 (docs/reviews/p1-t11/design-c.md §2.2, §3.2, §13.2, §13.5): the menu rules.
+// Pure (no React, no "@/" imports). `facility-nav.tsx` and `location-nav.tsx` pass CARE's own
+// link lists through these functions (src/components/ihr/ihrMenu.tsx adds names and icons).
+//
+// - pending (my-access not answered yet, or failed with nothing cached): only the items every
+//   mode keeps (Overview, Users) as CARE has them; every other facility item and every location
+//   item hidden, none of ours (design §13.8: fails closed, no flash of CARE's full menu).
+// - care: CARE's links, unchanged, plus our items the user holds (Records access, Hospital totals).
+// - restricted: CARE's links with `visibility` set by URL suffix (tables below), parents with no
+//   visible child hidden, a parent's url pointing at its first visible child, plus our items.
+// A URL suffix not in the tables is left as CARE has it (fails toward CARE: a dead end at worst,
+// never a leak; the backend refuses). scripts/check-ihr-frontend.py fails when upstream renames
+// a suffix named here.
+import type { IhrAccess } from "./access";
+
+export interface LinkLike {
+  name: string;
+  url: string;
+  visibility?: boolean;
+  children?: LinkLike[];
+}
+
+export type OurItemKey = "records" | "totals" | "places";
+
+export interface OurItem {
+  key: OurItemKey;
+  url: string;
+}
+
+export const OUR_ITEM_PATHS: Record<OurItemKey, string> = {
+  records: "/ihr/records",
+  totals: "/ihr/totals",
+  places: "/ihr/places",
+};
+
+/** Our menu items for this user, in menu order (always after CARE's own links). */
+export function ihrOurItems(access: IhrAccess, baseUrl: string): OurItem[] {
+  if (access.mode === "pending") return [];
+  const keys: OurItemKey[] = [];
+  if (access.records) keys.push("records");
+  if (access.totals) keys.push("totals");
+  if (access.mode === "restricted" && placeSlug(access) !== undefined) {
+    keys.push("places");
+  }
+  return keys.map((key) => ({ key, url: `${baseUrl}${OUR_ITEM_PATHS[key]}` }));
+}
+
+/** The services shortcut on the overview page follows the `/services` row (care mode only). */
+export function ihrShowsServices(access: IhrAccess): boolean {
+  return access.mode === "care";
+}
+
+type Visible<T extends LinkLike> = T & { visibility?: boolean };
+
+function suffixOf(url: string, baseUrl: string): string {
+  return url.startsWith(baseUrl) ? url.slice(baseUrl.length) : url;
+}
+
+function setVisible<T extends LinkLike>(link: T, allowed: boolean): T {
+  const visibility = link.visibility !== false && allowed;
+  return { ...link, visibility } as Visible<T>;
+}
+
+function isShown(link: LinkLike): boolean {
+  return link.visibility !== false;
+}
+
+/** A parent whose children were all hidden is hidden; its url is its first visible child's. */
+function withChildren<T extends LinkLike>(
+  link: T,
+  children: LinkLike[],
+  parentAllowed = true,
+): T {
+  const firstShown = children.find(isShown);
+  const visibility =
+    link.visibility !== false && parentAllowed && firstShown !== undefined;
+  return {
+    ...link,
+    url: firstShown ? firstShown.url : link.url,
+    visibility,
+    children,
+  } as unknown as T;
+}
+
+function mapChildren<T extends LinkLike>(
+  link: T,
+  rule: (child: LinkLike) => boolean | undefined,
+): LinkLike[] {
+  return (link.children ?? []).map((child) => {
+    const allowed = rule(child);
+    return allowed === undefined ? child : setVisible(child, allowed);
+  });
+}
+
+// ---------------------------------------------------------------------------------------------
+// Facility menu (facility-nav.tsx), restricted mode (design §3.2)
+
+/** The items every mode keeps as CARE has them: the only ones shown while pending. */
+const PENDING_KEEP: ReadonlySet<string> = new Set(["/overview", "/users"]);
+
+function facilityTopRule(
+  suffix: string,
+  hasChildren: boolean,
+): "keep" | "never" | "patients" | "billing" {
+  if (suffix === "/overview") return "keep";
+  if (suffix === "/appointments" || suffix === "/queues") return "keep"; // CARE's own rule
+  if (suffix === "/patients" && hasChildren) return "patients";
+  if (suffix === "/services" || suffix === "/resource") return "never";
+  if (suffix === "/users") return "keep";
+  if (suffix === "/billing" && hasChildren) return "billing";
+  // All 15 /settings/* items and /template (Templates) are configuration
+  if (suffix.startsWith("/settings/") || suffix === "/template") return "never";
+  return "keep"; // plugin links and anything new: as CARE has it
+}
+
+function patientsChildRule(
+  suffix: string,
+  access: IhrAccess,
+): boolean | undefined {
+  if (suffix === "/patients") return access.demographics;
+  if (suffix.startsWith("/encounters/patients/")) return access.encounterStatus;
+  if (suffix === "/encounters/locations") return false; // the bed board shows occupants (Q-K37)
+  return undefined;
+}
+
+function billingChildRule(
+  suffix: string,
+  access: IhrAccess,
+): boolean | undefined {
+  if (suffix === "/billing/account") return access.has("can_read_account");
+  if (suffix === "/billing/invoices") return access.has("can_read_invoice");
+  if (suffix === "/billing/payments") {
+    return access.has("can_read_payment_reconciliation");
+  }
+  return undefined;
+}
+
+/**
+ * CARE's facility links, as this user may use them, then our items.
+ * `makeOurs` builds one link of ours (name and icon) from an item.
+ */
+export function ihrFacilityLinks<T extends LinkLike>(
+  links: T[],
+  access: IhrAccess,
+  baseUrl: string,
+  makeOurs: (item: OurItem) => T,
+): T[] {
+  if (access.mode === "pending") {
+    return links.map((link) =>
+      PENDING_KEEP.has(suffixOf(link.url, baseUrl))
+        ? link
+        : setVisible(link, false),
+    );
+  }
+  const ours = ihrOurItems(access, baseUrl).map(makeOurs);
+  if (access.mode === "care") return ours.length ? [...links, ...ours] : links;
+
+  const shaped = links.map((link) => {
+    const suffix = suffixOf(link.url, baseUrl);
+    switch (facilityTopRule(suffix, !!link.children)) {
+      case "never":
+        return setVisible(link, false);
+      case "patients": {
+        const children = mapChildren(link, (child) =>
+          patientsChildRule(suffixOf(child.url, baseUrl), access),
+        );
+        // CARE's own parent rule (booking or encounter rights) would hide the Cashier's and
+        // MRD's Patients entry: the parent shows when a child does
+        return withChildren({ ...link, visibility: true }, children);
+      }
+      case "billing": {
+        const children = mapChildren(link, (child) =>
+          billingChildRule(suffixOf(child.url, baseUrl), access),
+        );
+        return withChildren(link, children);
+      }
+      default:
+        return link;
+    }
+  });
+  return [...shaped, ...ours];
+}
+
+// ---------------------------------------------------------------------------------------------
+// Location menu (location-nav.tsx), restricted mode (design §3.2, §13.5)
+
+/** Pages "My places" may open, in order: the choice for a link and for the menu is one rule. */
+const PLACE_PAGES = ["/service_requests", "/inventory/summary"] as const;
+
+function locationLeafRule(
+  suffix: string,
+  access: IhrAccess,
+): boolean | undefined {
+  if (suffix === "/service_requests") {
+    return access.has("can_read_service_request");
+  }
+  if (suffix === "/inventory/summary") {
+    return access.has("can_read_inventory_item");
+  }
+  if (
+    suffix === "/inventory/internal/receive/" ||
+    suffix === "/inventory/internal/dispatch/"
+  ) {
+    return access.has("can_read_supply_delivery");
+  }
+  if (suffix.startsWith("/inventory/external/")) {
+    return access.has("can_read_supply_request");
+  }
+  if (
+    suffix === "/medication_requests" ||
+    suffix === "/medication_dispense" ||
+    suffix === "/medication_return"
+  ) {
+    return false; // dispense orders are closed to restricted users
+  }
+  return undefined;
+}
+
+/** The slug that lets this user open some place page, if any (also gates the My places item). */
+function placeSlug(access: IhrAccess): string | undefined {
+  for (const page of PLACE_PAGES) {
+    const allowed = locationLeafRule(page, access);
+    if (allowed) {
+      return page === "/service_requests"
+        ? "can_read_service_request"
+        : "can_read_inventory_item";
+    }
+  }
+  return undefined;
+}
+
+/**
+ * The first page of a location this user may open, as a path under the location
+ * (`/service_requests`, `/inventory/summary`), or undefined when none.
+ */
+export function ihrPlacePage(access: IhrAccess): string | undefined {
+  return PLACE_PAGES.find((page) => locationLeafRule(page, access));
+}
+
+function locationTopRule(
+  suffix: string,
+  access: IhrAccess,
+): "keep" | "hide" | "show" | "group" {
+  if (suffix === "/beds" || suffix === "/pharmacy") return "hide";
+  if (suffix === "/laboratory" || suffix === "/inventory/summary") {
+    return "group";
+  }
+  if (suffix === "/schedule") {
+    return access.has("can_list_schedule") ? "show" : "hide";
+  }
+  if (suffix === "/appointments" || suffix === "/queues") {
+    return access.has("can_list_booking") ? "show" : "hide";
+  }
+  return "keep";
+}
+
+/** CARE's location links, as this user may use them (none while pending; as CARE has them in care mode). */
+export function ihrLocationLinks<T extends LinkLike>(
+  links: T[],
+  access: IhrAccess,
+  baseUrl: string,
+): T[] {
+  if (access.mode === "pending") {
+    return links.map((link) => setVisible(link, false));
+  }
+  if (access.mode !== "restricted") return links;
+  return links.map((link) => {
+    const suffix = suffixOf(link.url, baseUrl);
+    switch (locationTopRule(suffix, access)) {
+      case "hide":
+        return setVisible(link, false);
+      case "show":
+        return setVisible(link, true);
+      case "group": {
+        const children = mapChildren(link, (child) =>
+          locationLeafRule(suffixOf(child.url, baseUrl), access),
+        );
+        return withChildren(link, children);
+      }
+      default:
+        return link;
+    }
+  });
+}

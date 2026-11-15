@@ -14,4 +14,5 @@ urlpatterns = [
         name="ihr-records-access-end",
     ),
     path("owner/totals/", endpoints.OwnerTotalsView.as_view(), name="ihr-owner-totals"),
+    path("my-access/", endpoints.MyAccessView.as_view(), name="ihr-my-access"),
 ]

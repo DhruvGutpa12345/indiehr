@@ -15,6 +15,14 @@
 # [<route key as in role_matrix.txt>] <roles who see the keys below>
 
 
+[/api/ihr/my-access/] cash,lab,mrd,owner,rad,rec,store,tpa
+bills_here
+restricted
+
+[/api/ihr/my-access/ ?facility=facility] cash,lab,mrd,owner,rad,rec,store,tpa
+bills_here
+restricted
+
 [/api/ihr/owner/totals/ ?facility=facility&from~01-01-2026&to~31-12-2026] owner
 beds
 beds.occupied

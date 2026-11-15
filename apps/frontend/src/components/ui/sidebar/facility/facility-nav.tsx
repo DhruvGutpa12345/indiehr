@@ -3,7 +3,9 @@ import { useTranslation } from "react-i18next";
 
 import CareIcon from "@/CAREUI/icons/CareIcon";
 
-import { NavigationLink, NavMain } from "@/components/ui/sidebar/nav-main";
+import { NavigationLink } from "@/components/ui/sidebar/nav-main";
+
+import { IhrFacilityNavMain } from "@/components/ihr/IhrNavMain"; // IndieHR P1-T11c
 
 import { useCareApps } from "@/hooks/useCareApps";
 
@@ -247,7 +249,8 @@ export function FacilityNav({ selectedFacility }: FacilityNavProps) {
     canListTemplate,
   };
   return (
-    <NavMain
+    <IhrFacilityNavMain
+      facilityId={selectedFacility?.id} // IndieHR P1-T11c: restricted roles see only what they can use
       links={generateFacilityLinks(
         selectedFacility,
         t,
