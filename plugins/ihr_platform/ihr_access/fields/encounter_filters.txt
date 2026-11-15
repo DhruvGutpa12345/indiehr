@@ -1,0 +1,27 @@
+# Query parameters of CARE's encounter list for restricted users on our branch (P1-T11b2;
+# design-b.md "After the attack" §6.2, Q-K37). Every filter of CARE's EncounterFilters
+# (emr/api/viewsets/encounter.py), the tag filter's parameters and the list's own parameters:
+#   <parameter> allow|refuse  # reason
+# allow: the filter runs on our branch; refuse: the request answers 400 (a filter that would find
+# patients by bed, department, doctor or tag). A parameter not listed also answers 400 (fail
+# closed), and a filter CARE adds fails the system check ihr_access.E024 until classified here.
+# CARE's own path (CARE's list rights, MRD's grant) keeps CARE's full filters.
+facility allow  # the hospital: the list's own scope
+patient allow  # one patient's visits: the list's own scope (read by get_queryset, not a filter)
+patient_filter allow  # one patient's visits (the web app's encounter history sends it)
+status allow  # encounter status (Q-K21)
+live allow  # open or closed visits
+encounter_class allow  # OPD, IPD, emergency
+priority allow  # priority
+external_identifier allow  # the hospital's own visit number
+name allow  # the patient's name: demographics
+phone_number allow  # the patient's phone: demographics
+created_date allow  # when the visit was made
+location refuse  # a bed or ward finds who lies there (Q-K37)
+organization refuse  # a department's patients reveal the specialty (Q-K37)
+care_team_user refuse  # a doctor's patients reveal the specialty
+tags refuse  # tags can carry clinical labels (CARE's tag filter)
+tags_behavior refuse  # the tag filter's mode
+ordering allow  # sort order (created or modified date)
+limit allow  # page size
+offset allow  # page start

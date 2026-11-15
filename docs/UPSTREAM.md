@@ -79,6 +79,23 @@ After each sync, before pushing:
      its own `serialize`, fails `manage.py check` (`ihr_access.E022`). Changes to
      `PatientAccess.find_roles_on_patient` / `get_filtered_patients`
      (`care/security/authorization/patient.py`) → re-read `ihr_access/authz.py` (P1-T11b1);
+   - changes to the patient, encounter, location-association, resource-request, device,
+     report-upload, delivery-order, supply-delivery or dispense-order viewsets (P1-T11b2's
+     route swaps, `plugins/ihr_platform/ihr_access/views.py`) → re-read the swap; a new patient
+     or encounter action fails `ihr_access.tests.test_{patient,encounter}_swap` until
+     classified in `ihr_access/fields/{patient,encounter}_actions.txt` (unclassified it keeps
+     CARE's check); a new encounter filter, or a new field of CARE's encounter create spec,
+     fails `manage.py check` (`ihr_access.E024`) until classified in
+     `fields/encounter_filters.txt` or `fields/encounter_create.txt` (meanwhile restricted
+     users get 400 for it); a change to a CARE method our swaps copy
+     (`EMRRetrieveMixin.retrieve`, `EMRUpdateMixin.handle_update`) fails
+     `ihr_access.tests.test_encounter_swap.CareCopies` until our copy is re-read and the digest
+     in `ihr_access/care_copies.txt` re-pinned; a viewset that newly reads organisation
+     memberships fails `ihr_access.tests.test_further_swaps.MembershipOnlyLists` until
+     reviewed in `ihr_access/membership_only.txt`, and one that newly authorizes through the
+     store's supply-delivery permissions fails
+     `test_further_swaps.PatientReturns.test_every_supply_delivery_route_is_swapped` until
+     swapped;
    - new Playwright specs → check them against our India date formats;
    - new browser storage keys (localStorage, sessionStorage, `atomWithStorage`) → classify them
      in `apps/frontend/tests-ihr/storage-keys.json` or clear them in `clearStaffStorage`

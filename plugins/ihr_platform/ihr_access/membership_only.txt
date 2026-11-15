@@ -1,0 +1,23 @@
+# CARE viewsets whose code reads organisation memberships (FacilityOrganizationUser or
+# OrganizationUser), reviewed for the restricted roles (P1-T11b2; design-b.md "After the attack"
+# §7.4). One line each:
+#   <CARE class> membership|permission|swapped  # reason
+# membership: membership alone opens it, and what it shows holds no patient data;
+# permission: CARE checks a permission slug before rows are shown (membership only narrows them);
+# swapped: our class replaces it (ihr_access/views.py, ihr_identity) for the restricted roles.
+# A viewset upstream adds or changes so that it reads memberships fails
+# ihr_access.tests.test_further_swaps.MembershipOnlyLists until it is reviewed here.
+care.emr.api.viewsets.charge_item.ChargeItemViewSet permission  # can_read_charge_item; memberships only check the performer
+care.emr.api.viewsets.device.DeviceViewSet swapped  # list and retrieve were membership-only and named the patient (A2): empty and 403 for restricted users
+care.emr.api.viewsets.facility.FacilityUsersViewSet membership  # the hospital's staff list: staff cards, no patient data
+care.emr.api.viewsets.facility.FacilityViewSet membership  # the hospital's own card: no patient data
+care.emr.api.viewsets.facility_organization.FacilityOrganizationUsersViewSet permission  # can_list_facility_organization_users
+care.emr.api.viewsets.facility_organization.FacilityOrganizationViewSet permission  # can_view_facility_organization; "mine" lists one's own departments (no patient data)
+care.emr.api.viewsets.location.FacilityLocationViewSet permission  # can_list_facility_locations; a bed's occupant is projected (guard)
+care.emr.api.viewsets.organization.OrganizationUsersViewSet permission  # CARE's organisation user permissions
+care.emr.api.viewsets.organization.OrganizationViewSet permission  # CARE's organisation permissions; "mine" lists one's own organisations
+care.emr.api.viewsets.questionnaire_response_template.QuestionnaireResponseTemplateViewSet membership  # answer templates shared with a department: no patient data
+care.emr.api.viewsets.resource_request.ResourceRequestViewSet swapped  # membership-only and named the patient: 403 for restricted users
+care.emr.api.viewsets.scheduling.booking.TokenBookingViewSet permission  # can_list_booking; memberships only filter by department
+care.emr.api.viewsets.service_request.ServiceRequestViewSet permission  # can_read_service_request by location and department
+care.emr.api.viewsets.user.UserViewSet swapped  # ihr_identity.invitations.InvitingUserViewSet (P1-T5e1); the list is staff cards

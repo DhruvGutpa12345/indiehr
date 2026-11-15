@@ -1403,3 +1403,282 @@ department, never at the facility root").
 - b4: the grant endpoint, `records.end_grant`, the beat and per-request expiry, audit
   annotation, the signed-link cap, the grant authorizer, Owner totals, ADR-018, the
   click-through; decide the grant table's privilege class.
+
+## P1-T11b2 as built (2026-11-15)
+
+**What exists now.** Ten CARE viewsets are swapped for ours (`route_swaps.SWAPS`, guarded by
+`ihr_platform.E020`). The front desk (Receptionist, Cashier, TPA Desk, MRD) opens any patient of
+the hospital and the encounter status view through our `ihr_*` slugs, always projected; the
+Receptionist edits demographics under the edit rule and starts visits with a department. Owner,
+Lab Technician and Store Keeper cannot search or open patients. Bed history, resource requests,
+devices, account reports and dispense orders are refused to restricted users, and patient-linked
+delivery orders and supply deliveries are absent for them (and cannot be made by them). Patient
+writes by restricted users are decided before CARE reads the body. The review of the uncommitted
+b2 change (11 findings, "Review fixes" below) is folded into this section. CARE's own roles get CARE's answers (CARE's own test
+modules below pass, apart from five file-storage round trips that fail the same way without b2).
+
+### The swaps and gates (each confirmed in `apps/backend/care` at this pin)
+
+| CARE class (route) | Ours (`ihr_access/views.py`) | What changes, for whom |
+|---|---|---|
+| `emr/api/viewsets/patient.py` `PatientViewSet` (`patient/`) | `IhrPatientViewSet` | `get_object`: CARE's queryset first; on 404, a holder of `ihr_view_patient_demographics` gets the patient for `retrieve`, `update`, `partial_update`, `update_identifier` (`fields/patient_actions.txt` "widened"), projected; any other detail action answers 403 to them. `authorize_update`/`handle_update`: without CARE's `can_write_patient_obj`, `ihr_edit_patient_demographics` edits under `edit.py` (on `update_identifier`, only identifier-list systems, also for a user who is not restricted); anyone else served by our branch, and every restricted user (CARE's `upsert` too), is authorized before CARE validates the body. `clean_create_data`: a restricted user without `can_create_patient` gets 403 before validation; the Receptionist's identifiers off the list and `extensions` are dropped unread. `get_serializer_retrieve_context`: on our branch `?facility` is only checked to exist (CARE's facility-tag check is skipped; the projection drops facility tags). `initial()`: the search gate on `search`/`search_retrieve`; `add_user` refuses a restricted target (403); `get_appointments`/`get_tokens` need `?facility` for restricted users (else 403, unless the patient is under their own live grant), projected |
+| `emr/api/viewsets/encounter.py` `EncounterViewSet` (`encounter/`) | `IhrEncounterViewSet` | `list` with `?patient`: CARE's path when `can_view_patient_obj`; else, with both our slugs, that patient's encounters in facilities where the user holds `ihr_view_encounter_status`. With `?facility`: CARE's path when the user holds `can_list_encounter` there; else the encounters whose departments (or bed's) overlap the organisations where they hold the status slug; the `?patient` branch uses the same unit filter. Our branch: parameters off `fields/encounter_filters.txt` → 400, `IhrProjectedEncounterFilters` (CARE's allowed filters, no tag filter), projected. `retrieve` only: CARE's `authorize_retrieve` first, then both slugs in the encounter's facility and the status slug in one of its units (its departments' or bed's organisations, as CARE's `can_view_encounter_obj`), projected. `create`: CARE's check; for restricted users every field of CARE's create spec is classified in `fields/encounter_create.txt`: `clinical` (`discharge_summary_advice`, `hospitalization.discharge_disposition`, `diet_preference`) or an unclassified field with a value → 400, `hidden` (`extensions`, `meta`) dropped |
+| `emr/api/viewsets/location.py` `FacilityLocationEncounterViewSet` (`facility/{id}/location/{id}/association/`) | `IhrLocationEncounterViewSet` | every action 403 to restricted users (each row embeds the whole encounter; CARE lists a place's history to anyone holding `can_list_facility_locations` there, e.g. the Lab Technician at a lab place) |
+| `emr/api/viewsets/resource_request.py` `ResourceRequestViewSet`, `ResourceRequestCommentViewSet` (`resource/`, `resource/{id}/comment/`) | `IhrResourceRequestViewSet`, `IhrResourceRequestCommentViewSet` | every action 403 to restricted users |
+| `emr/api/viewsets/device.py` `DeviceViewSet` (`facility/{id}/device/`) | `IhrDeviceViewSet` | restricted users: list empty, every other action 403 |
+| `emr/api/viewsets/report/report_upload.py` `ReportUploadViewSet` (`template_reports/`) | `IhrReportUploadViewSet` | restricted users: account-report list, retrieve and archive 403; `generate` 403 for any template (Q-K41) |
+| `emr/api/viewsets/inventory/delivery_order.py` `DeliveryOrderViewSet`, `inventory/supply_delivery.py` `SupplyDeliveryViewSet` | `IhrDeliveryOrderViewSet`, `IhrSupplyDeliveryViewSet` | restricted users: rows with `patient` / `order__patient` set are filtered out of every queryset, and CARE's `upsert` (which finds rows by id) answers 404 for them; a create (POST or upsert) of an order with a `patient` is 403, of a delivery against a patient-linked order 404, before CARE validates (Q-K43) |
+| `emr/api/viewsets/inventory/dispense_order.py` `DispenseOrderViewSet` (`facility/{id}/order/dispense/`) | `IhrDispenseOrderViewSet` | restricted users: list empty, every other action 403 (each order names its patient, and CARE opens it to holders of the store's supply-delivery permissions at the location, which the Store Keeper holds; Q-K43 A) |
+
+### Files
+
+| Where | What |
+|---|---|
+| `ihr_access/views.py` | the ten swapped classes above, the action, filter and create lists' readers, `filter_problems()`, `create_problems()` |
+| `ihr_access/branches.py` | `holds()` (for our three slugs it first asks `may_hold()`: this request's cached roles against the roles granting our slugs, one query per request), `organizations_holding()`, `facilities_holding()` (CARE's own membership counting), `restricted()`, `widen()` (the one place our branches force the projection), `search_gate()`, the refusal line |
+| `ihr_access/edit.py` | the edit rule (`reduce`, `DemographicsSpec`) and the district-move rule |
+| `ihr_access/fields/encounter_filters.txt`, `encounter_create.txt`, `patient_actions.txt`, `encounter_actions.txt` | reviewed lists (each line with its reason) |
+| `ihr_access/care_copies.txt` | sha256 of the CARE code our swaps copy (`EMRRetrieveMixin.retrieve`, `EMRUpdateMixin.handle_update`, `EncounterViewSet.get_queryset`, `EncounterAccess.get_filtered_encounters` and `can_view_encounter_obj`) |
+| `ihr_access/identifiers.py` | `off_list()` (shared by search, `update_identifier`, the edit rule and the patient create) |
+| `ihr_access/membership_only.txt` | the 14 CARE viewsets that read organisation memberships, each classified `membership`, `permission` or `swapped` ("After the attack" §7.4) |
+| `ihr_access/checks.py`, `apps.py` | new system check `ihr_access.E024`: every filter of CARE's `EncounterFilters` and every field of `EncounterCreateSpec` is classified (E023 stays reserved for b4's grant authorizer) |
+| `ihr_platform/route_swaps.py` | ten entries added to `SWAPS` |
+| `ihr_access/tests/base.py`, `test_patient_swap.py`, `test_encounter_swap.py`, `test_further_swaps.py`, `test_writes.py` | 31 new tests (below) |
+| `ihr_access/tests/test_guard.py`, `test_patient_user.py` | two b1 assertions changed with the intended behaviour: the Owner now gets 403 on a device (the guard is still checked on the device spec, so `access-device-encounter` still fails that test), and the Receptionist's `update_identifier` with an allowed identifier now writes (200) |
+| `scripts/isolation-mutation.sh` | 25 rows (below) |
+| `docs/UPSTREAM.md`, `CLAUDE.md` | the after-sync step for the swaps; the swaps in the project notes |
+
+No file under `apps/` changed (no `UPSTREAM_PATCHES.md` entry); no migration, no new table;
+`batch_allowlist.txt` unchanged (the swaps change classes, not routes).
+
+### Deviations from the design
+
+1. **Named tests for the matrix and canary rows.** `access-bed-history` and
+   `access-resource-request` name b2 tests (`test_bed_history_refused_to_restricted`,
+   `test_resource_requests_refused_to_restricted`), and `access-delivery-patient` /
+   `access-booking-note` name `test_store_keeper_never_sees_a_patient_return` /
+   `test_receptionist_patient_appointments_are_projected`, because the role matrix and the canary
+   walk are b3's. b3 may add its tests to these rows.
+2. **Encounter create answers 200**, CARE's status (§10 test 9 says 201).
+3. **`patient_filter` is allowed** on our encounter branch. The design's list names `patient`
+   (the parameter `get_queryset` reads, also allowed); CARE's `patient_filter` filter narrows to
+   one patient the user can open anyway and the web app's encounter history sends it. The range
+   filter `created_date` is accepted as `created_date_after` / `created_date_before` (derived
+   from the filter's widget).
+4. **Both slugs on every encounter branch.** The `?facility` branch and retrieve also require
+   `ihr_view_patient_demographics` (each row embeds the patient); every role that holds the
+   status slug holds both (fail closed).
+5. **403, not 404, on non-widened patient actions** for holders of
+   `ihr_view_patient_demographics` (test 4 asks 403; they can open the patient anyway). Owner,
+   Lab Technician and Store Keeper keep CARE's 404 on a patient.
+6. **Report generation refused wholesale** to restricted users (every template type): the
+   patient, encounter and discharge-summary reports are closed by CARE's authorizers anyway and
+   an instance template has no facility check (§7.1's two cases in one rule).
+7. **Delivery `upsert` guarded too**: CARE's upsert finds a row by id without `get_queryset`;
+   for restricted users a patient-linked row answers 404 inside it.
+8. **The search gate also projects**: a user of ours who passes only through
+   `can_create_patient` or `ihr_view_patient_demographics` (no `can_list_patients`) is served
+   CARE's search projected (§5.3's "results go through the guard", extended to mixed users).
+9. **Identifiers in an update body** whose configuration is off the allow-list are dropped
+   unread (as hidden fields are), not refused; an empty value for one (which CARE reads as
+   "delete") is dropped too. `update_identifier` keeps b1's 400.
+10. **Devices**: every non-list action is refused to restricted users, not only retrieve.
+11. **"Restricted"** (one of our restricted roles and no clinical slug, b1 deviation 11) keys
+    every gate here, not "holds only restricted roles".
+12. **Billing denials as CARE has them**: invoices and payments have no destroy route; their
+    "destroy" is a cancel after CARE's free period (`can_destroy_*`), which is what the test
+    sends. A negative charge is not refused by CARE (it computes the charge without the negative
+    part unless the user holds `can_create_negative_charge_item`), so the test checks that
+    authorizer for each role.
+13. **Moving a district**: "the old one's state" is the top of the organisation chain; the PIN's
+    district is looked up in India Post's directory (`PostOffice`) and the hospital's district
+    organisation (`ihr_tenant_settings.geography.find`). The refusal line has no alert.
+
+### The rules as built
+
+- **Our branch** (patient retrieve and edits, encounter list and retrieve, a patient's bookings
+  and tokens with `?facility`, a projected search) runs only where CARE's own path gives the user
+  nothing, never adds rows to CARE's, and calls `branches.widen()`: everything shown in the
+  request is projected, also for a user who is not restricted (Q-K35).
+- **Patient scope** (Q-K34 A): the hospital's whole register, for holders of
+  `ihr_view_patient_demographics` in any department or the root.
+- **Edit rule**: the body is reduced to the `edit` fields of `fields/patient_edit.txt` (written
+  after CARE's validators, by `DemographicsSpec.de_serialize`, which writes nothing else);
+  `hidden` fields are ignored; a changed `visible` field (the date of death) is 400, an unchanged
+  one ignored; a district move passes only within the old state or to the PIN's district and when
+  the new chain gives nobody, through a government organisation, one of `can_list_patients`,
+  `can_view_clinical_data` or `can_view_questionnaire_responses` that the old chain did not
+  already give them (compared per person and slug); a patient with no district moves only to
+  the PIN's district, on the same terms (else 403 and `ihr-access: refused geo_move
+  hospital=<slug>` on standard error).
+- **Writes are decided before CARE reads the body** for restricted users and on our branch:
+  CARE validates a patient body (a programme number's "not unique" included) before it
+  authorizes, so update, partial update and upsert by id are authorized first, and a create by
+  a restricted user without `can_create_patient` is refused first; a 400 never says whether
+  someone holds a programme number. A registration keeps to the identifier list (others
+  dropped unread, as in an edit) and drops `extensions`; tags stay with CARE's
+  `can_apply_tag_config` (403, nothing made).
+- **Encounter filters on our branch**: only parameters marked `allow` (and their range suffixes);
+  `location`, `organization`, `care_team_user`, `tags`, `tags_behavior` and anything unlisted
+  answer 400. CARE's path (CARE's list rights; MRD's grant, b4) keeps CARE's filters.
+- **Search gate** (Q-K40): CARE's roles only, unchanged; a user of ours needs
+  `can_list_patients`, `can_create_patient` or `ihr_view_patient_demographics` (403 otherwise).
+- **`add_user`**: a restricted target is refused (403) before CARE writes; the placement
+  trigger still refuses the row (400) if the gate is ever bypassed.
+- **Q-K37a stays at option A** (no bed for the Cashier or TPA Desk), pinned by
+  `test_guard.ThroughTheApi.test_billing_roles_see_no_bed_on_the_account_for_now` (unchanged).
+
+### Tests added (31, plus 13 from the review fixes below)
+
+`test_patient_swap`: opening any patient projected (front desk 200, Owner/Lab/Store 404,
+Doctor full); the whole register (Q-K34); `test_receptionist_cannot_add_user_or_tag` (test 4);
+`test_add_user_refuses_restricted_target`; create and update by role (§9 test 9);
+`test_actions_are_classified`; `test_receptionist_save_keeps_hidden_fields` (test 5, the
+web app's exact body plus a hostile one); `test_the_date_of_death_is_clinical` (test 5);
+`test_receptionist_updates_an_allowed_identifier`; `test_moving_a_patients_district` (test 6);
+`test_search_refused_to_roles_without_patient_access` (§9 test 12);
+`test_mixed_roles_branch_is_still_projected` (§9 test 13);
+`test_receptionist_patient_appointments_are_projected` ("After the attack" §5.2).
+`test_encounter_swap`: the status view by patient and facility; `test_restricted_encounter_filters_refused`
+(test 7); `test_mixed_roles_on_the_facility_list_get_cares_rows_only` (test 8); actions and
+filters classified; `test_encounter_organizations_refused`; restricted users cannot change an
+encounter; `test_receptionist_cannot_write_discharge_advice` (§9 test 9);
+`test_receptionist_starts_a_visit_with_a_department` (test 9, signed in through the real
+session cookie; the `EncounterOrganization` insert is in `ihr_audit_entry`).
+`test_further_swaps`: `test_bed_history_refused_to_restricted`,
+`test_resource_requests_refused_to_restricted`, `test_devices_are_closed_to_restricted`,
+`test_account_report_refused_to_restricted` (test 10), `test_store_keeper_never_sees_a_patient_return`
+(test 11, with a batch PUT and an upsert), `test_membership_only_lists_are_reviewed` (§7.4).
+`test_writes`: clinical writes (allergy, note thread, patient file) 403 for every restricted
+role; charge create (Cashier 200, TPA Desk 403); `test_billing_denials`.
+
+### Mutation rows (13, plus 12 from the review fixes)
+
+`access-forced-projection`, `access-search-gate`, `access-add-user-gate`,
+`access-update-action-allowlist`, `access-edit-hidden-fields`, `access-booking-note`,
+`access-encounter-filters`, `access-retrieve-scope`, `encounter-create-fields`,
+`access-bed-history`, `access-resource-request`, `access-account-report`,
+`access-delivery-patient`. Review fixes: `access-update-authorize-first`,
+`access-create-authorize-first`, `access-create-identifiers`, `access-update-identifier-branch`,
+`access-geo-move-slugs`, `access-geo-move-no-district`, `access-patient-facility-context`,
+`access-encounter-unit-list`, `access-encounter-unit-scope`, `access-dispense-order`,
+`access-delivery-create-patient`, `access-delivery-create-order`.
+
+### Checks
+
+| Run | Result |
+|---|---|
+| Plugin suites, `IHR_DB_ROLES=test` (the nine labels) | `Ran 859 tests in 791.878s` `OK (skipped=45)`; Redis audit 752 keys, all tenant-prefixed |
+| Plugin suites, roles off | `Ran 824 tests in 781.300s` `OK (skipped=49)`; Redis audit 752 keys, all tenant-prefixed |
+| CARE modules in tenant mode, roles off (account, booking, device, encounter, facility organisation, location, managing organisations, organisation, patient, patient identifier, roles, schedule, token, token category, queue and sub-queue; and for the swapped or tested viewsets: resource request, delivery order and its concurrency test, supply delivery, supply request, allergy, notes, file upload, charge item, invoice, payment reconciliation) | `Ran 979 tests in 81.444s` `FAILED (failures=1, errors=4)`: the five are `test_file_upload_api`'s storage round trips, which cannot resolve the `minio` host from the one-off test container; the same module on the committed b1 code (`git archive HEAD`) gives the same `FAILED (failures=1, errors=4)`, so not caused by b2. The other 974 pass. An earlier run of the nine swapped modules (patient, encounter, device, location, resource request, delivery order and concurrency, supply delivery, identifiers) alone: `Ran 348 tests` `OK` |
+| `scripts/isolation-mutation.sh check` | 120 rows (107 + 13), every target and named test found |
+| The 13 new mutation rows, each applied alone to a scratch copy and run as CI runs them (roles off) | each named test FAILED. First pass: 11 of 13; `access-add-user-gate` ended in an ERROR (the trigger's refusal broke the test's transaction) and `access-bed-history` survived (CARE itself refuses every restricted role at the world's bed). Fixed in the tests: the add-user requests run in their own transaction as deployed (as b1's placement tests do), and a lab place the Lab Technician can list was added; both then FAILED as required |
+| `python3 scripts/check-logs.py` | `Log pipeline OK.` (92 checks; the new `ihr-access: refused geo_move` line has no alert and leaks nothing) |
+| `scripts/batch-allowlist.py --check` | `batch-allowlist: 37 routes, list current` |
+| `pre-commit run --all-files` (new files added with `git add -N` for the run, then reset) | 43 hooks passed (ruff check and format, logs-check, batch-allowlist, gitleaks, shellcheck …) |
+| `manage.py check` in the dev backend | `System check identified no issues` (E020 with the nine new swaps, E022, E024) |
+
+**Manual check (Alpha dev hospital, 2026-11-15, after restarting the backend and Celery; no new
+migration, no re-seed; `APIClient` signed in as each seeded user through `manage.py shell`):**
+- `care-receptionist`: phone search 200 (1 result); the patient opens 200 with blood group
+  `null`, `extensions {}` and the same 23 keys as the Doctor's body; patient list 200, count 0;
+  registering "B2 Manual Check" (synthetic) 200 with a projected answer (stored blood group
+  `B_positive`, as entered at registration); the web app's save replayed from the projected
+  GET 200 (address changed, blood group kept), and again with `blood_group: O_negative` 200
+  (blood group still kept); a visit started under "General Medicine" 200 (answer
+  `organizations: []`, stored with that department); encounter list `?patient` 200 with
+  status-only rows, `?facility` 200 (11 rows, no care team), `?organization=` 400.
+- `care-doctor`: the same patient 200 with blood group `AB_negative` (CARE's body).
+- `care-owner` and `care-labtech`: search 403, the patient 404, encounters `?patient` 403.
+
+### Review fixes (2026-11-15)
+
+An independent review of the uncommitted b2 change raised 11 findings; each was challenged
+against the code (verdicts below) and fixed with a regression test that fails without the fix,
+and a mutation row where it is an access control. None needed an owner decision (no new Q-K).
+
+| Finding | Verdict | Fix | Test (mutation row) |
+|---|---|---|---|
+| R1 (low after challenge): patient update opened to view-only holders (Cashier, TPA Desk, MRD) ran CARE's validators before the 403, a programme-number oracle | partly | `handle_update`: on our branch, and for every restricted user, `authorize_update` runs before CARE reads the body | `test_patient_swap.WritesDecideBeforeTheBody.test_update_is_refused_before_the_body_is_read` (`access-update-authorize-first`) |
+| W1 (medium): the same oracle through create and CARE's upsert, for every restricted role | partly | the same line covers upsert by id; `clean_create_data` refuses a restricted user without `can_create_patient` before validation | `test_update_is_refused_before_the_body_is_read`, `test_create_is_refused_before_the_body_is_read` (`access-create-authorize-first`) |
+| W4 (low): registration set programme identifiers and extensions | partly (tags refuted: CARE's `can_apply_tag_config` refuses them) | `clean_create_data` drops identifiers off the list and `extensions` (and `meta`) unread, for POST and upsert; tags pinned at 403 | `test_registration_keeps_to_the_identifier_list` (`access-create-identifiers`) |
+| W2 (medium): a two-job user (Receptionist + Nurse) wrote or deleted programme identifiers through `update_identifier` on our branch | confirmed | `authorize_update`: on our edit branch, `update_identifier` with a configuration off the list is 400 whatever `restricted` says (`identifiers.off_list`, shared with the edit rule) | `EditingDemographics.test_two_jobs_keep_to_the_identifier_list` (`access-update-identifier-branch`) |
+| W3 (low): the district-move rule compared people, not slugs, and skipped patients with no district | confirmed | `edit._privileged_grants` compares (person, slug) pairs; a patient with no district is placed only by the PIN and still gets the gained check | `test_a_district_move_compares_what_people_can_do` (`access-geo-move-slugs`), `test_a_patient_with_no_district_moves_on_the_same_terms` (`access-geo-move-no-district`) |
+| C1 (medium): the web app's patient request (`?facility=`) answered 403 to Cashier, TPA Desk and MRD (CARE's facility-tag check) | confirmed | `get_serializer_retrieve_context`: on our branch the facility is only checked to exist (404 if unknown); no tag permission granted | `OpeningAPatient.test_the_web_apps_patient_request_with_the_facility` (`access-patient-facility-context`) |
+| R2 (medium): dispense orders (each names its patient) open to the Store Keeper through the store's supply-delivery permissions | confirmed | `IhrDispenseOrderViewSet` (SWAPS): restricted users get an empty list and 403 otherwise; a static test requires every CARE viewset authorizing through `can_(list|write)_facility_supply_delivery` to be swapped | `PatientReturns.test_store_keeper_never_sees_a_dispense_order` (`access-dispense-order`), `test_every_supply_delivery_route_is_swapped` |
+| W5 (low): the Store Keeper could create a patient-linked return order, or a delivery against one, and read the patient in the answer | confirmed | `_NoPatientRows.clean_create_data` (before CARE validates): an order with `patient` 403, a delivery against a patient-linked order 404 | `test_store_keeper_never_sees_a_patient_return` (`access-delivery-create-patient`, `access-delivery-create-order`) |
+| R3 (low): encounter `?patient` list and retrieve ignored the unit where the status slug is held | confirmed | both now filter by the units (departments' or bed's organisations) where the user holds `ihr_view_encounter_status`, as CARE's `can_view_encounter_obj`; the "Scope asymmetry" limit is gone | `StatusList.test_a_front_desk_placed_in_one_unit_sees_that_unit_only` (`access-encounter-unit-list`, `access-encounter-unit-scope`) |
+| C2 (medium): copies of CARE code with no drift check | confirmed; fixed in two passes | `fields/encounter_create.txt` classifies every create-spec field (E024; an unclassified field with a value is 400 to restricted users); `care_copies.txt` pins `EMRRetrieveMixin.retrieve` and `EMRUpdateMixin.handle_update`, and CareCopies asserts CARE's classes still inherit them (no override of their own). Second pass: also pinned `EncounterViewSet.get_queryset` (the select_related list `_rows` copies, and the `?patient` / `?facility` hand-over to CARE), `EncounterAccess.get_filtered_encounters` (`in_units`, the `?facility` branch) and `EncounterAccess.can_view_encounter_obj` (`_status_retrievable`); `_rows` now starts from CARE's own base queryset (`super(EncounterViewSet, self)`), and its SQL is compared with CARE's `get_queryset` for a retrieve | `test_the_create_list_classifies_cares_fields`, `CreatingAVisit.test_unclassified_and_hidden_fields_at_create`, `CareCopies.test_copied_care_methods_are_unchanged` (5 pins), `CareCopies.test_our_rows_are_cares_rows` |
+| C3 (low): repeated authorization queries for CARE's roles | confirmed (the search claim refuted); fixed in two passes | the encounter `?patient` branch checks our slug first; the edit-branch decision is computed once per patient and request. Second pass (the 5 extra statements of a Doctor's save were CARE's `can_write_patient_obj`, run once by us and again by CARE): `branches.may_hold()` answers from this request's cached held roles (now shared with `state.restricted`) and one query for the roles granting our three slugs; `holds()` and `holds_in()` ask it first for our slugs, and the edit decision asks it before CARE's write check, so a user of CARE's roles only never reaches our membership queries or a second write check | `QueryBudget.test_a_doctors_encounter_history_and_patient_save` (warm, against CARE's own class: at most 1 extra statement on each request, measured 1) |
+
+**Checks after the review fixes (2026-11-15, after restarting the backend and Celery; no
+migration):**
+
+| Run | Result |
+|---|---|
+| Plugin suites, `IHR_DB_ROLES=test` (the nine labels) | `Ran 873 tests in 810.568s` `OK (skipped=45)`; Redis audit 764 keys, all tenant-prefixed |
+| Plugin suites, roles off | `Ran 838 tests in 785.855s` `OK (skipped=49)`; Redis audit 764 keys, all tenant-prefixed |
+| CARE modules in tenant mode, roles off (the list above plus dispense order, its concurrency test and medication dispense) | `Ran 1056 tests in 87.781s` `FAILED (failures=1, errors=4)`: the same five `test_file_upload_api` storage round trips (`Failed to resolve 'minio'` from the one-off container) as on b1; the other 1051 pass |
+| The 12 new mutation rows, each applied alone to a scratch copy of `plugins/` and run as CI runs them (roles off) | each named test FAILED (an assertion, not an error) on the first pass |
+| `scripts/isolation-mutation.sh check` | 132 rows, every target and named test found |
+| `python3 scripts/check-logs.py` | `Log pipeline OK.` |
+| `scripts/batch-allowlist.py --check` | `batch-allowlist: 37 routes, list current` |
+| `pre-commit run --all-files` (new files added with `git add -N` for the run, then reset) | 43 hooks passed |
+| `manage.py check` in the dev backend | `System check identified no issues` (E020 with ten swaps, E022, E024) |
+
+**Checks after the second fixer (C2, C3; 2026-11-15, backend and Celery restarted; no
+migration):** plugin suites `IHR_DB_ROLES=test`: `Ran 874 tests in 809.052s` `OK (skipped=45)`;
+roles off: `Ran 839 tests in 786.119s` `OK (skipped=49)` (Redis audit 764 keys, all
+tenant-prefixed, both); CARE modules (the same 30): `Ran 1056 tests in 89.098s`
+`FAILED (failures=1, errors=4)`, the same five `test_file_upload_api` storage round trips
+(`Failed to resolve 'minio'`), the other 1051 pass; `isolation-mutation.sh check` 132 rows found;
+`check-logs.py` `Log pipeline OK.`; `batch-allowlist.py --check` `37 routes, list current`;
+`pre-commit run --all-files` passed.
+
+### Known limits (for b3–b4)
+
+- **One query of ours per request for CARE's roles** on the patient and encounter swaps (the
+  roles that grant our three slugs, `branches.may_hold`; review C3). It is not cached across
+  requests: role grants differ per hospital schema and change between requests
+  (TENANCY_DESIGN §6).
+- **Pinned CARE copies are checked by digest, not merged**: an upstream sync that changes one of
+  the five methods in `care_copies.txt` fails `CareCopies` until our copy is re-read and the
+  digest re-pinned (after-sync step in docs/UPSTREAM.md); a change elsewhere in CARE that alters
+  what those methods mean (e.g. a new permission check called from them) is caught only if it
+  changes their source.
+- **Writes the front desk cannot read back**: none left on encounter create (extensions are
+  dropped, tags refused by CARE's `can_apply_tag_config`). At patient create the Receptionist
+  may still set the blood group (registration records it; pinned by
+  `test_patient_create_and_update_by_role`) and a date of death (CARE's create spec has it; the
+  edit rule refuses changing it later). Both are hidden from them afterwards.
+- **CARE's own oracle for CARE's roles**: CARE's patient create and upsert validate before they
+  authorize for every user; we decide first only for restricted users and on our branch. A user
+  of CARE's roles (or a clinician who also holds a front-desk role) keeps CARE's order there.
+- **CARE gap found on the way** (CARE's own roles; for P1-T11d with Q-K40): the delivery-order
+  list without `origin`/`destination` returns every order of the hospital to any signed-in user
+  (no check). Restricted users lose the patient-linked rows there through the swap above. (The
+  bed-history list does check `can_list_facility_locations` on the place, which is why the Lab
+  Technician and the Store Keeper reach their own department's places; the test seeds such a
+  place so the swap's refusal is what the test sees.)
+- The front desk's patient **list** stays empty; patients are found by search (as designed).
+- Device history routes (location, encounter, service) are not swapped: CARE closes them with
+  `can_list_devices` (b3 matrix rows).
+- A cross-state district move needs the PIN directory loaded; without it only moves within the
+  old state pass. The `geo_move` refusal line has no alert.
+- The web-app screens (patient tabs, encounter history, edit form) are still P1-T11c's (Q-K45).
+
+### Open items handed to b3–b4
+
+- b3: the role × endpoint matrix and the canary walk should cover the ten swapped viewsets
+  (bed history, resource requests, devices, account reports, delivery orders and supply
+  deliveries rows already have b2 tests and mutation rows; b3 may add its own tests to those
+  rows). `list_params.txt` needs `encounter` with `facility` and `patient`. The spec walk's
+  exemption list should add `ihr_access.edit.DemographicsSpec` (a write spec with
+  `__model__ = Patient`, never serialized). b2's fixtures (`SwapCase.other_patient`, the store,
+  return order and pharmacist, the account report and template, the resource request, the bed
+  association) can move into `build_world()`.
+- b3 batch cases (test 20): the edit rule and the encounter refusals apply to batch
+  sub-requests through the swap; only the supply-delivery batch PUT is tested in b2.
+- b4: MRD with a grant: `get_appointments`/`get_tokens` without `?facility` are left to CARE for
+  a granted patient, and the encounter list `?patient` takes CARE's path (`can_view_patient_obj`
+  through the hidden role); the grant authorizer's check takes `ihr_access.E023`.

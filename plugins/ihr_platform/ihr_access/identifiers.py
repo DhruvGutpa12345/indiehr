@@ -40,16 +40,16 @@ def _refuse_write():
 ACTIONS = {"search": _refuse_search, "update_identifier": _refuse_write}
 
 
-def hidden_config(user, data):
-    """A restricted user names an identifier configuration whose system they may not use."""
+def off_list(config_id):
+    """The identifier configuration ``config_id`` exists and its system is not on
+    ``fields/identifier_configs.txt``. A malformed or unknown id is not (CARE answers it).
+    Shared by the restricted users' search and writes here, the demographics edit and the
+    patient create of P1-T11b2 (views.IhrPatientViewSet, edit.allowed_identifiers)."""
     from care.emr.models.patient import PatientIdentifierConfig
 
     from ihr_access.guard import allowed_identifier_systems
 
-    if user is None or getattr(user, "is_superuser", False):
-        return False
-    config_id = data.get("config") if hasattr(data, "get") else None
-    if not config_id or not state.for_user(user).restricted:
+    if not config_id:
         return False
     try:
         config = PatientIdentifierConfig.objects.filter(external_id=config_id).first()
@@ -59,6 +59,20 @@ def hidden_config(user, data):
         return False  # CARE answers "not found"
     inner = config.config if isinstance(config.config, dict) else {}
     return inner.get("system") not in allowed_identifier_systems()
+
+
+def requested_config(data):
+    return data.get("config") if hasattr(data, "get") else None
+
+
+def hidden_config(user, data):
+    """A restricted user names an identifier configuration whose system they may not use."""
+    if user is None or getattr(user, "is_superuser", False):
+        return False
+    config_id = requested_config(data)
+    if not config_id or not state.for_user(user).restricted:
+        return False
+    return off_list(config_id)
 
 
 def _wrapper(original, refuse):

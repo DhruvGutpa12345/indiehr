@@ -46,6 +46,36 @@ SWAPS = {
     "care.emr.api.viewsets.user.UserViewSet": (
         "ihr_identity.invitations.InvitingUserViewSet"
     ),
+    # The restricted roles' demographics-and-billing view (P1-T11b2, design-b.md §5.3 and
+    # "After the attack" §5-§7): ihr_access/views.py
+    "care.emr.api.viewsets.patient.PatientViewSet": (
+        "ihr_access.views.IhrPatientViewSet"
+    ),
+    "care.emr.api.viewsets.encounter.EncounterViewSet": (
+        "ihr_access.views.IhrEncounterViewSet"
+    ),
+    "care.emr.api.viewsets.location.FacilityLocationEncounterViewSet": (
+        "ihr_access.views.IhrLocationEncounterViewSet"
+    ),
+    "care.emr.api.viewsets.resource_request.ResourceRequestViewSet": (
+        "ihr_access.views.IhrResourceRequestViewSet"
+    ),
+    "care.emr.api.viewsets.resource_request.ResourceRequestCommentViewSet": (
+        "ihr_access.views.IhrResourceRequestCommentViewSet"
+    ),
+    "care.emr.api.viewsets.report.report_upload.ReportUploadViewSet": (
+        "ihr_access.views.IhrReportUploadViewSet"
+    ),
+    "care.emr.api.viewsets.device.DeviceViewSet": "ihr_access.views.IhrDeviceViewSet",
+    "care.emr.api.viewsets.inventory.delivery_order.DeliveryOrderViewSet": (
+        "ihr_access.views.IhrDeliveryOrderViewSet"
+    ),
+    "care.emr.api.viewsets.inventory.supply_delivery.SupplyDeliveryViewSet": (
+        "ihr_access.views.IhrSupplyDeliveryViewSet"
+    ),
+    "care.emr.api.viewsets.inventory.dispense_order.DispenseOrderViewSet": (
+        "ihr_access.views.IhrDispenseOrderViewSet"
+    ),
 }
 # {CARE's class: ours}, filled as CARE registers them
 swapped = {}

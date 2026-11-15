@@ -1,0 +1,28 @@
+# What a restricted user may set when starting a visit (P1-T11b2, review C2; design-b.md "After
+# the attack" §6). Every field of CARE's EncounterCreateSpec, with HospitalizationSpec's fields
+# dotted, one line each:
+#   <field> allow|clinical|hidden  # reason
+# allow: passed to CARE; clinical: 400 when sent with a value (nothing made); hidden: dropped
+# unread (never shown to them, never written by them). A field CARE adds fails
+# ihr_access.tests.test_encounter_swap until it is classified here, and until then a restricted
+# user sending it with a value gets 400.
+id allow  # ignored by CARE on create
+status allow  # the visit's state (planned, in progress)
+period allow  # the visit's dates; its fields below
+period.start allow  # when the visit starts
+period.end allow  # when it ended (a visit recorded after the fact)
+priority allow  # front-desk triage level, shown in the status view
+encounter_class allow  # outpatient, inpatient, emergency
+external_identifier allow  # the visit number the front desk issues
+patient allow  # whose visit
+facility allow  # this hospital's facility
+organizations allow  # the department the visit is filed under (Q-K44)
+appointment allow  # the booking the visit comes from
+hospitalization allow  # the admission block; its fields below
+hospitalization.re_admission allow  # an administrative flag at admission
+hospitalization.admit_source allow  # where the patient came from (outpatients, referral)
+hospitalization.discharge_disposition clinical  # set by the clinician at discharge
+hospitalization.diet_preference clinical  # a clinical order
+discharge_summary_advice clinical  # the clinician's advice
+extensions hidden  # plugin data, possibly clinical; hidden from them on read
+meta hidden  # internal store

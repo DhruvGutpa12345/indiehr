@@ -1,0 +1,10 @@
+# CARE methods our swaps copy (ihr_access/views.py; P1-T11b2, review C2), pinned by the sha256
+# of inspect.getsource at the upstream pin. One line each:
+#   <CARE method> <sha256>  # our copy, and what to re-check
+# After an upstream sync changes one, ihr_access.tests.test_encounter_swap.CareCopies fails:
+# re-read CARE's new method, carry the change into our copy, then pin the new digest here.
+care.emr.api.viewsets.base.EMRRetrieveMixin.retrieve 87809bfebd96d112dc3920a32653c70ba57753d37df1828fd3ea262cba6d0494  # IhrEncounterViewSet.retrieve serves every role (CARE's roles too)
+care.emr.api.viewsets.base.EMRUpdateMixin.handle_update 0db87b501bdf4d38c3b3e97cbe8368003f273fcf5e0489524690ff17e6c2582e  # IhrPatientViewSet.handle_update's edit path (the front desk's demographics edit)
+care.emr.api.viewsets.encounter.EncounterViewSet.get_queryset 55a3098a6e3eb67faa781ab9f5f959d1a18317a4c257a7dd27248212db12d4c2  # IhrEncounterViewSet._rows (select_related, order; also CareCopies.test_our_rows_are_cares_rows) and _status_rows (when ?patient / ?facility hand over to CARE)
+care.security.authorization.encounter.EncounterAccess.get_filtered_encounters fbb2823a5e22061f2037f7bdb66ed25203db1548cbcc72a4ba8844ebf11d68fa  # in_units and the ?facility branch (can_list_encounter there hands over to CARE)
+care.security.authorization.encounter.EncounterAccess.can_view_encounter_obj 76a80382b1d8fca328afbd0ea0181f90d0eb6ab0fddedc2eb1f569bc8498110d  # IhrEncounterViewSet._status_retrievable (the encounter's and its bed's organisation caches)

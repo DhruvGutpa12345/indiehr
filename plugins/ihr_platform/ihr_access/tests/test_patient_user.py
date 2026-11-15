@@ -462,13 +462,19 @@ class IdentifierAllowListOnSearchAndWrites(TestCase):
             ).value,
             before,
         )
-        # An allowed identifier is CARE's to answer: b1 does not widen the action (404)
+        # An allowed identifier is written: P1-T11b2 widens the action for the front desk
         response = self.api(w.users["Receptionist"]).post(
             f"/api/v1/patient/{w.patient.external_id}/update_identifier/",
             {"config": str(w.phone_config.external_id), "value": "+919800000000"},
             format="json",
         )
-        self.assertIn(response.status_code, (403, 404), response.content[:300])
+        self.assertEqual(response.status_code, 200, response.content[:300])
+        self.assertEqual(
+            PatientIdentifier.objects.get(
+                patient=w.patient, config=w.phone_config
+            ).value,
+            "+919800000000",
+        )
 
     def test_the_actions_are_guarded(self):
         from care.emr.api.viewsets.patient import PatientViewSet

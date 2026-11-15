@@ -1,0 +1,19 @@
+# Every action of CARE's EncounterViewSet, as our swap (views.IhrEncounterViewSet) treats it
+# (P1-T11b2; design-b.md "After the attack" §6.1):
+#   <action> widened|gated|care  # reason
+# widened: our branch serves ihr_view_encounter_status where CARE's path gives nothing, projected;
+# gated: CARE's own action behind a check of ours; care: CARE's own check only.
+# An action CARE adds fails ihr_access.tests.test_encounter_swap until it is classified here.
+list widened  # ?facility / ?patient for the status view, with the filter allow-list
+retrieve widened  # status view; CARE's authorize_retrieve is left unchanged
+create gated  # can_create_encounter; restricted users cannot set clinical fields
+update care  # can_write_encounter (no restricted role holds it; status changes are P2-T2)
+partial_update care  # as update
+organizations care  # an encounter's departments reveal the specialty (Q-K37)
+organizations_add care  # can_write_encounter
+organizations_remove care  # can_write_encounter
+set_facility_identifier care  # can_write_encounter
+set_care_team_members care  # can_write_encounter
+restart care  # can_write_encounter
+set_tags care  # can_write_encounter
+remove_tags care  # can_write_encounter

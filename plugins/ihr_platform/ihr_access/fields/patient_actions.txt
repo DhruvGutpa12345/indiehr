@@ -1,0 +1,26 @@
+# Every action of CARE's PatientViewSet, as our swap (views.IhrPatientViewSet) treats it (P1-T11b2;
+# design-b.md "After the attack" §5.1):
+#   <action> widened|gated|care  # reason
+# widened: our branch opens the patient for ihr_view_patient_demographics (and edits it for
+# ihr_edit_patient_demographics), projected; gated: CARE's own action behind a gate of ours;
+# care: CARE's own check only (a restricted user who could open the patient gets 403).
+# An action CARE adds fails ihr_access.tests.test_patient_swap until it is classified here.
+retrieve widened  # the demographics record (Q-K34: the whole hospital register)
+update widened  # the edit rule (fields/patient_edit.txt)
+partial_update widened  # the edit rule
+update_identifier widened  # only identifier_configs.txt systems (identifiers.py)
+search gated  # refused to our roles without patient access (Q-K40); projected without can_list_patients
+search_retrieve gated  # as search
+add_user gated  # refused for a restricted target (Q-K40); CARE's write check otherwise
+get_appointments gated  # restricted users must name the facility (CARE's booking check), projected
+get_tokens gated  # restricted users must name the facility (CARE's token check), projected
+list care  # CARE's list: empty for restricted users (authz.py)
+create care  # can_create_patient; the response is projected for restricted users
+destroy care  # superusers only
+upsert care  # CARE's write check per data point
+get_users care  # who is on the care team: clinical
+delete_user care  # care-team change
+set_instance_tags care  # tags can carry clinical labels
+remove_instance_tags care  # as set_instance_tags
+set_facility_tags care  # as set_instance_tags
+remove_facility_tags care  # as set_instance_tags

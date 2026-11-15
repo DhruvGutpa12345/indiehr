@@ -261,7 +261,9 @@ class BedAndDevice(AccessCase):
                 state.end()
 
     def test_the_owner_sees_no_one_on_a_device(self):
-        """A device's list and retrieve need only facility membership in CARE (A2)."""
+        """A device's list and retrieve need only facility membership in CARE (A2). Since
+        P1-T11b2 the device swap refuses the device to restricted users ("After the attack"
+        §7.2), and the guard still drops the patient wherever CARE embeds a device."""
         w = self.world
         url = (
             f"/api/v1/facility/{w.facility.external_id}/device/{w.device.external_id}/"
@@ -270,10 +272,13 @@ class BedAndDevice(AccessCase):
         self.assertEqual(doctor.status_code, 200, doctor.content[:300])
         self.assertIsNotNone(doctor.json()["current_encounter"])
         owner = self.api(w.users["Owner"]).get(url)
-        self.assertEqual(owner.status_code, 200, owner.content[:300])
-        self.assertIsNone(owner.json()["current_encounter"])
+        self.assertEqual(owner.status_code, 403, owner.content[:300])
         self.assertNotIn(CANARY, owner.content.decode())
         self.assertNotIn(w.patient.name, owner.content.decode())
+        self.as_user(w.users["Owner"])
+        body = DeviceRetrieveSpec.serialize(w.device).to_json()
+        self.assertIsNone(body["current_encounter"])
+        self.assertNotIn(CANARY, json.dumps(body, default=str))
 
     def test_device_shape_unit(self):
         w = self.world

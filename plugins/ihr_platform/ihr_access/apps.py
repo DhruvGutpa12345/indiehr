@@ -29,6 +29,7 @@ class IhrAccessConfig(AppConfig):
         # Search and identifier writes keep to the identifier allow-list (review S2)
         identifiers.install()
         checks.register(access_checks.guard_installed)
+        checks.register(access_checks.filters_classified)
 
         # Each DRF view starts with a fresh state for the person it authenticated (after the
         # audit actor is bound: ihr_audit wraps first); each request starts and ends with none

@@ -19,6 +19,7 @@ _state = ContextVar("ihr_access_state", default=None)
 
 class RequestState:
     __slots__ = (
+        "_granting",
         "_grants",
         "_held",
         "_restricted",
@@ -36,6 +37,7 @@ class RequestState:
         self._restricted = None
         self._restricted_only = None
         self._grants = None
+        self._granting = None
         self._held = None
         self._role_ids = None
 
@@ -47,7 +49,7 @@ class RequestState:
     @property
     def restricted(self):
         if self._restricted is None:
-            self._restricted = restricted(self.user, self.role_ids)
+            self._restricted = restricted(self.user, self.role_ids, self.held_role_ids)
         return self._restricted
 
     @property
@@ -73,6 +75,23 @@ class RequestState:
                 else frozenset()
             )
         return self._held
+
+    def roles_granting(self, slug, together=()):
+        """Role ids that grant ``slug``, read as CARE's ``get_role_from_permissions`` reads them
+        (so never fewer); ``together``: slugs read in the same query (review C3)."""
+        if self._granting is None:
+            self._granting = {}
+        if slug not in self._granting:
+            from care.security.models import RolePermission
+
+            wanted = {slug, *together} - set(self._granting)
+            found = {name: set() for name in wanted}
+            for name, role_id in RolePermission.objects.filter(
+                permission__slug__in=wanted
+            ).values_list("permission__slug", "role_id"):
+                found[name].add(role_id)
+            self._granting.update({k: frozenset(v) for k, v in found.items()})
+        return self._granting[slug]
 
     @property
     def role_ids(self):
@@ -148,16 +167,16 @@ def _signed_in(user):
     )
 
 
-def restricted(user, role_ids=None):
+def restricted(user, role_ids=None, held=None):
     """Holds one of our restricted roles here, and no clinical slug through any organisation
-    (design-b.md §4; permissions add up, Q-K35)."""
+    (design-b.md §4; permissions add up, Q-K35). ``held``: this request's held role ids."""
     from care.security.models import RolePermission
     from ihr_roles.registry import CLINICAL_SLUGS, RESTRICTED
 
     if not _signed_in(user) or user.is_superuser:
         return False
     role_ids = our_role_ids() if role_ids is None else role_ids
-    held = _held_role_ids(user)
+    held = _held_role_ids(user) if held is None else held
     if not held & {role_ids[n] for n in RESTRICTED if n in role_ids}:
         return False
     # As CARE's own permission lookups (RoleModel.get_permission_sk_for_role) and the
