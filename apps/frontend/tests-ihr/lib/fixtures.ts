@@ -37,16 +37,20 @@ export const SIGN_IN_BUTTON = "Sign in with your hospital account";
 export const NOT_MEMBER = "You are not a member of this hospital.";
 
 interface Fixtures {
-  /** A fresh browser context (own cookies, storage and Keycloak session), watched for evidence. */
-  newContext: () => Promise<BrowserContext>;
+  /** A fresh browser context (own cookies, storage and Keycloak session), watched for evidence.
+   * Options override CONTEXT_OPTIONS for that context only. */
+  newContext: (options?: BrowserContextOptions) => Promise<BrowserContext>;
 }
 
 export const test = base.extend<Fixtures>({
   newContext: async ({ browser }: { browser: Browser }, use, testInfo) => {
     const evidence = new Evidence();
     const contexts: BrowserContext[] = [];
-    await use(async () => {
-      const context = await browser.newContext(CONTEXT_OPTIONS);
+    await use(async (options?: BrowserContextOptions) => {
+      const context = await browser.newContext({
+        ...CONTEXT_OPTIONS,
+        ...options,
+      });
       evidence.watch(context);
       contexts.push(context);
       return context;

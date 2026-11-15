@@ -68,7 +68,12 @@ test("a non-member is stopped at the other hospital, and her cookie is refused t
 test("a member of both hospitals holds two independent host-only cookies (dr.meera)", async ({
   newContext,
 }) => {
-  const context = await newContext();
+  // Service workers are blocked in this context only (owner, 2026-11-15): the browser's own
+  // update fetch of the worker script gives Playwright no raw headers, so the check below could
+  // not read its Cookie header and failed ("service-worker.js: unread"). Blocking the worker
+  // keeps every request readable; nothing is exempted. The worker itself is covered by
+  // service-worker.spec.ts.
+  const context = await newContext({ serviceWorkers: "block" });
   // Each request's host and Cookie header, read once the request has finished or failed. Reading
   // them while the request is in flight, or after its page has moved on, can hang ("Worker
   // closed"), which twice timed this test out; every read is also bounded (5 s), so a read that
