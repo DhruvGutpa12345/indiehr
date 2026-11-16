@@ -15,11 +15,13 @@ import os
 import re
 import sys
 import time
+from types import SimpleNamespace
 from unittest import mock
 
 from django.conf import settings
 from django.db import transaction
 from django.test import SimpleTestCase
+from django.utils import timezone
 from ihr_identity import testing as identity
 from ihr_roles import registry
 
@@ -578,6 +580,38 @@ class MatrixFiles(SimpleTestCase):
         self.assertIn("staff<user>", walked)
         handled = matrix.key_paths(body, handled=frozenset({("patient", "p-1")}))
         self.assertEqual(handled, {"subject<patient>", "staff<user>"})
+
+    def test_the_world_slot_never_crosses_local_midnight(self):
+        """CI 16-11, 23:4x IST: a world built in the last 15 minutes before midnight had a slot
+        ending the next day, which CARE's slots-for-day never returns, so the canary missed the
+        access-slot-day mutation. The slot then starts an hour earlier, inside one local day."""
+        tz = timezone.get_current_timezone()
+        for local in (
+            datetime.datetime(2026, 11, 16, 23, 50, tzinfo=tz),
+            datetime.datetime(2026, 11, 16, 23, 45, tzinfo=tz),
+            datetime.datetime(2026, 11, 16, 23, 44, tzinfo=tz),
+            datetime.datetime(2026, 11, 16, 10, 0, tzinfo=tz),
+            datetime.datetime(2026, 11, 17, 0, 0, tzinfo=tz),
+        ):
+            with self.subTest(local=local.isoformat()):
+                start = testing.slot_start(local)
+                end = start + datetime.timedelta(minutes=testing.SLOT_MINUTES)
+                self.assertEqual(
+                    timezone.localtime(start).date(), timezone.localtime(end).date()
+                )
+                self.assertLessEqual(start, local)
+        noon = datetime.datetime(2026, 11, 16, 12, 0, tzinfo=tz)
+        self.assertEqual(testing.slot_start(noon), noon)
+
+    def test_today_is_the_world_day(self):
+        """``@today`` is the day of the world's slot, not the clock's, so a request made after
+        midnight still asks for the day the world was built on."""
+        slot = SimpleNamespace(
+            start_datetime=datetime.datetime(2026, 11, 16, 18, 20, tzinfo=datetime.UTC)
+        )
+        world = SimpleNamespace(booking=SimpleNamespace(token_slot=slot), objects={})
+        self.assertEqual(matrix.resolve_body(world, "@today"), "2026-11-16")
+        self.assertEqual(matrix.resolve_body(world, "@today+6"), "2026-11-22")
 
     def test_date_keys_are_one_placeholder(self):
         """Review C-C3: availability_stats answers one key per asked day; the walk records

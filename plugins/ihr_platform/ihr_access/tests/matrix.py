@@ -54,7 +54,6 @@ from urllib.parse import urlencode
 from django.apps import apps
 from django.db import connection, transaction
 from django.http.request import QueryDict
-from django.utils import timezone
 from ihr_identity.blocked import Blocked
 from ihr_platform.tests.isolation.routes import (
     PARAM_MODELS,
@@ -64,7 +63,7 @@ from ihr_platform.tests.isolation.routes import (
     get_route_views,
 )
 
-from ihr_access import guard
+from ihr_access import guard, testing
 from ihr_access.testing import CANARY
 
 HERE = Path(__file__).parent
@@ -458,7 +457,7 @@ def resolve_body(world, value):
     ref, _, cut = value[1:].partition(":")
     if ref.startswith("today"):
         days = int(ref[len("today") :] or 0)
-        today = timezone.localdate()
+        today = testing.world_day(world)
         return (today + datetime.timedelta(days=days)).isoformat()
     name, _, attr = ref.partition(".")
     if name not in world.objects:

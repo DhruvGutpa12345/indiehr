@@ -128,6 +128,26 @@ def marker(name):
     return f"{CANARY}-{name}"
 
 
+SLOT_MINUTES = 15
+
+
+def slot_start(now):
+    """When the world's slot starts: ``now``, unless the slot would end on the next local day.
+    CARE's slots-for-day matches a slot by the local date of both its start and its end, so a
+    world built in the last minutes before midnight (IST) had no slot that day and the canary
+    had nothing to leak (CI, 16-11 at 23:4x IST). Then the slot starts an hour earlier."""
+    end = timezone.localtime(now + datetime.timedelta(minutes=SLOT_MINUTES))
+    if end.date() != timezone.localtime(now).date():
+        return now - datetime.timedelta(hours=1)
+    return now
+
+
+def world_day(world):
+    """The local day the world's slot and booking fall on: ``@today`` in post_reads.txt, so a
+    request made after midnight still asks for the world's day."""
+    return timezone.localtime(world.booking.token_slot.start_datetime).date()
+
+
 def build_world(full=False):
     """The test hospital. ``full``: also everything the role matrix and the canary walk need
     (P1-T11b3, ``add_matrix_world``); the b1/b2 tests use the small one."""
@@ -253,11 +273,12 @@ def _build_small_world():
         tokens_per_slot=1,
         availability=[],
     )
+    start = slot_start(now)
     slot = TokenSlot.objects.create(
         resource=resource,
         availability=availability,
-        start_datetime=now,
-        end_datetime=now + datetime.timedelta(minutes=15),
+        start_datetime=start,
+        end_datetime=start + datetime.timedelta(minutes=SLOT_MINUTES),
     )
     booking = TokenBooking.objects.create(
         token_slot=slot,
