@@ -18,6 +18,8 @@ import {
   EncounterStatus,
 } from "@/types/emr/encounter/encounter";
 import encounterApi from "@/types/emr/encounter/encounterApi";
+import { ihrShowsEncounterActions } from "@/Utils/ihr/frontDesk"; // IndieHR P1-T11c
+import { useIhrAccess } from "@/Utils/ihr/useIhrAccess"; // IndieHR P1-T11c
 import mutate from "@/Utils/request/mutate";
 
 export interface EncounterActionsProps {
@@ -29,6 +31,7 @@ export function EncounterActions({ encounter }: EncounterActionsProps) {
   const queryClient = useQueryClient();
 
   const isCompleted = encounter.status === EncounterStatus.COMPLETED;
+  const ihr = useIhrAccess(); // IndieHR P1-T11c
 
   const { mutate: restartEncounter, isPending: isRestarting } = useMutation({
     mutationFn: mutate(encounterApi.restart, {
@@ -52,7 +55,8 @@ export function EncounterActions({ encounter }: EncounterActionsProps) {
   };
 
   // Only show actions dropdown if there are any actions available
-  if (!isCompleted) {
+  // IndieHR P1-T11c: restart needs can_write_encounter, which no restricted role holds
+  if (!isCompleted || !ihrShowsEncounterActions(ihr)) {
     return null;
   }
 

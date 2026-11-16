@@ -21,7 +21,13 @@ It checks:
    (PatientRoutes.tsx by default); the patient tab keys as CARE builds them
    (`"<PATIENT_TAB_PREFIX>" + tab.route`) and each DEMOGRAPHICS_TABS name as a tab route;
 3. each upstream file we hooked still has our marker and call (AppRouter.tsx, facility-nav.tsx,
-   location-nav.tsx, overview.tsx);
+   location-nav.tsx, overview.tsx, and the P1-T11c2 screens: PatientProfile.tsx, Demography.tsx,
+   PatientRegistration.tsx, EncounterHistory.tsx, EncounterCard.tsx, EncounterActions.tsx,
+   PatientHome.tsx, PatientInfoCard.tsx, CreateEncounterForm.tsx, EncounterList.tsx,
+   AccountShow.tsx, ChargeItemsTable.tsx, BedChargeItemsTable.tsx), each hook site that carries a
+   leak or a dead end (not one hook per file); and the upstream text the rules of src/Utils/ihr/frontDesk.ts read: the
+   plugin-slot key and `BASE_PATIENT_TABS` export, the account tab names (ACCOUNT_TABS equals the
+   keys of frontDesk.ts's ACCOUNT_TAB_SLUGS), the encounter list's refused filter keys;
 4. plugins/ihr_platform/ihr_roles/frontend_slugs.json (written by the backend's
    `manage.py ihr_frontend_slugs --write`) equals src/Utils/ihr/ihrSlugs.json byte for byte.
 
@@ -45,6 +51,20 @@ PATIENT_TABS = SRC / "components/Patient/PatientDetailsTab/index.tsx"
 IHR_MENU = SRC / "components/ihr/ihrMenu.tsx"
 APP_ROUTER = SRC / "Routers/AppRouter.tsx"
 OVERVIEW = SRC / "pages/Facility/overview.tsx"
+PATIENT_PROFILE = SRC / "components/Patient/PatientProfile.tsx"
+DEMOGRAPHY = SRC / "components/Patient/PatientDetailsTab/Demography.tsx"
+PATIENT_REGISTRATION = SRC / "components/Patient/PatientRegistration.tsx"
+ENCOUNTER_HISTORY = SRC / "components/Patient/PatientDetailsTab/EncounterHistory.tsx"
+ENCOUNTER_CARD = SRC / "components/Facility/EncounterCard.tsx"
+ENCOUNTER_ACTIONS = SRC / "components/Encounter/EncounterActions.tsx"
+PATIENT_HOME = SRC / "pages/Patient/PatientHome.tsx"
+PATIENT_INFO_CARD = SRC / "components/Patient/PatientInfoCard.tsx"
+CREATE_ENCOUNTER = SRC / "components/Encounter/CreateEncounterForm.tsx"
+ENCOUNTER_LIST = SRC / "pages/Encounters/EncounterList.tsx"
+ACCOUNT_SHOW = SRC / "pages/Facility/billing/account/AccountShow.tsx"
+CHARGE_ITEMS_TABLE = SRC / "pages/Facility/billing/account/components/ChargeItemsTable.tsx"
+BED_CHARGE_ITEMS_TABLE = SRC / "pages/Facility/billing/account/components/BedChargeItemsTable.tsx"
+FRONT_DESK = SRC / "Utils/ihr/frontDesk.ts"
 MENU = SRC / "Utils/ihr/menu.ts"
 ROUTE_KEYS = SRC / "Utils/ihr/routeKeys.ts"
 SLUGS_COPY = SRC / "Utils/ihr/ihrSlugs.json"
@@ -60,6 +80,20 @@ FILES = [
     IHR_MENU,
     APP_ROUTER,
     OVERVIEW,
+    PATIENT_PROFILE,
+    DEMOGRAPHY,
+    PATIENT_REGISTRATION,
+    ENCOUNTER_HISTORY,
+    ENCOUNTER_CARD,
+    ENCOUNTER_ACTIONS,
+    PATIENT_HOME,
+    PATIENT_INFO_CARD,
+    CREATE_ENCOUNTER,
+    ENCOUNTER_LIST,
+    ACCOUNT_SHOW,
+    CHARGE_ITEMS_TABLE,
+    BED_CHARGE_ITEMS_TABLE,
+    FRONT_DESK,
     MENU,
     ROUTE_KEYS,
     SLUGS_COPY,
@@ -73,7 +107,65 @@ HOOKS = {
     FACILITY_NAV: "<IhrFacilityNavMain",
     LOCATION_NAV: "<IhrLocationNavMain",
     OVERVIEW: "ihrShowsServices(",
+    # P1-T11c2 (frontDesk.ts rules)
+    PATIENT_PROFILE: "ihrPatientTabs(",
+    DEMOGRAPHY: "ihrDemographySections(",
+    PATIENT_REGISTRATION: "ihrHidesClinicalFormFields(",
+    ENCOUNTER_HISTORY: "ihrEncounterHistoryRule(",
+    ENCOUNTER_CARD: "ihrCanOpenEncounter(",
+    ENCOUNTER_ACTIONS: "ihrShowsEncounterActions(",
+    PATIENT_HOME: "ihrShowsViewAccounts(",
+    PATIENT_INFO_CARD: "hideTags = false",
+    CREATE_ENCOUNTER: "ihrShowsEncounterTags(",
+    ENCOUNTER_LIST: "ihrEncounterParams(",
+    ACCOUNT_SHOW: "ihrAccountTabs(",
+    CHARGE_ITEMS_TABLE: "canEditChargeItems = true",
+    BED_CHARGE_ITEMS_TABLE: "canEditChargeItems = true",
 }
+
+# P1-T11c2: upstream text the rules of frontDesk.ts read: (file, regex that must match, why[, how
+# many times at least; default 1]). Regexes, not literals: prettier may break a call over several
+# lines. Every hook site that carries a leak or a dead end is listed, so a sync resolution that
+# drops one is caught (a counted entry: one site per button).
+FRONT_DESK_ANCHORS = [
+    (DEMOGRAPHY, r'key="patient_details_tab__demography__general_info"', "the plugin slot ihrDemographySections removes"),
+    (DEMOGRAPHY, r'id: "additional-details"', "the plugin-data section it removes"),
+    (DEMOGRAPHY, r'id: "tags"', "the tag section it removes"),
+    (DEMOGRAPHY, r'id: "general-info"', "the general section it edits"),
+    (PATIENT_TABS, r"export const BASE_PATIENT_TABS\b", "the unfiltered tab list PatientProfile passes"),
+    (ENCOUNTER_LIST, r'departmentFilter\(\s*"organization"', "the department filter key"),
+    (ENCOUNTER_LIST, r'careTeamFilter\(\s*"care_team"', "the care team filter key"),
+    (ENCOUNTER_LIST, r'tagFilter\(\s*"tags"', "the tag filter key"),
+    (ENCOUNTER_LIST, r"restoredParams\.organization\b", "the session-restored filters (F18)"),
+    (ENCOUNTER_LIST, r"restoredParams\.care_team_user\b", "the session-restored filters (F18)"),
+    (ENCOUNTER_LIST, r"restoredParams\.tags\b", "the session-restored filters (F18)"),
+    (ACCOUNT_SHOW, r"canAddChargeItems=\{ihrCanAddChargeItems\(", "the add-charge-items buttons' rule"),
+    (ACCOUNT_SHOW, r"<IhrNavTabs\b", "NavTabs that renders nothing without a visible tab"),
+    # patient home: the tag card and the encounter tab's list right
+    (PATIENT_HOME, r"hideTags=\{ihrHidesPatientTags\(", "the tag card (projected as empty, a refused write)"),
+    (PATIENT_HOME, r"ihrCanListEncounters\(", "the encounter tab's list right"),
+    # encounter list: the filters offered and the request switch
+    (ENCOUNTER_LIST, r"ihrEncounterFilters\(", "the filter chips the backend refuses"),
+    (ENCOUNTER_LIST, r"ihrEncounterListEnabled\(", "no list request while my-access is pending"),
+    # patient edit form: blood group, plugin fields and the death record (patient_edit.txt)
+    (PATIENT_REGISTRATION, r"hideBloodGroup=\{ihrHidesClinical\}", "the blood group field"),
+    (PATIENT_REGISTRATION, r"!ihrHidesClinical\s*&&\s*extensions\.fields", "the plugin extension fields"),
+    (PATIENT_REGISTRATION, r"hideDeceased=\{ihrHidesClinical\}", "the death record (400 when changed)"),
+    (PATIENT_REGISTRATION, r"!hideDeceased\s*&&", "the death record block"),
+    # account page: every write button follows the role's own right (ihrAccountActions)
+    (ACCOUNT_SHOW, r"ihrAccountActions\(ihr\)", "the account page's write rule"),
+    (ACCOUNT_SHOW, r"ihrActions\.invoice\s*&&", "Create invoice (desktop and mobile)", 2),
+    (ACCOUNT_SHOW, r"ihrActions\.payment\s*&&", "credit payment (desktop, mobile), credit note, transfer", 4),
+    (ACCOUNT_SHOW, r"ihrActions\.account\s*&&", "Settle & close (desktop, menu) and the tag sheet", 3),
+    (ACCOUNT_SHOW, r"\(ihrActions\.account\s*\|\|\s*ihrActions\.payment\)", "the header menu only when it has an item"),
+    (ACCOUNT_SHOW, r"canEditChargeItems=\{ihrActions\.chargeItems\}", "the charge item row menus (both tables)", 2),
+    (CHARGE_ITEMS_TABLE, r"\{canEditChargeItems\s*&&", "the row menu"),
+    (CHARGE_ITEMS_TABLE, r"disabled=\{!canEditChargeItems\}", "the bulk select (header and row)", 2),
+    (BED_CHARGE_ITEMS_TABLE, r"\{canEditChargeItems\s*&&", "the row menu"),
+]
+ACCOUNT_TABS_UPSTREAM = re.compile(r"export const ACCOUNT_TABS = \[([^\]]*)\]")
+ACCOUNT_TAB_SLUGS_OURS = re.compile(r"ACCOUNT_TAB_SLUGS[^=]*=\s*\{([^}]*)\}")
+
 
 FACILITY_SECTION = "// Facility menu (facility-nav.tsx)"
 LOCATION_SECTION = "// Location menu (location-nav.tsx)"
@@ -222,6 +314,29 @@ def check(root: Path = ROOT) -> list:
             problems.append(f"{rel}: our hook marker `{MARKER}` is gone")
         if call not in text:
             problems.append(f"{rel}: our hook call `{call}` is gone")
+
+    # 3b. the upstream text frontDesk.ts's rules read (P1-T11c2)
+    for rel, pattern, why, *least in FRONT_DESK_ANCHORS:
+        needed = least[0] if least else 1
+        found = len(re.findall(pattern, texts[rel])) if texts[rel] else needed
+        if found < needed:
+            problems.append(
+                f"{rel}: `{pattern}` found {found} time(s), expected {needed} ({why}; {FRONT_DESK})"
+            )
+    upstream_tabs = ACCOUNT_TABS_UPSTREAM.search(texts[ACCOUNT_SHOW])
+    ours_tabs = ACCOUNT_TAB_SLUGS_OURS.search(texts[FRONT_DESK])
+    if texts[ACCOUNT_SHOW] and texts[FRONT_DESK]:
+        if upstream_tabs is None or ours_tabs is None:
+            problems.append(
+                f"{ACCOUNT_SHOW}: ACCOUNT_TABS (or {FRONT_DESK}: ACCOUNT_TAB_SLUGS) not found"
+            )
+        else:
+            theirs = re.findall(r'"([^"]+)"', upstream_tabs.group(1))
+            mine = re.findall(r"^\s*(\w+):", ours_tabs.group(1), flags=re.M)
+            if sorted(theirs) != sorted(mine):
+                problems.append(
+                    f"{ACCOUNT_SHOW}: ACCOUNT_TABS {theirs} differs from the tabs {FRONT_DESK} classifies {mine}: classify the change in ACCOUNT_TAB_SLUGS"
+                )
 
     # 4. slug files
     src, copy = root / SLUGS_SOURCE, root / SLUGS_COPY

@@ -193,12 +193,14 @@ export interface BedChargeItemsTableProps {
   facilityId: string;
   account: AccountRead;
   canAddChargeItems?: boolean;
+  canEditChargeItems?: boolean; // IndieHR P1-T11c
 }
 
 function BedChargeItemsTable({
   facilityId,
   account,
   canAddChargeItems = true,
+  canEditChargeItems = true, // IndieHR P1-T11c
 }: BedChargeItemsTableProps) {
   const { t } = useTranslation();
   const encounterId = account.primary_encounter?.id;
@@ -491,15 +493,17 @@ function BedChargeItemsTable({
                                 </div>
                               </TableCell>
                               <TableCell className="border-x p-3 text-gray-950">
-                                <ChargeItemActionsMenu
-                                  item={item}
-                                  facilityId={facilityId}
-                                  accountId={accountId}
-                                  onEdit={(item) => {
-                                    setSelectedChargeItem(item);
-                                    setIsEditDialogOpen(true);
-                                  }}
-                                />
+                                {canEditChargeItems && ( // IndieHR P1-T11c
+                                  <ChargeItemActionsMenu
+                                    item={item}
+                                    facilityId={facilityId}
+                                    accountId={accountId}
+                                    onEdit={(item) => {
+                                      setSelectedChargeItem(item);
+                                      setIsEditDialogOpen(true);
+                                    }}
+                                  />
+                                )}
                               </TableCell>
                             </TableRow>
                           );

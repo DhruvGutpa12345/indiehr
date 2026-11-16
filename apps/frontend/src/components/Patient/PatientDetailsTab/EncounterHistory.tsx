@@ -16,6 +16,8 @@ import { PatientProps } from "@/components/Patient/PatientDetailsTab";
 
 import { getPermissions } from "@/common/Permissions";
 
+import { ihrEncounterHistoryRule } from "@/Utils/ihr/frontDesk"; // IndieHR P1-T11c
+import { useIhrAccess, useIhrPatientView } from "@/Utils/ihr/useIhrAccess"; // IndieHR P1-T11c
 import { ShortcutBadge } from "@/Utils/keyboardShortcutComponents";
 import query from "@/Utils/request/query";
 import { goBack } from "@/Utils/utils";
@@ -41,6 +43,15 @@ const EncounterHistory = (props: PatientProps) => {
     patientData.permissions,
   );
 
+  // IndieHR P1-T11c: the demographics view lists with the encounter status slug; while pending
+  // nothing is asked and nobody is sent away
+  const ihrList = ihrEncounterHistoryRule(
+    canViewPatients,
+    useIhrPatientView(patientId),
+    useIhrAccess(),
+  );
+  const canListHere = ihrList === "yes";
+
   // "can_create_encounter" has the ENCOUNTER permission context, and the
   // patient response only carries PATIENT and FACILITY context permissions.
   // The facility permissions are the correct source, as in the other
@@ -60,16 +71,16 @@ const EncounterHistory = (props: PatientProps) => {
         offset: ((qParams.page || 1) - 1) * 5,
       },
     }),
-    enabled: canViewPatients,
+    enabled: canListHere,
   });
 
   useEffect(() => {
-    if (!canViewPatients) {
+    if (ihrList === "no") {
       toast.error(t("no_permission_to_view_page"));
       goBack(`/facility/${facilityId}/patient/${patientId}`);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [canViewPatients]);
+  }, [ihrList]);
 
   return (
     <div className="mt-8">

@@ -5,8 +5,9 @@
 
 Creates the hospital if it is missing, loads CARE's synthetic demo data into it once, sets its
 profile, adds a pharmacist and a billing user, adds one user for each of our eight roles placed as
-design-b.md §4 says (P1-T11b1), and sets every test user's password to $TEST_PASSWORD (CARE's
-fixture passwords are public). Prints one JSON line.
+design-b.md §4 says (P1-T11b1), puts one account's visit in a bed as an inpatient stay (P1-T11c2),
+and sets every test user's password to $TEST_PASSWORD (CARE's fixture passwords are public).
+Prints one JSON line.
 Run through ``scripts/care-dev.sh seed``.
 """
 
@@ -21,7 +22,7 @@ from django_tenants.utils import schema_context
 from ihr_tenant_settings.models import HospitalProfile
 
 from ihr_platform.models import Domain, Hospital
-from ihr_platform.seeding import load_demo_data
+from ihr_platform.seeding import add_inpatient_stay, load_demo_data
 
 # Synthetic hospitals: names, places and phone numbers are made up.
 DEMO_HOSPITALS = {
@@ -133,6 +134,7 @@ class Command(BaseCommand):
             from care.users.models import User
 
             loaded = False
+            stay = None
             if not passwords_only:
                 if not User.objects.filter(username="care-doctor").exists():
                     load_demo_data(hospital.schema_name, domain)
@@ -141,6 +143,8 @@ class Command(BaseCommand):
                 for field, value in profile.items():
                     setattr(current, field, value)
                 current.save()
+                # an inpatient with a bed stay and an account: the billing desks' screens
+                stay = add_inpatient_stay()
             created = _add_extra_users()
             created += _add_role_users()
             reset = _set_passwords(password)
@@ -151,6 +155,7 @@ class Command(BaseCommand):
                     "hospital": slug,
                     "address": domain,
                     "demo_data_loaded": loaded,
+                    "inpatient_stay_added": stay is not None,
                     "users_created": created,
                     "passwords_reset": reset,
                 }

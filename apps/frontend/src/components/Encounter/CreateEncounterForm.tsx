@@ -52,6 +52,8 @@ import {
 import encounterApi from "@/types/emr/encounter/encounterApi";
 import { TagConfig, TagResource } from "@/types/emr/tagConfig/tagConfig";
 import useTagConfigs from "@/types/emr/tagConfig/useTagConfig";
+import { ihrShowsEncounterTags } from "@/Utils/ihr/frontDesk"; // IndieHR P1-T11c
+import { useIhrAccess } from "@/Utils/ihr/useIhrAccess"; // IndieHR P1-T11c
 import { ShortcutBadge } from "@/Utils/keyboardShortcutComponents";
 import mutate from "@/Utils/request/mutate";
 
@@ -84,6 +86,7 @@ export default function CreateEncounterForm({
   const [isOpen, setIsOpen] = useState(defaultOpen);
   const queryClient = useQueryClient();
   const { t } = useTranslation();
+  const ihrShowsTags = ihrShowsEncounterTags(useIhrAccess()); // IndieHR P1-T11c
   useShortcutSubContext();
 
   const encounterFormSchema = z
@@ -352,26 +355,28 @@ export default function CreateEncounterForm({
                   </FormItem>
                 )}
               />
-              <FormField
-                control={form.control}
-                name="tags"
-                render={({ field }) => (
-                  <FormItem>
-                    <FormLabel>{t("tags", { count: 2 })}</FormLabel>
-                    <FormControl className="mt-0">
-                      <TagSelectorPopover
-                        selected={selectedTags}
-                        onChange={(tags) => {
-                          field.onChange(tags.map((tag) => tag.id));
-                        }}
-                        resource={TagResource.ENCOUNTER}
-                        facilityId={facilityId}
-                      />
-                    </FormControl>
-                    <FormMessage />
-                  </FormItem>
-                )}
-              />
+              {ihrShowsTags && (
+                <FormField
+                  control={form.control}
+                  name="tags"
+                  render={({ field }) => (
+                    <FormItem>
+                      <FormLabel>{t("tags", { count: 2 })}</FormLabel>
+                      <FormControl className="mt-0">
+                        <TagSelectorPopover
+                          selected={selectedTags}
+                          onChange={(tags) => {
+                            field.onChange(tags.map((tag) => tag.id));
+                          }}
+                          resource={TagResource.ENCOUNTER}
+                          facilityId={facilityId}
+                        />
+                      </FormControl>
+                      <FormMessage />
+                    </FormItem>
+                  )}
+                />
+              )}
               <FormField
                 control={form.control}
                 name="organizations"

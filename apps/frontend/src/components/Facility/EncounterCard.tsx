@@ -19,6 +19,8 @@ import {
   ENCOUNTER_STATUS_ICONS,
   EncounterListRead,
 } from "@/types/emr/encounter/encounter";
+import { ihrCanOpenEncounter } from "@/Utils/ihr/frontDesk"; // IndieHR P1-T11c
+import { useIhrAccess } from "@/Utils/ihr/useIhrAccess"; // IndieHR P1-T11c
 
 interface TimelineEncounterCardProps {
   encounter: EncounterListRead;
@@ -40,8 +42,12 @@ export function TimelineEncounterCard({
     permissions,
   );
   const [isHovered, setIsHovered] = useState(false);
+  const ihr = useIhrAccess(); // IndieHR P1-T11c
 
-  const canAccess = canReadEncounter || canViewPatients;
+  const canAccess = ihrCanOpenEncounter(
+    canReadEncounter || canViewPatients,
+    ihr,
+  ); // IndieHR P1-T11c: the status page for the front desk
 
   const StatusIcon = ENCOUNTER_STATUS_ICONS[encounter.status];
 

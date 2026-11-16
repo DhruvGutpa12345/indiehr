@@ -31,6 +31,13 @@ import useCurrentFacility from "@/pages/Facility/utils/useCurrentFacility";
 import PatientHomeTabs from "@/pages/Patient/home/PatientHomeTabs";
 import { PLUGIN_Component } from "@/PluginEngine";
 import patientApi from "@/types/emr/patient/patientApi";
+import { ihrPatientView } from "@/Utils/ihr/access"; // IndieHR P1-T11c
+import {
+  ihrCanListEncounters,
+  ihrHidesPatientTags,
+  ihrShowsViewAccounts,
+} from "@/Utils/ihr/frontDesk"; // IndieHR P1-T11c
+import { useIhrAccess } from "@/Utils/ihr/useIhrAccess"; // IndieHR P1-T11c
 import query from "@/Utils/request/query";
 import { goBack } from "@/Utils/utils";
 import careConfig from "@careConfig";
@@ -93,6 +100,10 @@ export default function PatientHome() {
     enabled: !!(partial_id && (year_of_birth || phone_number)),
   });
 
+  // IndieHR P1-T11c: what the front desk may see of this patient (nothing while pending)
+  const ihr = useIhrAccess();
+  const ihrView = ihrPatientView(ihr, patientData?.permissions);
+
   if (isVerifyingPatient || !facility) {
     return (
       <div className="space-y-4 md:max-w-5xl mx-auto">
@@ -122,6 +133,7 @@ export default function PatientHome() {
                   ]}
                   tagEntityType="patient"
                   tagEntityId={patientData.id}
+                  hideTags={ihrHidesPatientTags(ihrView)}
                   patient={patientData}
                   facilityId={facilityId}
                   onTagsUpdate={() => {
@@ -216,12 +228,14 @@ export default function PatientHome() {
                     />
                   )}
 
-                <QuickAction
-                  icon={<Wallet />}
-                  title={t("view_accounts")}
-                  actionId="view-the-accounts"
-                  href={`/facility/${facilityId}/billing/account?status=active&patient_filter=${patientData.id}&patient_name=${patientData.name}`}
-                />
+                {ihrShowsViewAccounts(ihrView, ihr) && (
+                  <QuickAction
+                    icon={<Wallet />}
+                    title={t("view_accounts")}
+                    actionId="view-the-accounts"
+                    href={`/facility/${facilityId}/billing/account?status=active&patient_filter=${patientData.id}&patient_name=${patientData.name}`}
+                  />
+                )}
                 <PLUGIN_Component
                   __name="PatientHomeQuickActions"
                   patient={patientData}
@@ -233,7 +247,11 @@ export default function PatientHome() {
                 patientId={patientData.id}
                 facility={facility}
                 facilityPermissions={facility?.permissions ?? []}
-                canListEncounters={canListEncounters}
+                canListEncounters={ihrCanListEncounters(
+                  canListEncounters,
+                  ihrView,
+                  ihr,
+                )}
                 canWriteAppointment={canWriteAppointment}
                 canListTokens={canListTokens}
                 activeTab={activeTab}

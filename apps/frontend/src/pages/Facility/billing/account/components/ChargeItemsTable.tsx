@@ -110,12 +110,14 @@ export interface ChargeItemsTableProps {
   accountId: string;
   patientId: string;
   canAddChargeItems?: boolean;
+  canEditChargeItems?: boolean; // IndieHR P1-T11c
 }
 function ChargeItemsTable({
   facilityId,
   accountId,
   patientId,
   canAddChargeItems = true,
+  canEditChargeItems = true, // IndieHR P1-T11c
 }: ChargeItemsTableProps) {
   const { t } = useTranslation();
   const queryClient = useQueryClient();
@@ -447,6 +449,7 @@ function ChargeItemsTable({
                       handleSelectAll(checked === true)
                     }
                     aria-label={t("select_all")}
+                    disabled={!canEditChargeItems} // IndieHR P1-T11c
                   />
                 </TableHead>
                 <TableHead className="border-x p-3 text-gray-700 text-sm font-medium leading-5 w-10"></TableHead>
@@ -502,6 +505,7 @@ function ChargeItemsTable({
                           handleSelectItem(item.id, checked === true)
                         }
                         aria-label={t("select_item")}
+                        disabled={!canEditChargeItems} // IndieHR P1-T11c
                       />
                     </TableCell>
                     <TableCell className="border-x p-3 text-gray-950">
@@ -581,19 +585,21 @@ function ChargeItemsTable({
                       </div>
                     </TableCell>
                     <TableCell className="border-x p-3 text-gray-950">
-                      <ChargeItemActionsMenu
-                        item={item}
-                        facilityId={facilityId}
-                        accountId={accountId}
-                        onEdit={(item) => {
-                          setSelectedChargeItem(item);
-                          setIsEditDialogOpen(true);
-                        }}
-                        onChangeAccount={(item) => {
-                          setSelectedItems(new Set([item.id]));
-                          setIsChangeAccountOpen(true);
-                        }}
-                      />
+                      {canEditChargeItems && ( // IndieHR P1-T11c
+                        <ChargeItemActionsMenu
+                          item={item}
+                          facilityId={facilityId}
+                          accountId={accountId}
+                          onEdit={(item) => {
+                            setSelectedChargeItem(item);
+                            setIsEditDialogOpen(true);
+                          }}
+                          onChangeAccount={(item) => {
+                            setSelectedItems(new Set([item.id]));
+                            setIsChangeAccountOpen(true);
+                          }}
+                        />
+                      )}
                     </TableCell>
                   </TableRow>
                 );

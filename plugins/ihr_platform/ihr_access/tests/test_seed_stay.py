@@ -1,0 +1,106 @@
+"""The demo seed's inpatient stay (P1-T11c2; design-c.md §4, risk R6).
+
+CARE's demo data gives every visit a random class and no bed, so the billing desks' screens
+(the visit's bed on the status page, the account's "Bed charges" tab) had nothing to show. The
+seed helper ``add_inpatient_stay`` turns one account's visit into an inpatient stay in a free
+bed. Synthetic data only; it must be safe to run again.
+"""
+
+from care.emr.models import Encounter
+from care.emr.models.account import Account
+from care.emr.models.location import FacilityLocation, FacilityLocationEncounter
+from ihr_platform.seeding import add_inpatient_stay
+
+from ihr_access.tests.base import SwapCase
+
+
+class SeedStay(SwapCase):
+    def outpatient_account(self, name="Demo OPD account"):
+        """A visit that is not an inpatient stay, and an account whose primary visit it is."""
+        w = self.world
+        patient, _ = self.other_patient()
+        encounter = Encounter.objects.create(
+            patient=patient,
+            facility=w.facility,
+            status="planned",
+            encounter_class="amb",
+            priority="routine",
+            period={},
+        )
+        account = Account.objects.create(
+            facility=w.facility,
+            patient=patient,
+            primary_encounter=encounter,
+            status="active",
+            billing_status="open",
+            name=name,
+        )
+        return account, encounter
+
+    def free_bed(self, name="Bed 7"):
+        w = self.world
+        return FacilityLocation.objects.create(
+            facility=w.facility,
+            parent=w.bed.parent,
+            name=name,
+            description="a free bed",
+            status="active",
+            operational_status="O",
+            mode="instance",
+            form="bd",
+        )
+
+    def test_nothing_to_do_without_an_account(self):
+        Account.objects.all().delete()
+        self.assertIsNone(add_inpatient_stay())
+
+    def test_a_visit_without_a_free_bed_is_left_alone(self):
+        # the world's one bed is taken by its own visit
+        _account, encounter = self.outpatient_account()
+        self.assertIsNone(add_inpatient_stay())
+        encounter.refresh_from_db()
+        self.assertEqual(encounter.encounter_class, "amb")
+        self.assertIsNone(encounter.current_location)
+
+    def test_the_account_visit_becomes_an_inpatient_stay_in_the_free_bed(self):
+        account, encounter = self.outpatient_account()
+        bed = self.free_bed()
+
+        done = add_inpatient_stay()
+
+        self.assertEqual(done.pk, encounter.pk)
+        encounter.refresh_from_db()
+        bed.refresh_from_db()
+        self.assertEqual(encounter.encounter_class, "imp")
+        self.assertEqual(encounter.status, "in_progress")
+        self.assertEqual(encounter.current_location_id, bed.pk)
+        self.assertEqual(bed.current_encounter_id, encounter.pk)
+        stay = FacilityLocationEncounter.objects.get(encounter=encounter)
+        self.assertEqual(
+            (stay.location_id, stay.status, stay.end_datetime),
+            (bed.pk, "active", None),
+        )
+        # what the account page reads
+        account.refresh_from_db()
+        self.assertEqual(account.primary_encounter_id, encounter.pk)
+
+    def test_running_it_again_changes_nothing(self):
+        self.outpatient_account()
+        self.free_bed()
+        self.free_bed("Bed 8")
+        self.assertIsNotNone(add_inpatient_stay())
+
+        self.assertIsNone(add_inpatient_stay())
+
+        self.assertEqual(
+            FacilityLocationEncounter.objects.filter(
+                encounter__account__isnull=False
+            ).count(),
+            1,
+        )
+        self.assertEqual(
+            FacilityLocation.objects.filter(
+                current_encounter__isnull=False, name__in=["Bed 7", "Bed 8"]
+            ).count(),
+            1,
+        )

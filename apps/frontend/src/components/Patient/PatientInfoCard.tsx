@@ -22,6 +22,7 @@ export const PatientInfoCard = ({
   children,
   tagEntityType,
   tagEntityId,
+  hideTags = false, // IndieHR P1-T11c: tags are projected away for the front desk
 }: {
   patient: PublicPatientRead | PatientListRead | PatientRead;
   tags: TagConfig[];
@@ -30,6 +31,7 @@ export const PatientInfoCard = ({
   children?: React.ReactNode;
   tagEntityType: TagEntityType;
   tagEntityId: string;
+  hideTags?: boolean;
 }) => {
   const { t } = useTranslation();
 
@@ -43,47 +45,52 @@ export const PatientInfoCard = ({
           {children}
         </CardHeader>
       </Card>
-      <Card className="bg-white shadow-sm mx-3 rounded-md rounded-t-none rounded-b-md">
-        <CardHeader className="px-1 py-0 pt-2 md:pt-1">
-          <div className="flex flex-col md:flex-row items-center justify-between gap-2">
-            <div className="flex flex-wrap items-center gap-2">
-              {tags.length > 0 ? (
-                tags.map((tag) => (
-                  <TagBadge
-                    key={tag.id}
-                    tag={tag}
-                    hierarchyDisplay
-                    variant="outline"
-                  />
-                ))
-              ) : (
-                <span className="text-sm text-gray-500 px-2">
-                  {t("no_tags_assigned")}
-                </span>
-              )}
-            </div>
-
-            <TagAssignmentSheet
-              entityType={tagEntityType}
-              entityId={tagEntityId}
-              facilityId={facilityId}
-              currentTags={tags}
-              canWrite={true}
-              onUpdate={() => {
-                onTagsUpdate();
-              }}
-              trigger={
-                <Button variant="ghost">
-                  <SettingsIcon className=" text-gray-950" strokeWidth={1.5} />
-                  <span className="font-semibold underline">
-                    {tags.length === 0 ? t("add_tags") : t("manage_tags")}
+      {!hideTags && (
+        <Card className="bg-white shadow-sm mx-3 rounded-md rounded-t-none rounded-b-md">
+          <CardHeader className="px-1 py-0 pt-2 md:pt-1">
+            <div className="flex flex-col md:flex-row items-center justify-between gap-2">
+              <div className="flex flex-wrap items-center gap-2">
+                {tags.length > 0 ? (
+                  tags.map((tag) => (
+                    <TagBadge
+                      key={tag.id}
+                      tag={tag}
+                      hierarchyDisplay
+                      variant="outline"
+                    />
+                  ))
+                ) : (
+                  <span className="text-sm text-gray-500 px-2">
+                    {t("no_tags_assigned")}
                   </span>
-                </Button>
-              }
-            />
-          </div>
-        </CardHeader>
-      </Card>
+                )}
+              </div>
+
+              <TagAssignmentSheet
+                entityType={tagEntityType}
+                entityId={tagEntityId}
+                facilityId={facilityId}
+                currentTags={tags}
+                canWrite={true}
+                onUpdate={() => {
+                  onTagsUpdate();
+                }}
+                trigger={
+                  <Button variant="ghost">
+                    <SettingsIcon
+                      className=" text-gray-950"
+                      strokeWidth={1.5}
+                    />
+                    <span className="font-semibold underline">
+                      {tags.length === 0 ? t("add_tags") : t("manage_tags")}
+                    </span>
+                  </Button>
+                }
+              />
+            </div>
+          </CardHeader>
+        </Card>
+      )}
     </>
   );
 };

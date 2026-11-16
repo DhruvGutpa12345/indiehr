@@ -59,6 +59,8 @@ import { FacilityRead } from "@/types/facility/facility";
 import { Organization } from "@/types/organization/organization";
 import organizationApi from "@/types/organization/organizationApi";
 import { PatientIdentifierConfig } from "@/types/patient/patientIdentifierConfig/patientIdentifierConfig";
+import { ihrHidesClinicalFormFields } from "@/Utils/ihr/frontDesk"; // IndieHR P1-T11c
+import { useIhrPatientView } from "@/Utils/ihr/useIhrAccess"; // IndieHR P1-T11c
 import { ShortcutBadge } from "@/Utils/keyboardShortcutComponents";
 import mutate from "@/Utils/request/mutate";
 import query from "@/Utils/request/query";
@@ -90,6 +92,11 @@ export const PatientRegistration = ({ patientId }: { patientId?: string }) => {
   const { t } = useTranslation();
   const { facility, facilityId } = useCurrentFacility();
   const [{ phone_number, flow }] = useQueryParams<QParams>();
+  // IndieHR P1-T11c: on update the demographics view has no blood group or plugin fields
+  const ihrHidesClinical = ihrHidesClinicalFormFields(
+    useIhrPatientView(patientId),
+    !!patientId,
+  );
 
   const [suppressDuplicateWarning, setSuppressDuplicateWarning] =
     useState(!!patientId);
@@ -427,7 +434,11 @@ export const PatientRegistration = ({ patientId }: { patientId?: string }) => {
                   </div>
                 </AccordionTrigger>
                 <AccordionContent className="px-1 flex flex-col gap-6">
-                  <PatientBasicsContent form={form} isCreate={!patientId} />
+                  <PatientBasicsContent
+                    form={form}
+                    isCreate={!patientId}
+                    hideBloodGroup={ihrHidesClinical}
+                  />
                 </AccordionContent>
               </AccordionItem>
               <AccordionItem
@@ -444,8 +455,11 @@ export const PatientRegistration = ({ patientId }: { patientId?: string }) => {
                   </div>
                 </AccordionTrigger>
                 <AccordionContent className="px-1 flex flex-col gap-6">
-                  <AdditionalDetailsContent form={form} />
-                  {extensions.fields}
+                  <AdditionalDetailsContent
+                    form={form}
+                    hideDeceased={ihrHidesClinical}
+                  />
+                  {!ihrHidesClinical && extensions.fields}
                 </AccordionContent>
               </AccordionItem>
             </Accordion>
@@ -490,9 +504,11 @@ export const PatientRegistration = ({ patientId }: { patientId?: string }) => {
 const PatientBasicsContent = ({
   form,
   isCreate,
+  hideBloodGroup = false, // IndieHR P1-T11c
 }: {
   form: UseFormReturn<z.infer<ReturnType<typeof getFormSchema>>>;
   isCreate: boolean;
+  hideBloodGroup?: boolean;
 }) => {
   const { t } = useTranslation();
   const { facilityId, facility } = useCurrentFacility();
@@ -690,35 +706,37 @@ const PatientBasicsContent = ({
             </FormItem>
           )}
         />
-        <FormField
-          control={form.control}
-          name="blood_group"
-          render={({ field }) => (
-            <FormItem>
-              <FormLabel>{t("blood_group")}</FormLabel>
-              <Select
-                {...field}
-                value={field.value ?? ""}
-                onValueChange={field.onChange}
-                defaultValue={field.value}
-              >
-                <FormControl>
-                  <SelectTrigger ref={field.ref}>
-                    <SelectValue placeholder={t("select_blood_group")} />
-                  </SelectTrigger>
-                </FormControl>
-                <SelectContent>
-                  {BLOOD_GROUP_CHOICES.map((bg) => (
-                    <SelectItem key={bg.id} value={bg.id}>
-                      {bg.text}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-              <FormMessage />
-            </FormItem>
-          )}
-        />
+        {!hideBloodGroup && (
+          <FormField
+            control={form.control}
+            name="blood_group"
+            render={({ field }) => (
+              <FormItem>
+                <FormLabel>{t("blood_group")}</FormLabel>
+                <Select
+                  {...field}
+                  value={field.value ?? ""}
+                  onValueChange={field.onChange}
+                  defaultValue={field.value}
+                >
+                  <FormControl>
+                    <SelectTrigger ref={field.ref}>
+                      <SelectValue placeholder={t("select_blood_group")} />
+                    </SelectTrigger>
+                  </FormControl>
+                  <SelectContent>
+                    {BLOOD_GROUP_CHOICES.map((bg) => (
+                      <SelectItem key={bg.id} value={bg.id}>
+                        {bg.text}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+                <FormMessage />
+              </FormItem>
+            )}
+          />
+        )}
       </div>
 
       {facility &&
@@ -777,8 +795,10 @@ const PatientBasicsContent = ({
 
 const AdditionalDetailsContent = ({
   form,
+  hideDeceased = false, // IndieHR P1-T11c
 }: {
   form: UseFormReturn<z.infer<ReturnType<typeof getFormSchema>>>;
+  hideDeceased?: boolean;
 }) => {
   const { t } = useTranslation();
   const { facility } = useCurrentFacility();
@@ -945,49 +965,51 @@ const AdditionalDetailsContent = ({
           />
         ))}
 
-      <div className="flex items-center mb-4 bg-red-50 p-4 rounded-md border border-red-200">
-        <div className="flex flex-col gap-2">
-          <p className="text-sm font-medium text-black">
-            {t("deceased_status")}
-          </p>
-          <div className="flex items-center gap-2">
-            <Checkbox
-              checked={form.watch("is_deceased")}
-              onCheckedChange={(checked) => {
-                form.setValue("is_deceased", !!checked);
-              }}
-            />
-            <div className="flex flex-col">
-              <span className="text-sm font-medium text-black">
-                {t("mark_as_deceased")}
-              </span>
-              <p className="text-sm text-gray-700">
-                {t("use_only_if_patient_has_passed_away_before_registration")}
-              </p>
+      {!hideDeceased && (
+        <div className="flex items-center mb-4 bg-red-50 p-4 rounded-md border border-red-200">
+          <div className="flex flex-col gap-2">
+            <p className="text-sm font-medium text-black">
+              {t("deceased_status")}
+            </p>
+            <div className="flex items-center gap-2">
+              <Checkbox
+                checked={form.watch("is_deceased")}
+                onCheckedChange={(checked) => {
+                  form.setValue("is_deceased", !!checked);
+                }}
+              />
+              <div className="flex flex-col">
+                <span className="text-sm font-medium text-black">
+                  {t("mark_as_deceased")}
+                </span>
+                <p className="text-sm text-gray-700">
+                  {t("use_only_if_patient_has_passed_away_before_registration")}
+                </p>
+              </div>
             </div>
+            {form.watch("is_deceased") && (
+              <FormField
+                control={form.control}
+                name="deceased_datetime"
+                render={({ field }) => (
+                  <FormItem className="w-full mt-2">
+                    <FormLabel>{t("date_and_time_of_death")}</FormLabel>
+                    <FormControl>
+                      <DateTimeInput
+                        id="death-datetime"
+                        value={field.value ?? ""}
+                        onDateChange={(val) => field.onChange(val ?? null)}
+                        max={format(new Date(), "yyyy-MM-dd'T'HH:mm")}
+                      />
+                    </FormControl>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
+            )}
           </div>
-          {form.watch("is_deceased") && (
-            <FormField
-              control={form.control}
-              name="deceased_datetime"
-              render={({ field }) => (
-                <FormItem className="w-full mt-2">
-                  <FormLabel>{t("date_and_time_of_death")}</FormLabel>
-                  <FormControl>
-                    <DateTimeInput
-                      id="death-datetime"
-                      value={field.value ?? ""}
-                      onDateChange={(val) => field.onChange(val ?? null)}
-                      max={format(new Date(), "yyyy-MM-dd'T'HH:mm")}
-                    />
-                  </FormControl>
-                  <FormMessage />
-                </FormItem>
-              )}
-            />
-          )}
         </div>
-      </div>
+      )}
 
       {facility &&
         getAutogeneratedIdentifierConfigs(facility).map(

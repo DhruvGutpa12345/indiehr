@@ -75,3 +75,61 @@ def load_demo_data(schema_name, domain):
         care_fixture_context() as base,
     ):
         load_fixtures(base)
+
+
+def add_inpatient_stay():
+    """Make one demo patient's visit an inpatient stay in a free bed, with its account.
+
+    The Cashier and the TPA Desk see the visit's bed (Q-K37a B) and the account's "Bed charges"
+    tab lists it; CARE's own demo data gives visits a random class and no bed, so the web app's
+    billing-desk screens (P1-T11c2) had nothing to show. Synthetic data only. Picks the oldest
+    account that has a primary visit, turns that visit into an in-progress inpatient visit and
+    places it in the first free bed of its hospital (a stay that started two days ago). Run
+    inside a hospital's schema; does nothing when that visit already has a bed stay, when no
+    account has a visit, or when no bed is free. Returns the visit, or None.
+    """
+    from datetime import timedelta
+
+    from care.emr.models.account import Account
+    from care.emr.models.location import FacilityLocation, FacilityLocationEncounter
+    from django.db import transaction
+    from django.utils import timezone
+
+    account = (
+        Account.objects.filter(primary_encounter__isnull=False, deleted=False)
+        .order_by("created_date", "id")
+        .select_related("primary_encounter")
+        .first()
+    )
+    if account is None:
+        return None
+    encounter = account.primary_encounter
+    if FacilityLocationEncounter.objects.filter(encounter=encounter).exists():
+        return None
+    bed = (
+        FacilityLocation.objects.filter(
+            facility=encounter.facility,
+            form="bd",
+            mode="instance",
+            current_encounter__isnull=True,
+            deleted=False,
+        )
+        .order_by("name", "id")
+        .first()
+    )
+    if bed is None:
+        return None
+    started = timezone.now() - timedelta(days=2)
+    with transaction.atomic():
+        encounter.encounter_class = "imp"
+        encounter.status = "in_progress"
+        encounter.period = {"start": started.isoformat()}
+        encounter.current_location = bed
+        encounter.save()
+        FacilityLocationEncounter.objects.create(
+            location=bed, encounter=encounter, status="active", start_datetime=started
+        )
+        bed.current_encounter = encounter
+        bed.system_availability_status = "reserved"
+        bed.save()
+    return encounter

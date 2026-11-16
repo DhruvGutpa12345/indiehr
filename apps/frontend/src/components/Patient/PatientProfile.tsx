@@ -9,12 +9,18 @@ import Page from "@/components/Common/Page";
 import RelativeDateTooltip from "@/components/Common/RelativeDateTooltip";
 import {
   getTabs,
+  BASE_PATIENT_TABS as ihrAllTabs,
   patientTabs as tabs,
 } from "@/components/Patient/PatientDetailsTab";
 
 import { getPermissions } from "@/common/Permissions";
 
 import { PLUGIN_Component } from "@/PluginEngine";
+import {
+  ihrAppointmentsFacilityId,
+  ihrPatientTabs,
+} from "@/Utils/ihr/frontDesk"; // IndieHR P1-T11c
+import { useIhrAccess, useIhrPatientView } from "@/Utils/ihr/useIhrAccess"; // IndieHR P1-T11c
 import query from "@/Utils/request/query";
 import { formatName } from "@/Utils/utils";
 import { usePermissions } from "@/context/PermissionContext";
@@ -56,6 +62,9 @@ export const PatientProfile = (props: {
     hasPermission,
   );
 
+  const ihr = useIhrAccess(); // IndieHR P1-T11c
+  const ihrView = useIhrPatientView(id); // IndieHR P1-T11c
+
   const { canWriteAppointment } = getPermissions(
     hasPermission,
     patientData?.permissions ?? [],
@@ -65,7 +74,8 @@ export const PatientProfile = (props: {
     return <Loading />;
   }
 
-  const tabs = getPatientTabs;
+  // IndieHR P1-T11c: the demographics view's own tabs; nothing while pending
+  const tabs = ihrPatientTabs(getPatientTabs, ihrAllTabs, ihrView, ihr);
 
   const Tab = tabs.find((t) => t.route === page);
 
@@ -141,7 +151,9 @@ export const PatientProfile = (props: {
             {Tab?.component && (
               <Tab.component
                 facilityId={
-                  Tab?.route === "appointments" ? undefined : facilityId || ""
+                  Tab?.route === "appointments"
+                    ? ihrAppointmentsFacilityId(ihrView, facilityId) // IndieHR P1-T11c
+                    : facilityId || ""
                 }
                 patientId={id}
                 patientData={patientData}

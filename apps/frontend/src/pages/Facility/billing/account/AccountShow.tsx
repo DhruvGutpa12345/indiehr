@@ -11,6 +11,7 @@ import { cn } from "@/lib/utils";
 
 import CareIcon from "@/CAREUI/icons/CareIcon";
 import TagBadge from "@/components/Tags/TagBadge";
+import { IhrNavTabs } from "@/components/ihr/IhrNavTabs"; // IndieHR P1-T11c
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
@@ -27,7 +28,6 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { MonetaryDisplay } from "@/components/ui/monetary-display";
-import { NavTabs } from "@/components/ui/nav-tabs";
 import {
   Select,
   SelectContent,
@@ -45,9 +45,15 @@ import { TableSkeleton } from "@/components/Common/SkeletonLoading";
 import TagAssignmentSheet from "@/components/Tags/TagAssignmentSheet";
 
 import {
+  ihrAccountActions,
+  ihrAccountTabs,
+  ihrCanAddChargeItems,
+} from "@/Utils/ihr/frontDesk"; // IndieHR P1-T11c
+import {
   indiaDateString,
   indiaDateTimeString,
 } from "@/Utils/ihr/indiaDateFormats"; // IndieHR P1-T7b
+import { useIhrAccess } from "@/Utils/ihr/useIhrAccess"; // IndieHR P1-T11c
 import mutate from "@/Utils/request/mutate";
 import query from "@/Utils/request/query";
 import { getPermissions } from "@/common/Permissions";
@@ -145,6 +151,8 @@ function AccountShow({
   }>({ sheetOpen: false, reason: AccountBillingStatus.closed_baddebt });
 
   const { facility } = useCurrentFacility();
+  const ihr = useIhrAccess(); // IndieHR P1-T11c
+  const ihrActions = ihrAccountActions(ihr); // IndieHR P1-T11c
   const { hasPermission } = usePermissions();
 
   const { canUpdateAccount } = getPermissions(
@@ -301,65 +309,77 @@ function AccountShow({
   const roundedBalance = roundWhole(account.total_balance);
   const roundedBilledGross = roundWhole(account.total_gross);
 
-  const tabs = {
-    invoices: {
-      label: t("invoices"),
-      component: (
-        <InvoicesData
-          facilityId={facilityId}
-          accountId={accountId}
-          hideAccountColumn
-        />
-      ),
+  // IndieHR P1-T11c: tabs by the role's read slugs, never Reports (Q-K41), the bed only for billing
+  const tabs = ihrAccountTabs(
+    {
+      invoices: {
+        label: t("invoices"),
+        component: (
+          <InvoicesData
+            facilityId={facilityId}
+            accountId={accountId}
+            hideAccountColumn
+          />
+        ),
 
-      shortcutId: "switch-to-invoices-tab",
+        shortcutId: "switch-to-invoices-tab",
+      },
+      charge_items: {
+        label: t("charge_items"),
+        component: (
+          <ChargeItemsTable
+            facilityId={facilityId}
+            accountId={accountId}
+            patientId={account.patient.id}
+            canAddChargeItems={ihrCanAddChargeItems(
+              isAccountBillableAndActive,
+              ihr,
+            )}
+            canEditChargeItems={ihrActions.chargeItems}
+          />
+        ),
+        shortcutId: "switch-to-charge-items-tab",
+      },
+      payments: {
+        label: t("payments"),
+        component: (
+          <PaymentsData
+            facilityId={facilityId}
+            accountId={accountId}
+            patientId={account.patient.id}
+            hideAccountColumn
+          />
+        ),
+        shortcutId: "switch-to-payments-tab",
+      },
+      reports: {
+        label: t("reports"),
+        component: (
+          <ReportSubTab
+            associatingId={accountId}
+            reportType={ReportType.ACCOUNT_REPORT}
+          />
+        ),
+        shortcutId: "switch-to-reports-tab",
+      },
+      bed_charge_items: {
+        label: t("bed_charge_items"),
+        component: (
+          <BedChargeItemsTable
+            facilityId={facilityId}
+            account={account}
+            canAddChargeItems={ihrCanAddChargeItems(
+              isAccountBillableAndActive,
+              ihr,
+            )}
+            canEditChargeItems={ihrActions.chargeItems}
+          />
+        ),
+        shortcutId: "switch-to-bed-charge-items-tab",
+      },
     },
-    charge_items: {
-      label: t("charge_items"),
-      component: (
-        <ChargeItemsTable
-          facilityId={facilityId}
-          accountId={accountId}
-          patientId={account.patient.id}
-          canAddChargeItems={isAccountBillableAndActive}
-        />
-      ),
-      shortcutId: "switch-to-charge-items-tab",
-    },
-    payments: {
-      label: t("payments"),
-      component: (
-        <PaymentsData
-          facilityId={facilityId}
-          accountId={accountId}
-          patientId={account.patient.id}
-          hideAccountColumn
-        />
-      ),
-      shortcutId: "switch-to-payments-tab",
-    },
-    reports: {
-      label: t("reports"),
-      component: (
-        <ReportSubTab
-          associatingId={accountId}
-          reportType={ReportType.ACCOUNT_REPORT}
-        />
-      ),
-      shortcutId: "switch-to-reports-tab",
-    },
-    bed_charge_items: {
-      label: t("bed_charge_items"),
-      component: (
-        <BedChargeItemsTable
-          facilityId={facilityId}
-          account={account}
-          canAddChargeItems={isAccountBillableAndActive}
-        />
-      ),
-      shortcutId: "switch-to-bed-charge-items-tab",
-    },
-  };
+    ihr,
+  );
 
   return (
     <div className="space-y-3">
@@ -376,103 +396,128 @@ function AccountShow({
         <div className="flex gap-2">
           {isAccountBillableAndActive && (
             <div className="hidden lg:flex gap-2">
-              <Button
-                variant="ghost"
-                className="text-gray-950 gap-1 flex flex-row items-center justify-between"
-                onClick={() =>
-                  setCloseAccountStatus({
-                    ...closeAccountStatus,
-                    sheetOpen: true,
-                  })
-                }
-              >
-                <CareIcon icon="l-check" className="size-5" />
-                <span className="underline">{t("settle_close")}</span>
-                <ShortcutBadge actionId="settle-close-account" />
-              </Button>
-              <Button
-                variant="outline"
-                className="border-gray-400 text-gray-950"
-                onClick={() =>
-                  navigate(
-                    `/facility/${facilityId}/billing/account/${accountId}/invoices/create`,
-                  )
-                }
-              >
-                <CareIcon icon="l-plus" className="mr-2 size-4" />
-                {t("create_invoice")}
-                <ShortcutBadge actionId="create-invoice" />
-              </Button>
-              <Button variant="primary" onClick={() => openPaymentSheet("pay")}>
-                <CareIcon icon="l-plus" className="size-4" />
-                {t("add_credit_payment")}
-                <ShortcutBadge actionId="credit-payment-account" />
-              </Button>
+              {ihrActions.account && (
+                <Button
+                  variant="ghost"
+                  className="text-gray-950 gap-1 flex flex-row items-center justify-between"
+                  onClick={() =>
+                    setCloseAccountStatus({
+                      ...closeAccountStatus,
+                      sheetOpen: true,
+                    })
+                  }
+                >
+                  <CareIcon icon="l-check" className="size-5" />
+                  <span className="underline">{t("settle_close")}</span>
+                  <ShortcutBadge actionId="settle-close-account" />
+                </Button>
+              )}
+              {ihrActions.invoice && (
+                <Button
+                  variant="outline"
+                  className="border-gray-400 text-gray-950"
+                  onClick={() =>
+                    navigate(
+                      `/facility/${facilityId}/billing/account/${accountId}/invoices/create`,
+                    )
+                  }
+                >
+                  <CareIcon icon="l-plus" className="mr-2 size-4" />
+                  {t("create_invoice")}
+                  <ShortcutBadge actionId="create-invoice" />
+                </Button>
+              )}
+              {ihrActions.payment && (
+                <Button
+                  variant="primary"
+                  onClick={() => openPaymentSheet("pay")}
+                >
+                  <CareIcon icon="l-plus" className="size-4" />
+                  {t("add_credit_payment")}
+                  <ShortcutBadge actionId="credit-payment-account" />
+                </Button>
+              )}
             </div>
           )}
           {isAccountBillableAndActive && (
             <div className="lg:hidden flex justify-end gap-2">
-              <Button
-                variant="outline"
-                className="border-gray-400 text-gray-950"
-                onClick={() =>
-                  navigate(
-                    `/facility/${facilityId}/billing/account/${accountId}/invoices/create`,
-                  )
-                }
-              >
-                <CareIcon icon="l-plus" className="size-4" />
-                {t("invoice")}
-                <ShortcutBadge actionId="create-invoice" />
-              </Button>
-              <Button variant="primary" onClick={() => openPaymentSheet("pay")}>
-                <CareIcon icon="l-plus" className="size-4" />
-                {t("credit")}
-                <ShortcutBadge actionId="record-payment-account" />
-              </Button>
-            </div>
-          )}
-          {account.status == AccountStatus.active && (
-            <DropdownMenu>
-              <DropdownMenuTrigger asChild>
+              {ihrActions.invoice && (
                 <Button
                   variant="outline"
-                  size="icon"
-                  className="border-gray-400"
+                  className="border-gray-400 text-gray-950"
+                  onClick={() =>
+                    navigate(
+                      `/facility/${facilityId}/billing/account/${accountId}/invoices/create`,
+                    )
+                  }
                 >
-                  <MoreVertical className="size-4" />
+                  <CareIcon icon="l-plus" className="size-4" />
+                  {t("invoice")}
+                  <ShortcutBadge actionId="create-invoice" />
                 </Button>
-              </DropdownMenuTrigger>
-              <DropdownMenuContent align="end">
-                {!isAccountBillingClosed(account) && (
-                  <>
-                    <DropdownMenuItem
-                      className="lg:hidden"
-                      onClick={() =>
-                        setCloseAccountStatus({
-                          ...closeAccountStatus,
-                          sheetOpen: true,
-                        })
-                      }
-                    >
-                      {t("settle_close")}
-                      <ShortcutBadge actionId="settle-close-account" />
-                    </DropdownMenuItem>
-                    <DropdownMenuItem
-                      onClick={() => openPaymentSheet("credit_note")}
-                    >
-                      <CareIcon icon="l-plus" className="mr-2 size-4" />
-                      {t("record_credit_note")}
-                    </DropdownMenuItem>
-                  </>
-                )}
-                <DropdownMenuItem onClick={() => setTransferPaymentOpen(true)}>
-                  <CareIcon icon="l-exchange" className="mr-2 size-4" />
-                  {t("transfer_payment")}
-                </DropdownMenuItem>
-              </DropdownMenuContent>
-            </DropdownMenu>
+              )}
+              {ihrActions.payment && (
+                <Button
+                  variant="primary"
+                  onClick={() => openPaymentSheet("pay")}
+                >
+                  <CareIcon icon="l-plus" className="size-4" />
+                  {t("credit")}
+                  <ShortcutBadge actionId="record-payment-account" />
+                </Button>
+              )}
+            </div>
           )}
+          {account.status == AccountStatus.active &&
+            (ihrActions.account || ihrActions.payment) && (
+              <DropdownMenu>
+                <DropdownMenuTrigger asChild>
+                  <Button
+                    variant="outline"
+                    size="icon"
+                    className="border-gray-400"
+                  >
+                    <MoreVertical className="size-4" />
+                  </Button>
+                </DropdownMenuTrigger>
+                <DropdownMenuContent align="end">
+                  {!isAccountBillingClosed(account) && (
+                    <>
+                      {ihrActions.account && (
+                        <DropdownMenuItem
+                          className="lg:hidden"
+                          onClick={() =>
+                            setCloseAccountStatus({
+                              ...closeAccountStatus,
+                              sheetOpen: true,
+                            })
+                          }
+                        >
+                          {t("settle_close")}
+                          <ShortcutBadge actionId="settle-close-account" />
+                        </DropdownMenuItem>
+                      )}
+                      {ihrActions.payment && (
+                        <DropdownMenuItem
+                          onClick={() => openPaymentSheet("credit_note")}
+                        >
+                          <CareIcon icon="l-plus" className="mr-2 size-4" />
+                          {t("record_credit_note")}
+                        </DropdownMenuItem>
+                      )}
+                    </>
+                  )}
+                  {ihrActions.payment && (
+                    <DropdownMenuItem
+                      onClick={() => setTransferPaymentOpen(true)}
+                    >
+                      <CareIcon icon="l-exchange" className="mr-2 size-4" />
+                      {t("transfer_payment")}
+                    </DropdownMenuItem>
+                  )}
+                </DropdownMenuContent>
+              </DropdownMenu>
+            )}
         </div>
       </Card>
       <div className="bg-gray-100 p-3 space-y-4 rounded-lg">
@@ -521,26 +566,32 @@ function AccountShow({
                 {t("tags_proper")}
               </p>
               <div className="flex flex-wrap gap-1">
-                <TagAssignmentSheet
-                  entityType="account"
-                  entityId={accountId}
-                  facilityId={facilityId}
-                  currentTags={account.tags ?? []}
-                  onUpdate={() => {
-                    queryClient.invalidateQueries({
-                      queryKey: ["account", accountId],
-                    });
-                  }}
-                  patientId={account.patient.id}
-                  trigger={
-                    <Button variant="outline" size="xs" className="rounded-sm">
-                      <Hash />
-                      {account.tags && account.tags.length > 0
-                        ? t("manage_tags")
-                        : t("add_tags")}
-                    </Button>
-                  }
-                />
+                {ihrActions.account && (
+                  <TagAssignmentSheet
+                    entityType="account"
+                    entityId={accountId}
+                    facilityId={facilityId}
+                    currentTags={account.tags ?? []}
+                    onUpdate={() => {
+                      queryClient.invalidateQueries({
+                        queryKey: ["account", accountId],
+                      });
+                    }}
+                    patientId={account.patient.id}
+                    trigger={
+                      <Button
+                        variant="outline"
+                        size="xs"
+                        className="rounded-sm"
+                      >
+                        <Hash />
+                        {account.tags && account.tags.length > 0
+                          ? t("manage_tags")
+                          : t("add_tags")}
+                      </Button>
+                    }
+                  />
+                )}
                 {account.tags?.map((tag) => (
                   <TagBadge key={tag.id} tag={tag} className="text-xs" />
                 ))}
@@ -727,7 +778,7 @@ function AccountShow({
       </div>
 
       {/* Tabs Section */}
-      <NavTabs
+      <IhrNavTabs
         className="w-full mt-4"
         tabContentClassName="mt-6"
         tabs={tabs}

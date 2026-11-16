@@ -17,6 +17,8 @@ import { getPermissions } from "@/common/Permissions";
 import { GENDER_TYPES } from "@/common/constants";
 
 import { PLUGIN_Component } from "@/PluginEngine";
+import { ihrDemographySections } from "@/Utils/ihr/frontDesk"; // IndieHR P1-T11c
+import { useIhrAccess, useIhrPatientView } from "@/Utils/ihr/useIhrAccess"; // IndieHR P1-T11c
 import { formatPatientAge } from "@/Utils/utils";
 import { formatPatientAddress } from "@/components/Patient/utils";
 import { usePermissions } from "@/context/PermissionContext";
@@ -39,6 +41,9 @@ export const Demography = (props: PatientProps) => {
     hasPermission,
     patientData.permissions,
   );
+
+  const ihr = useIhrAccess(); // IndieHR P1-T11c
+  const ihrView = useIhrPatientView(patientId); // IndieHR P1-T11c
 
   const patientExtensionData = usePatientExtensionData(
     patientData.extensions,
@@ -161,7 +166,7 @@ export const Demography = (props: PatientProps) => {
     })),
   };
 
-  const data: Data[] = [
+  const careData: Data[] = [
     {
       id: "general-info",
       allowEdit:
@@ -305,6 +310,15 @@ export const Demography = (props: PatientProps) => {
       ),
     },
   ];
+
+  // IndieHR P1-T11c: the demographics view drops tags, plugin data and blood group (§3.3)
+  const data = ihrDemographySections(
+    careData,
+    ihrView,
+    ihr,
+    !!facilityId,
+    t("blood_group"),
+  );
 
   return (
     <div>

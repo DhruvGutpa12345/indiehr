@@ -674,6 +674,24 @@ A payment record can be a payment, an advance, or an adjustment (a write-off or 
 
 *Recommendation A:* fail closed; the delay is one small request, cached for the session. Reverse: `PENDING_KEEP` in `src/Utils/ihr/menu.ts` (and its tests).
 
+### Q-K55 — May the Receptionist print an appointment slip? (P1-T11c2, design-c.md §13.8; auto-accepted by Claude, 2026-11-16, awaiting owner confirmation)
+
+CARE's print page (`AppointmentPrint.tsx`) always also asks for the visit's charge items and invoice. The Receptionist holds neither `can_read_charge_item` nor `can_read_invoice`, so every print would answer 403.
+
+- **A ⭐ (taken).** Keep the print page refused for the demographics view ("not part of your role"); the Receptionist sees the appointment itself on the patient's Appointments tab.
+- B. A one-line hook in `AppointmentPrint.tsx` that skips the charge-item and invoice queries without those slugs, and open the page: a printable slip without the bill part.
+
+*Recommendation A:* no new upstream edit and no dead end now; B is cheap if the front desk asks for printed slips. Reverse: add the print key to `DEMOGRAPHICS_KEYS` in `src/Utils/ihr/routeKeys.ts` plus the hook (B).
+
+### Q-K56 — Which billing buttons do the Cashier, TPA Desk and Receptionist see on an account? (P1-T11c2 review F3; auto-accepted by Claude, 2026-11-16, awaiting owner confirmation)
+
+Design §3.3 listed only the account page's tabs; CARE drew every write button to everyone who opens the account, and the backend refuses most of them for our desks.
+
+- **A ⭐ (taken).** A button shows only when the request behind it can succeed (`ihrAccountActions` in `frontDesk.ts`): the Cashier keeps all of them; the TPA Desk keeps Settle and close and tags (`can_update_account`), no invoice, payment, credit note, transfer or charge-item row menu; the Receptionist none. CARE's roles unchanged. Two more upstream files carry a small hook (the two charge-item tables).
+- B. Leave CARE's buttons and let the backend answer 403 on press.
+
+*Recommendation A:* no dead ends at the desk. Reverse: make `ihrAccountActions` return CARE's value for restricted roles too.
+
 **Still open:** Q-B4 (final MVP module list: assumed as in PLAN.md Phase 2) and Q-B6/B7 (pricing, timeline). Q-F2 is moot while AI is deferred.
 
 ---

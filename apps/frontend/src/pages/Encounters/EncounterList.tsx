@@ -42,6 +42,12 @@ import { CardGridSkeleton } from "@/components/Common/SkeletonLoading";
 import EncounterInfoCard from "@/components/Encounter/EncounterInfoCard";
 
 import useFilters from "@/hooks/useFilters";
+import {
+  ihrEncounterFilters,
+  ihrEncounterListEnabled,
+  ihrEncounterParams,
+} from "@/Utils/ihr/frontDesk"; // IndieHR P1-T11c
+import { useIhrAccess } from "@/Utils/ihr/useIhrAccess"; // IndieHR P1-T11c
 
 import PatientIdentifierFilter from "@/components/Patient/PatientIdentifierFilter";
 import {
@@ -135,7 +141,12 @@ export function EncounterList({
   facilityId,
   encounterClass,
 }: EncounterListProps) {
-  const { qParams, updateQuery, Pagination, resultsPerPage } = useFilters({
+  const {
+    qParams: careQParams,
+    updateQuery,
+    Pagination,
+    resultsPerPage,
+  } = useFilters({
     limit: 15,
     disableCache: true,
     cacheBlacklist: [
@@ -147,6 +158,10 @@ export function EncounterList({
     ],
   });
   const { t } = useTranslation();
+  // IndieHR P1-T11c: outside CARE's mode the refused filters (department, care team, tags) are
+  // dropped from the address, from a filter saved in the session, and from the request
+  const ihr = useIhrAccess();
+  const qParams = ihrEncounterParams(careQParams, ihr);
   const [, setSavedFilters] = useAtom(encounterListFiltersAtom);
   const hasRestoredFilters = useRef(false);
   const hasAppliedDefaultStatus = useRef(false);
@@ -371,7 +386,7 @@ export function EncounterList({
         name: searchQueryParams.name,
       },
     }),
-    enabled: !propEncounters && !encounter_id,
+    enabled: !propEncounters && !encounter_id && ihrEncounterListEnabled(ihr),
   });
 
   const { data: queryEncounter } = useQuery({
@@ -428,14 +443,22 @@ export function EncounterList({
     enabled: !!care_team_user,
   });
 
-  const filters = [
-    encounterStatusFilter("status", "multi"),
-    encounterPriorityFilter("priority"),
-    departmentFilter("organization"),
-    careTeamFilter("care_team"),
-    tagFilter("tags", TagResource.ENCOUNTER, "multi", t("tags", { count: 2 })),
-    dateFilter("created_date", t("date"), longDateRangeOptions, true),
-  ];
+  const filters = ihrEncounterFilters(
+    [
+      encounterStatusFilter("status", "multi"),
+      encounterPriorityFilter("priority"),
+      departmentFilter("organization"),
+      careTeamFilter("care_team"),
+      tagFilter(
+        "tags",
+        TagResource.ENCOUNTER,
+        "multi",
+        t("tags", { count: 2 }),
+      ),
+      dateFilter("created_date", t("date"), longDateRangeOptions, true),
+    ],
+    ihr,
+  );
 
   const onFilterUpdate = (filterQuery: Record<string, unknown>) => {
     // Save to sessionStorage atom

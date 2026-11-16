@@ -214,6 +214,116 @@ class CheckIhrFrontend(unittest.TestCase):
                 path.write_text(path.read_text().replace(cif.MARKER, "marker"), encoding="utf-8")
                 self.assertProblem(rel, "marker")
 
+    # --- the front-desk and billing-desk screens (P1-T11c2) ----------------------------------
+
+    def test_every_c2_screen_is_hooked(self):
+        hooked = {
+            cif.PATIENT_PROFILE,
+            cif.DEMOGRAPHY,
+            cif.PATIENT_REGISTRATION,
+            cif.ENCOUNTER_HISTORY,
+            cif.ENCOUNTER_CARD,
+            cif.ENCOUNTER_ACTIONS,
+            cif.PATIENT_HOME,
+            cif.PATIENT_INFO_CARD,
+            cif.CREATE_ENCOUNTER,
+            cif.ENCOUNTER_LIST,
+            cif.ACCOUNT_SHOW,
+        }
+        self.assertLessEqual(hooked, set(cif.HOOKS))
+
+    def test_plugin_slot_key_change_fails(self):
+        self.edit(
+            cif.DEMOGRAPHY,
+            'key="patient_details_tab__demography__general_info"',
+            'key="patient_details_tab__demography__general"',
+        )
+        self.assertProblem(cif.DEMOGRAPHY, "plugin slot")
+
+    def test_demography_section_ids_are_anchored(self):
+        for section in ("additional-details", "tags", "general-info"):
+            with self.subTest(section=section):
+                self.setUp()
+                self.edit(cif.DEMOGRAPHY, f'id: "{section}"', f'id: "{section}x"')
+                self.assertProblem(cif.DEMOGRAPHY, section)
+
+    def test_base_patient_tabs_export_is_anchored(self):
+        self.edit(cif.PATIENT_TABS, "export const BASE_PATIENT_TABS", "const BASE_PATIENT_TABS")
+        self.assertProblem(cif.PATIENT_TABS, "BASE_PATIENT_TABS")
+
+    def test_encounter_list_filter_keys_are_anchored_even_when_split_over_lines(self):
+        for call, key in (
+            ("departmentFilter", "organization"),
+            ("careTeamFilter", "care_team"),
+            ("tagFilter", "tags"),
+        ):
+            with self.subTest(call=call):
+                self.setUp()
+                self.edit(cif.ENCOUNTER_LIST, f'{call}(', f'{call}Renamed(')
+                self.assertProblem(cif.ENCOUNTER_LIST, key)
+
+    def test_session_restored_filters_are_anchored(self):
+        self.edit(cif.ENCOUNTER_LIST, "restoredParams.care_team_user", "restoredParams.care_team_member")
+        self.assertProblem(cif.ENCOUNTER_LIST, "care_team_user")
+
+    def test_a_new_account_tab_must_be_classified(self):
+        self.edit(cif.ACCOUNT_SHOW, '  "bed_charge_items",\n] as const', '  "bed_charge_items",\n  "statements",\n] as const')
+        self.assertProblem(cif.ACCOUNT_SHOW, "ACCOUNT_TABS")
+
+    def test_a_dropped_account_tab_must_be_classified(self):
+        self.edit(cif.ACCOUNT_SHOW, '  "reports",\n', "")
+        self.assertProblem(cif.ACCOUNT_SHOW, "ACCOUNT_TABS")
+
+    def test_account_nav_tabs_wrapper_is_anchored(self):
+        self.edit(cif.ACCOUNT_SHOW, "<IhrNavTabs", "<NavTabs")
+        self.assertProblem(cif.ACCOUNT_SHOW, "NavTabs")
+
+    def test_every_hook_site_is_anchored_not_only_one_per_file(self):
+        # (file, text to break, a fragment the problem names); every site carries a leak or a dead end
+        sites = [
+            (cif.PATIENT_HOME, "hideTags={ihrHidesPatientTags(", "ihrHidesPatientTags"),
+            (cif.PATIENT_HOME, "ihrCanListEncounters(", "ihrCanListEncounters"),
+            (cif.ENCOUNTER_LIST, "ihrEncounterFilters(", "ihrEncounterFilters"),
+            (cif.ENCOUNTER_LIST, "ihrEncounterListEnabled(", "ihrEncounterListEnabled"),
+            (cif.PATIENT_REGISTRATION, "hideBloodGroup={ihrHidesClinical}", "hideBloodGroup"),
+            (cif.PATIENT_REGISTRATION, "!ihrHidesClinical && extensions.fields", "extensions"),
+            (cif.PATIENT_REGISTRATION, "hideDeceased={ihrHidesClinical}", "hideDeceased"),
+            (cif.PATIENT_REGISTRATION, "!hideDeceased &&", "hideDeceased"),
+            (cif.ACCOUNT_SHOW, "ihrAccountActions(ihr)", "ihrAccountActions"),
+            (cif.CHARGE_ITEMS_TABLE, "{canEditChargeItems && (", "canEditChargeItems"),
+            (cif.BED_CHARGE_ITEMS_TABLE, "{canEditChargeItems && (", "canEditChargeItems"),
+        ]
+        for rel, old, fragment in sites:
+            with self.subTest(rel=str(rel), old=old):
+                self.setUp()
+                self.edit(rel, old, "SOMETHING_ELSE", count=100)
+                self.assertProblem(rel, fragment)
+
+    def test_a_lost_account_button_gate_is_caught_even_when_others_remain(self):
+        # one of the two invoice buttons (desktop, mobile) loses its gate: the other still matches,
+        # so the count is what catches it
+        for gate, fragment in (
+            ("ihrActions.invoice &&", "ihrActions\\.invoice"),
+            ("ihrActions.payment &&", "ihrActions\\.payment"),
+            ("ihrActions.account &&", "ihrActions\\.account"),
+        ):
+            with self.subTest(gate=gate):
+                self.setUp()
+                self.edit(cif.ACCOUNT_SHOW, gate, "true &&", count=1)
+                self.assertProblem(cif.ACCOUNT_SHOW, fragment)
+
+    def test_both_tables_must_receive_the_charge_item_edit_right(self):
+        self.edit(cif.ACCOUNT_SHOW, "canEditChargeItems={ihrActions.chargeItems}", "", count=1)
+        self.assertProblem(cif.ACCOUNT_SHOW, "canEditChargeItems")
+
+    def test_the_bulk_select_stays_disabled_for_read_only_roles(self):
+        self.edit(cif.CHARGE_ITEMS_TABLE, "disabled={!canEditChargeItems}", "", count=1)
+        self.assertProblem(cif.CHARGE_ITEMS_TABLE, "disabled")
+
+    def test_the_account_menu_condition_is_anchored(self):
+        self.edit(cif.ACCOUNT_SHOW, "(ihrActions.account || ihrActions.payment)", "true")
+        self.assertProblem(cif.ACCOUNT_SHOW, "found 0 time")
+
     # --- slug files -------------------------------------------------------------------------
 
     def test_slug_copy_must_equal_the_backend_file_byte_for_byte(self):
