@@ -3014,7 +3014,7 @@ acme_proof_run() {  # the checks of acme-proof (run inside its throwaway folder)
   local key
   key="$(traefik_sh 'sed -n "s/.*\"password\":\"\([^\"]*\)\".*/\1/p" /data/acme-dns-accounts.json')"
   check "acme-dns key in no service's log" 0 \
-    "$(compose logs --no-color traefik acme-dns coredns pebble 2>/dev/null | grep -cF "$key" || true)"
+    "$(compose logs --no-color traefik acme-dns coredns pebble 2>/dev/null | grep -cF -e "$key" || true)"
   echo "== Restart and renewal"
   serial1="$(serial_now)"
   compose restart traefik >/dev/null 2>&1

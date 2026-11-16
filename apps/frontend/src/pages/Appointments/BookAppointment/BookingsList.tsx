@@ -117,7 +117,7 @@ const AppointmentCard = ({
               {format(appointment.token_slot.start_datetime, "EEE, dd MMM")}
             </span>
             <span className="text-sm text-gray-600 font-medium">
-              {appointment.token_slot.availability.name}
+              {appointment.token_slot.availability?.name}
             </span>
           </div>
           <div className="flex flex-col">
@@ -219,7 +219,7 @@ const AppointmentTable = ({
                       )}
                     </span>
                     <span className="text-sm text-gray-600 font-medium">
-                      {appointment.token_slot.availability.name}
+                      {appointment.token_slot.availability?.name}
                     </span>
                   </div>
                 </div>

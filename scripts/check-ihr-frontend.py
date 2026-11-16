@@ -69,6 +69,8 @@ ENCOUNTER_LIST = SRC / "pages/Encounters/EncounterList.tsx"
 ACCOUNT_SHOW = SRC / "pages/Facility/billing/account/AccountShow.tsx"
 CHARGE_ITEMS_TABLE = SRC / "pages/Facility/billing/account/components/ChargeItemsTable.tsx"
 BED_CHARGE_ITEMS_TABLE = SRC / "pages/Facility/billing/account/components/BedChargeItemsTable.tsx"
+BOOKINGS_LIST = SRC / "pages/Appointments/BookAppointment/BookingsList.tsx"
+UPCOMING_APPOINTMENT = SRC / "pages/Appointments/components/UpcomingAppointmentCard.tsx"
 FRONT_DESK = SRC / "Utils/ihr/frontDesk.ts"
 MENU = SRC / "Utils/ihr/menu.ts"
 ROUTE_KEYS = SRC / "Utils/ihr/routeKeys.ts"
@@ -99,6 +101,8 @@ FILES = [
     ACCOUNT_SHOW,
     CHARGE_ITEMS_TABLE,
     BED_CHARGE_ITEMS_TABLE,
+    BOOKINGS_LIST,
+    UPCOMING_APPOINTMENT,
     FRONT_DESK,
     MENU,
     ROUTE_KEYS,
@@ -168,6 +172,10 @@ FRONT_DESK_ANCHORS = [
     (CHARGE_ITEMS_TABLE, r"\{canEditChargeItems\s*&&", "the row menu"),
     (CHARGE_ITEMS_TABLE, r"disabled=\{!canEditChargeItems\}", "the bulk select (header and row)", 2),
     (BED_CHARGE_ITEMS_TABLE, r"\{canEditChargeItems\s*&&", "the row menu"),
+    # a projected booking has no schedule (fields/booking.txt drops token_slot.availability,
+    # Q-K37): the patient's Appointments tab and patient home must not read its name unguarded
+    (BOOKINGS_LIST, r"token_slot\.availability\?\.name", "the schedule name (card and table)", 2),
+    (UPCOMING_APPOINTMENT, r"token_slot\.availability\?\.name", "the schedule name"),
 ]
 # P1-T11c3: the records-access button and live-grant banner (IhrPatientActions) sit in two
 # upstream screens; every facility route is returned inside the one grant watcher (withIhrRoutes).

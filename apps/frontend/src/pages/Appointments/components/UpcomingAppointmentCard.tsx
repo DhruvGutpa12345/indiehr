@@ -104,7 +104,7 @@ const AppointmentRow = ({
         </span>
         <div className="hidden sm:block h-5 w-px bg-gray-300" />
         <span className="hidden sm:block text-sm text-gray-600 truncate">
-          {appointment.token_slot.availability.name}
+          {appointment.token_slot.availability?.name}
         </span>
       </div>
       <div className="flex flex-row items-center justify-between sm:justify-end gap-2">

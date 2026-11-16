@@ -151,6 +151,9 @@ test("the Receptionist's front-desk screens (reception.ravi, alpha)", async ({
     // the other three tabs open without a dead end
     await page.getByRole("tab", { name: "Appointments" }).click();
     await expect(page).toHaveURL(/\/appointments(\?|$)/);
+    await page.waitForLoadState("networkidle");
+    // a projected booking has no schedule (Q-K37): the tab must not fall to the error page
+    await expect(page.getByText("Couldn't Load the Page")).toHaveCount(0);
     await page.getByRole("tab", { name: "Encounters" }).click();
     await expect(page).toHaveURL(/\/encounters(\?|$)/);
     await expect(
