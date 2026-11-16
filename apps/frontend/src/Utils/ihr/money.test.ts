@@ -3,7 +3,7 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, it } from "node:test";
 
-import { formatInr, groupIndianDigits } from "./money";
+import { formatInr, formatInrCompact, groupIndianDigits } from "./money";
 
 // CI runs this file from apps/frontend (see .github/workflows/apps.yml).
 const source = (path: string) =>
@@ -68,5 +68,50 @@ describe("Indian money format (P1-T7b)", () => {
       /: formatInr\(value, currencySymbol, ACCOUNTING_PRECISION\);/,
     );
     assert.doesNotMatch(text, /`\$\{currencySymbol\}\$\{round\(value\)\}`/);
+  });
+});
+
+describe("compact amounts for the Owner's tiles (P1-T11c3)", () => {
+  const labels = { lakh: "lakh", crore: "crore" };
+
+  it("shows crores and lakhs with two decimals, words passed in", () => {
+    assert.equal(formatInrCompact("12345678.90", labels), "₹1.23 crore");
+    assert.equal(formatInrCompact("10000000", labels), "₹1.00 crore");
+    assert.equal(formatInrCompact("456000", labels), "₹4.56 lakh");
+    assert.equal(formatInrCompact("100000", labels), "₹1.00 lakh");
+    assert.equal(
+      formatInrCompact("456000", { lakh: "लाख", crore: "करोड़" }),
+      "₹4.56 लाख",
+    );
+    assert.equal(
+      formatInrCompact("12345678", { lakh: "लाख", crore: "करोड़" }),
+      "₹1.23 करोड़",
+    );
+  });
+
+  it("rounds half up, and carries a rounded-up lakh into a crore", () => {
+    assert.equal(formatInrCompact("112500", labels), "₹1.13 lakh");
+    assert.equal(formatInrCompact("1234500", labels), "₹12.35 lakh");
+    assert.equal(formatInrCompact("9999999.6", labels), "₹1.00 crore");
+    assert.equal(formatInrCompact("12350000", labels), "₹1.24 crore");
+  });
+
+  it("below one lakh it is exactly formatInr", () => {
+    assert.equal(formatInrCompact("98765", labels), formatInr("98765"));
+    assert.equal(formatInrCompact("98765", labels), "₹98,765.00");
+    assert.equal(formatInrCompact("99999.999", labels), "₹1,00,000.00");
+    assert.equal(formatInrCompact("0", labels), "₹0.00");
+  });
+
+  it("keeps the sign in front", () => {
+    assert.equal(formatInrCompact("-456000", labels), "-₹4.56 lakh");
+    assert.equal(formatInrCompact("-98765", labels), "-₹98,765.00");
+  });
+
+  it("never makes up a figure for a missing value", () => {
+    assert.equal(formatInrCompact(null, labels), "-");
+    assert.equal(formatInrCompact(undefined, labels), "-");
+    assert.equal(formatInrCompact("", labels), "-");
+    assert.equal(formatInrCompact("abc", labels), "abc");
   });
 });

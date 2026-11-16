@@ -23,6 +23,7 @@ import {
   encounterListOutcome,
   patientGateOutcome,
   routeGate,
+  watcherScope,
 } from "./routeKeys";
 
 // CI runs this file from apps/frontend (see .github/workflows/apps.yml).
@@ -167,6 +168,38 @@ describe("routeGate: CARE's keys (C1-1, C1-2, C1-5)", () => {
       "bedBoardLocation",
     );
     assert.equal(routeGate("/facility/:facilityId/overview"), "none");
+  });
+});
+
+describe("the grant watcher's scope (review F6)", () => {
+  it("wraps every facility route and CARE's facility-less patient charts", () => {
+    const keys = upstreamKeys();
+    const facilityLess = keys.filter((k) => watcherScope(k) === "facilityLess");
+    // built in an array by CARE (the regex of upstreamKeys does not see it)
+    assert.equal(watcherScope("/patient/:id/:tab"), "facilityLess");
+    for (const key of [
+      "/patient/:id",
+      "/patient/:patientId/history/:tab",
+      "/organization/organizationId/patient/:patientId/diagnostic_reports/:diagnosticReportId/print",
+    ]) {
+      assert.ok(keys.includes(key), `${key} is one of CARE's keys`);
+      assert.equal(watcherScope(key), "facilityLess", key);
+    }
+    assert.ok(facilityLess.length >= 4);
+    for (const key of keys.filter((k) => k.startsWith("/facility/"))) {
+      assert.equal(watcherScope(key), "facility", key);
+    }
+  });
+
+  it("leaves lists and other pages alone", () => {
+    for (const key of [
+      "/patient/home",
+      "/organization/:id/patients",
+      "/admin/patient_identifier_config",
+      "/",
+    ]) {
+      assert.equal(watcherScope(key), null, key);
+    }
   });
 });
 

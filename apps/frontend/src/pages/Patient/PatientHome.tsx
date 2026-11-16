@@ -17,6 +17,7 @@ import { useState } from "react";
 import { pharmacyDispenseServiceAtom } from "@/atoms/pharmacy";
 import { getPermissions } from "@/common/Permissions";
 import CreateEncounterForm from "@/components/Encounter/CreateEncounterForm";
+import { IhrPatientActions } from "@/components/ihr/IhrPatientActions"; // IndieHR P1-T11c
 import { PatientInfoCard } from "@/components/Patient/PatientInfoCard";
 import CreateTokenForm from "@/components/Tokens/CreateTokenForm";
 import PatientTokensList from "@/components/Tokens/PatientTokensList";
@@ -154,6 +155,11 @@ export default function PatientHome() {
                     className="flex justify-end"
                   />
                 </PatientInfoCard>
+                {/* IndieHR P1-T11c: records access button / live-grant banner (MRD) */}
+                <IhrPatientActions
+                  patient={patientData}
+                  facilityId={facilityId}
+                />
               </div>
 
               {canViewAppointments && (

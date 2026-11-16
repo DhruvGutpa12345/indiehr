@@ -326,6 +326,47 @@ class CheckIhrFrontend(unittest.TestCase):
 
     # --- slug files -------------------------------------------------------------------------
 
+    # --- records access and the grant watcher (P1-T11c3) -----------------------------------
+
+    def test_records_banner_is_mounted_in_both_patient_screens(self):
+        for rel in (cif.PATIENT_PROFILE, cif.PATIENT_HOME):
+            with self.subTest(rel=str(rel)):
+                self.setUp()
+                self.edit(rel, "<IhrPatientActions", "<IhrNothing")
+                self.assertProblem(rel, "IhrPatientActions")
+
+    def test_records_banner_import_marker_is_anchored(self):
+        self.edit(
+            cif.PATIENT_HOME,
+            'import { IhrPatientActions } from "@/components/ihr/IhrPatientActions"; // IndieHR P1-T11c',
+            'import { IhrPatientActions } from "@/components/ihr/IhrPatientActions";',
+        )
+        self.assertProblem(cif.PATIENT_HOME, "marked import")
+
+    def test_upstream_blocks_the_banner_sits_beside_are_anchored(self):
+        self.edit(cif.PATIENT_PROFILE, "<PatientDeceasedInfo", "<PatientDeceased")
+        self.assertProblem(cif.PATIENT_PROFILE, "PatientDeceasedInfo")
+        self.setUp()
+        self.edit(cif.PATIENT_HOME, "</PatientInfoCard>", "</PatientCard>")
+        self.assertProblem(cif.PATIENT_HOME, "PatientInfoCard")
+
+    def test_the_chart_tab_is_anchored(self):
+        self.edit(cif.PATIENT_TABS, 'route: "clinical_history"', 'route: "history"')
+        self.assertProblem(cif.PATIENT_TABS, "clinical_history")
+
+    def test_every_facility_route_stays_inside_the_grant_watcher(self):
+        self.edit(cif.IHR_ROUTES, "withWatcher(key, wrap(key, route))", "wrap(key, route)")
+        self.assertProblem(cif.IHR_ROUTES, "grant watcher")
+        self.setUp()
+        self.edit(cif.IHR_ROUTES, "withWatcher(key, route)", "route")
+        self.assertProblem(cif.IHR_ROUTES, "our own facility routes")
+        self.setUp()
+        self.edit(cif.IHR_ROUTES, "<IhrGrantWatcher facilityLess", "<Fragment facilityLess")
+        self.assertProblem(cif.IHR_ROUTES, "the watcher itself")
+        self.setUp()
+        self.edit(cif.IHR_ROUTES, "watcherScope(key)", "null")
+        self.assertProblem(cif.IHR_ROUTES, "facility-less")
+
     def test_slug_copy_must_equal_the_backend_file_byte_for_byte(self):
         copy = self.root / cif.SLUGS_COPY
         copy.write_bytes(copy.read_bytes().rstrip(b"\n"))

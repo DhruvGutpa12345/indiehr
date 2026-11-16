@@ -229,6 +229,17 @@ def annotate_patients(key, by_patient, **fields):
     _by_patient.set((dict(fields), key, {**known, **by_patient}))
 
 
+def withdraw_patients(key):
+    """Drop this request's ``annotate_patients`` note kept under ``key``: the request shows
+    those patients for another purpose, and its entry lists them as shown with the path's
+    purpose only. A records grant's holder listing their own grants (name and year of birth)
+    reads no record under them (P1-T11c3; design-c.md §13.4). A later ``annotate_patients``
+    in the same request notes again. Outside a request it does nothing."""
+    held = _by_patient.get()
+    if held and held[1] == key:
+        _by_patient.set(None)
+
+
 def patient_fields(patients, path_purpose="care"):
     """The fields ``annotate_patients`` asked for, for these shown patients (pks); {} when the
     request showed none of the patients it named. A path with a purpose of its own (audit,

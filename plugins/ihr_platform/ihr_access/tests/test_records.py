@@ -132,7 +132,7 @@ class GrantFlow(RecordsCase):
         self.assertEqual([g["id"] for g in listed], [grant.pk])
         self.assertEqual(
             self.api("Receptionist").get("/api/ihr/records-access/").json(),
-            {"results": []},
+            {"results": [], "grant_minutes": records.grant_minutes()},
         )
         with self.captureOnCommitCallbacks(execute=True):
             ended = self.api(mrd).delete(f"/api/ihr/records-access/{grant.pk}/")
@@ -330,6 +330,189 @@ class GrantFlow(RecordsCase):
         self.assertTrue(
             records.log_line("granted", 1, 1, "legal", night).endswith("hour=22")
         )
+
+
+class GrantList(RecordsCase):
+    """P1-T11c3 (design-c.md §13.4, SS5 and SS7): the grant body names the patient (name, year
+    of birth) for the MRD's own list and the POST answer; the list says how long a new grant
+    lasts; it lists only the caller's grants; listing reads no record (no grant id in its
+    request entry). Names only with ``?names=1`` (the records page): the grant watcher's poll is
+    ids and times and shows no patient (review BA1)."""
+
+    KEYS = frozenset(
+        {
+            "id",
+            "patient",
+            "patient_name",
+            "patient_year_of_birth",
+            "reason",
+            "reference",
+            "created_at",
+            "expires_at",
+            "seconds_left",
+        }
+    )
+    POLL_KEYS = frozenset({"id", "patient", "expires_at", "seconds_left"})
+
+    def test_list_and_create_name_the_patient(self):
+        w = self.world
+        mrd = w.users["MRD"]
+        patient = Patient.objects.get(pk=w.patient.pk)
+        self.assertIsInstance(patient.year_of_birth, int)
+        asked = self.ask(mrd, w.patient)
+        self.assertEqual(asked.status_code, 201, asked.content[:300])
+        listed = self.api(mrd).get("/api/ihr/records-access/?names=1").json()
+        self.assertEqual(set(listed), {"results", "grant_minutes"})
+        [item] = listed["results"]
+        for body in (asked.json(), item):
+            with self.subTest(body=body["id"]):
+                self.assertEqual(set(body), self.KEYS)
+                self.assertEqual(body["patient"], str(patient.external_id))
+                self.assertEqual(body["patient_name"], patient.name)
+                self.assertEqual(body["patient_year_of_birth"], patient.year_of_birth)
+        self.assertEqual(item["id"], asked.json()["id"])
+
+    def test_a_patient_without_a_year_of_birth_is_null(self):
+        from ihr_access.endpoints import grant_body
+
+        now = timezone.now()
+        stub = SimpleNamespace(
+            pk=7,
+            patient=SimpleNamespace(external_id="p-1", name="A B", year_of_birth=None),
+            reason="insurer",
+            reference="TEST-1",
+            created_at=now,
+            expires_at=now + datetime.timedelta(minutes=5),
+        )
+        body = grant_body(stub, now)
+        self.assertEqual(set(body), self.KEYS)
+        self.assertIsNone(body["patient_year_of_birth"])
+        self.assertEqual(body["patient_name"], "A B")
+        self.assertEqual(body["seconds_left"], 300)
+
+    def test_grant_minutes_is_the_setting(self):
+        w = self.world
+        mrd = w.users["MRD"]
+        answer = self.api(mrd).get("/api/ihr/records-access/").json()
+        self.assertEqual(answer["grant_minutes"], records.grant_minutes())
+        with override_settings(IHR_RECORDS_GRANT_MINUTES=45):
+            for who in (mrd, "Receptionist"):
+                with self.subTest(who=who):
+                    answer = self.api(who).get("/api/ihr/records-access/").json()
+                    self.assertEqual(answer["grant_minutes"], 45)
+            asked = self.ask(mrd, w.patient)
+            self.assertEqual(asked.status_code, 201, asked.content[:300])
+        grant = RecordsGrant.objects.get(pk=asked.json()["id"])
+        self.assertAlmostEqual(
+            (grant.expires_at - grant.created_at).total_seconds(), 45 * 60, delta=1
+        )
+        self.assertAlmostEqual(asked.json()["seconds_left"], 45 * 60, delta=2)
+
+    def test_another_users_grant_never_appears(self):
+        w = self.world
+        mrd = w.users["MRD"]
+        other = w.user("acc-mrd-2", ("MRD", w.root))
+        second, _visit = self.other_patient()
+        mine = grant_records(w, mrd, w.patient)
+        theirs = grant_records(w, other, second, reason="patient_request", reference="")
+        same = grant_records(w, other, w.patient, reason="nabh_review", reference="")
+        expected = {mrd: [mine.pk], other: sorted([theirs.pk, same.pk])}
+        for who, ids in expected.items():
+            for path in (
+                "/api/ihr/records-access/",
+                "/api/ihr/records-access/?names=1",
+            ):
+                with self.subTest(who=who.username, path=path):
+                    listed = self.api(who).get(path).json()["results"]
+                    self.assertEqual(sorted(g["id"] for g in listed), ids)
+        names = {
+            g["patient_name"]
+            for g in self.api(mrd)
+            .get("/api/ihr/records-access/?names=1")
+            .json()["results"]
+        }
+        self.assertEqual(names, {Patient.objects.get(pk=w.patient.pk).name})
+        # A hospital-wide admin may end anyone's grant (DELETE) but lists only their own
+        admin = w.users["Facility Admin"]
+        self.assertEqual(
+            self.api(admin).get("/api/ihr/records-access/").json()["results"], []
+        )
+
+    def test_listing_reads_no_record(self):
+        """The list with names (``?names=1``, the records-access page) shows each granted
+        patient's name and year of birth: its request entry lists them as shown (patients),
+        with the path's own purpose (``records``, the records-access screen:
+        ihr_audit.middleware.PURPOSES), and no grant id; a read of the patient right after
+        still names the grant."""
+        w = self.world
+        mrd = w.users["MRD"]
+        grant = grant_records(w, mrd, w.patient)
+        since = mark()
+        answer = self.api(mrd).get("/api/ihr/records-access/?names=1")
+        self.assertEqual(answer.status_code, 200)
+        self.assertEqual([g["id"] for g in answer.json()["results"]], [grant.pk])
+        self.assertEqual(entries_since(since, kind="write"), [])
+        [entry] = entries_since(since, kind="request")
+        self.assertEqual(entry["patients"], [w.patient.pk])
+        self.assertNotIn("grants", entry["context"])
+        self.assertEqual(entry["context"]["purpose"], "records")  # the path's
+        self.assertEqual(entry["actor"], f"user:{mrd.pk}:{mrd.username}")
+        self.assertEqual(entry["data"], {"status": 200})
+        since = mark()
+        url = f"/api/v1/patient/{w.patient.external_id}/"
+        self.assertEqual(self.api(mrd).get(url).status_code, 200)
+        [read] = entries_since(since, kind="request")
+        self.assertEqual(read["context"]["purpose"], "records")
+        self.assertEqual(read["context"]["grants"], [grant.pk])
+
+    def test_the_watchers_poll_shows_no_patient(self):
+        """The grant watcher's poll (no ``names``; every 30 seconds on every page an MRD has
+        open) answers ids and times only and loads no grant or patient: its request shows no
+        patient, so it writes no audit entry (review BA1). ``names`` other than ``1`` is the
+        same poll."""
+        w = self.world
+        mrd = w.users["MRD"]
+        grant = grant_records(w, mrd, w.patient)
+        external = str(Patient.objects.get(pk=w.patient.pk).external_id)
+        for path in (
+            "/api/ihr/records-access/",
+            "/api/ihr/records-access/?names=0",
+            "/api/ihr/records-access/?names=yes",
+        ):
+            with self.subTest(path=path):
+                since = mark()
+                answer = self.api(mrd).get(path)
+                self.assertEqual(answer.status_code, 200)
+                body = answer.json()
+                self.assertEqual(set(body), {"results", "grant_minutes"})
+                [item] = body["results"]
+                self.assertEqual(set(item), self.POLL_KEYS)
+                self.assertEqual(item["id"], grant.pk)
+                self.assertEqual(item["patient"], external)
+                self.assertEqual(item["expires_at"], grant.expires_at.isoformat())
+                self.assertGreater(item["seconds_left"], 0)
+                self.assertEqual(entries_since(since, kind="request"), [])
+                self.assertEqual(entries_since(since, kind="write"), [])
+
+    def test_withdrawing_drops_only_its_own_note(self):
+        from ihr_audit import context
+
+        context.begin_request({"purpose": "care"})
+        try:
+            context.annotate_patients("grants", {11: 7}, purpose="records")
+            context.withdraw_patients("other")
+            self.assertEqual(
+                context.patient_fields([11]), {"purpose": "records", "grants": [7]}
+            )
+            context.withdraw_patients("grants")
+            self.assertEqual(context.patient_fields([11]), {})
+            context.annotate_patients("grants", {11: 8}, purpose="records")
+            self.assertEqual(
+                context.patient_fields([11]), {"purpose": "records", "grants": [8]}
+            )
+        finally:
+            context.end()
+        context.withdraw_patients("grants")  # outside a request: nothing to drop
 
 
 class GrantedReads(RecordsCase):

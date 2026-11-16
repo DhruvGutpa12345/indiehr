@@ -12,7 +12,7 @@ import type { ReactNode } from "react";
 
 import type { AppRoutes } from "@/Routers/AppRouter";
 
-import { REQUIRED_KEYS, routeGate } from "@/Utils/ihr/routeKeys";
+import { REQUIRED_KEYS, routeGate, watcherScope } from "@/Utils/ihr/routeKeys";
 
 import {
   IhrBedBoardGate,
@@ -20,6 +20,7 @@ import {
   IhrEncounterListGate,
   IhrPatientGate,
 } from "./IhrGates";
+import { IhrGrantWatcher } from "./IhrGrantWatcher";
 import { IhrMyPlaces } from "./IhrMyPlaces";
 import { IhrOwnerTotals } from "./IhrOwnerTotals";
 import { IhrRecordsAccess } from "./IhrRecordsAccess";
@@ -118,6 +119,26 @@ const OUR_ROUTES: Record<string, AnyRoute> = {
   ),
 };
 
+/**
+ * Every facility route, and CARE's patient charts with no facility in the address (review F6),
+ * is returned inside the one grant watcher (IhrGrantWatcher.tsx, design §13.3). Each route
+ * function returns the same component type in the same place, so React keeps ONE watcher alive
+ * while the user moves between those pages; it does nothing for users who cannot ask for
+ * records access (outside a facility: for users who are not restricted).
+ */
+function withWatcher(key: string, route: AnyRoute): AnyRoute {
+  const scope = watcherScope(key);
+  if (scope === null) return route;
+  const facilityLess = scope === "facilityLess";
+  return function watchedRoute(params: Params) {
+    return (
+      <IhrGrantWatcher facilityLess={facilityLess}>
+        {route(params)}
+      </IhrGrantWatcher>
+    );
+  };
+}
+
 /** CARE's route table with our gates around some routes and our own routes added. */
 export function withIhrRoutes(routes: AppRoutes): AppRoutes {
   const table = routes as unknown as Record<string, AnyRoute>;
@@ -126,7 +147,10 @@ export function withIhrRoutes(routes: AppRoutes): AppRoutes {
   }
   const wrapped: Record<string, AnyRoute> = {};
   for (const [key, route] of Object.entries(table)) {
-    wrapped[key] = wrap(key, route);
+    wrapped[key] = withWatcher(key, wrap(key, route));
   }
-  return { ...wrapped, ...OUR_ROUTES } as unknown as AppRoutes;
+  for (const [key, route] of Object.entries(OUR_ROUTES)) {
+    wrapped[key] = withWatcher(key, route);
+  }
+  return wrapped as unknown as AppRoutes;
 }

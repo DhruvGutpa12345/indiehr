@@ -150,9 +150,9 @@ test("the Receptionist's front-desk screens (reception.ravi, alpha)", async ({
 
     // the other three tabs open without a dead end
     await page.getByRole("tab", { name: "Appointments" }).click();
-    await expect(page).toHaveURL(/\/appointments$/);
+    await expect(page).toHaveURL(/\/appointments(\?|$)/);
     await page.getByRole("tab", { name: "Encounters" }).click();
-    await expect(page).toHaveURL(/\/encounters$/);
+    await expect(page).toHaveURL(/\/encounters(\?|$)/);
     await expect(
       page
         .getByRole("link", { name: "View Encounter" })
@@ -161,7 +161,7 @@ test("the Receptionist's front-desk screens (reception.ravi, alpha)", async ({
     ).toBeVisible();
     await expectNoProjectedLabels(page, "the Encounters tab");
     await page.getByRole("tab", { name: "Accounts" }).click();
-    await expect(page).toHaveURL(/\/accounts$/);
+    await expect(page).toHaveURL(/\/accounts(\?|$)/);
     await page.waitForLoadState("networkidle");
     dead.expectNone("on the patient page's tabs");
   });
@@ -222,7 +222,7 @@ test("the Receptionist's front-desk screens (reception.ravi, alpha)", async ({
     );
     await submit.click();
     expect([200, 201]).toContain((await created).status());
-    await page.waitForURL(/\/encounter\/[0-9a-f-]+\/updates$/);
+    await page.waitForURL(/\/encounter\/[0-9a-f-]+\/updates(\?|$)/);
     await expect(page.locator('[data-ihr="encounter-status"]')).toBeVisible();
     await expect(page.locator('[data-ihr="visit-status"]')).toBeVisible();
     await expectNoProjectedLabels(page, "the new visit's status page");

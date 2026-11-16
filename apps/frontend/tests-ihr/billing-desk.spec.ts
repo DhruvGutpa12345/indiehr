@@ -123,7 +123,7 @@ for (const desk of DESKS) {
 
     await test.step("Bed Charge Items lists the bed by name", async () => {
       await page.getByRole("tab", { name: /^Bed Charge Items/ }).click();
-      await expect(page).toHaveURL(/\/bed_charge_items$/);
+      await expect(page).toHaveURL(/\/bed_charge_items(\?|$)/);
       await expect(
         page.getByText(stay.bedName).filter({ visible: true }).first(),
       ).toBeVisible();
@@ -136,7 +136,7 @@ for (const desk of DESKS) {
         await expect(addRoomRent).toHaveCount(0);
         // nor the general charge items tab's add buttons
         await page.getByRole("tab", { name: /^Charge Items/ }).click();
-        await expect(page).toHaveURL(/\/charge_items$/);
+        await expect(page).toHaveURL(/\/charge_items(\?|$)/);
         await expect(
           page.getByRole("button", { name: /Add Charge Items|Quick Add/ }),
         ).toHaveCount(0);

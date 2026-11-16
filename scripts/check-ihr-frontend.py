@@ -28,6 +28,10 @@ It checks:
    leak or a dead end (not one hook per file); and the upstream text the rules of src/Utils/ihr/frontDesk.ts read: the
    plugin-slot key and `BASE_PATIENT_TABS` export, the account tab names (ACCOUNT_TABS equals the
    keys of frontDesk.ts's ACCOUNT_TAB_SLUGS), the encounter list's refused filter keys;
+3c. (P1-T11c3) IhrPatientActions (records button and live-grant banner) is still mounted and its
+   marked import kept in PatientProfile.tsx and PatientHome.tsx, with the upstream blocks it sits
+   beside; the chart tab `clinical_history` exists; every facility route (CARE's and ours) is
+   still returned inside the one grant watcher by src/components/ihr/IhrRoutes.tsx;
 4. plugins/ihr_platform/ihr_roles/frontend_slugs.json (written by the backend's
    `manage.py ihr_frontend_slugs --write`) equals src/Utils/ihr/ihrSlugs.json byte for byte.
 
@@ -49,6 +53,7 @@ PATIENT_ROUTES = SRC / "Routers/routes/PatientRoutes.tsx"
 SCHEDULE_ROUTES = SRC / "Routers/routes/ScheduleRoutes.tsx"
 PATIENT_TABS = SRC / "components/Patient/PatientDetailsTab/index.tsx"
 IHR_MENU = SRC / "components/ihr/ihrMenu.tsx"
+IHR_ROUTES = SRC / "components/ihr/IhrRoutes.tsx"
 APP_ROUTER = SRC / "Routers/AppRouter.tsx"
 OVERVIEW = SRC / "pages/Facility/overview.tsx"
 PATIENT_PROFILE = SRC / "components/Patient/PatientProfile.tsx"
@@ -78,6 +83,7 @@ FILES = [
     SCHEDULE_ROUTES,
     PATIENT_TABS,
     IHR_MENU,
+    IHR_ROUTES,
     APP_ROUTER,
     OVERVIEW,
     PATIENT_PROFILE,
@@ -162,6 +168,22 @@ FRONT_DESK_ANCHORS = [
     (CHARGE_ITEMS_TABLE, r"\{canEditChargeItems\s*&&", "the row menu"),
     (CHARGE_ITEMS_TABLE, r"disabled=\{!canEditChargeItems\}", "the bulk select (header and row)", 2),
     (BED_CHARGE_ITEMS_TABLE, r"\{canEditChargeItems\s*&&", "the row menu"),
+]
+# P1-T11c3: the records-access button and live-grant banner (IhrPatientActions) sit in two
+# upstream screens; every facility route is returned inside the one grant watcher (withIhrRoutes).
+# (file, regex that must match, why[, how many times at least; default 1])
+RECORDS_ANCHORS = [
+    (PATIENT_PROFILE, r"<IhrPatientActions\b", "the records button and live-grant banner (MRD)"),
+    (PATIENT_PROFILE, r"import \{ IhrPatientActions \}[^\n]*IndieHR P1-T11c", "the marked import of the banner"),
+    (PATIENT_PROFILE, r"<PatientDeceasedInfo\b", "the header block the banner sits below"),
+    (PATIENT_HOME, r"<IhrPatientActions\b", "the records button and live-grant banner (MRD)"),
+    (PATIENT_HOME, r"import \{ IhrPatientActions \}[^\n]*IndieHR P1-T11c", "the marked import of the banner"),
+    (PATIENT_HOME, r"</PatientInfoCard>", "the card the banner sits below"),
+    (PATIENT_TABS, r'route: "clinical_history"', "the chart tab MRD sees under a grant (tests-ihr/records.spec.ts)"),
+    (IHR_ROUTES, r"withWatcher\(key,\s*wrap\(key,\s*route\)\)", "every CARE facility route inside the one grant watcher"),
+    (IHR_ROUTES, r"withWatcher\(key,\s*route\)", "our own facility routes inside the one grant watcher"),
+    (IHR_ROUTES, r"<IhrGrantWatcher\b", "the watcher itself"),
+    (IHR_ROUTES, r"watcherScope\(key\)", "the facility-less patient charts inside the watcher too (review F6)"),
 ]
 ACCOUNT_TABS_UPSTREAM = re.compile(r"export const ACCOUNT_TABS = \[([^\]]*)\]")
 ACCOUNT_TAB_SLUGS_OURS = re.compile(r"ACCOUNT_TAB_SLUGS[^=]*=\s*\{([^}]*)\}")
@@ -322,6 +344,14 @@ def check(root: Path = ROOT) -> list:
         if found < needed:
             problems.append(
                 f"{rel}: `{pattern}` found {found} time(s), expected {needed} ({why}; {FRONT_DESK})"
+            )
+    # 3c. the records-access hooks and the watcher (P1-T11c3)
+    for rel, pattern, why, *least in RECORDS_ANCHORS:
+        needed = least[0] if least else 1
+        found = len(re.findall(pattern, texts[rel])) if texts[rel] else needed
+        if found < needed:
+            problems.append(
+                f"{rel}: `{pattern}` found {found} time(s), expected {needed} ({why})"
             )
     upstream_tabs = ACCOUNT_TABS_UPSTREAM.search(texts[ACCOUNT_SHOW])
     ours_tabs = ACCOUNT_TAB_SLUGS_OURS.search(texts[FRONT_DESK])

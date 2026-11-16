@@ -105,6 +105,24 @@ export function routeGate(key: string): RouteGate {
   return "none";
 }
 
+/**
+ * CARE's patient chart routes with no facility in the address (`/patient/:id/...`,
+ * `/organization/<org>/patient/...`, review F6). Under a records grant the backend serves them
+ * (its read checks follow the patient, not the address), so the grant watcher wraps them too.
+ */
+export function isFacilityLessPatientKey(key: string): boolean {
+  return (
+    /^\/patient\/:/.test(key) || /^\/organization\/[^/]+\/patient\//.test(key)
+  );
+}
+
+/** The keys the one grant watcher wraps: every facility route and the facility-less charts. */
+export function watcherScope(key: string): "facility" | "facilityLess" | null {
+  if (key.startsWith("/facility/")) return "facility";
+  if (isFacilityLessPatientKey(key)) return "facilityLess";
+  return null;
+}
+
 /** What a gate renders: CARE's loader, our refusal, our status page, or CARE's element. */
 export type GateOutcome = "loading" | "notForRole" | "status" | "care";
 

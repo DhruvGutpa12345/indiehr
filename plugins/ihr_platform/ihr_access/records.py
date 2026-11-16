@@ -59,6 +59,8 @@ MAX_REFERENCE = 100
 # A reference is a case or claim number: letters, digits and a few separators, never free text
 REFERENCE_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9 ./_:-]{0,99}$")
 MARKER = "ihr_records"
+# The audit context's key for the grant ids a request showed (``annotate``)
+GRANTS_KEY = "grants"
 logger = logging.getLogger(__name__)
 # Grants a request found expired, ended after its view (RecordsExpiryMiddleware); None outside
 # a request the middleware wraps (a command, a test calling a view directly): the beat ends them
@@ -383,7 +385,7 @@ def annotate():
     if current is None or not current.grants:
         return
     context.annotate_patients(
-        "grants",
+        GRANTS_KEY,
         {patient: grant for patient, (grant, _ends) in current.grants.items()},
         purpose="records",
     )

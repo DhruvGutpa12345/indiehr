@@ -23,6 +23,7 @@ import {
 import { useIhrAccess, useIhrPatientView } from "@/Utils/ihr/useIhrAccess"; // IndieHR P1-T11c
 import query from "@/Utils/request/query";
 import { formatName } from "@/Utils/utils";
+import { IhrPatientActions } from "@/components/ihr/IhrPatientActions"; // IndieHR P1-T11c
 import { usePermissions } from "@/context/PermissionContext";
 import patientApi from "@/types/emr/patient/patientApi";
 
@@ -116,6 +117,8 @@ export const PatientProfile = (props: {
             isPatientPage={true}
           />
           <PatientDeceasedInfo patient={patientData} />
+          {/* IndieHR P1-T11c: records access button / live-grant banner (MRD) */}
+          <IhrPatientActions patient={patientData} facilityId={facilityId} />
         </div>
         <div
           className="sticky top-0 z-9 mt-4 w-full border-b border-gray-200 bg-gray-50"

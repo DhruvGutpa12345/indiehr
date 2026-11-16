@@ -5,6 +5,7 @@ import type { ReactNode } from "react";
 
 import Loading from "@/components/Common/Loading";
 
+import type { IhrPatientView } from "@/Utils/ihr/access";
 import {
   type GateOutcome,
   bedBoardOutcome,
@@ -15,6 +16,7 @@ import {
 import { useIhrAccess, useIhrPatientView } from "@/Utils/ihr/useIhrAccess";
 
 import { IhrEncounterStatus } from "./IhrEncounterStatus";
+import { useIhrOpenChart } from "./IhrGrantWatcher";
 import { IhrNotForRole } from "./IhrNotForRole";
 
 interface GateProps {
@@ -36,6 +38,21 @@ function show(
   return <IhrNotForRole facilityId={facilityId} />;
 }
 
+/**
+ * A restricted records user (MRD) sees a patient in CARE's own view only under a grant: tell the
+ * grant watcher this chart is open, so its end (or a list it cannot get) clears it even when no
+ * list has named the grant yet (review F2).
+ */
+function useChartUnderGrant(
+  patientId: string | undefined,
+  view: IhrPatientView,
+) {
+  const access = useIhrAccess();
+  const underGrant =
+    access.mode === "restricted" && access.records && view === "care";
+  useIhrOpenChart(underGrant ? patientId : undefined);
+}
+
 /** The encounter page: the status view for the front desk, nothing for roles without patients. */
 export function IhrEncounterGate({
   facilityId,
@@ -44,6 +61,7 @@ export function IhrEncounterGate({
   render,
 }: GateProps & { patientId: string; encounterId: string }) {
   const view = useIhrPatientView(patientId);
+  useChartUnderGrant(patientId, view);
   return show(encounterGateOutcome(view), facilityId, render, () => (
     <IhrEncounterStatus
       facilityId={facilityId}
@@ -65,6 +83,7 @@ export function IhrPatientGate({
   render,
 }: GateProps & { patientId?: string; demographicsAllowed: boolean }) {
   const view = useIhrPatientView(patientId);
+  useChartUnderGrant(patientId, view);
   return show(
     patientGateOutcome(view, demographicsAllowed),
     facilityId,

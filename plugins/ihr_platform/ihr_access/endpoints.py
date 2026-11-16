@@ -1,13 +1,16 @@
 """Our own endpoints for the restricted roles (P1-T11b4; design-b.md §7, §8).
 
     POST   /api/ihr/records-access/          {patient, reason, reference}: a records grant (MRD)
-    GET    /api/ihr/records-access/          the caller's own live grants
+    GET    /api/ihr/records-access/          the caller's own live grants (ids and times only;
+                                             ?names=1 adds each patient's name and year of birth)
     DELETE /api/ihr/records-access/<id>/     end one early: its holder, or a hospital-wide admin
     GET    /api/ihr/owner/totals/            the Owner's totals (totals.py)
     GET    /api/ihr/my-access/?facility=<id> the web app's mode for the caller (P1-T11c1)
 
 Staff sign-in only (the default authentication classes); every request is in the audit trail
-(a records request with ``purpose: records``). The web-app screens are P1-T11c's (Q-K45).
+(a records request with ``purpose: records``; the list of one's grants names no grant id, it
+reads no record under them). The web-app screens are P1-T11c's (Q-K45; c3: the records-access
+page and the Owner totals page).
 """
 
 import uuid
@@ -15,6 +18,7 @@ import uuid
 from care.facility.models import Facility
 from django.core.exceptions import ValidationError as DjangoValidationError
 from django.utils import timezone
+from ihr_audit import context
 from ihr_identity.staff_access import hospital_wide_admin
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
@@ -29,10 +33,16 @@ NOT_A_FACILITY = "Not a facility id."
 
 
 def grant_body(grant, now=None):
+    """One grant as its holder sees it: the list (GET) and the POST 201 body. The patient's
+    name and year of birth are what the MRD's own grants list shows (P1-T11c3; design-c.md
+    §13.4, SS5: no per-row patient read); the request entry lists the patient as shown."""
     now = now or timezone.now()
+    patient = grant.patient
     return {
         "id": grant.pk,
-        "patient": str(grant.patient.external_id),
+        "patient": str(patient.external_id),
+        "patient_name": patient.name,
+        "patient_year_of_birth": patient.year_of_birth,
         "reason": grant.reason,
         "reference": grant.reference,
         "created_at": grant.created_at.isoformat(),
@@ -41,21 +51,48 @@ def grant_body(grant, now=None):
     }
 
 
+def grant_summary(row, now):
+    """One grant as the web app's grant watcher polls it (``GET`` without ``names=1``): its id,
+    the patient's external id, when it runs out. Built from ``values()`` rows, so no grant or
+    patient instance is loaded and the request shows no patient (ihr_audit.reads: a poll every
+    30 seconds writes no audit entry; review BA1)."""
+    expires_at = row["expires_at"]
+    return {
+        "id": row["pk"],
+        "patient": str(row["patient__external_id"]),
+        "expires_at": expires_at.isoformat(),
+        "seconds_left": max(0, int((expires_at - now).total_seconds())),
+    }
+
+
 class RecordsAccessView(APIView):
     permission_classes = (IsAuthenticated,)
 
     def get(self, request):
+        """The caller's own live grants, and ``grant_minutes`` (how long a new one lasts:
+        ``IHR_RECORDS_GRANT_MINUTES``; design-c.md §13.4, SS7).
+
+        Without ``names=1`` (the grant watcher's poll, every 30 seconds on every page an MRD
+        opens) each grant is only its id, the patient's external id and its times
+        (``grant_summary``): no patient is loaded, so the request shows none and writes no audit
+        entry (review BA1). With ``names=1`` (the records-access page, on opening it) each grant
+        is ``grant_body``: the patient's name and year of birth, so the request entry lists those
+        patients as shown with the path's own purpose (``records``, the records-access screen,
+        like asking and ending: ihr_audit.middleware.PURPOSES), never a grant id (§13.4).
+        Listing one's grants reads no record under them either way."""
         from ihr_access.models import RecordsGrant
 
         now = timezone.now()
-        mine = (
-            RecordsGrant.objects.filter(
-                user=request.user, ended_at__isnull=True, expires_at__gt=now
-            )
-            .select_related("patient")
-            .order_by("expires_at")
-        )
-        return Response({"results": [grant_body(g, now) for g in mine]})
+        mine = RecordsGrant.objects.filter(
+            user=request.user, ended_at__isnull=True, expires_at__gt=now
+        ).order_by("expires_at")
+        if request.query_params.get("names") == "1":
+            context.withdraw_patients(records.GRANTS_KEY)
+            results = [grant_body(g, now) for g in mine.select_related("patient")]
+        else:
+            rows = mine.values("pk", "patient__external_id", "expires_at")
+            results = [grant_summary(row, now) for row in rows]
+        return Response({"results": results, "grant_minutes": records.grant_minutes()})
 
     def post(self, request):
         data = request.data if hasattr(request.data, "get") else {}

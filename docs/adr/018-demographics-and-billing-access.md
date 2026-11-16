@@ -148,9 +148,21 @@ owner B, 2026-11-15, built the same day** (item 3). **Q-K46 (adjustments in "col
 - **Cost.** One indexed query per staff request (the user's open records grants), one query of
   ours per request on the swapped patient and encounter routes for CARE's roles (design-b.md,
   P1-T11b2 review C3), and about 2.5 minutes of matrix crawl in CI's plugin step.
-- **Not yet usable day to day.** CARE's web app opens patient tabs, the encounter history, the
-  edit form, records access and totals only through CARE's permissions: the screens for our roles
-  are P1-T11c (Q-K45). Until then the front desk, MRD and the Owner are tested through the API.
-- **Admin guide** (P1-T11c, with the screens): where each role is placed (design-b.md §4), that a
-  stale `PatientUser` row of a restricted person is removed (`ihr_patient_user_check`), and what
-  the placement trigger refuses.
+- **Usable day to day in the web app (P1-T11c, Q-K45; design-c.md).** c1: menus and routes by
+  the backend's own rule (`/api/ihr/my-access/`), "My places" for the Lab Technician and Store
+  Keeper. c2: the front-desk and billing-desk screens (patient tabs, the visit status page with
+  the bed for billing, the edit form). c3: MRD's records-access page (asked for from the patient
+  page only, the live grants with the patient's name and year of birth from the grant list
+  itself, one watcher that clears every clinical page when a grant ends, however it ends) and
+  the Owner's totals page (₹ in lakh and crore, exact figures on hover). The grant list
+  (`GET /api/ihr/records-access/`) carries `grant_minutes` (the setting); each grant is its id,
+  the patient's external id and its times, which the watcher polls every 30 s without loading a
+  patient (no audit entry). Only `?names=1` (the records page, on opening it) adds
+  `patient_name`, `patient_year_of_birth`, the reason, reference and start; that request lists
+  the patients as shown and names no grant id in its audit entry (it reads no record under
+  them; `ihr_audit.context.withdraw_patients`). Still API-only: a
+  hospital-wide admin ending another clerk's grant (`DELETE /api/ihr/records-access/<id>/`) and
+  grant history (the audit viewer).
+- **Admin guide:** docs/ROLES_GUIDE.md (P1-T11c3): where each role is placed (design-b.md §4),
+  what the placement trigger refuses, `ihr_patient_user_check` for stale `PatientUser` rows, what
+  each role sees, records access, ending a grant as an admin, and the totals page.

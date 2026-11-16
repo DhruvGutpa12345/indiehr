@@ -19,6 +19,7 @@
       "last_used_camera_device_id": "this computer's camera",
       "care:developer_mode": "a developer-mode switch (true or false)",
       "ihr_last_activity": "a time stamp (idle time-out)",
+      "ihr_grants_changed": "a time stamp that tells the other tabs to re-read their live records grants (P1-T11c3, the fallback where BroadcastChannel is missing)",
       "ihr_sign_out_pending": "\"1\" until the backend confirms a sign-out (staffSession.ts)"
     },
     "prefixes": {

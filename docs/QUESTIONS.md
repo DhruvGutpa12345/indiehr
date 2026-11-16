@@ -692,6 +692,30 @@ Design §3.3 listed only the account page's tabs; CARE drew every write button t
 
 *Recommendation A:* no dead ends at the desk. Reverse: make `ihrAccountActions` return CARE's value for restricted roles too.
 
+### Q-K57 — When does the web app treat a records grant as ended if it cannot reach the backend? (P1-T11c3 review F2/F4; auto-accepted by Claude, 2026-11-16, awaiting owner confirmation)
+
+The grant watcher (`IhrGrantWatcher.tsx`, rules in `records.ts` `watchStep`) asks `GET /api/ihr/records-access/` every 30 s, on focus, on any 403 and when a chart opens; each look gives up after 10 s.
+
+- **A ⭐ (taken).** Two failed looks in a row while a grant is held or a chart is open → the page is cleared (every cached answer dropped, toast "Records access could not be confirmed", back to the records page). One failure is tolerated, so a single dropped request does not throw the clerk out.
+- B. Clear on the first failed look (strictest; a flaky network interrupts MRD often).
+- C. Never clear on failures; rely on the grant's own expiry time (the screen could outlive an admin's early end while offline).
+
+*Recommendation A:* the backend already refuses every read after the end, so this only decides how long already-loaded data stays on screen (at most about 40 s). Reverse: `MAX_FAILURES_WHILE_HELD` in `records.ts`.
+
+### Q-K58 — What does the audit trail say about MRD listing their own grants? (P1-T11c3 backend; auto-accepted by Claude, 2026-11-16, awaiting owner confirmation)
+
+- **A ⭐ (taken).** The list request keeps its path's purpose `records` (as asking for and ending a grant do, b4's `PURPOSES`) but carries **no** `grants` key, so it never looks like a read of the record under a grant. The records page's list (`?names=1`) shows the patient's name and year of birth and is recorded as showing that patient.
+- B. Give list requests their own purpose (e.g. `admin`), splitting `ihr_audit/middleware.PURPOSES` by method.
+
+*Recommendation A:* the `grants` key is what tells a record read apart; one purpose per path keeps the audit rule simple. Reverse: split `PURPOSES` by method.
+
+### Q-K59 — May the grant watcher's 30-second poll show patients? (P1-T11c3 review BA1; auto-accepted by Claude, 2026-11-16, awaiting owner confirmation)
+
+- **A ⭐ (taken).** No. The bare `GET /api/ihr/records-access/` returns ids and times only and writes no "patient shown" audit entry; names come only with `?names=1`, which the records page asks for. Without this, every MRD page would add a patient-shown audit entry every 30 s.
+- B. One list body for both (names always), accepting the audit noise.
+
+*Recommendation A.* Reverse: drop the `names` switch in `endpoints.py` and the `none:names` row of `list_params.txt`.
+
 **Still open:** Q-B4 (final MVP module list: assumed as in PLAN.md Phase 2) and Q-B6/B7 (pricing, timeline). Q-F2 is moot while AI is deferred.
 
 ---

@@ -1,5 +1,7 @@
 // IndieHR P1-T11c: our own API routes in CARE's route-object shape (query(), mutate()).
 import type { MyAccess } from "@/Utils/ihr/access";
+import type { Grant, GrantList, GrantRequest } from "@/Utils/ihr/records";
+import type { Totals } from "@/Utils/ihr/totals";
 import { HttpMethod, Type } from "@/Utils/request/types";
 
 export const ihrAccessApi = {
@@ -8,5 +10,41 @@ export const ihrAccessApi = {
     path: "/api/ihr/my-access/",
     method: HttpMethod.GET,
     TRes: Type<MyAccess>(),
+  },
+} as const;
+
+/** MRD's records-access grants (P1-T11c3, design-c.md §6, §13.3) */
+export const ihrRecordsApi = {
+  /** The watcher's poll: ids and times only, shows no patient (review BA1) */
+  list: {
+    path: "/api/ihr/records-access/",
+    method: HttpMethod.GET,
+    TRes: Type<GrantList>(),
+  },
+  /** With each patient's name and year of birth: the records page only (queryParams NAMES_QUERY) */
+  listWithNames: {
+    path: "/api/ihr/records-access/",
+    method: HttpMethod.GET,
+    TRes: Type<GrantList<Grant>>(),
+  },
+  create: {
+    path: "/api/ihr/records-access/",
+    method: HttpMethod.POST,
+    TRes: Type<Grant>(),
+    TBody: Type<GrantRequest>(),
+  },
+  end: {
+    path: "/api/ihr/records-access/{id}/",
+    method: HttpMethod.DELETE,
+    TRes: Type<Record<string, never>>(),
+  },
+} as const;
+
+/** The Owner's totals (P1-T11c3, design-c.md §7) */
+export const ihrTotalsApi = {
+  get: {
+    path: "/api/ihr/owner/totals/",
+    method: HttpMethod.GET,
+    TRes: Type<Totals>(),
   },
 } as const;
