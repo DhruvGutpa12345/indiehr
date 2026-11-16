@@ -21,6 +21,7 @@ from care.emr.models.organization import OrganizationUser
 from care.security.authorization import AuthorizationController
 from care.security.models import RolePermission
 from care.security.permissions.user import UserPermissions
+from care.users.models import User
 from django.conf import settings
 from django.contrib.auth import get_user_model
 from django.db import IntegrityError, connection, transaction
@@ -28,7 +29,7 @@ from django.shortcuts import get_object_or_404
 from django.utils import timezone
 from ihr_platform.models import StaffAccessRequest, StaffInvitation
 from rest_framework.exceptions import PermissionDenied, ValidationError
-from rest_framework.permissions import IsAuthenticated
+from rest_framework.permissions import BasePermission, IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
@@ -71,6 +72,23 @@ def hospital_wide_admin(user):
         )
         .exists()
     )
+
+
+class IsHospitalAdmin(BasePermission):
+    """DRF gate: signed-in staff (never a service account) with an admin role on the whole
+    hospital. The audit viewer (P1-T6b) and the reference pack decisions (P1-T15b1) use it;
+    being a permission class, a refused write is decided before its body is read."""
+
+    message = "Only a hospital-wide admin can do this."
+
+    def has_permission(self, request, view):
+        user = request.user
+        return (
+            isinstance(user, User)
+            and user.is_authenticated
+            and not user.is_service_account
+            and hospital_wide_admin(user)
+        )
 
 
 class StaffAccessView(APIView):

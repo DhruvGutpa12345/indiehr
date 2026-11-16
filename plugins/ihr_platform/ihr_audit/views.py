@@ -20,13 +20,11 @@ from datetime import datetime, time, timedelta
 from pathlib import Path
 
 from care.emr.models import Patient
-from care.users.models import User
 from django.db import connection
 from django.http import FileResponse
-from ihr_identity.staff_access import hospital_wide_admin
+from ihr_identity.staff_access import IsHospitalAdmin
 from psycopg import sql
 from rest_framework.exceptions import ValidationError
-from rest_framework.permissions import BasePermission
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
@@ -41,19 +39,6 @@ KINDS = frozenset(("write", "truncate", "request"))
 OPS = {name: letter for letter, name in OP_NAMES.items()}
 TABLE = re.compile(r"^[a-z0-9_]{1,63}$")
 COLUMNS = "id, at, kind, actor, context, tbl, op, row_pk, patients, data"
-
-
-class IsHospitalAdmin(BasePermission):
-    message = "Only a hospital-wide admin can open the audit trail."
-
-    def has_permission(self, request, view):
-        user = request.user
-        return (
-            isinstance(user, User)
-            and user.is_authenticated
-            and not user.is_service_account
-            and hospital_wide_admin(user)
-        )
 
 
 MAX_ID = 2**63 - 1

@@ -486,6 +486,7 @@ class _MatrixWorld:
         self.store()
         self.records()
         self.people()
+        self.packs()
 
     def places(self):
         w = self.w
@@ -1297,6 +1298,22 @@ class _MatrixWorld:
         )
         report.save()
         self.name("report", report)
+
+    def packs(self):
+        """A reference pack item waiting for the hospital admin (P1-T15b1): the pack update
+        route's ``<pk>`` names a real item, so its matrix row shows the gate, not a 404."""
+        from ihr_refdata.models import PackItem
+
+        self.w.extra["pack_item"] = PackItem.objects.create(
+            pack="matrix-pack",
+            kind="valueset",
+            item="matrix-item",
+            state=PackItem.State.PENDING,
+            reason=PackItem.Reason.UNKNOWN_ORIGIN,
+            pending_version=1,
+            pending_sha256="0" * 64,
+            changed_at=self.now,
+        )
 
     def people(self):
         """A Pharmacist at the store, a Nurse once on the care team who moved to the front

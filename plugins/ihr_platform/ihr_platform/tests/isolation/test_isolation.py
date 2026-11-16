@@ -58,12 +58,14 @@ CONVERTER_ROUTES = (
     "api/ihr/staff/<str:username>/access/",
     "api/ihr/audit/entries/<int:pk>/",
     "api/ihr/pincode/<str:pincode>/",
+    "api/ihr/packs/updates/<int:pk>/",  # the tenant's own waiting pack item (world.py)
 )
 # Detail routes of the rows extras.py seeds for the crawl (P1-T16b), per tenant.
 SEEDED_ROUTES = 31
 # Filled for nobody: POST-only (staff_urls.py), so the GET crawl never requests it.
 POST_ONLY_ROUTE = "api/ihr/staff/<str:username>/<slug:action>/"
 # Its value is this tenant's own audit entry of a Patient UPDATE (world.py, _collect_ids).
+PACK_ITEM_ROUTE = "api/ihr/packs/updates/<int:pk>/"
 AUDIT_ENTRY_ROUTE = "api/ihr/audit/entries/<int:pk>/"
 BATCH_URL = "/api/v1/batch_requests/"
 # Open anonymously in every run: world.py makes the facility fill() puts in it public.
@@ -338,6 +340,14 @@ class CrossTenantIsolationTests(SimpleTestCase):
                             or tenant.canary.lower() in _body(response),
                             "no own id or canary in the audit entry",
                         )
+                    if (
+                        route == PACK_ITEM_ROUTE
+                    ):  # its own waiting item (world.py), by name
+                        self.assertIn(
+                            f"iso-{tenant.canary.lower()}",
+                            _body(response),
+                            "not this tenant's own pack item",
+                        )
             with self.subTest(tenant=tenant.hospital.slug, route="pincode places"):
                 response = client.get(f"/api/ihr/pincode/{tenant.pincode}/")
                 self.assertEqual(response.status_code, 200, response.content[:300])
@@ -528,6 +538,41 @@ class CrossTenantIsolationTests(SimpleTestCase):
             )
         with schema_context(self.b.schema):
             self.assertEqual(RecentViewsManager.get_recent_views(key), [])
+
+    def test_pack_decision_limits_are_per_hospital(self):
+        """The pack decision API's limits (P1-T15b1 "After the attack" item 6) are each
+        hospital's own: A's full minute bucket and A's in-flight mark never refuse B. Each
+        tenant also makes a rate-counted POST, so test_zz sees the API's own key shapes."""
+        from django.core.cache import cache
+        from ihr_refdata import api as packs
+
+        now = 1_700_000_000.0
+        buckets = [
+            f"ihr:packs:rate:{t.admin.pk}:{int(now // 60)}" for t in (self.a, self.b)
+        ]
+        with schema_context(self.a.schema):
+            for bucket in buckets:
+                cache.set(bucket, packs.PER_USER_PER_MINUTE, 120)
+            self.assertTrue(cache.add(packs._in_flight_key(), "a-busy", 60))
+        try:
+            with patch.object(packs, "time", SimpleNamespace(time=lambda: now)):
+                for tenant, status in ((self.b, 400), (self.a, 429)):
+                    with self.subTest(tenant=tenant.hospital.slug):
+                        answer = self._staff_client(tenant).post(
+                            f"/api/ihr/packs/updates/{tenant.pack_item_id}/",
+                            {},  # B: refused for its body, never for A's limits
+                            format="json",
+                        )
+                        self.assertEqual(
+                            answer.status_code, status, answer.content[:300]
+                        )
+            with schema_context(self.b.schema):
+                self.assertTrue(cache.add(packs._in_flight_key(), "b-free", 60))
+        finally:
+            for tenant in (self.a, self.b):
+                with schema_context(tenant.schema):
+                    cache.delete(packs._in_flight_key())
+                    cache.delete_many(buckets)
 
     # --- background jobs ------------------------------------------------------------------
 

@@ -57,15 +57,19 @@ def normal_compose(compose):
     return _drop_empty(compose)
 
 
-def content_hash(fields):
-    canonical = {
+def canonical(fields):
+    """The four fields as they are compared (and shown to the admin: P1-T15b1)."""
+    return {
         "name": fields["name"],
         "status": fields["status"],
         "compose": normal_compose(fields["compose"]),
         "is_system_defined": bool(fields["is_system_defined"]),
     }
+
+
+def content_hash(fields):
     text = json.dumps(
-        canonical, sort_keys=True, separators=(",", ":"), ensure_ascii=False
+        canonical(fields), sort_keys=True, separators=(",", ":"), ensure_ascii=False
     )
     return hashlib.sha256(text.encode()).hexdigest()
 
@@ -125,6 +129,18 @@ def row_hash(row):
     return content_hash(row_fields(row))
 
 
+def decision_hash(row):
+    """What the admin decides on (P1-T15b1 ``row_sha256``): the four fields and whether the row
+    is soft-deleted. Never compared with what a pack wrote (that is ``row_hash``)."""
+    text = json.dumps(
+        {"fields": canonical(row_fields(row)), "deleted": bool(row.deleted)},
+        sort_keys=True,
+        separators=(",", ":"),
+        ensure_ascii=False,
+    )
+    return hashlib.sha256(text.encode()).hexdigest()
+
+
 def retired_hash(row):
     """The row's hash once retired (what a retire writes, or would write)."""
     return content_hash({**row_fields(row), "status": RETIRED})
@@ -133,10 +149,41 @@ def retired_hash(row):
 # --- reading and writing the hospital's rows ----------------------------------------------
 
 
-def rows(slugs):
-    """{slug: row} for these slugs, soft-deleted rows included (they still hold the slug)."""
+def rows(slugs, *, lock=False):
+    """{slug: row} for these slugs, soft-deleted rows included (they still hold the slug).
+    ``lock``: rows locked for update (a decision re-checks the row it writes)."""
     model = _model()
-    return {row.slug: row for row in model._base_manager.filter(slug__in=list(slugs))}  # noqa: SLF001
+    found = model._base_manager.filter(slug__in=list(slugs))  # noqa: SLF001
+    if lock:
+        found = found.select_for_update()
+    return {row.slug: row for row in found}
+
+
+def label(row, item):
+    """The name an admin knows the item by: the hospital's own, else the pack's."""
+    if row is not None:
+        return row.name
+    return item["name"] if item is not None else ""
+
+
+def effect(row, item):
+    """What accepting would do to the hospital's row."""
+    if item is None:
+        return "retire"
+    if row is None:
+        return "create"
+    return "restore" if row.deleted else "update"
+
+
+def shown(row=None, item=None, *, retire=False):
+    """The four fields as compared (canonical), from a row or a pack item; None when neither.
+    ``retire``: what retiring the row would leave in it."""
+    if row is None and item is None:
+        return None
+    fields = canonical(row_fields(row) if item is None else item_fields(item))
+    if retire:
+        fields["status"] = RETIRED
+    return fields
 
 
 def all_present(slugs):

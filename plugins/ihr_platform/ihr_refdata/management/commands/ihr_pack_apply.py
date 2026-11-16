@@ -55,6 +55,13 @@ def check_operator(operator):
     if operator.lower() in RESERVED_OPERATORS:
         msg = f"--operator {operator!r} is reserved for the start-up and check runs"
         raise CommandError(msg)
+    if operator.lower().startswith(engine.STAFF_OPERATOR_PREFIX):
+        # packs:user-<pk> is a hospital admin's decision in the web app (P1-T15b1)
+        msg = (
+            f"--operator may not start with {engine.STAFF_OPERATOR_PREFIX!r}: that names "
+            "a hospital admin's decision in the web app"
+        )
+        raise CommandError(msg)
     return operator
 
 

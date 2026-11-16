@@ -59,6 +59,16 @@ class Release:
         return {item["slug"]: item for item in self.items}
 
 
+def manifest_sha256(root=None):
+    """The sha256 of MANIFEST.json's bytes (it names every file's sha256)."""
+    path = Path(root or packs_dir()) / MANIFEST
+    try:
+        return sha256_of(path.read_bytes())
+    except OSError as exc:
+        msg = f"cannot read {path}: {exc}"
+        raise PackError(msg) from None
+
+
 def read_manifest(root=None):
     path = (root or packs_dir()) / MANIFEST
     try:

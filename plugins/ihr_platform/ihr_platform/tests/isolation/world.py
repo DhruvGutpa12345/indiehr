@@ -63,6 +63,9 @@ class Tenant:
     # values hold this tenant's canary and its patient its own id (_collect_ids)
     audit_entry_id: str = ""
     pincode: str = PINCODE  # path converter <pincode>
+    # path converter <pk> of the pack update route: a reference pack item of this tenant's,
+    # waiting for its admin (P1-T15b1, _seed_pack_item)
+    pack_item_id: str = ""
     # detail routes of rows seeded for the crawl (P1-T16b), each checked to answer its owner
     seeded_routes: list = field(default_factory=list)
 
@@ -140,7 +143,7 @@ def _add_geography(tenant):
 
 def _make_admin_hospital_wide(tenant):
     """The crawl's admin (a CARE superuser) also needs an admin role on a top-level
-    organisation: the audit viewer has no superuser bypass (ihr_audit IsHospitalAdmin)."""
+    organisation: the audit viewer has no superuser bypass (ihr_identity IsHospitalAdmin)."""
     from care.emr.models.organization import Organization, OrganizationUser
     from care.security.models import RolePermission
     from care.security.permissions.user import UserPermissions
@@ -233,7 +236,28 @@ def build_world(cleanup):
         _add_geography(tenant)
         _make_admin_hospital_wide(tenant)
         _collect_ids(tenant)
+        _seed_pack_item(tenant)
     return a, b
+
+
+def _seed_pack_item(tenant):
+    """A reference pack item waiting for the hospital admin, named with the tenant's canary:
+    the pack update routes then answer their owner with that tenant's own row (P1-T15b1)."""
+    from django.utils import timezone
+    from ihr_refdata.models import PackItem
+
+    with schema_context(tenant.schema):
+        record = PackItem.objects.create(
+            pack="isolation-pack",
+            kind="valueset",
+            item=f"iso-{tenant.canary.lower()}",
+            state=PackItem.State.PENDING,
+            reason=PackItem.Reason.UNKNOWN_ORIGIN,
+            pending_version=1,
+            pending_sha256="0" * 64,
+            changed_at=timezone.now(),
+        )
+    tenant.pack_item_id = str(record.pk)
 
 
 def drop_world(*tenants):

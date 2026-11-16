@@ -716,6 +716,137 @@ The grant watcher (`IhrGrantWatcher.tsx`, rules in `records.ts` `watchStep`) ask
 
 *Recommendation A.* Reverse: drop the `names` switch in `endpoints.py` and the `none:names` row of `list_params.txt`.
 
+### Q-K60 — Who decides pack items? (P1-T15b design; auto-accepted by Claude, 2026-11-16, awaiting owner confirmation)
+
+- **A ⭐ (taken).** Hospital-wide admins only, for every scope (the API's `IsHospitalAdmin`).
+- B. Facility admins decide their own facility's items.
+
+*Recommendation A:* one reviewed gate, and no facility content ships yet. B fits the facility packs of P1-T24. Reverse: widen the permission class in `ihr_refdata/api.py` and add a facility check.
+
+### Q-K61 — How does an admin see what a pack applied? (P1-T15b design, Q-T10; auto-accepted by Claude, 2026-11-16, awaiting owner confirmation)
+
+- **A ⭐ (taken).** Each applied `PackApply` carries a per-item `changes` list (up to 500 items, plus the total).
+- B. Counts only, with details left to the audit trail.
+
+*Recommendation A:* Q-T10 asks for a list an admin can read. Reverse: store counts only and point to the audit trail.
+
+### Q-K62 — What happens to identifier changes that could break existing data? (P1-T15b design, item 8; auto-accepted by Claude, 2026-11-16, awaiting owner confirmation)
+
+- **A ⭐ (taken).** Automatic unless a data check fails: `unique` switched on while values repeat, or `regex` changed while stored values no longer match. Then the item is pending with reason `data-check`, the counts are stored, accept is refused until the data is fixed, and keep is allowed. Checks are bounded and never run in a GET.
+- B. Always wait for the admin.
+- C. Always automatic.
+- D. Accept with acknowledged counts.
+
+*Recommendation A:* it keeps "automatic for unedited rows". CARE re-validates identifiers on every patient edit, so D would make front-desk demographic edits fail. Reverse: make every identifier change pending.
+
+### Q-K63 — What if the hospital deleted an identifier config or form that a pack ships? (P1-T15b design, item 11; auto-accepted by Claude, 2026-11-16, awaiting owner confirmation)
+
+- **A ⭐ (taken).** A deletion is a local edit. The item turns pending `deleted` only when the pack's content for it changes. Keep stays kept. Accept restores it.
+- B. Restore automatically, as value sets are.
+- C. Make it pending at every apply.
+
+*Recommendation A:* CARE binds value-set slugs in code, but not these, and deleting one is the hospital's choice. Reverse: set the kind's restore flag.
+
+### Q-K64 — How do identifier configs reach every web process after a change? (P1-T15b design, S11; auto-accepted by Claude, 2026-11-16, awaiting owner confirmation)
+
+CARE's `get_config` keeps a dict that is never cleared.
+
+- **A ⭐ (taken).** Our plugin swaps in CARE's Redis-backed `model_from_cache`. The server refuses to start if the swap is missing (system check).
+- B. Restart the web processes after a change.
+
+*Recommendation A:* CARE's own edits have the same fault, and a restart rule gets forgotten. Reverse: remove the swap and document the restart.
+
+### Q-K65 — How are pack form versions named and linked? (P1-T15b design, items 1-3; auto-accepted by Claude, 2026-11-16, awaiting owner confirmation)
+
+- **A ⭐ (taken).** Slug `ihr-pack-<key>-v<N>`. The old version is retired by status. Version 1 is linked to the hospital's top-level organisations, and later versions copy the previous version's links.
+- B. One slug moved to the newest row.
+- C. Version 1 left unlinked.
+
+*Recommendation A:* slugs are unique and old answers must keep their form. An unlinked form is invisible to everyone on a hospital host, because superusers are refused there. Reverse: change the slug rule in `forms.py` (old answers keep the old slug).
+
+### Q-K66 — Where does the "answered form is never edited in place" guard live? (P1-T15b design, item 4; auto-accepted by Claude, 2026-11-16, awaiting owner confirmation)
+
+- **A ⭐ (taken).** In database triggers. Form side: frozen columns and hard delete are refused. Answer side: hard delete of `QuestionnaireResponse` and `FormSubmission` rows is refused, the form link is fixed after insert, and the lock is taken (FOR SHARE) on insert. Soft delete stays free.
+- B. A viewset swap.
+
+The answer-side trigger refuses hard deletes of patients' form answers. This bears on retention and on any future DPDP erasure path (an owner-only SECURITY DEFINER function would be needed), so the owner should confirm it explicitly.
+
+*Recommendation A:* it covers every writer, including CARE's commented-out check and Django's cascade. Reverse: drop the answer-side triggers and rely on the form-side check.
+
+### Q-K67 — Which facilities get a per-facility pack? (P1-T15b design, item 14; auto-accepted by Claude, 2026-11-16, awaiting owner confirmation)
+
+- **A ⭐ (taken).** Every live facility. A new facility gets its packs from a deduplicated on-commit task (facility packs only). A 15-minute beat job per active hospital is the backstop.
+- B. The admin enrols facilities.
+- C. Start-up as the only backstop.
+
+*Recommendation A:* CARE's catalogue is per facility, and start-ups happen only on deploy. Reverse: remove the signal and the beat job.
+
+### Q-K68 — What if a pack item's link target is missing? (P1-T15b design; auto-accepted by Claude, 2026-11-16, awaiting owner confirmation)
+
+- **A ⭐ (taken).** Write nothing. The item is pending `missing-link` and retried automatically.
+- B. Write it without that link.
+
+*Recommendation A:* a lab test without its specimen is wrong in a way staff would not notice. Reverse: let the handler skip the link.
+
+### Q-K69 — May packs carry prices? (P1-T15b design; auto-accepted by Claude, 2026-11-16, awaiting owner confirmation)
+
+- **A ⭐ (taken).** Never. Prices and stock stay the hospital's. A pack may ship charge item definitions without price components.
+- B. Packs ship prices.
+
+*Recommendation A:* money is the hospital's decision, and an unedited price would change "automatically". Reverse: allow price components in a kind's handler.
+
+### Q-K70 — How is the per-facility mechanism proven in b3? (P1-T15b design; auto-accepted by Claude, 2026-11-16, awaiting owner confirmation)
+
+- **A ⭐ (taken).** Real CARE models with test-only handlers.
+- B. A test-only model and migration.
+
+*Recommendation A:* it proves CARE's slug prefix, id arrays and PROTECT, with no migration. Reverse: add the test model.
+
+### Q-K71 — Do identifier changes that loosen patient search wait for the admin? (P1-T15b design, item 7; auto-accepted by Claude, 2026-11-16, awaiting owner confirmation)
+
+- **A ⭐ (taken).** Yes. Pending `privacy`, whatever the edit state: partial search turned on, a retrieve check (DOB, year of birth, OTP) turned off, or a new active hospital-wide config with such options.
+- B. Automatic for unedited rows (Q-T10 as written).
+
+*Recommendation A:* a pack must not widen who can find a patient by identifier without the hospital's OK. Reverse: drop the `privacy` rule in `identifiers.py`.
+
+### Q-K72 — What if a foreign form already sits at a pack form's slug? (P1-T15b design, item 3; auto-accepted by Claude, 2026-11-16, awaiting owner confirmation)
+
+- **A ⭐ (taken).** `ihr-pack-` is a reserved namespace, enforced by the questionnaire trigger. If a foreign row is already there, the engine takes the next free suffix `-2` to `-9` and records it. Ten taken slugs is a `conflict`.
+- B. Block until the form is renamed.
+
+*Recommendation A:* renaming is impossible on a hospital host once a form has answers. Reverse: make a foreign row a `conflict`.
+
+### Q-K73 — What happens to drafts and templates on a retired form version? (P1-T15b design, item 12; auto-accepted by Claude, 2026-11-16, awaiting owner confirmation)
+
+- **A ⭐ (taken).** The old version is retired at once. The change list and item detail count the stranded drafts and response templates.
+- B. Keep the old version active while drafts exist.
+
+*Recommendation A:* pack form versions are rare and reviewed, and B leaves two live versions. Reverse: add a drafts check before retiring.
+
+### Q-K74 — What if a new auto-numbered identifier replaces an old one? (P1-T15b design, item 10; auto-accepted by Claude, 2026-11-16, awaiting owner confirmation)
+
+- **A ⭐ (taken).** Pending `counter-restart`, with the old count shown. A `default_value` change on the same config is automatic.
+- B. Automatic, warned in the change list.
+
+*Recommendation A:* the new count starts at 0, and desk staff would see look-alike numbers. Reverse: drop the `counter-restart` reason.
+
+### Q-K75 — What if the hospital renames a catalogue slug a pack bound to? (P1-T15b design, item 13; auto-accepted by Claude, 2026-11-16, awaiting owner confirmation)
+
+- **A ⭐ (taken).** Accepted for the test-only kinds. A production facility kind must first bind by `external_id` (a renamed bound row is pending `edited`, never a create).
+- B. Bind in b3 now.
+
+*Recommendation A:* no facility content ships in P1-T15b, so binding lands with the first real kind (b4+). Reverse: add the `external_id` binding to b3.
+
+### Q-K76 — Who counts as a "hospital-wide admin"? (P1-T15b1 review, finding A3; auto-accepted by Claude, 2026-11-16, awaiting owner confirmation)
+
+The gate (`ihr_identity.staff_access.IsHospitalAdmin`, shared by the audit viewer of P1-T6b and the pack decisions of P1-T15b1) accepts an admin role on **any** active top-level organisation of the hospital. Nothing records which organisation is "the hospital": CARE's top-level organisations also include the government state organisations (`ihr_load_geography`) and role organisations, and the dev seed's admins hold their role on a role organisation.
+
+- **A ⭐ (taken).** Keep the gate as it is for now (no change to who sees the audit trail today). Known limit: an admin role on a state organisation would also pass.
+- B. Record one "hospital root" organisation per hospital at provisioning (a field on the hospital profile) and accept only admins there; the seed and provisioning move their first admin onto it.
+- C. Accept only org_type `team` top-level organisations: this locks out every current hospital-wide admin, including the seed's.
+
+*Recommendation A now, B before go-live:* B needs the provisioning flow and the seed to change together, and P1-T15b2a item 1 needs the same answer, so it is best built once as its own small task after you confirm. Nobody is given an admin role on a state organisation by our code today. Reverse: build B (a field plus a check in `hospital_wide_admin`).
+
 **Still open:** Q-B4 (final MVP module list: assumed as in PLAN.md Phase 2) and Q-B6/B7 (pricing, timeline). Q-F2 is moot while AI is deferred.
 
 ---

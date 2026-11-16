@@ -222,6 +222,11 @@ Detailed task definitions: [PLAN.md](PLAN.md) §6. Open questions: [QUESTIONS.md
     - 🔵 P1-T15 Reference-data packs — split by Claude, 2026-11-13, confirmed by you 2026-11-14 (Q-K24):
       - 🟡 P1-T15a Pack engine + CARE's system value sets as the first pack, replacing `sync_valueset` at start-up and in provisioning; drift and re-apply tests on every upstream sync
       - ⬜ P1-T15b (after P1-T17) Admin "updates available" API; identifier configs and forms (new version, never edited in place); per-facility kinds
+        - split by Claude, 2026-11-16, awaiting owner confirmation:
+        - 🔄 P1-T15b1 The hospital admin's "updates available" API: pending and kept items, the field difference, accept or keep with a reason (the screen comes with P1-T24)
+        - ⬜ P1-T15b2a The kinds contract and hospital-wide identifier configs (UHID, ABHA), with the identifier-config cache shared by every web process (Q-K62…Q-K64, Q-K71, Q-K74)
+        - ⬜ P1-T15b2b Forms (questionnaires: a new version is a new form; a form with answers is never edited in place, guarded by a database trigger) (Q-K65, Q-K66, Q-K72, Q-K73)
+        - ⬜ P1-T15b3 Per-facility kinds: items applied in each facility, with same-facility links (the lab catalogue's shape); test packs only, content comes with Phase 2
       - Scope from the Phase 1 review: `PackRelease` per hospital, update unedited rows and flag edited ones (Q-T10), re-apply after each upstream sync in CI; `up` stops running `sync_valueset` for existing hospitals (R1-12; Phase 2 masters P2-T1/T5/T13 need it)
     - 🟡 P1-T16 Isolation coverage — split by Claude, 2026-11-13, confirmed by you 2026-11-14 (Q-K26):
       - 🟡 P1-T16a Crawl fails closed and fills path-converter routes; staff-access route fixed; seven mutation rows + guard tests

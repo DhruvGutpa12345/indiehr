@@ -70,6 +70,12 @@ class PackApply(models.Model):
     actor = models.CharField(max_length=150)
     counts = models.JSONField(default=dict)
     error = models.CharField(max_length=400, blank=True, default="")
+    # The visible change list (P1-T15b1, Q-K61): with an "applied" row only, at most 500
+    # [{item, facility, change}] (created, updated, restored, repaired, retired, pending; and
+    # the record-only ones: resolved, adopted, kept); the total is counts["changes_total"]. An
+    # "applied" row from before P1-T15b1 has no changes_total: the API shows changes null
+    # ("not recorded"). Decisions keep counts = {item, reason}.
+    changes = models.JSONField(default=list, blank=True)
 
     def __str__(self):
         return f"{self.pack} v{self.version} {self.outcome}"

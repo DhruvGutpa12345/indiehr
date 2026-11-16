@@ -14,7 +14,7 @@ from care.emr.models.valueset import ValueSet
 from django.core.management import call_command
 from django.core.management.base import CommandError
 from django.db import connection
-from django.test import TestCase
+from django.test import SimpleTestCase, TestCase
 from django_tenants.utils import get_public_schema_name, schema_context
 from ihr_audit import context as audit
 from ihr_platform.models import Hospital
@@ -506,6 +506,102 @@ class RuleTests(PackCase):
         record = items()["ihr-a"]
         self.assertEqual((record.state, record.applied_version), ("current", 3))
         self.assertTrue(PackApply.objects.filter(outcome="accepted").exists())
+
+
+class ChangeListTests(PackCase):
+    """The visible change list (P1-T15b1 §2.6, Q-K61): every item an apply wrote, record-only
+    writes included, at most MAX_CHANGES entries plus the total."""
+
+    def setUp(self):
+        super().setUp()
+        self.packs = Packs(self)
+
+    def changes(self, version):
+        (row,) = PackApply.objects.filter(
+            pack=TEST_PACK, version=version, outcome="applied"
+        )
+        self.assertEqual(row.counts["changes_total"], len(row.changes))
+        self.assertEqual({c["facility"] for c in row.changes}, {None})
+        return sorted((c["item"], c["change"]) for c in row.changes)
+
+    def test_each_kind_of_change_is_listed_once(self):
+        self.packs.add(
+            1, *(vs(f"ihr-{s}", n) for s, n in zip("abcdek", "123456", strict=True))
+        )
+        self.apply()
+        self.edit("ihr-c", deleted=True)
+        ValueSet.objects.filter(slug="ihr-d").update(
+            compose={**vs("ihr-d", "4")["compose"], "exclude": None}
+        )
+        self.edit("ihr-e", name="Ours")
+        self.edit("ihr-k", name="Ours too")
+        self.packs.add(
+            2, vs("ihr-a", "1", "9"), vs("ihr-c", "3"), vs("ihr-d", "4"),
+            vs("ihr-e", "5", "9"), vs("ihr-k", "6", "9"),
+        )  # fmt: skip
+        self.apply()
+        self.assertEqual(
+            self.changes(2),
+            [("ihr-a", "updated"), ("ihr-b", "retired"), ("ihr-c", "restored"),
+             ("ihr-d", "repaired"), ("ihr-e", "pending"), ("ihr-k", "pending")],
+        )  # fmt: skip
+        self.decide("--keep", "ihr-k")
+        valuesets.create(
+            vs("ihr-f", "7")
+        )  # made here, exactly as the pack will have it
+        # v3 withdraws ihr-e's change, leaves ihr-k (kept) alone, adds ihr-f
+        self.packs.add(
+            3, vs("ihr-a", "1", "9"), vs("ihr-c", "3"), vs("ihr-d", "4"),
+            vs("ihr-e", "5"), vs("ihr-f", "7"), vs("ihr-k", "6", "9"),
+        )  # fmt: skip
+        self.apply()
+        self.assertEqual(
+            self.changes(3),
+            [("ihr-e", "resolved"), ("ihr-f", "adopted"), ("ihr-k", "kept")],
+        )
+        self.assertEqual(items()["ihr-e"].state, "current")
+        # a re-apply (ihr-b still retired) writes nothing: no new row, no "retired" again
+        before = PackApply.objects.count()
+        self.apply()
+        self.assertEqual(PackApply.objects.count(), before)
+
+    def test_a_pending_change_the_hospital_took_by_hand_is_resolved(self):
+        self.packs.add(1, vs("ihr-a", "1"))
+        self.apply()
+        self.edit("ihr-a", name="Ours")
+        self.packs.add(2, vs("ihr-a", "1", "2"), vs("ihr-b", "2"))
+        self.apply()
+        self.assertEqual(items()["ihr-a"].state, "pending")
+        self.edit("ihr-a", name="Ihr A", compose=vs("ihr-a", "1", "2")["compose"])
+        self.packs.add(3, vs("ihr-a", "1", "2"), vs("ihr-b", "2", "3"))
+        self.apply()
+        self.assertEqual(self.changes(3), [("ihr-a", "resolved"), ("ihr-b", "updated")])
+
+    def test_the_list_is_cut_at_max_changes_with_the_real_total(self):
+        self.assertEqual(engine.MAX_CHANGES, 500)
+        with mock.patch.object(engine, "MAX_CHANGES", 2):
+            self.packs.add(1, vs("ihr-a", "1"), vs("ihr-b", "2"), vs("ihr-c", "3"))
+            self.apply()
+        row = PackApply.objects.get(pack=TEST_PACK, version=1)
+        self.assertEqual(len(row.changes), 2)
+        self.assertEqual(row.counts["changes_total"], 3)
+
+
+class ReleaseCacheTests(SimpleTestCase):
+    def test_another_thread_replacing_the_cache_never_raises(self):
+        """T4: gunicorn's gthread workers share the per-process release cache. Another thread
+        replacing it between a membership test and a lookup must not raise KeyError."""
+        found = engine.verified_releases(cached=True)
+        key = next(iter(engine._VERIFIED))
+
+        class Racing(dict):
+            def __contains__(self, k):
+                there = super().__contains__(k)
+                self.clear()  # another thread replaced the cache just now
+                return there
+
+        with mock.patch.object(engine, "_VERIFIED", Racing({key: found})):
+            self.assertIs(engine.verified_releases(cached=True), found)
 
 
 class VersionTests(PackCase):

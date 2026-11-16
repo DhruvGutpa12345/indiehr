@@ -511,6 +511,8 @@ def tenant_for(world):
         username=world.users["Doctor"].username,
         audit_entry_id=str(entry or ""),
         pincode="411001",
+        # the pack update route's <pk>: the waiting item the full world seeds (P1-T15b1)
+        pack_item_id=str(pack.pk) if (pack := world.extra.get("pack_item")) else "",
     )
 
 

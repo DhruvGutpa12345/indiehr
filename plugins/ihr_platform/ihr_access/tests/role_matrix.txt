@@ -36,11 +36,11 @@
 
 # --- GET ------------------------------------------------------------------------------------
 GET /  all:allow  # health, version and root: no hospital data
-GET /api/ihr/audit/entries/  all:deny  # the audit viewer: top-level hospital admins only (ihr_audit IsHospitalAdmin), and no one in this world is one
-GET /api/ihr/audit/entries/<int:pk>/  all:deny  # the audit viewer: top-level hospital admins only (ihr_audit IsHospitalAdmin), and no one in this world is one
-GET /api/ihr/audit/export/  all:deny  # the audit viewer: top-level hospital admins only (ihr_audit IsHospitalAdmin), and no one in this world is one
-GET /api/ihr/audit/status/  all:deny  # the audit viewer: top-level hospital admins only (ihr_audit IsHospitalAdmin), and no one in this world is one
-GET /api/ihr/audit/verifier.py  all:deny  # the audit viewer: top-level hospital admins only (ihr_audit IsHospitalAdmin), and no one in this world is one
+GET /api/ihr/audit/entries/  all:deny  # the audit viewer: top-level hospital admins only (ihr_identity IsHospitalAdmin), and no one in this world is one
+GET /api/ihr/audit/entries/<int:pk>/  all:deny  # the audit viewer: top-level hospital admins only (ihr_identity IsHospitalAdmin), and no one in this world is one
+GET /api/ihr/audit/export/  all:deny  # the audit viewer: top-level hospital admins only (ihr_identity IsHospitalAdmin), and no one in this world is one
+GET /api/ihr/audit/status/  all:deny  # the audit viewer: top-level hospital admins only (ihr_identity IsHospitalAdmin), and no one in this world is one
+GET /api/ihr/audit/verifier.py  all:deny  # the audit viewer: top-level hospital admins only (ihr_identity IsHospitalAdmin), and no one in this world is one
 GET /api/ihr/auth/callback/  all:redirect  # the sign-in flow: a redirect to Keycloak
 GET /api/ihr/auth/login/  all:redirect  # the sign-in flow: a redirect to Keycloak
 GET /api/ihr/auth/logout/  all:deny  # POST only: 405 to a GET
@@ -54,6 +54,9 @@ GET /api/ihr/my-access/  all:allow  # the web app's mode for the caller (P1-T11c
 GET /api/ihr/my-access/ ?facility=facility  all:allow  # as above for one facility: bills_here true only for the Cashier and the TPA Desk placed there (Q-K37a B); ihr_access.tests.test_my_access
 GET /api/ihr/owner/totals/  all:deny owner:invalid  # the Owner's totals (P1-T11b4): ihr_view_hospital_totals only; with no facility and days named the Owner gets 400
 GET /api/ihr/owner/totals/ ?facility=facility&from~01-01-2026&to~31-12-2026  all:deny owner:allow  # aggregates only, never an id, a name or a row (the canary's Owner rule reads this body; ihr_access.tests.test_totals)
+GET /api/ihr/packs/history/  all:deny  # reference pack updates (P1-T15b1): hospital-wide admins only (ihr_identity IsHospitalAdmin), and no one in this world is one; ihr_refdata.tests.test_api
+GET /api/ihr/packs/updates/  all:deny  # reference pack updates (P1-T15b1): hospital-wide admins only (ihr_identity IsHospitalAdmin), and no one in this world is one; ihr_refdata.tests.test_api
+GET /api/ihr/packs/updates/<int:pk>/  all:deny  # reference pack updates (P1-T15b1): hospital-wide admins only (ihr_identity IsHospitalAdmin), and no one in this world is one; <pk> is the waiting item the world seeds (testing.py packs()), so this row is the gate's, not a 404; ihr_refdata.tests.test_api
 GET /api/ihr/pincode/<str:pincode>/  all:unavailable  # the PIN directory is not loaded in the test hospital: 503 for everyone (ihr_tenant_settings tests load it)
 GET /api/ihr/profile/  all:allow  # the hospital's own profile and branding (P1-T2a), no patient data
 GET /api/ihr/records-access/  all:empty mrdg:allow  # the caller's own live records grants (P1-T11b4): none for anyone but MRD with a grant

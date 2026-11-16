@@ -172,6 +172,8 @@
 # the crawl saw no read on the route itself) --------------------------------------------------
 /api/ihr/audit/entries/ none  # the audit viewer's own filters (ihr_audit tests them); no one in this world may open it
 /api/ihr/audit/export/ none  # as entries
+/api/ihr/packs/history/ none  # the change list's own filters (ihr_refdata.tests.test_api); no one in this world may open it
+/api/ihr/packs/updates/ none  # the pack updates' own filters (ihr_refdata.tests.test_api); no one in this world may open it
 /api/v1/encounter/{external_id}/organizations/ none  # static walk: EncounterViewSet reads facility and patient in its list; this action read none in the crawl
 /api/v1/facility/{facility_external_id}/appointments/{external_id}/ none  # static walk: TokenBookingViewSet reads its filters in the list; a retrieve read none in the crawl
 /api/v1/facility/{facility_external_id}/charge_item_definition/{slug}/ none  # static walk: the list's category and favourites filters; a retrieve read none

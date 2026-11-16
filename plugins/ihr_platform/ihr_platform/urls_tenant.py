@@ -20,6 +20,8 @@ urlpatterns = [
     # Hospital admins: reset a lost authenticator, resend or cancel an invitation (P1-T5e2)
     path("api/ihr/staff/", include("ihr_identity.staff_urls")),
     path("api/ihr/audit/", include("ihr_audit.urls")),
+    # Hospital-wide admins: reference pack updates, accept or keep, the change list (P1-T15b1)
+    path("api/ihr/packs/", include("ihr_refdata.urls")),
     # MRD's records grants and the Owner's totals (P1-T11b4)
     path("api/ihr/", include("ihr_access.urls")),
     path("api/ihr/", include("ihr_tenant_settings.urls")),

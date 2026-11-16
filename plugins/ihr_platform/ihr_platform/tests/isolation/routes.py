@@ -118,7 +118,18 @@ def _model(cls):
     return model
 
 
-def _converter_value(name, tenant):
+# Converters whose value depends on the route: (route, converter name) -> the tenant's
+# attribute holding it. The reference pack item world.py seeds waiting (P1-T15b1); a tenant
+# object without that attribute (the role matrix's) gets the converter's general value.
+ROUTE_CONVERTER_VALUES = {
+    ("api/ihr/packs/updates/<int:pk>/", "pk"): "pack_item_id",
+}
+
+
+def _converter_value(name, tenant, route=""):
+    attribute = ROUTE_CONVERTER_VALUES.get((route.lstrip("^/"), name))
+    if attribute and getattr(tenant, attribute, ""):
+        return getattr(tenant, attribute)
     return {
         "username": tenant.username,
         "pk": tenant.audit_entry_id,
@@ -152,7 +163,7 @@ def fill(route, cls, tenant, *, ids_from=None, external_id_from=None):
             return None
         path = PARAM_RE.sub(value, path, count=1)
     while match := CONVERTER_RE.search(path):
-        value = _converter_value(match["name"], tenant)
+        value = _converter_value(match["name"], tenant, route)
         converter = get_converters().get(match["conv"] or "str")
         if not value or converter is None:
             return None
