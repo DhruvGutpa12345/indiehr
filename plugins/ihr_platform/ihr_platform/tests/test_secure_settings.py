@@ -156,6 +156,17 @@ class SecureRulesTests(SimpleTestCase):
                 self.assertEqual(len(found), 1, found)
                 self.assertIn(expected, found[0])
 
+    def test_test_only_pack_kinds_are_refused(self):
+        """P1-T15b3 (Q-K70 A): the test-only reference pack kinds are never on a server. Its
+        own method, so mutation row facility-test-kinds-guard fails here."""
+        found = secure.problems(
+            GOOD_SETTINGS | {"IHR_REFDATA_TEST_KINDS": True}, GOOD_ENV
+        )
+        self.assertEqual(
+            found,
+            ["IHR_REFDATA_TEST_KINDS must stay off (test packs only, P1-T15b3)."],
+        )
+
     def test_patient_global_edit_access_is_refused(self):
         """CARE's switch opens every patient to every signed-in user (P1-T11a). Its own
         method, so its mutation row fails here and nowhere it could hide (P1-T16a)."""

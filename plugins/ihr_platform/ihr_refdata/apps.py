@@ -13,9 +13,20 @@ class IhrRefdataConfig(AppConfig):
         # The answered-form guard (P1-T15b2b, forms_guard.py): installed and kept current in
         # every hospital schema by post_migrate, never by re-running a migration
         post_migrate.connect(_install, sender=self, dispatch_uid=INSTALL_UID)
+        # A new facility gets the per-facility packs (P1-T15b3 item 14, tasks.py)
+        from django.db.models.signals import post_save
+
+        from ihr_refdata import tasks
+
+        post_save.connect(
+            tasks.facility_saved,
+            sender="facility.Facility",
+            dispatch_uid=FACILITY_UID,
+        )
 
 
 INSTALL_UID = "ihr_refdata_forms_guard"
+FACILITY_UID = "ihr_refdata_new_facility"
 
 
 def forms_guard_checks(app_configs=None, **kwargs):

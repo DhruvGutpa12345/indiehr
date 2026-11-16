@@ -434,6 +434,23 @@ def missing_link(key, row, item):
     )
 
 
+def linkable(items):
+    """Item 11 (P1-T15b3): a first version held for a missing link can be written once the
+    hospital has an organisation to link it to (one query); until then the start-up
+    short-circuit does not reconcile for it."""
+    return _organisation_exists()
+
+
+def _organisation_exists():
+    from care.emr.models.organization import Organization
+
+    return (
+        Organization.objects.filter(parent__isnull=True, active=True)
+        .exclude(org_type=GOVT)
+        .exists()
+    )
+
+
 def hospital_organisations():
     """The hospital's top-level organisations a first version is linked to: no parent,
     active, not deleted, not a government one (Q-K80 A: the 36 state organisations are not)."""

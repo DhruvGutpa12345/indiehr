@@ -20,7 +20,9 @@ most one decision is in flight per hospital and 30 per user per minute (schema-p
 keys); beyond that 429. A busy hospital (a pack apply, a release, a dump, a restore) is 409
 with ``Retry-After: 60`` and never names the other job.
 
-The ``facility`` filter and per-facility items come with P1-T15b3: not read here yet.
+Per-facility items (P1-T15b3): each shows its facility's external id (null for a hospital-wide
+item) and the list takes ``facility=<external id>``. A soft-deleted facility's items are hidden
+(listed, shown and decided as if absent) until it is restored.
 """
 
 import re
@@ -30,6 +32,7 @@ import uuid
 from care.users.models import User
 from django.core.cache import cache
 from django.db import connection, transaction
+from django.db.models import Q
 from django.http import QueryDict
 from django.utils import timezone
 from django.utils.dateparse import parse_datetime
@@ -55,6 +58,7 @@ IN_FLIGHT_SECONDS = 150
 STATES = {"pending": PackItem.State.PENDING, "kept": PackItem.State.KEPT}
 WAITING = tuple(STATES.values())
 HEX = re.compile(r"^(?:[0-9a-f]{64})?$")
+UUID = re.compile(r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$")
 NUMBER = re.compile(r"^[0-9]{1,7}$")
 PACK_NAME = re.compile(r"^[a-z0-9][a-z0-9-]{0,63}$")
 STAFF_ACTOR = re.compile(r"^packs:user-([0-9]{1,19})$")
@@ -115,7 +119,9 @@ def _summary(record, row, item):
         "kind": record.kind,
         "item": record.item,
         "label": handler.label(row, item),
-        "facility": None,  # per-facility items: P1-T15b3
+        "facility": (
+            str(record.facility.external_id) if record.facility_id is not None else None
+        ),
         "state": record.state,
         "reason": record.reason,
         "applied_version": record.applied_version,
@@ -166,9 +172,19 @@ def detail(record, releases):
 
 
 def _row(handler, record):
-    """The hospital row the record's item writes (by the record's target where it has one)."""
-    return handler.rows([record.item], targets={record.item: record.target}).get(
-        record.item
+    """The hospital row the record's item writes (by the record's target where it has one;
+    in the record's facility for a per-facility kind)."""
+    return (
+        handler.at(record.facility)
+        .rows([record.item], targets={record.item: record.target})
+        .get(record.item)
+    )
+
+
+def _shown():
+    """Records an admin may see: hospital-wide ones, and those of facilities not deleted."""
+    return PackItem.objects.select_related("facility").filter(
+        Q(facility__isnull=True) | Q(facility__deleted=False)
     )
 
 
@@ -231,7 +247,7 @@ class UpdatesView(APIView):
                 releases = _releases()
             except engine.PackError:
                 return _refused(503, UNAVAILABLE)
-            rows = PackItem.objects.filter(state__in=states)
+            rows = _shown().filter(state__in=states)
             if pack := params.get("pack"):
                 if pack not in releases:
                     _bad("pack", "not a pack of this build")
@@ -240,19 +256,29 @@ class UpdatesView(APIView):
                 if kind not in kinds.names():
                     _bad("kind", f"one of {', '.join(kinds.names())}")
                 rows = rows.filter(kind=kind)
+            if facility := params.get("facility"):
+                if not UUID.match(facility):
+                    _bad("facility", "a facility's id")
+                rows = rows.filter(facility__external_id=facility)
         except _BadQueryError as bad:
             return Response(bad.body, status=400)
-        rows = rows.order_by("pack", "item", "id")
+        rows = rows.order_by("pack", "item", "facility_id", "id")
         count = rows.count()
         page = list(rows[offset : offset + limit])
         found = {}
-        for kind in {r.kind for r in page}:
-            mine = [r for r in page if r.kind == kind]
-            found[kind] = kinds.get(kind).rows(
-                [r.item for r in mine], targets={r.item: r.target for r in mine}
+        for kind, place in {(r.kind, r.facility_id) for r in page}:
+            mine = [r for r in page if (r.kind, r.facility_id) == (kind, place)]
+            found[kind, place] = (
+                kinds.get(kind)
+                .at(mine[0].facility)
+                .rows([r.item for r in mine], targets={r.item: r.target for r in mine})
             )
         results = [
-            _summary(r, found[r.kind].get(r.item), _waiting_item(r, releases))
+            _summary(
+                r,
+                found[r.kind, r.facility_id].get(r.item),
+                _waiting_item(r, releases),
+            )
             for r in page
         ]
         return Response({"count": count, "results": results})
@@ -269,7 +295,7 @@ class UpdateView(APIView):
     def _record(self, pk, *, waiting=True):
         if pk > MAX_ID:
             return None
-        rows = PackItem.objects.filter(pk=pk)
+        rows = _shown().filter(pk=pk)
         if waiting:
             rows = rows.filter(state__in=WAITING)
         return rows.first()
@@ -356,6 +382,7 @@ class UpdateView(APIView):
                     expect=expect,
                     record=False,
                     releases=releases,
+                    facility=record.facility,
                 )
         except runner.ProvisioningError:
             return _refused(409, BUSY, busy=True)

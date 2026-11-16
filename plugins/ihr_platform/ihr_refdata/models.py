@@ -30,10 +30,21 @@ class PackItem(models.Model):
         )
         PRIVACY = "privacy"  # it would widen who finds a patient: the admin decides
         COUNTER_RESTART = "counter-restart"  # a new number series replaces an old one
+        # P1-T15b3 (Q-K68 A): a row the item must link to is not there (blocks accept)
+        MISSING_LINK = "missing-link"
 
     pack = models.CharField(max_length=64)
     kind = models.CharField(max_length=32)
-    item = models.CharField(max_length=255)  # the value set's slug
+    # A per-facility kind's item is applied once per facility (P1-T15b3): its record names the
+    # facility; null for a hospital-wide kind. PROTECT: a record never loses its facility
+    facility = models.ForeignKey(
+        "facility.Facility",
+        on_delete=models.PROTECT,
+        null=True,
+        blank=True,
+        related_name="+",
+    )
+    item = models.CharField(max_length=255)  # the pack key (a value set's slug, ...)
     state = models.CharField(max_length=16, choices=State.choices)
     reason = models.CharField(
         max_length=32, choices=Reason.choices, blank=True, default=""
@@ -61,13 +72,43 @@ class PackItem(models.Model):
 
     class Meta:
         constraints = [
+            # One record per item, and per facility for a per-facility kind; two hospital-wide
+            # records of one item are refused too (NULLS NOT DISTINCT)
             models.UniqueConstraint(
-                fields=["pack", "kind", "item"], name="ihr_packitem_one_per_item"
+                fields=["pack", "kind", "facility", "item"],
+                name="ihr_packitem_one_per_item_facility",
+                nulls_distinct=False,
             )
         ]
 
     def __str__(self):
         return f"{self.pack}:{self.item} ({self.state})"
+
+
+class PackFacility(models.Model):
+    """The release of a per-facility pack last reconciled in one facility (P1-T15b3): the
+    start-up short-circuit, the new-facility task and the 15-minute backstop find a facility
+    that has not had the current release from it (a new one, or one restored after it was
+    deleted) with one query. Written in the reconcile's own transaction, and only when it
+    changes, so a re-apply stays silent."""
+
+    pack = models.CharField(max_length=64)
+    facility = models.ForeignKey(
+        "facility.Facility", on_delete=models.PROTECT, related_name="+"
+    )
+    version = models.PositiveIntegerField()
+    sha256 = models.CharField(max_length=64)
+    reconciled_at = models.DateTimeField()
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(
+                fields=["pack", "facility"], name="ihr_packfacility_one_per_facility"
+            )
+        ]
+
+    def __str__(self):
+        return f"{self.pack} v{self.version} in facility {self.facility_id}"
 
 
 class PackApply(models.Model):

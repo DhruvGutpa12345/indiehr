@@ -13,8 +13,16 @@ HERE = Path(__file__).resolve().parent.parent
 
 class ContractTests(SimpleTestCase):
     def test_every_registered_kind_keeps_the_contract(self):
+        # the test settings register the test-only per-facility kinds too (P1-T15b3)
         self.assertEqual(
-            kinds.names(), ("identifier_config", "questionnaire", "valueset")
+            kinds.names(),
+            (
+                "identifier_config",
+                "questionnaire",
+                "t_activity",
+                "t_specimen",
+                "valueset",
+            ),
         )
         for name in kinds.names():
             with self.subTest(kind=name):
@@ -39,6 +47,16 @@ class ContractTests(SimpleTestCase):
                 self.assertEqual(
                     inspect.signature(kind.write).parameters["restore"].default, False
                 )
+                self.assertIsInstance(kind.LINKS, dict)
+                if kind.SCOPE == "facility":  # P1-T15b3: asked inside one facility
+                    for bound in kinds.FACILITY_REQUIRED:
+                        self.assertIn(
+                            "facility",
+                            inspect.signature(getattr(kind, bound)).parameters,
+                        )
+                else:
+                    self.assertEqual(kind.LINKS, {})
+                    self.assertIs(kind.at(None), kind)
                 self.assertEqual(
                     set(inspect.signature(kind.shown).parameters),
                     {"row", "item", "retire"},
@@ -81,3 +99,25 @@ class ContractTests(SimpleTestCase):
                 self.assertNotIn("HANDLERS", text)
                 self.assertNotIn("import valuesets", text)
                 self.assertNotIn("valuesets.", text)
+
+
+class TestKindsTests(SimpleTestCase):
+    """P1-T15b3 (Q-K70 A): the test-only kinds exist only while the test flag is on."""
+
+    def test_the_test_kinds_are_per_facility_and_only_with_the_flag(self):
+        from django.test import override_settings
+
+        self.assertEqual(kinds.get("t_specimen").SCOPE, "facility")
+        self.assertEqual(
+            kinds.get("t_activity").LINKS, {"specimen_requirements": "t_specimen"}
+        )
+        with self.assertRaises(ValueError):
+            kinds.get("t_specimen").at(None)
+        with override_settings(IHR_REFDATA_TEST_KINDS=False):
+            self.assertNotIn("t_specimen", kinds.names())
+            with self.assertRaises(KeyError):
+                kinds.get("t_activity")
+            self.assertEqual(
+                manifest.kind_names(),
+                ("identifier_config", "questionnaire", "valueset"),
+            )

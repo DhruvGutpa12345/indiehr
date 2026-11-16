@@ -51,3 +51,7 @@ CACHES["default"]["LOCATION"] = _test_redis.geturl()  # noqa: F405
 # The terminology loader's test and bench exemptions (folders, no sha256, the synthetic release)
 # apply only where a setting says so, and only to test_*/bench_* databases (P1-T10a2)
 IHR_TERMINOLOGY_THROWAWAY_DB = True
+
+# Test-only reference pack kinds (P1-T15b3, Q-K70 A: ihr_refdata/tests/kinds.py). Refused on a
+# server (settings/secure.py): a pack of theirs is then an unknown kind for the whole fleet
+IHR_REFDATA_TEST_KINDS = True

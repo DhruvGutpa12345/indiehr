@@ -48,10 +48,29 @@ Optional (default):
                               ("privacy", "counter-restart"; "" for none)
     usable(row), make_usable(row)
                               a row CARE cannot read, mended without losing its content
+    LINKS                     {} ({field: target kind}: P1-T15b3, per-facility kinds only)
+    linkable(items)           True (P1-T15b3 item 11): a held "missing-link" item may now be
+                              written, so the start-up short-circuit reconciles again (one
+                              query; the default always does)
+    stale_hash(row)           "" (P1-T15b3, review T1): the row's hash with every link to a
+                              deleted or superseded target read as its key; when it equals
+                              what the pack wrote, the link is re-pointed (or the item held
+                              as "missing-link"), never counted as the hospital's edit
+
+Per-facility kinds (``SCOPE = "facility"``, P1-T15b3, design.md §4): applied once per live
+facility. The engine reaches them only through ``get(kind).at(facility)``, which passes
+``facility=`` to each of FACILITY_BOUND the kind defines (``rows``, ``all_present`` and
+``create`` must take it); a hospital-wide kind is its own ``at(None)``. A kind may be a module
+or a class with the same names (ihr_refdata.catalogue). Test-only kinds
+(``ihr_refdata.tests.kinds``) are registered only while ``IHR_REFDATA_TEST_KINDS`` is on: the
+test settings alone; the deployment settings refuse it (settings/secure.py), so a pack of
+theirs is an unknown kind on a server and ``prepare()`` refuses it for the fleet.
 """
 
 import inspect
+from functools import partial
 
+from django.conf import settings
 from django.core.exceptions import ImproperlyConfigured
 
 from ihr_refdata import forms, identifiers, valuesets
@@ -103,8 +122,23 @@ DEFAULTS = {
     "admin_reason": lambda row, item, leaving: ("", {}),
     "usable": lambda row: True,
     "make_usable": lambda row: False,
+    "LINKS": {},
+    "linkable": lambda items: True,
+    "stale_hash": lambda row: "",
 }
 CONTRACT = (*REQUIRED, *DEFAULTS)
+# What a per-facility kind is asked inside one facility: ``facility=`` is passed to each it
+# defines (P1-T15b3)
+FACILITY_BOUND = (
+    "rows",
+    "all_present",
+    "create",
+    "record_target",
+    "conflict",
+    "missing_link",
+    "linkable",
+)
+FACILITY_REQUIRED = ("rows", "all_present", "create")
 
 
 class Kind:
@@ -121,7 +155,38 @@ class Kind:
         if "targets" not in inspect.signature(module.all_present).parameters:
             msg = f"pack kind {module.__name__}: all_present() must take targets="
             raise ImproperlyConfigured(msg)
+        scope = getattr(module, "SCOPE", DEFAULTS["SCOPE"])
+        if scope not in SCOPES:
+            msg = (
+                f"pack kind {module.__name__}: SCOPE must be one of {', '.join(SCOPES)}"
+            )
+            raise ImproperlyConfigured(msg)
+        if scope == "facility":
+            for name in FACILITY_BOUND:
+                if not hasattr(module, name) and name not in FACILITY_REQUIRED:
+                    continue
+                if (
+                    "facility"
+                    not in inspect.signature(getattr(module, name)).parameters
+                ):
+                    msg = f"pack kind {module.__name__}: {name}() must take facility="
+                    raise ImproperlyConfigured(msg)
+        elif getattr(module, "LINKS", None):
+            msg = f"pack kind {module.__name__}: only a per-facility kind links (LINKS)"
+            raise ImproperlyConfigured(msg)
         self.module = module
+
+    def at(self, facility):
+        """This kind inside ``facility`` (a per-facility kind) or hospital-wide (``None``)."""
+        if self.SCOPE == "facility":
+            if facility is None:
+                msg = f"{self!r} is applied per facility: name the facility"
+                raise ValueError(msg)
+            return _AtFacility(self, facility)
+        if facility is not None:
+            msg = f"{self!r} is hospital-wide: it has no facility"
+            raise ValueError(msg)
+        return self
 
     def __getattr__(self, name):
         try:
@@ -135,14 +200,44 @@ class Kind:
         return f"<kind {self.module.KIND}>"
 
 
-_REGISTRY = {module.KIND: Kind(module) for module in (valuesets, identifiers, forms)}
+class _AtFacility:
+    """A per-facility kind inside one facility: ``facility=`` passed to what it defines of
+    FACILITY_BOUND; everything else is the kind's own."""
+
+    def __init__(self, kind, facility):
+        self.kind = kind
+        self.facility = facility
+
+    def __getattr__(self, name):
+        value = getattr(self.kind, name)
+        if name in FACILITY_BOUND and hasattr(self.kind.module, name):
+            return partial(value, facility=self.facility)
+        return value
+
+    def __repr__(self):
+        return f"<kind {self.kind.KIND} in facility {self.facility.pk}>"
+
+
+_BUILT = {module.KIND: Kind(module) for module in (valuesets, identifiers, forms)}
+# The test-only kinds, made once per process when first asked for (code, no hospital data)
+_TEST_ONLY = {}
+
+
+def _registry():
+    if not getattr(settings, "IHR_REFDATA_TEST_KINDS", False):
+        return _BUILT
+    if not _TEST_ONLY:
+        from ihr_refdata.tests import kinds as test_kinds
+
+        _TEST_ONLY.update({k.KIND: Kind(k) for k in test_kinds.KINDS})
+    return {**_BUILT, **_TEST_ONLY}
 
 
 def names():
     """Every registered kind, sorted."""
-    return tuple(sorted(_REGISTRY))
+    return tuple(sorted(_registry()))
 
 
 def get(kind):
     """The kind ``kind`` (KeyError for one this build does not know)."""
-    return _REGISTRY[kind]
+    return _registry()[kind]

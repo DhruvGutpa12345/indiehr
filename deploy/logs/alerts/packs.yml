@@ -13,6 +13,15 @@
 # paths anyone can choose), and only a whole line that is exactly ours, with a slug-shaped
 # hospital. The label is never put into the action's command. Tests: scripts/check-logs.py
 # (cases in deploy/logs/tests/alert-cases.json) and scripts/test_staging_logs.py.
+#
+# PackFacilityDeferred (P1-T15b3): a new or restored facility that the Celery workers could not
+# fill with the per-facility packs (ihr_refdata/tasks.py): the new-facility task gave up after
+# 3 tries, then the 15-minute backstop writes "ihr-packs: hospital=<slug> outcome=deferred
+# facility=<external id>" at every run it still cannot fill it ("facility=unknown" when the
+# worker refuses the pack files). Held for two hours (lines in every 40-minute window: at
+# least two backstop runs, so one late or missed run never restarts the hold), so one give-up
+# the backstop then fixes never mails anyone. Worker services only (celery, celery-worker),
+# whole line, slug-shaped hospital, the facility a UUID or "unknown".
 groups:
   - name: reference-packs
     type: vlogs
@@ -27,3 +36,12 @@ groups:
         annotations:
           summary: 'Reference packs failed to apply to hospital {{ $labels.hospital }} ({{ $value }} times in 24 hours)'
           action: 'Read that hospital''s PackApply rows (the error), fix the cause, then run ihr_pack_apply --slug <the hospital named above> --operator <you> (it refuses a hospital that is held or not on this build''s schema: ihr_fleet_run check first). No PackApply error, but a line "data check not fully checked" naming a pack and item just before: run ihr_pack_pending --slug <the hospital> --recheck --operator <you> (ihr_pack_pending --slug <the hospital> lists what holds each item)'
+      - alert: PackFacilityDeferred
+        expr: '_time:40m source:=container service:in(celery, celery-worker) "ihr-packs: hospital=" | extract_regexp "^ihr-packs: hospital=(?P<hospital>[a-z][a-z0-9-]{2,30}) outcome=deferred facility=(?P<facility>[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}|unknown)$" | filter hospital:~"^[a-z][a-z0-9-]{2,30}$" | stats by (hospital) count() as deferrals'
+        for: 2h
+        labels:
+          severity: warning
+          service: packs
+        annotations:
+          summary: 'A facility of hospital {{ $labels.hospital }} has waited over two hours for its per-facility reference packs'
+          action: 'Another job keeps holding the hospital, or the apply fails: read the worker log (the ihr-packs lines for that hospital: "per-facility packs failed" or "the pack files are refused" with the error; the workers write no PackApply row for a failure), fix the cause, then run ihr_pack_apply --slug <the hospital named above> --operator <you>, which reconciles every live facility'

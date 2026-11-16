@@ -33,6 +33,15 @@ admin may take (``privacy``, ``counter-restart``). A kind that does not restore 
 treats a deletion as a local edit: pending ``deleted`` only when the pack changes the item. A pack older than the one applied here is skipped (an image
 roll-back must still start); the same version with another sha256 is refused. A newer release
 that writes nothing here is still recorded (outcome "reached"), so later starts skip it.
+
+Per-facility kinds (P1-T15b3, design.md §4 and "After the attack" items 11, 13 and 14): the rule
+table above runs once per live facility (``_reconcile(release, handler, facility)``), each with
+its own records (``PackItem.facility``) and rows; one PackApply row per pack and run, whose
+change list names the facility. A soft-deleted facility is skipped (its records stay, hidden
+from the API) and caught up when restored. ``PackFacility`` records the release last reconciled
+in each facility: the start-up short-circuit needs it for every live facility, and the
+new-facility task and the 15-minute backstop (tasks.py) find a facility without it in one
+query. Packs are applied in the order their manifest entries' ``after`` give (ties by name).
 """
 
 import logging
@@ -42,13 +51,14 @@ from functools import partial
 from pathlib import Path
 
 from django.db import connection, transaction
+from django.db.models import BooleanField, Count, ExpressionWrapper, Max, Q
 from django.utils import timezone
 from django_tenants.utils import get_public_schema_name, schema_context
 from ihr_audit import context as audit
 
 from ihr_refdata import kinds, manifest
 from ihr_refdata.manifest import PackError
-from ihr_refdata.models import PackApply, PackItem
+from ihr_refdata.models import PackApply, PackFacility, PackItem
 
 log = logging.getLogger("ihr.refdata")
 MAX_ERROR = 300
@@ -63,7 +73,18 @@ _CURRENT = {
     "checks": {},
 }
 
-__all__ = ["PackError", "apply_packs", "decide", "normal_reason", "pending", "prepare"]
+__all__ = [
+    "PackError",
+    "applied_ahead",
+    "apply_packs",
+    "decide",
+    "lagging_facilities",
+    "needs_filling",
+    "normal_reason",
+    "order",
+    "pending",
+    "prepare",
+]
 MAX_CHANGES = (
     500  # entries of PackApply.changes; the total is in counts["changes_total"]
 )
@@ -91,11 +112,14 @@ class StaleError(RefusedError):
 
 class BlockedError(RefusedError):
     """The item cannot be accepted until a problem is fixed (keep is still allowed).
-    ``checks``: a data check's result found at the accept, stored on the item (Q9)."""
+    ``checks``: a data check's result found at the accept, stored on the item (Q9).
+    ``held``: (reason, why, pending sha256) of a conflict or missing link found at the
+    accept, stored on a pending item (review E6)."""
 
-    def __init__(self, message, checks=None):
+    def __init__(self, message, checks=None, held=None):
         super().__init__(message)
         self.checks = checks
+        self.held = held
 
 
 class NotReleasedError(StaleError):
@@ -192,9 +216,61 @@ def verified_releases(root=None, *, cached=False):
     for versions in found.values():
         check_pack(versions)
         check_items(versions[-1])
+    check_order({pack: versions[-1] for pack, versions in found.items()})
     if key is not None:
         _VERIFIED = {key: found}
     return found
+
+
+def order(releases):
+    """The packs of ``releases`` in the order they are applied: each after the packs its
+    ``after`` names (those among ``releases``), otherwise by name (PackError on a cycle)."""
+    left = sorted(releases)
+    done, out = set(), []
+    while left:
+        ready = [
+            pack
+            for pack in left
+            if all(a in done or a not in releases for a in releases[pack].after)
+        ]
+        if not ready:
+            msg = f"the packs' after lists make a cycle: {', '.join(left)}"
+            raise PackError(msg)
+        done.add(ready[0])
+        out.append(ready[0])
+        left.remove(ready[0])
+    return out
+
+
+def check_order(latest):
+    """Fleet-wide checks of the packs' ``after`` (P1-T15b3; PackError): every pack it names
+    exists, there is no cycle, and a kind that links (``LINKS``) is applied after a pack of
+    each kind it links to, so its targets are written first."""
+    for pack in sorted(latest):
+        release = latest[pack]
+        for name in release.after:
+            if name not in latest:
+                msg = f"{pack}: after names {name!r}, which is not a pack of this build"
+                raise PackError(msg)
+        handler = kinds.get(release.kind)
+        for link, target in sorted(handler.LINKS.items()):
+            try:
+                linked = kinds.get(target)
+            except (
+                KeyError
+            ):  # review E7: refused for the fleet like any other pack fault
+                msg = f"{pack}: its {link} links to {target!r}, which is not a kind of this build"
+                raise PackError(msg) from None
+            if handler.SCOPE != "facility" or linked.SCOPE != "facility":
+                msg = f"{pack}: only per-facility kinds link ({link} -> {target})"
+                raise PackError(msg)
+            if not any(latest[a].kind == target for a in release.after):
+                msg = (
+                    f"{pack}: its {link} links to {target} items, but no pack of that "
+                    "kind is in its after list"
+                )
+                raise PackError(msg)
+    order(latest)
 
 
 def recorded(release):
@@ -245,21 +321,39 @@ def prepare(operator, *, root=None, record=True, cached=False):
 
 
 def apply_packs(
-    hospital, *, operator, releases=None, root=None, dry_run=False, recheck=False
+    hospital,
+    *,
+    operator,
+    releases=None,
+    root=None,
+    dry_run=False,
+    recheck=False,
+    facilities=None,
 ):
-    """Apply the newest version of every pack to ``hospital`` (lock-free; see above).
-    Returns a Result per pack; a pack that fails raises ApplyError (its writes rolled back).
-    ``dry_run`` works out the same results and writes nothing. ``recheck``
-    (``ihr_pack_pending --recheck``): every data check is run again, whatever is stored."""
+    """Apply the newest version of every pack to ``hospital`` (lock-free; see above), in
+    ``order``. Returns a Result per pack; a pack that fails raises ApplyError (its writes
+    rolled back) and the later packs are not applied. ``dry_run`` works out the same results
+    and writes nothing. ``recheck`` (``ihr_pack_pending --recheck``): every data check is run
+    again, whatever is stored. ``facilities`` (the new-facility task and the 15-minute
+    backstop, item 14): only per-facility packs, and only in those facilities; a hospital-wide
+    pack is never applied then."""
     if releases is None:
         releases = prepare(operator, root=root, record=not dry_run)
     results = []
     with schema_context(hospital.schema_name):
-        for pack in sorted(releases):
+        for pack in order(releases):
             release = releases[pack]
+            if facilities is not None and kinds.get(release.kind).SCOPE != "facility":
+                continue
             try:
                 results.append(
-                    _apply_release(release, operator, dry_run=dry_run, recheck=recheck)
+                    _apply_release(
+                        release,
+                        operator,
+                        dry_run=dry_run,
+                        recheck=recheck,
+                        facilities=facilities,
+                    )
                 )
             except Exception as exc:
                 raise ApplyError(release, exc) from exc
@@ -278,7 +372,101 @@ def _last_applied(pack):
     )
 
 
-def _apply_release(release, operator, *, dry_run, recheck=False):
+def applied_ahead(releases):
+    """The packs of ``releases`` this hospital took a newer version of: after an image
+    roll-back the apply skips them as older, so the task and the backstop leave them alone
+    until the roll-forward (review T3). One query."""
+    newest = dict(
+        PackApply.objects.filter(
+            pack__in=list(releases), outcome__in=[Outcome.APPLIED, Outcome.REACHED]
+        )
+        .order_by()
+        .values("pack")
+        .annotate(newest=Max("version"))
+        .values_list("pack", "newest")
+    )
+    return {
+        pack
+        for pack, release in releases.items()
+        if newest.get(pack, 0) > release.version
+    }
+
+
+def live_facilities():
+    """The hospital's facilities that are not soft-deleted (Q-K67 A), oldest first."""
+    from care.facility.models import Facility
+
+    return Facility._base_manager.filter(deleted=False).order_by("id")  # noqa: SLF001
+
+
+def lagging_facilities(releases, *, missing_links=False):
+    """Live facilities that lack the current release of one of these per-facility packs (no
+    PackFacility for its sha256, nor for a newer version: after an image roll-back the pack
+    is skipped as older, review T3): one query (item 14). ``missing_links`` (the backstop):
+    also those with an item held for a missing link, which ``_settled`` reconciles only once
+    a target is there (item 11); each then carries ``ihr_behind`` (False: only the held
+    item), for ``needs_filling``."""
+    mine = [r for r in releases.values() if kinds.get(r.kind).SCOPE == "facility"]
+    if not mine:
+        return []
+    current = Q()
+    for release in mine:
+        current |= Q(pack=release.pack, sha256=release.sha256)
+        current |= Q(pack=release.pack, version__gt=release.version)
+    complete = (
+        PackFacility.objects.filter(current)
+        .values("facility")
+        .annotate(n=Count("id"))
+        .filter(n=len(mine))
+        .values("facility")
+    )
+    behind = ~Q(id__in=complete)
+    found = live_facilities()
+    if missing_links:
+        found = found.annotate(
+            ihr_behind=ExpressionWrapper(behind, output_field=BooleanField())
+        )
+        behind |= Q(
+            id__in=PackItem.objects.filter(
+                pack__in=[r.pack for r in mine],
+                state=State.PENDING,
+                reason=MISSING_LINK,
+            ).values("facility")
+        )
+    return list(found.filter(behind))
+
+
+def needs_filling(releases, facility):
+    """True when ``facility`` (one ``lagging_facilities`` found) has work now: it lacks a
+    current release, or a pending record of it can clear without the admin (an item held
+    for a missing link only once all its targets are live: ``_needs_reconcile``). The
+    backstop asks it before it takes the hospital's lock (review E2)."""
+    if getattr(facility, "ihr_behind", True):
+        return True
+    return any(
+        _needs_reconcile(release, kinds.get(release.kind), facility)
+        for release in releases.values()
+        if kinds.get(release.kind).SCOPE == "facility"
+    )
+
+
+def _settled(release, handler, facility):
+    """True when ``facility`` has nothing to do for ``release``, the release applied here: it
+    was reconciled with it, no pending record can clear without the admin, and every row
+    expected is there (the start-up short-circuit, per facility)."""
+    return (
+        PackFacility.objects.filter(
+            pack=release.pack, facility=facility, sha256=release.sha256
+        ).exists()
+        and not _needs_reconcile(release, handler, facility)
+        and handler.at(facility).all_present(
+            _expected_rows(release, handler, facility),
+            targets=_targets(release.pack, facility=facility),
+        )
+    )
+
+
+def _apply_release(release, operator, *, dry_run, recheck=False, facilities=None):
     handler = kinds.get(release.kind)
     with (
         audit.extend(pack=release.pack, version=release.version, sha256=release.sha256),
@@ -301,30 +489,48 @@ def _apply_release(release, operator, *, dry_run, recheck=False):
                 f"applied here (sha256 {last.sha256[:12]}): versions are immutable"
             )
             raise RefusedError(msg)
-        if (
-            last is not None
-            and last.sha256 == release.sha256
-            and not recheck
-            and not _needs_reconcile(release, handler)
-            and handler.all_present(
-                _expected_rows(release, handler), targets=_targets(release.pack)
-            )
-        ):
-            return Result(release.pack, release.version, "unchanged")
-        done = _reconcile(release, handler, dry_run=dry_run, recheck=recheck)
-        counts, writes, changes = done.counts, done.writes, done.changes
-        if done.written and handler.RECHECK_CONFLICTS and not dry_run:
-            transaction.on_commit(
-                partial(
-                    recheck_conflicts,
-                    connection.schema_name,
-                    release,
-                    tuple(done.written),
+        same = last is not None and last.sha256 == release.sha256 and not recheck
+        if handler.SCOPE == "facility":
+            places = live_facilities()
+            if facilities is not None:  # the task and the backstop: only these, if live
+                places = places.filter(pk__in=[f.pk for f in facilities])
+            places = list(places)
+            if same:
+                places = [f for f in places if not _settled(release, handler, f)]
+                if not places:
+                    return Result(release.pack, release.version, "unchanged")
+        else:
+            if (
+                same
+                and not _needs_reconcile(release, handler)
+                and handler.all_present(
+                    _expected_rows(release, handler), targets=_targets(release.pack)
                 )
-            )
+            ):
+                return Result(release.pack, release.version, "unchanged")
+            places = [None]
+        counts, writes, changes, unchecked = Counter(), 0, [], []
+        for place in places:
+            done = _reconcile(release, handler, place, dry_run=dry_run, recheck=recheck)
+            counts.update(done.counts)
+            writes += done.writes
+            changes += done.changes
+            unchecked += done.unchecked
+            if done.written and handler.RECHECK_CONFLICTS and not dry_run:
+                transaction.on_commit(
+                    partial(
+                        recheck_conflicts,
+                        connection.schema_name,
+                        release,
+                        tuple(done.written),
+                        place.pk if place is not None else None,
+                    )
+                )
+        counts = dict(sorted(counts.items()))
         # A newer release with nothing to write here (e.g. only CARE's spelling of compose
-        # changed) is still recorded once, so the sha256 short-circuit fires from then on (C5)
-        reached = last is None or last.sha256 != release.sha256
+        # changed) is still recorded once, so the sha256 short-circuit fires from then on (C5).
+        # Not by the task or the backstop: they reach only some facilities
+        reached = (last is None or last.sha256 != release.sha256) and facilities is None
         if (writes or reached) and not dry_run:
             # The visible change list (Q-K61): only with an applied row, at most MAX_CHANGES
             # entries and their total
@@ -341,33 +547,46 @@ def _apply_release(release, operator, *, dry_run, recheck=False):
             )
     result = "applied" if writes else "unchanged"
     return Result(
-        release.pack, release.version, result, counts=counts, unchecked=done.unchecked
+        release.pack, release.version, result, counts=counts, unchecked=unchecked
     )
 
 
-def _needs_reconcile(release, handler):
+def _records(pack, facility=None):
+    """This pack's records, hospital-wide (``facility`` None) or of one facility."""
+    return PackItem.objects.filter(pack=pack, facility=facility)
+
+
+def _needs_reconcile(release, handler, facility=None):
     """True when a pending record must be reconciled again although the release is the one
     applied here (item 11): a reason that can clear without the admin (RERUN), or a record
     that does not wait for exactly this release's content (an older release, or tampered
-    with: put right, never trusted)."""
+    with: put right, never trusted). Items held for a missing link are reconciled only when
+    the kind finds a target of theirs there now (one query, ``linkable``)."""
     items = release.by_item()
-    for item, reason, version, sha256 in PackItem.objects.filter(
-        pack=release.pack, state=State.PENDING
-    ).values_list("item", "reason", "pending_version", "pending_sha256"):
+    held = []
+    for item, reason, version, sha256 in (
+        _records(release.pack, facility)
+        .filter(state=State.PENDING)
+        .values_list("item", "reason", "pending_version", "pending_sha256")
+    ):
         expected = handler.item_hash(items[item]) if item in items else ""
-        if reason in RERUN or version != release.version or sha256 != expected:
+        if version != release.version or sha256 != expected:
             return True
-    return False
+        if reason == MISSING_LINK and item in items:
+            held.append(items[item])
+        elif reason in RERUN:
+            return True
+    return bool(held) and handler.at(facility).linkable(held)
 
 
-def _expected_rows(release, handler):
+def _expected_rows(release, handler, facility=None):
     """The items that should have a row now: not one waiting on the admin, or kept, for
     exactly this content (a create held for privacy or a counter-restart has none, and must
     not reconcile at every start: item 11, review Q6)."""
     waiting = set(
-        PackItem.objects.filter(
-            pack=release.pack, state__in=[State.PENDING, State.KEPT]
-        ).values_list("item", "pending_sha256")
+        _records(release.pack, facility)
+        .filter(state__in=[State.PENDING, State.KEPT])
+        .values_list("item", "pending_sha256")
     )
     return [
         item["slug"]
@@ -376,10 +595,10 @@ def _expected_rows(release, handler):
     ]
 
 
-def _targets(pack, records=None):
+def _targets(pack, records=None, facility=None):
     """{item: target} of this pack's records that name their row (forms: item 2)."""
     if records is None:
-        records = PackItem.objects.filter(pack=pack).exclude(target="")
+        records = _records(pack, facility).exclude(target="")
         return dict(records.values_list("item", "target"))
     return {r.item: r.target for r in records if r.target}
 
@@ -408,13 +627,18 @@ def reusable(stored, content_hash, mark, names):
     )
 
 
-def recheck_conflicts(schema, release, keys):
+def recheck_conflicts(schema, release, keys, facility_id=None):
     """After commit (item 9): writers that do not take the kind's lock (CARE's own) may have
     made a duplicate meanwhile. An item that now has a conflict is pending ``conflict``."""
-    handler = kinds.get(release.kind)
     items = release.by_item()
     with schema_context(schema), transaction.atomic():
-        found = handler.rows(keys, targets=_targets(release.pack))
+        facility = None
+        if facility_id is not None:
+            facility = live_facilities().filter(pk=facility_id).first()
+            if facility is None:
+                return
+        handler = kinds.get(release.kind).at(facility)
+        found = handler.rows(keys, targets=_targets(release.pack, facility=facility))
         for key in keys:
             item = items.get(key)
             why = handler.conflict(key, found.get(key), item) if item else ""
@@ -422,7 +646,9 @@ def recheck_conflicts(schema, release, keys):
                 continue
             record = (
                 PackItem.objects.select_for_update()
-                .filter(pack=release.pack, kind=release.kind, item=key)
+                .filter(
+                    pack=release.pack, kind=release.kind, item=key, facility=facility
+                )
                 .first()
             )
             if record is None:
@@ -450,11 +676,18 @@ class _Reconciled:
     unchecked: list  # keys whose data check hit a cap (now, or as stored)
 
 
-def _reconcile(release, handler, *, dry_run, recheck=False):  # noqa: PLR0912, PLR0915 (the rule table)
+def _reconcile(release, handler, facility=None, *, dry_run, recheck=False):  # noqa: PLR0912, PLR0915 (the rule table)
+    """The rule table for one release, hospital-wide (``facility`` None) or in one facility
+    of a per-facility kind (its own records and rows; links resolve inside it)."""
     now = timezone.now()
+    handler = handler.at(facility)
+    where = str(facility.external_id) if facility is not None else None
     items = release.by_item()
     records = {
-        r.item: r for r in PackItem.objects.filter(pack=release.pack, kind=release.kind)
+        r.item: r
+        for r in PackItem.objects.filter(
+            pack=release.pack, kind=release.kind, facility=facility
+        )
     }
     targets = _targets(release.pack, records.values())
     rows = handler.rows(set(items) | set(records), targets=targets)
@@ -474,7 +707,7 @@ def _reconcile(release, handler, *, dry_run, recheck=False):  # noqa: PLR0912, P
     changes = []  # [{item, facility, change}]: what this apply did, item by item
 
     def listed(slug, change, **extra):
-        changes.append({"item": slug, "facility": None, "change": change, **extra})
+        changes.append({"item": slug, "facility": where, "change": change, **extra})
 
     def note(record, slug, **values):
         """Write the record's new values; True when anything changed."""
@@ -485,6 +718,7 @@ def _reconcile(release, handler, *, dry_run, recheck=False):  # noqa: PLR0912, P
                 PackItem.objects.create(
                     pack=release.pack,
                     kind=release.kind,
+                    facility=facility,
                     item=slug,
                     changed_at=now,
                     **values,
@@ -680,6 +914,22 @@ def _reconcile(release, handler, *, dry_run, recheck=False):  # noqa: PLR0912, P
                 # the row already holds it: nothing written to it
                 counts["adopted"] += 1
                 settled(record, slug, done)
+        elif (
+            record is not None
+            and record.applied_sha256 == new
+            and handler.stale_hash(row) == new
+        ):
+            # What the pack wrote, but a link now names a deleted target, or one a newer live
+            # row of its key replaced (review T1, item 13): the target's deletion is the
+            # hospital's, the link is not its edit. Re-pointed to the key's live row, or held
+            # as missing-link until there is one (Q-K68 A)
+            held, checks = gate(slug, record, row, item, new)
+            if held:
+                hold(record, slug, held, new, checks)
+                continue
+            holder = None if dry_run else handler.write(row, item)
+            wrote(slug, "updated", holder, done)
+            note(record, slug, **done)
         elif record is not None and record.applied_sha256 == new:
             # The hospital edited the row and the pack has nothing new for it since it last
             # applied it: the edit is the hospital's own, never offered for revert (C4). A
@@ -723,7 +973,10 @@ def _reconcile(release, handler, *, dry_run, recheck=False):  # noqa: PLR0912, P
             counts["retired"] += 1
             if note(record, slug, **retired):
                 listed(slug, "retired")
-        elif handler.row_hash(row) == record.applied_sha256:
+        elif handler.row_hash(row) == record.applied_sha256 or (
+            record.applied_sha256 and handler.stale_hash(row) == record.applied_sha256
+        ):
+            # unedited (a link to a target the hospital deleted is not an edit, review T1)
             retiring = not handler.is_retired(row)
             if retiring:
                 writes += 1
@@ -750,9 +1003,31 @@ def _reconcile(release, handler, *, dry_run, recheck=False):  # noqa: PLR0912, P
                 listed(slug, "kept")
         else:
             waiting(record, slug, "")  # accepting it retires the row
+    if facility is not None and not dry_run:
+        _mark(release, facility, now)
     return _Reconciled(
         dict(sorted(counts.items())), writes, changes, written, unchecked
     )
+
+
+def _mark(release, facility, now):
+    """``facility`` was reconciled with ``release`` (written only when that changes)."""
+    marker = PackFacility.objects.filter(pack=release.pack, facility=facility).first()
+    if marker is None:
+        PackFacility.objects.create(
+            pack=release.pack,
+            facility=facility,
+            version=release.version,
+            sha256=release.sha256,
+            reconciled_at=now,
+        )
+    elif (marker.version, marker.sha256) != (release.version, release.sha256):
+        marker.version, marker.sha256, marker.reconciled_at = (
+            release.version,
+            release.sha256,
+            now,
+        )
+        marker.save(update_fields=["version", "sha256", "reconciled_at"])
 
 
 # --- what the hospital admin decides (CLI now; API and screen in P1-T15b and P1-T24) -------
@@ -761,9 +1036,9 @@ def _reconcile(release, handler, *, dry_run, recheck=False):  # noqa: PLR0912, P
 def pending(hospital):
     with schema_context(hospital.schema_name):
         return list(
-            PackItem.objects.filter(state__in=[State.PENDING, State.KEPT]).order_by(
-                "pack", "item"
-            )
+            PackItem.objects.filter(state__in=[State.PENDING, State.KEPT])
+            .select_related("facility")
+            .order_by("pack", "item", "facility_id")
         )
 
 
@@ -796,16 +1071,14 @@ def replayed(record, *, accept, version, sha256):
         )
     if not there:
         return False
-    last = (
-        PackApply.objects.filter(
-            pack=record.pack,
-            outcome__in=[Outcome.ACCEPTED, Outcome.KEPT],
-            counts__item=record.item,
-        )
-        .order_by("-id")
-        .values_list("outcome", "version")
-        .first()
+    decisions = PackApply.objects.filter(
+        pack=record.pack,
+        outcome__in=[Outcome.ACCEPTED, Outcome.KEPT],
+        counts__item=record.item,
     )
+    if record.facility_id is not None:
+        decisions = decisions.filter(counts__facility=str(record.facility.external_id))
+    last = decisions.order_by("-id").values_list("outcome", "version").first()
     return last == (Outcome.ACCEPTED if accept else Outcome.KEPT, version)
 
 
@@ -835,11 +1108,12 @@ def decide(  # noqa: PLR0912, PLR0915 (one decision, every check of it)
     nothing is written. A record already where the decision leads for that version is a
     replay: returned with ``replayed = True``, nothing written. ``record=False``: the release
     must already be in the fleet's record (NotReleasedError), never recorded here.
-    ``facility``: per-facility items come with P1-T15b3; only hospital-wide ones here.
+    ``facility``: the facility of a per-facility item (P1-T15b3; None for a hospital-wide
+    one); a soft-deleted facility's items wait hidden and are never decided.
     ``releases``: what ``prepare`` returned (the API prepares once, before the lock)."""
     reason = normal_reason(reason)
-    if facility is not None:
-        msg = "per-facility pack items are not decided here yet"
+    if facility is not None and facility.deleted:
+        msg = f"{pack}:{slug} has nothing waiting to decide in that facility"
         raise NothingWaitingError(msg)
     if releases is None:
         releases = prepare(operator, root=root, record=record)
@@ -853,6 +1127,14 @@ def decide(  # noqa: PLR0912, PLR0915 (one decision, every check of it)
         )
         raise NotReleasedError(msg)
     handler = kinds.get(release.kind)
+    if (handler.SCOPE == "facility") != (facility is not None):
+        msg = (
+            f"{pack}:{slug}: name the facility (a per-facility pack)"
+            if facility is None
+            else f"{pack} is hospital-wide: it has no facility's items"
+        )
+        raise NothingWaitingError(msg)
+    where = {"facility": str(facility.external_id)} if facility is not None else {}
     action = "accept" if accept else "keep"
     try:
         with (
@@ -863,12 +1145,29 @@ def decide(  # noqa: PLR0912, PLR0915 (one decision, every check of it)
                 sha256=release.sha256,
                 action=action,
                 item=slug,
+                **where,
             ),
             transaction.atomic(),
         ):
+            if facility is not None:
+                # read again and locked (review E3): the caller's copy was read before the
+                # hospital's lock, and a facility deleted since is never decided in
+                from care.facility.models import Facility
+
+                facility = (
+                    Facility._base_manager.select_for_update(no_key=True)  # noqa: SLF001
+                    .filter(pk=facility.pk, deleted=False)
+                    .first()
+                )
+                if facility is None:
+                    msg = (
+                        f"{pack}:{slug} has nothing waiting to decide in that facility"
+                    )
+                    raise NothingWaitingError(msg)
+            handler = kinds.get(release.kind).at(facility)
             found = (
                 PackItem.objects.select_for_update()
-                .filter(pack=pack, item=slug)
+                .filter(pack=pack, item=slug, facility=facility)
                 .first()
             )
             if expect is not None and replayed(
@@ -939,6 +1238,7 @@ def decide(  # noqa: PLR0912, PLR0915 (one decision, every check of it)
                             hospital.schema_name,
                             release,
                             (slug,),
+                            facility.pk if facility is not None else None,
                         )
                     )
             if found.state != State.KEPT:
@@ -955,11 +1255,13 @@ def decide(  # noqa: PLR0912, PLR0915 (one decision, every check of it)
                 care_commit=release.care_commit,
                 outcome=Outcome.ACCEPTED if accept else Outcome.KEPT,
                 actor=operator[:150],
-                counts={"item": slug, "reason": reason},
+                counts={"item": slug, **where, "reason": reason},
             )
     except BlockedError as exc:
         if exc.checks is not None:
-            _store_blocked(hospital, pack, slug, exc.checks)
+            _store_blocked(hospital, pack, slug, exc.checks, facility)
+        if exc.held is not None:
+            _store_held(hospital, pack, slug, *exc.held, facility)
         raise
     found.replayed = False
     return found
@@ -972,10 +1274,10 @@ def _accept_checks(handler, record, pack, slug, row, item):
     A failed one is stored on the item by ``decide`` (Q9)."""
     if why := handler.conflict(slug, row, item):
         msg = f"{pack}:{slug} cannot be accepted until its conflict is fixed: {why}"
-        raise BlockedError(msg)
+        raise BlockedError(msg, held=(Reason.CONFLICT, why, record.pending_sha256))
     if why := handler.missing_link(slug, row, item):
         msg = f"{pack}:{slug} cannot be accepted until its missing link is there: {why}"
-        raise BlockedError(msg)
+        raise BlockedError(msg, held=(MISSING_LINK, why, record.pending_sha256))
     if names := handler.data_checks(row, item):
         mark = handler.watermark(row)
         found = record.checks or {}
@@ -996,13 +1298,29 @@ def _accept_checks(handler, record, pack, slug, row, item):
             raise BlockedError(msg, checks=found)
 
 
-def _store_blocked(hospital, pack, slug, checks):
+def _store_held(hospital, pack, slug, reason, why, sha256, facility=None):
+    """A conflict or missing link that refused an accept is kept on a pending item as its
+    reason (review E6): the list shows it as blocked, and the next apply or the backstop
+    asks again (RERUN; a missing link once its targets are live). A kept item is asked
+    afresh at its accept (E5), so it is left as it is."""
+    with schema_context(hospital.schema_name), transaction.atomic():
+        PackItem.objects.filter(
+            pack=pack,
+            item=slug,
+            facility=facility,
+            state=State.PENDING,
+            pending_sha256=sha256,
+        ).update(reason=reason, checks={reason: why}, changed_at=timezone.now())
+
+
+def _store_blocked(hospital, pack, slug, checks, facility=None):
     """A data check that refused an accept is kept on the item as its reason (Q9): the list
     shows it, and one not fully checked is alerted on by the next apply (Q3)."""
     with schema_context(hospital.schema_name), transaction.atomic():
         PackItem.objects.filter(
             pack=pack,
             item=slug,
+            facility=facility,
             state__in=[State.PENDING, State.KEPT],
             pending_sha256=checks["sha256"],
         ).update(reason=Reason.DATA_CHECK, checks=checks, changed_at=timezone.now())

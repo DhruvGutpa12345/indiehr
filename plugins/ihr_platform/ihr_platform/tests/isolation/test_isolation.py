@@ -585,6 +585,26 @@ class CrossTenantIsolationTests(SimpleTestCase):
                     cache.delete(packs._in_flight_key())
                     cache.delete_many(buckets)
 
+    def test_new_facility_task_key_is_per_hospital(self):
+        """P1-T15b3 item 14: the new-facility task is queued once per hospital under ONE raw
+        Redis key that carries the hospital's schema (no cache key function adds it): A's
+        queued task never stops B's, and the key is written, so test_zz audits its shape."""
+        from ihr_refdata import tasks
+
+        keys = [tasks.queue_key(t.schema) for t in (self.a, self.b)]
+        try:
+            with patch.object(tasks.fill_new_facilities, "apply_async") as send:
+                self.assertTrue(tasks.queue(self.a.schema, 1))
+                self.assertFalse(tasks.queue(self.a.schema, 2))  # deduplicated in A
+                self.assertTrue(tasks.queue(self.b.schema, 3))  # never by A's key
+            self.assertEqual(send.call_count, 2)
+            redis = tasks._redis()
+            for tenant, key in zip((self.a, self.b), keys, strict=True):
+                self.assertTrue(key.startswith(f"{tenant.schema}:"), key)
+                self.assertIsNotNone(redis.get(key))
+        finally:
+            tasks._redis().delete(*keys)
+
     # --- background jobs ------------------------------------------------------------------
 
     def test_celery_tasks_run_in_the_senders_tenant(self):
@@ -624,6 +644,7 @@ class CrossTenantIsolationTests(SimpleTestCase):
         )
         from care.emr.tasks import setup_periodic_tasks
         from ihr_audit.tasks import setup_periodic_tasks as setup_audit_tasks
+        from ihr_refdata.tasks import setup_periodic_tasks as setup_pack_tasks
 
         from ihr_platform.beat import PLATFORM_ONCE, ActiveTenantScheduler
         from ihr_platform.tasks import setup_periodic_tasks as setup_platform_tasks
@@ -633,10 +654,16 @@ class CrossTenantIsolationTests(SimpleTestCase):
         setup_periodic_tasks(app)
         setup_audit_tasks(app)
         setup_platform_tasks(app)
+        setup_pack_tasks(
+            app
+        )  # the per-facility packs' backstop (P1-T15b3): per hospital
         scheduler = ActiveTenantScheduler(app=app, lazy=True)
         entries = scheduler._tenant_aware_beat_schedule_to_dict(app.conf.beat_schedule)
         self.assertTrue(
             any("cleanup_expired_otps" in name for name in entries), entries
+        )
+        self.assertTrue(
+            any("ihr_refdata_fill_facilities" in name for name in entries), entries
         )
 
         with schema_context("public"), as_owner():  # an operator's status change

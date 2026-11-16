@@ -45,7 +45,7 @@ def _https(value):
     return str(value or "").startswith("https://")
 
 
-def problems(settings, environ):  # noqa: PLR0912 (one flat list of rules)
+def problems(settings, environ):  # noqa: PLR0912, PLR0915 (one flat list of rules)
     """Everything unsafe about these settings, as sentences; empty when safe."""
     found = [
         f"{name} is not set."
@@ -128,6 +128,11 @@ def problems(settings, environ):  # noqa: PLR0912 (one flat list of rules)
         # Test and benchmark names relax the terminology loader's rules (P1-T10a2)
         found.append(
             "The database must not be a test_* or bench_* database, nor marked throwaway."
+        )
+    if settings.get("IHR_REFDATA_TEST_KINDS"):
+        # Test-only reference pack kinds would let a test pack write a facility's catalogue
+        found.append(
+            "IHR_REFDATA_TEST_KINDS must stay off (test packs only, P1-T15b3)."
         )
     if settings.get("PATIENT_GLOBAL_EDIT_ACCESS_ENABLED"):
         # CARE's switch lets anyone open and edit any patient without clinical-data rights

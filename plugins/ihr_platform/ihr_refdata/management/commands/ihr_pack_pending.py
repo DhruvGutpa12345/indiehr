@@ -4,6 +4,12 @@
     manage.py ihr_pack_pending --slug alpha --accept care-valuesets:<slug> --operator <name> --reason "<why>"
     manage.py ihr_pack_pending --slug alpha --keep care-valuesets:<slug> --operator <name> --reason "<why>"
     manage.py ihr_pack_pending --slug alpha --recheck --operator <name>
+    manage.py ihr_pack_pending --slug alpha --accept <pack>:<key> --facility <external id> ...
+
+A per-facility pack's item (P1-T15b3) is decided in one facility: name it with --facility (its
+external id, as the list shows it). With --facility and no decision, only that facility's items
+are listed; --recheck takes no --facility (it reconciles every live facility). A deleted
+facility's items are listed with "(deleted)" and cannot be decided until it is restored.
 
 "Accept" writes the newest release's content for the item (read again from the verified pack
 file; a soft-deleted row is restored). "Keep" leaves the hospital's own row; the item comes
@@ -51,6 +57,11 @@ class Command(BaseCommand):
             help="Run every data check again (an apply with the stored counts ignored)",
         )
         parser.add_argument(
+            "--facility",
+            metavar="EXTERNAL_ID",
+            help="The facility of a per-facility pack's item (its external id)",
+        )
+        parser.add_argument(
             "--operator",
             help="Who decides (recorded as packs:<operator>; 1-64 letters, digits or . _ @ -)",
         )
@@ -61,7 +72,9 @@ class Command(BaseCommand):
             f"{engine.MAX_REASON} characters; kept for good in the audit trail",
         )
 
-    def handle(self, *args, slug, accept, keep, recheck, operator, reason, **options):
+    def handle(
+        self, *args, slug, accept, keep, recheck, operator, reason, facility, **options
+    ):
         hospital = (
             Hospital.objects.exclude(schema_name=get_public_schema_name())
             .filter(slug=slug)
@@ -71,14 +84,24 @@ class Command(BaseCommand):
             msg = f"No hospital with slug {slug!r}"
             raise CommandError(msg)
         if recheck:
+            if facility:
+                msg = "--recheck takes every live facility: leave out --facility"
+                raise CommandError(msg)
             self._recheck(hospital, operator)
             return
         target = accept or keep
+        place = _facility(hospital, facility) if facility else None
         if not target:
             for record in engine.pending(hospital):
+                if place is not None and record.facility_id != place.pk:
+                    continue
                 waits = f"v{record.pending_version}" if record.pending_version else "-"
+                where = ""
+                if record.facility_id is not None:
+                    gone = " (deleted)" if record.facility.deleted else ""
+                    where = f"  facility={record.facility.external_id}{gone}"
                 self.stdout.write(
-                    f"{record.pack}:{record.item}  {record.state}"
+                    f"{record.pack}:{record.item}{where}  {record.state}"
                     f"{f' ({record.reason})' if record.reason else ''}  {waits}"
                     f"{_held_text(held(record))}"
                 )
@@ -114,6 +137,7 @@ class Command(BaseCommand):
                         accept=bool(accept),
                         operator=actor,
                         reason=reason,
+                        facility=place,
                     )
             except (
                 runner.ProvisioningError,
@@ -121,7 +145,10 @@ class Command(BaseCommand):
                 engine.PackError,
             ) as exc:
                 raise CommandError(str(exc)) from None
-        self.stdout.write(f"{hospital.slug}: {pack}:{item} is now {record.state}")
+        where = f" in facility {place.external_id}" if place is not None else ""
+        self.stdout.write(
+            f"{hospital.slug}: {pack}:{item}{where} is now {record.state}"
+        )
 
     def _recheck(self, hospital, operator):
         if not operator:
@@ -148,6 +175,25 @@ class Command(BaseCommand):
         if outcome != "done":
             msg = f"{hospital.slug}: the recheck was {outcome} (see above)"
             raise CommandError(msg)
+
+
+def _facility(hospital, external_id):
+    """The hospital's facility with this external id (CommandError when there is none)."""
+    from care.facility.models import Facility
+    from django.core.exceptions import ValidationError
+    from django_tenants.utils import schema_context
+
+    with schema_context(hospital.schema_name):
+        try:
+            found = Facility._base_manager.filter(  # noqa: SLF001
+                external_id=external_id
+            ).first()
+        except ValidationError:
+            found = None
+    if found is None:
+        msg = f"{hospital.slug} has no facility {external_id!r}"
+        raise CommandError(msg)
+    return found
 
 
 def _held_text(found):

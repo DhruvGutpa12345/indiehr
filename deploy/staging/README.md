@@ -828,6 +828,7 @@ redone by its catch-up run).
 | Alert | When | Severity |
 |---|---|---|
 | PackApplyFailed | exactly that whole line, from the `migrate` one-shot (dev: `celery`), in the last 24 hours (the mail names the hospital; request paths in the web backend's log can never raise it) | warning |
+| PackFacilityDeferred | exactly `ihr-packs: hospital=<slug> outcome=deferred facility=<external id\|unknown>`, from the workers alone (`celery`, `celery-worker`), in every 40-minute window for two hours: a facility the per-facility packs could not reach (see "Per-facility packs" below) | warning |
 | HospitalNotServed | exactly the `ihr-fleet:` line above (outcome failed, deferred or held), from the `migrate` container (the one-shot and `staging.sh fleet`) or the worker's per-minute report (`celery-worker`; dev: `celery`), in the last 24 hours | critical |
 | AuditHospitalCheckFailed / AuditHospitalSealLate | exactly the audit watch's `ihr-audit:` line (chain, fingerprint, triggers or unchecked / seal), from the `audit-watch` service alone, in the last 30 / 10 minutes (see "Audit watch") | critical / warning |
 | AuditEventRecorded | exactly the audit watch's `ihr-audit: hospital=<slug> event=<restore\|offboarding> outcome=recorded` line, once per new event, in the last hour | warning |
@@ -842,6 +843,30 @@ not fully checked`, and it comes back at every apply until the check is finished
 `scripts/staging.sh manage ihr_pack_pending --slug <slug> --recheck --operator <you>` (it takes
 the same hospitals as `ihr_pack_apply --slug`; `ihr_pack_pending --slug <slug>` lists what holds
 each item: a conflict, the counts, whether fully checked, and when).
+
+**Per-facility packs** (P1-T15b3, `ihr_refdata/tasks.py`). A per-facility pack (a facility's own
+catalogue rows) is applied in every live facility, each with its own records. A new facility
+queues one Celery task for its hospital once its creation commits; the task fills only the
+facilities that lack the current release, never a hospital-wide pack, under the hospital's lock.
+A busy hospital is tried 3 times (30 s, 2 min, 5 min); then the worker writes
+`ihr-packs: hospital=<slug> outcome=deferred facility=<external id>` and leaves it to the
+**backstop**, which beat runs every 15 minutes in each active hospital: it finds, in one query,
+the live facilities without the current release (a give-up, a facility restored after deletion)
+and writes the same line at every run it still cannot fill one. PackFacilityDeferred mails after
+two hours of such lines. `facility=unknown` means the worker refused the pack files themselves.
+The workers write no `PackApply` row for a failure: read their `ihr-packs:` log lines, fix the
+cause, then `ihr_pack_apply --slug <slug> --operator <you>` reconciles every live facility.
+Neither the task nor the backstop touches a held, restoring or suspended hospital, nor a release
+the start-up has not recorded yet. After an image roll-back to an older pack version, the
+facilities wait (a warning line, no alert) until the roll-forward.
+
+An item that links to another (an activity to its specimens) waits as `missing-link` while a
+target is missing or deleted in that facility: nothing is written, accept is refused, and the
+apply or the backstop writes it once every target is live again. Decide a per-facility item with
+`ihr_pack_pending --slug <slug> --accept|--keep <pack>:<item> --facility <external id> --operator
+<you> --reason "<why>"` (the external id as the list prints it; `--facility` without a decision
+lists only that facility's items). A deleted facility's items are listed with `(deleted)` and
+cannot be decided until it is restored.
 
 **Batch requests** (P1-T20a, `deploy/logs/alerts/batch.yml`): the web backend runs a sub-request
 of `/api/v1/batch_requests/` only if its method and route are on the list the web app's own batch

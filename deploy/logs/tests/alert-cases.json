@@ -1,5 +1,5 @@
 {
- "_comment": "scripts/check-logs.py: these journal entries go through the real redaction steps into a throwaway VictoriaLogs, then vmalert runs deploy/logs/alerts/ on them. 'expect' lists, per alert, the values of its key label it must fire (or wait to fire) for, and no others: client_ip, hospital for PackApplyFailed, HospitalNotServed, ReleaseWindowOverrun, AuditHospitalCheckFailed, AuditHospitalSealLate, DumpHospitalFailed, DumpHospitalHeld and HospitalRestoreFailed, schema for ParkedSchemaOverdue, or reason for DatabaseRoleRefused (hospital for BatchRequestRefused and the three MrdRecords alerts).",
+ "_comment": "scripts/check-logs.py: these journal entries go through the real redaction steps into a throwaway VictoriaLogs, then vmalert runs deploy/logs/alerts/ on them. 'expect' lists, per alert, the values of its key label it must fire (or wait to fire) for, and no others: client_ip, hospital for PackApplyFailed, PackFacilityDeferred, HospitalNotServed, ReleaseWindowOverrun, AuditHospitalCheckFailed, AuditHospitalSealLate, DumpHospitalFailed, DumpHospitalHeld and HospitalRestoreFailed, schema for ParkedSchemaOverdue, or reason for DatabaseRoleRefused (hospital for BatchRequestRefused and the three MrdRecords alerts).",
  "fixtures": [
   {
    "count": 1,
@@ -2063,6 +2063,62 @@
     "CONTAINER_NAME": "indiehr-staging-backend-1",
     "COM_DOCKER_COMPOSE_SERVICE": "backend"
    }
+  },
+  {
+   "count": 1,
+   "record": {
+    "MESSAGE": "ihr-packs: hospital=lambda outcome=deferred facility=0b1e8c2a-5d4f-4a6b-9c3d-2e1f0a9b8c7d",
+    "_HOSTNAME": "srv1",
+    "PRIORITY": "3",
+    "_TRANSPORT": "journal",
+    "_COMM": "dockerd",
+    "_UID": "0",
+    "_SYSTEMD_UNIT": "docker.service",
+    "CONTAINER_NAME": "indiehr-staging-celery-worker-1",
+    "COM_DOCKER_COMPOSE_SERVICE": "celery-worker"
+   }
+  },
+  {
+   "count": 1,
+   "record": {
+    "MESSAGE": "ihr-packs: hospital=mu outcome=deferred facility=12",
+    "_HOSTNAME": "srv1",
+    "PRIORITY": "3",
+    "_TRANSPORT": "journal",
+    "_COMM": "dockerd",
+    "_UID": "0",
+    "_SYSTEMD_UNIT": "docker.service",
+    "CONTAINER_NAME": "indiehr-staging-celery-worker-1",
+    "COM_DOCKER_COMPOSE_SERVICE": "celery-worker"
+   }
+  },
+  {
+   "count": 1,
+   "record": {
+    "MESSAGE": "ihr-packs: hospital=nu outcome=deferred facility=0b1e8c2a-5d4f-4a6b-9c3d-2e1f0a9b8c7d",
+    "_HOSTNAME": "srv1",
+    "PRIORITY": "3",
+    "_TRANSPORT": "journal",
+    "_COMM": "dockerd",
+    "_UID": "0",
+    "_SYSTEMD_UNIT": "docker.service",
+    "CONTAINER_NAME": "indiehr-staging-backend-1",
+    "COM_DOCKER_COMPOSE_SERVICE": "backend"
+   }
+  },
+  {
+   "count": 1,
+   "record": {
+    "MESSAGE": "ihr-packs: hospital=omicron outcome=deferred facility=unknown",
+    "_HOSTNAME": "srv1",
+    "PRIORITY": "3",
+    "_TRANSPORT": "journal",
+    "_COMM": "dockerd",
+    "_UID": "0",
+    "_SYSTEMD_UNIT": "docker.service",
+    "CONTAINER_NAME": "indiehr-staging-celery-worker-1",
+    "COM_DOCKER_COMPOSE_SERVICE": "celery-worker"
+   }
   }
  ],
  "expect": {
@@ -2150,6 +2206,10 @@
   ],
   "MrdRecordsOffHours": [
    "delta"
+  ],
+  "PackFacilityDeferred": [
+   "lambda",
+   "omicron"
   ]
  },
  "expect_state": {
@@ -2173,6 +2233,7 @@
   "ParkedSchemaOverdue": "firing",
   "MrdRecordsRefused": "firing",
   "MrdRecordsVolume": "firing",
-  "MrdRecordsOffHours": "firing"
+  "MrdRecordsOffHours": "firing",
+  "PackFacilityDeferred": "pending"
  }
 }

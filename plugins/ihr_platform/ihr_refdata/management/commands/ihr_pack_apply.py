@@ -44,7 +44,8 @@ def log_line(slug, outcome):
     return f"ihr-packs: hospital={slug} outcome={outcome}"
 
 
-RESERVED_OPERATORS = {"startup", "check"}
+# the start-up and check runs, and the new-facility task and its backstop (P1-T15b3)
+RESERVED_OPERATORS = {"startup", "check", "facility-task", "facility-beat"}
 
 
 def check_operator(operator):

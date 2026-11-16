@@ -41,6 +41,14 @@ LUA = (LOGS / "fluent-bit" / "redact.lua").read_text()
 ALERTS = {f.name: load(f) for f in sorted((LOGS / "alerts").glob("*.yml"))}
 # The reference pack alert's whole-line pattern (deploy/logs/alerts/packs.yml, S1)
 PACKS_LINE = r"^ihr-packs: hospital=(?P<hospital>[a-z][a-z0-9-]{2,30}) outcome=failed$"
+# A facility the workers could not fill with the per-facility packs (P1-T15b3)
+PACKS_FACILITY_LINE = (r"^ihr-packs: hospital=(?P<hospital>[a-z][a-z0-9-]{2,30}) outcome=deferred "
+                       r"facility=(?P<facility>[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}"
+                       r"|unknown)$")
+# The backstop's cadence (ihr_refdata/tasks.py FILL_EVERY_SECONDS): the rule's window spans two runs
+TASKS = (ROOT / "plugins" / "ihr_platform" / "ihr_refdata" / "tasks.py").read_text()
+STAGING_README = (ROOT / "deploy" / "staging" / "README.md").read_text()
+FID = "0b1e8c2a-5d4f-4a6b-9c3d-2e1f0a9b8c7d"  # a facility external id (made up)
 # The fleet runner's (deploy/logs/alerts/fleet.yml, P1-T18a): the same shape, three outcomes
 FLEET_LINE = r"^ihr-fleet: hospital=(?P<hospital>[a-z][a-z0-9-]{2,30}) outcome=(?:failed|deferred|held)$"
 # A release window's hold past its budget (P1-T18b): only the worker's per-minute report
@@ -381,6 +389,14 @@ class LogAlerts(unittest.TestCase):
                                  r'\| filter hospital:~"\^\[a-z\]\[a-z0-9-\]\{2,30\}\$" ')
                 allowed = r"^\$(labels\.hospital|value)$"
                 self.assertNotIn("{{", r["annotations"]["action"], r["alert"])
+            elif r["alert"] == "PackFacilityDeferred":
+                self.assertEqual(by, ["hospital"], r["alert"])
+                # the Celery workers write it (ihr_refdata/tasks.py); our whole fixed line only
+                self.assertRegex(r["expr"], r'^_time:\d+m source:=container service:in\(celery, celery-worker\) '
+                                 r'"ihr-packs: hospital=" \| extract_regexp "' + re.escape(PACKS_FACILITY_LINE) + r'" '
+                                 r'\| filter hospital:~"\^\[a-z\]\[a-z0-9-\]\{2,30\}\$" ')
+                allowed = r"^\$(labels\.hospital|value)$"
+                self.assertNotIn("{{", r["annotations"]["action"], r["alert"])
             elif r["alert"] == "DatabaseRoleLoginFailed":
                 self.assertEqual(by, ["role"], r["alert"])
                 # the db container's own lines only
@@ -400,14 +416,14 @@ class LogAlerts(unittest.TestCase):
                                          "DumpHospitalFailed", "DumpHospitalHeld",
                                          "FailedSignInsFromAddress", "HospitalNotServed", "HospitalRestoreFailed",
                                          "MrdRecordsOffHours", "MrdRecordsRefused", "MrdRecordsVolume",
-                                         "PackApplyFailed", "ParkedSchemaOverdue",
+                                         "PackApplyFailed", "PackFacilityDeferred", "ParkedSchemaOverdue",
                                          "RateLimitedAddress", "ReleaseWindowOverrun", "SignInLockoutStorm",
                                          "SignInLockoutsFromAddress"])
 
     def test_pack_line_is_ours_alone(self):
         """S1: the rule's regex takes only our own whole line with a slug-shaped hospital; text
         anyone can put in a request path or a longer line is never a hospital."""
-        [expr] = [r["expr"] for f, r in self.rules() if f == "packs.yml"]
+        [expr] = [r["expr"] for _, r in self.rules() if r["alert"] == "PackApplyFailed"]
         self.assertIn('extract_regexp "%s"' % PACKS_LINE, expr)
         line = re.compile(PACKS_LINE)
         self.assertEqual(line.match("ihr-packs: hospital=alpha outcome=failed")["hospital"], "alpha")
@@ -420,6 +436,48 @@ class LogAlerts(unittest.TestCase):
                        "ihr-packs: hospital=beta outcome=deferred",
                        "ihr-packs: hospital=fake outcome=failed\nmore"):
             self.assertIsNone(line.search(forged), forged)
+
+    def test_facility_pack_line_is_ours_alone(self):
+        """P1-T15b3: only the workers' whole line, with a slug-shaped hospital and a numeric
+        facility (ihr_refdata.tasks.deferred_line writes exactly this)."""
+        [rule] = [r for _, r in self.rules() if r["alert"] == "PackFacilityDeferred"]
+        self.assertIn('extract_regexp "%s"' % PACKS_FACILITY_LINE, rule["expr"])
+        self.assertIn("service:in(celery, celery-worker)", rule["expr"])
+        line = re.compile(PACKS_FACILITY_LINE)
+        found = line.match(f"ihr-packs: hospital=alpha outcome=deferred facility={FID}")
+        self.assertEqual((found["hospital"], found["facility"]), ("alpha", FID))
+        found = line.match("ihr-packs: hospital=alpha outcome=deferred facility=unknown")
+        self.assertEqual(found["facility"], "unknown")
+        for forged in ("ihr-packs: hospital=beta outcome=deferred",
+                       "ihr-packs: hospital=alpha outcome=deferred facility=12",
+                       f"ihr-packs: hospital=alpha outcome=deferred facility=x{FID}",
+                       f"ihr-packs: hospital=alpha outcome=deferred facility={FID} more",
+                       f"ihr-packs: hospital=alpha outcome=deferred facility={FID.upper()}",
+                       "ihr-packs: hospital=alpha outcome=deferred facility=unknownx",
+                       f"Not Found: /ihr-packs: hospital=alpha outcome=deferred facility={FID}",
+                       f"ihr-packs: hospital=Alpha outcome=deferred facility={FID}"):
+            self.assertIsNone(line.search(forged), forged)
+
+    def test_facility_pack_window_spans_two_backstop_runs(self):
+        """Review Q3: the rule holds 2 h, so every 1-minute evaluation must find a line. The
+        backstop writes one per run, at its end; a window of at least two runs keeps one late
+        or missed run from emptying it and restarting the hold."""
+        [rule] = [r for _, r in self.rules() if r["alert"] == "PackFacilityDeferred"]
+        window = int(re.match(r"^_time:(\d+)m ", rule["expr"])[1]) * 60
+        every = re.search(r"^FILL_EVERY_SECONDS = (\d+) \* (\d+)$", TASKS, re.M)
+        self.assertGreaterEqual(window, 2 * int(every[1]) * int(every[2]))
+
+    def test_every_alert_is_in_the_staging_runbook(self):
+        """Review Q4: each alert the rules define is explained in deploy/staging/README.md."""
+        missing = sorted({r["alert"] for _, r in self.rules()} - set(re.findall(r"\w+", STAGING_README)))
+        self.assertEqual(missing, [])
+
+    def test_facility_pack_action_points_at_what_exists(self):
+        """Review Q5: the workers write no PackApply row for a failure, so the action names the
+        worker's log lines, never PackApply rows as the evidence."""
+        [rule] = [r for _, r in self.rules() if r["alert"] == "PackFacilityDeferred"]
+        self.assertIn("worker log", rule["annotations"]["action"])
+        self.assertIn("no PackApply row", rule["annotations"]["action"])
 
     def test_batch_line_is_ours_alone(self):
         """P1-T20a: only the batch view's whole refusal line; never a request path, a longer
@@ -664,7 +722,8 @@ class LogAlerts(unittest.TestCase):
         holds = {r["alert"]: r.get("for") for _, r in self.rules()}
         self.assertEqual(holds, {"SignInLockoutsFromAddress": None, "SignInLockoutStorm": None,
                                  "FailedSignInsFromAddress": None, "RateLimitedAddress": "5m",
-                                 "PackApplyFailed": None, "HospitalNotServed": None,
+                                 "PackApplyFailed": None, "PackFacilityDeferred": "2h",
+                                 "HospitalNotServed": None,
                                  "ReleaseWindowOverrun": None, "DatabaseRoleRefused": None,
                                  "DatabaseSchemaGated": None, "DatabaseRoleLoginFailed": None,
                                  "BatchRequestRefused": None, "AuditHospitalCheckFailed": None,

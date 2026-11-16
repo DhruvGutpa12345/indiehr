@@ -1,11 +1,17 @@
 """Reference pack files and their manifest (P1-T15a).
 
-    packs/MANIFEST.json            {"about": ..., "releases": [{pack, version, file, sha256}]}
+    packs/MANIFEST.json            {"about": ..., "releases": [{pack, version, file, sha256,
+                                    after?}]}
     packs/<pack>/<version>.json    {pack, version, kind, care_commit, item_count, items: [...]}
 
 Version files are built by ``ihr_pack_build`` (never by hand), written as canonical bytes and
 never changed once committed (a pre-commit hook refuses a modified one; a test checks every
 sha256). Every file is checked against the manifest before anything is applied.
+
+``after`` (P1-T15b3, optional): the packs this pack is applied after, as its newest release's
+entry names them (a per-facility pack that links into another names it: the engine resolves
+links to rows that must already be there). The engine checks the order fleet-wide
+(engine.check_order).
 """
 
 import hashlib
@@ -49,6 +55,7 @@ class Release:
     kind: str
     care_commit: str
     items: tuple  # dicts, sorted by "slug"
+    after: tuple = ()  # packs applied before this one (the manifest entry's "after")
 
     @property
     def item_count(self):
@@ -120,6 +127,15 @@ def releases(root=None):
         ):
             msg = f"bad manifest entry: {entry!r}"
             raise PackError(msg)
+        after = entry.get("after", [])
+        if (
+            not isinstance(after, list)
+            or not all(isinstance(name, str) and name for name in after)
+            or len(set(after)) != len(after)
+            or entry["pack"] in after
+        ):
+            msg = f"{entry['pack']}: after must list other packs, each once: {after!r}"
+            raise PackError(msg)
         path = (root / entry["file"]).resolve()
         if root.resolve() not in path.parents:
             msg = f"manifest entry outside the packs folder: {entry['file']}"
@@ -145,6 +161,7 @@ def releases(root=None):
             kind=content["kind"],
             care_commit=content.get("care_commit", ""),
             items=tuple(content["items"]),
+            after=tuple(after),
         )
         versions = found.setdefault(release.pack, [])
         if any(r.version == release.version for r in versions):

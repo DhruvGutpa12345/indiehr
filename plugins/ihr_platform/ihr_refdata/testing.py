@@ -101,7 +101,7 @@ class Packs:
         self._write_manifest(self.entries)
         testcase.enterContext(override_settings(IHR_REFDATA_PACKS_DIR=str(self.root)))
 
-    def add(self, version, *items, pack=TEST_PACK, kind="valueset"):
+    def add(self, version, *items, pack=TEST_PACK, kind="valueset", after=()):
         content = {
             "pack": pack,
             "version": version,
@@ -117,14 +117,15 @@ class Packs:
         self.entries = [
             e for e in self.entries if (e["pack"], e["version"]) != (pack, version)
         ]
-        self.entries.append(
-            {
-                "pack": pack,
-                "version": version,
-                "file": name,
-                "sha256": manifest.sha256_of(data),
-            }
-        )
+        entry = {
+            "pack": pack,
+            "version": version,
+            "file": name,
+            "sha256": manifest.sha256_of(data),
+        }
+        if after:
+            entry["after"] = list(after)
+        self.entries.append(entry)
         self._write_manifest(self.entries)
 
     def only(self, *versions, pack=TEST_PACK):
