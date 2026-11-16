@@ -263,10 +263,20 @@ test("the Receptionist's front-desk screens (reception.ravi, alpha)", async ({
       const url = new URL(request.url());
       if (url.pathname === "/api/v1/encounter/") asked.push(url.search);
     });
+    // the list asks after CARE's 500 ms debounce, which is not network activity: wait for its
+    // answer itself, never for "network idle" (that came before the request in CI)
+    const listed = page.waitForResponse(
+      (response) =>
+        new URL(response.url()).pathname === "/api/v1/encounter/" &&
+        response.request().method() === "GET",
+      { timeout: 20_000 },
+    );
     await page.goto(`${base}/encounters/patients/all`);
     await expect(
       page.getByText("Encounters").filter({ visible: true }).first(),
     ).toBeVisible();
+    const answer = await listed;
+    expect(answer.status(), await answer.text()).toBe(200);
     await page.waitForLoadState("networkidle");
     expect(asked.length, "the list asked for encounters").toBeGreaterThan(0);
     for (const search of asked) {
