@@ -618,6 +618,62 @@ A payment record can be a payment, an advance, or an adjustment (a write-off or 
 
 *Recommendation A, with C later if you want it.* "Collected" should mean cash in the bank; an adjustment is not. The two figures then answer different questions, and the totals page (P1-T11c) can say so. Pinned by `ihr_access.tests.test_totals.OwnerTotals.test_owner_totals_count_and_sum` (an adjustment of ₹999 is not collected); the choice is `RECEIVED_TYPES` in `ihr_access/totals.py`. Failed, queued and partial payments are never counted (review A1, not a choice: CARE does not count them either).
 
+### Q-K47 — Where do our English web-app strings live? (P1-T11c design, docs/reviews/p1-t11/design-c.md §11, §13.7; auto-accepted by Claude, 2026-11-16, awaiting owner confirmation)
+
+- **A ⭐ (taken).** A new `deploy/locale/en.json` holds our `ihr_*` English keys only; `merge-locale.py` merges it into the web app at build; upstream `public/locale/en.json` goes back to upstream's text (the 27 keys we added there move). This is subtask P1-T11c0.
+- B. Keep adding `ihr_*` keys to upstream `en.json` as logged patches (as P1-T4b and P1-T7b did).
+
+*Recommendation A:* about 60 new keys would otherwise be a patch in a file every upstream sync touches; CI already merges our locale files before each build. Reverse: move the keys back into upstream `en.json` and drop the file.
+
+### Q-K48 — How do the Lab Technician and Store Keeper reach their lab or store? (P1-T11c; auto-accepted by Claude, 2026-11-16, awaiting owner confirmation)
+
+- **A ⭐ (taken).** A "My places" menu item of ours lists the places they belong to (CARE's `location/?mine=true`) and links to the first page they may open. No permission changes.
+- B. Give both roles `can_read_healthcare_service` so CARE's Services menu works (a registry change; matrix rows and key snapshots change).
+
+*Recommendation A:* it changes no permission and keeps P1-T11b's reviewed matrix. Reverse: drop the menu item and add the grant.
+
+### Q-K49 — Who gets the stricter web-app menus? (P1-T11c, revised after the design attack (SS3); auto-accepted by Claude, 2026-11-16, awaiting owner confirmation)
+
+- **A' ⭐ (taken).** Exactly the backend's own rule (`state.restricted`: holds one of our restricted roles and no clinical slug anywhere), published to the web app by a new `GET /api/ihr/my-access/`. CARE roles without clinical slugs keep CARE's menus.
+- B (withdrawn). Anyone without a clinical or patient-opening slug in this facility: it disagrees with the backend's rule.
+
+*Recommendation A':* the menus and the API then never disagree about who is restricted. Reverse: change the rule in one place (`my-access`).
+
+### Q-K50 — What does the front desk see when it opens a visit, and after creating one? (P1-T11c; auto-accepted by Claude, 2026-11-16, awaiting owner confirmation)
+
+- **A ⭐ (taken).** A status page of ours (status, class, dates, priority, visit number, status history; for the Cashier and TPA Desk also the bed (Q-K37a B) and the account link) for every visit link and after "create encounter".
+- B. Return to the patient's encounter tab after create, and hide "View encounter" for them.
+
+*Recommendation A:* one route wrap covers every link and the redirect; the billing desks need the bed and the account from the visit. Reverse: remove the route wrap.
+
+### Q-K51 — How does the MRD clerk pick the patient for a records grant? (P1-T11c, design attack SS2/FF3; auto-accepted by Claude, 2026-11-16, awaiting owner confirmation)
+
+- **A ⭐ (taken).** Only from the patient page (CARE's own verify flow: phone, year of birth); the records page takes `?patient=<id>` and has no search of its own.
+- B. CARE's two steps (phone, then year of birth and `search_retrieve`) inside our records page.
+
+*Recommendation A:* no second copy of CARE's knowledge check to keep in step. Reverse: add the two steps to the page.
+
+### Q-K52 — What does the Owner's "Visits" tile count? (P1-T11c; auto-accepted by Claude, 2026-11-16, awaiting owner confirmation)
+
+- **A ⭐ (taken).** Visits excluding cancelled and entered-in-error.
+- B. All statuses, labelled "visits recorded, all statuses".
+
+*Recommendation A:* a cancelled or mistaken visit is not a visit the hospital served. Reverse: one filter in `totals.ts`.
+
+### Q-K53 — How are CARE's own three roles' menus pinned in the browser tests? (P1-T11c, design attack FF4; auto-accepted by Claude, 2026-11-16, awaiting owner confirmation)
+
+- **A ⭐ (taken).** Hand-derived lists in `roles-menus.spec.ts` plus a unit test that the menu code in CARE mode deep-equals CARE's unpatched menus.
+- B. A recording-mode commit before the hooks, then an artifact download (one extra CI round and commit).
+
+*Recommendation A:* CI keeps artifacts only on failure, and the unit test already proves CARE's menus are untouched. Reverse: add the recording step.
+
+### Q-K54 — What does the menu show while the web app is still asking the backend who you are? (P1-T11c1 review C1-4, design-c.md §13.8; auto-accepted by Claude, 2026-11-16, awaiting owner confirmation)
+
+- **A ⭐ (taken).** Only Overview and Users until `my-access` answers (and if it keeps failing, retried every 15 s): a restricted role never sees CARE's full menu flash, and a failed `my-access` never opens it. CARE's roles get their full menu one round trip later; during a backend outage clinicians also see only Overview and Users.
+- B. CARE's full menu while pending (design §13.2): no delay for clinicians, but a Receptionist briefly sees, and can click, menus that answer 403.
+
+*Recommendation A:* fail closed; the delay is one small request, cached for the session. Reverse: `PENDING_KEEP` in `src/Utils/ihr/menu.ts` (and its tests).
+
 **Still open:** Q-B4 (final MVP module list: assumed as in PLAN.md Phase 2) and Q-B6/B7 (pricing, timeline). Q-F2 is moot while AI is deferred.
 
 ---
