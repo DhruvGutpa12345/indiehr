@@ -847,6 +847,33 @@ The gate (`ihr_identity.staff_access.IsHospitalAdmin`, shared by the audit viewe
 
 *Recommendation A now, B before go-live:* B needs the provisioning flow and the seed to change together, and P1-T15b2a item 1 needs the same answer, so it is best built once as its own small task after you confirm. Nobody is given an admin role on a state organisation by our code today. Reverse: build B (a field plus a check in `hospital_wide_admin`).
 
+### Q-K77 — Should a deleted identifier config still answer lookups? (P1-T15b2a; auto-accepted by Claude, 2026-11-16, awaiting owner confirmation)
+
+Our replacement for CARE's identifier-config lookup (`ihr_platform/identifier_cache.py`, so every web process sees a changed config at once) reads through CARE's own Redis-backed cache, and that cache reads soft-deleted rows too. CARE's original raised "does not exist" for a deleted config.
+
+- **A ⭐ (taken).** Keep it: a patient's identifier recorded under a config that was later deleted still shows its label and rules. Only the same hospital's data is ever returned.
+- B. Refuse deleted configs as CARE did (one check in `get_config`).
+
+*Recommendation A:* an identifier already on a patient's record should keep displaying; nothing new can be recorded under a deleted config either way. Reverse: B.
+
+### Q-K78 — Exact or case-insensitive item names for value sets? (P1-T15b2a; auto-accepted by Claude, 2026-11-16, awaiting owner confirmation)
+
+Design item 13 said pack items are matched to rows by lower-case name "for every kind". As built, identifier configs match case-insensitively, but value sets keep CARE's exact slug match.
+
+- **A ⭐ (taken).** Exact for value sets: CARE binds value-set slugs exactly and its slug is unique, so a case-insensitive match could bind the wrong row.
+- B. Case-insensitive for every kind, as item 13 was worded.
+
+*Recommendation A.* Reverse: one lookup in `valuesets.rows`.
+
+### Q-K79 — Re-check held identifier items at every start? (P1-T15b2a; auto-accepted by Claude, 2026-11-16, awaiting owner confirmation)
+
+An identifier-config item held because patients' data fails its rules (duplicates, values the new pattern refuses) is checked again at every start, because new patient data may have changed the answer. Each check is capped at 90 seconds and runs inside that hospital's start-up step.
+
+- **A ⭐ (taken).** Keep it for now. No identifier content ships before Phase 2, so no hospital can have such an item yet.
+- B. Start-up never runs data checks; held items are re-checked only by `ihr_pack_pending --recheck` or a nightly job.
+
+*Recommendation A now, B before identifier content ships (Phase 2):* at fleet scale, many held items could each add up to 90 s to a release window. Reverse: B (skip `run_data_checks` under `--startup`, add a beat job).
+
 **Still open:** Q-B4 (final MVP module list: assumed as in PLAN.md Phase 2) and Q-B6/B7 (pricing, timeline). Q-F2 is moot while AI is deferred.
 
 ---

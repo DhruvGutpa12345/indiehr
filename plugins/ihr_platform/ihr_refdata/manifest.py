@@ -17,7 +17,6 @@ from django.conf import settings
 
 PACKS_DIR = Path(__file__).with_name("packs")
 MANIFEST = "MANIFEST.json"
-KINDS = ("valueset",)
 
 
 class PackError(Exception):
@@ -82,11 +81,18 @@ def read_manifest(root=None):
     return manifest
 
 
+def kind_names():
+    """The kinds this build knows (the registry in kinds.py)."""
+    from ihr_refdata import kinds
+
+    return kinds.names()
+
+
 def _check_release(entry, data, path):
     if (data.get("pack"), data.get("version")) != (entry["pack"], entry["version"]):
         msg = f"{path} names {data.get('pack')} v{data.get('version')}, not the manifest's"
         raise PackError(msg)
-    if data.get("kind") not in KINDS:
+    if data.get("kind") not in kind_names():
         msg = f"{path}: unknown kind {data.get('kind')!r}"
         raise PackError(msg)
     items = data.get("items")

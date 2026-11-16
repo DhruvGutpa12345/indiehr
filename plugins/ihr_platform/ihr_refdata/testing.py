@@ -33,6 +33,33 @@ def vs(slug, *codes, name=None, status="active"):
     }
 
 
+TEST_SYSTEM = (
+    "https://ihr.test/id/"  # test packs only: no real identifier content ships
+)
+
+
+def idc(name, *, status="active", display=None, **config):
+    """An identifier config item (kind identifier_config) for a test pack: the system is
+    TEST_SYSTEM + name; retrieval needs the year of birth unless ``config`` says otherwise."""
+    system = TEST_SYSTEM + name
+    retrieve = {"retrieve_with_year_of_birth": True}
+    retrieve.update(config.pop("retrieve_config", {}))
+    return {
+        "slug": system,
+        "status": status,
+        "config": {
+            "use": "official",
+            "system": system,
+            "display": display or name.upper(),
+            "required": False,
+            "unique": False,
+            "regex": "",
+            "retrieve_config": retrieve,
+            **config,
+        },
+    }
+
+
 class Packs:
     """A packs folder of our own, in use (IHR_REFDATA_PACKS_DIR) for the rest of a test."""
 
@@ -43,11 +70,11 @@ class Packs:
         self._write_manifest(self.entries)
         testcase.enterContext(override_settings(IHR_REFDATA_PACKS_DIR=str(self.root)))
 
-    def add(self, version, *items, pack=TEST_PACK):
+    def add(self, version, *items, pack=TEST_PACK, kind="valueset"):
         content = {
             "pack": pack,
             "version": version,
-            "kind": "valueset",
+            "kind": kind,
             "care_commit": CARE_COMMIT,
             "item_count": len(items),
             "items": sorted(items, key=lambda item: item["slug"]),

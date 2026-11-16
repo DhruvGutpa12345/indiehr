@@ -12,6 +12,7 @@ class IhrPlatformConfig(AppConfig):
         from ihr_platform import (  # noqa: F401
             celery_gate,
             db_roles,
+            identifier_cache,
             route_swaps,
             signals,
         )
@@ -20,6 +21,10 @@ class IhrPlatformConfig(AppConfig):
         # imported (P1-T20a): every variant of each route reaches them
         route_swaps.install()
         checks.register(route_swaps.system_check)
+        # CARE's identifier config lookup read through its Redis cache, cleared in every
+        # process by post_save (P1-T15b2a, Q-K64); E025 refuses to start without it
+        identifier_cache.install()
+        checks.register(identifier_cache.system_check)
         # Queued Celery tasks never run in a hospital that is not served (P1-T18a, S1)
         celery_gate.install()
         # Every process checks its database role on its first connection (P1-T19; only

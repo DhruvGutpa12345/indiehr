@@ -16,6 +16,10 @@ from django.utils import timezone
 from pydantic import ValidationError
 
 KIND = "valueset"
+SCOPE = "hospital"  # one per hospital (kinds.py, the contract)
+# CARE binds these slugs in code: a deleted set breaks every write bound to it, so a
+# soft-deleted row is restored (C8)
+RESTORE_DELETED = True
 FIELDS = ("name", "status", "compose", "is_system_defined")
 RETIRED = "retired"  # CARE's own status value (resources/valueset/spec.py)
 # The compose lists CARE's ValueSet.create_composition iterates over with no guard: a row
@@ -238,6 +242,20 @@ def make_usable(row):
     row.modified_date = timezone.now()
     row.save(update_fields=["compose", "modified_date"])
     return True
+
+
+def is_retired(row):
+    return row.status == RETIRED
+
+
+def target(item):
+    """The slug is the key: nothing else to record (PackItem.target stays "")."""
+    return ""
+
+
+def conflict(key, row, item):
+    """Nothing blocks a value set write (the slug is unique in CARE's table)."""
+    return ""
 
 
 def retire(row):

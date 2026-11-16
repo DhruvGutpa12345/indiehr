@@ -492,6 +492,8 @@ class CrossTenantIsolationTests(SimpleTestCase):
             PatientIdentifierConfig,
             PatientIdentifierConfigCache,
         )
+        from care.emr.resources.base import model_cache_key, model_string
+        from django.core.cache import cache
 
         def make(tenant, external_id=None):
             with schema_context(tenant.schema):
@@ -516,9 +518,18 @@ class CrossTenantIsolationTests(SimpleTestCase):
             self.assertIn(self.a.canary, seen_by_a)
             self.assertIn(self.b.canary, seen_by_b)
         finally:
+            # CARE's local dict and, since the lookup reads CARE's Redis cache (P1-T15b2a,
+            # ihr_platform/identifier_cache.py), both hospitals' Redis keys: a queryset
+            # delete fires no post_save to clear them
             PatientIdentifierConfigCache.clear_cache()
             for tenant in (self.a, self.b):
                 with schema_context(tenant.schema):
+                    cache.delete_pattern(
+                        model_cache_key(
+                            model_string(PatientIdentifierConfig),
+                            pk=a_config.external_id,
+                        )
+                    )
                     PatientIdentifierConfig.objects.filter(
                         external_id=a_config.external_id
                     ).delete()

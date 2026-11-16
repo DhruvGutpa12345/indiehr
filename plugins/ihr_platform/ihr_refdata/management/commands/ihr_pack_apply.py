@@ -187,9 +187,10 @@ class Command(BaseCommand):
             self.stderr.write(log_line(hospital.slug, "failed"))
         return busy
 
-    def _one(self, hospital, releases, actor, *, check, retry=False):
+    def _one(self, hospital, releases, actor, *, check, retry=False, recheck=False):
         """ "done", "failed", "deferred" (recorded) or "busy" (with ``retry``: not recorded,
-        the caller tries again)."""
+        the caller tries again). ``recheck``: ihr_pack_pending --recheck (every data check
+        run again), recorded and alerted on exactly as an apply."""
         try:
             if check:
                 results = engine.apply_packs(
@@ -198,7 +199,7 @@ class Command(BaseCommand):
             else:
                 with runner.exclusive(hospital.slug):
                     results = engine.apply_packs(
-                        hospital, operator=actor, releases=releases
+                        hospital, operator=actor, releases=releases, recheck=recheck
                     )
         except runner.ProvisioningError:
             if retry:
@@ -228,7 +229,8 @@ class Command(BaseCommand):
             return "failed"
         for result in results:
             counts = ", ".join(f"{n} {what}" for what, n in result.counts.items())
-            line = f"{hospital.slug}: {result.pack} v{result.version} {result.result}"
+            done = "rechecked" if recheck else result.result
+            line = f"{hospital.slug}: {result.pack} v{result.version} {done}"
             if check and result.result == "applied":
                 line = f"{hospital.slug}: {result.pack} v{result.version} would change"
             self.stdout.write(f"{line}{f' ({counts})' if counts else ''}")
@@ -236,6 +238,18 @@ class Command(BaseCommand):
                 self.stderr.write(
                     f"ihr-packs: hospital={hospital.slug} pack={result.pack} {result.note}"
                 )
+        if any(result.unchecked for result in results) and not check:
+            # A data check hit its cap (P1-T15b2a item 8): the item stays held, "not fully
+            # checked"; alerted like a failure at every apply until ihr_pack_pending
+            # --recheck finishes it (the stored result counts too)
+            for result in results:
+                for key in result.unchecked:
+                    self.stderr.write(
+                        f"ihr-packs: hospital={hospital.slug} pack={result.pack} "
+                        f"item={key} data check not fully checked: ihr_pack_pending "
+                        f"--slug {hospital.slug} --recheck --operator <you>"
+                    )
+            self.stderr.write(log_line(hospital.slug, "failed"))
         return "done"
 
     def _record(self, hospital, releases, outcome, error, actor, *, check):

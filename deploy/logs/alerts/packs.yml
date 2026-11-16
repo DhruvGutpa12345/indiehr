@@ -4,7 +4,10 @@
 # or "deferred" when another job still held it after three retries) and written as one fixed
 # line, "ihr-packs: hospital=<slug> outcome=failed", which this rule watches. That hospital may
 # lack new code lists until the packs are applied again: look at its PackApply rows, fix the
-# cause and run ihr_pack_apply --slug <slug> --operator <you>.
+# cause and run ihr_pack_apply --slug <slug> --operator <you>. The same line follows a data
+# check that hit its cap (P1-T15b2a: "ihr-packs: hospital=<slug> pack=<pack> item=<item> data
+# check not fully checked" just before it; no PackApply error): it is written at every apply
+# until ihr_pack_pending --slug <slug> --recheck --operator <you> finishes the check.
 # Forgery (S1): only container lines (source:=container) of the services that run --startup
 # (staging "migrate", dev "celery"; never the web backend, whose access log prints request
 # paths anyone can choose), and only a whole line that is exactly ours, with a slug-shaped
@@ -23,4 +26,4 @@ groups:
           service: packs
         annotations:
           summary: 'Reference packs failed to apply to hospital {{ $labels.hospital }} ({{ $value }} times in 24 hours)'
-          action: 'Read that hospital''s PackApply rows (the error), fix the cause, then run ihr_pack_apply --slug <the hospital named above> --operator <you> (it refuses a hospital that is held or not on this build''s schema: ihr_fleet_run check first)'
+          action: 'Read that hospital''s PackApply rows (the error), fix the cause, then run ihr_pack_apply --slug <the hospital named above> --operator <you> (it refuses a hospital that is held or not on this build''s schema: ihr_fleet_run check first). No PackApply error, but a line "data check not fully checked" naming a pack and item just before: run ihr_pack_pending --slug <the hospital> --recheck --operator <you> (ihr_pack_pending --slug <the hospital> lists what holds each item)'

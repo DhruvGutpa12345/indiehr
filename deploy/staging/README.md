@@ -836,6 +836,12 @@ Fix the cause, then `scripts/staging.sh manage ihr_pack_apply --slug <slug> --op
 (`<you>`: 1-64 letters, digits or `. _ @ -`; recorded as `packs:<you>`).
 A busy hospital (another job holds its lock) is tried again after 5, 15 and 30 seconds; still
 busy after that, it is recorded (`outcome=deferred`) and alerted on like a failure.
+A data check that hit its cap (P1-T15b2a: identifier configs) has no `PackApply` error: the
+line before the alerted one reads `ihr-packs: hospital=<slug> pack=<pack> item=<item> data check
+not fully checked`, and it comes back at every apply until the check is finished with
+`scripts/staging.sh manage ihr_pack_pending --slug <slug> --recheck --operator <you>` (it takes
+the same hospitals as `ihr_pack_apply --slug`; `ihr_pack_pending --slug <slug>` lists what holds
+each item: a conflict, the counts, whether fully checked, and when).
 
 **Batch requests** (P1-T20a, `deploy/logs/alerts/batch.yml`): the web backend runs a sub-request
 of `/api/v1/batch_requests/` only if its method and route are on the list the web app's own batch

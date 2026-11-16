@@ -20,6 +20,16 @@ class PackItem(models.Model):
         NONE = ""
         EDITED = "edited"  # the row differs from what this pack last wrote
         UNKNOWN_ORIGIN = "unknown-origin"  # differs, and this pack never wrote it
+        # P1-T15b2a (design.md §3.1, "After the attack" items 7-11)
+        DELETED = "deleted"  # the hospital deleted the row (kinds that do not restore)
+        CONFLICT = (
+            "conflict"  # structural: writing is impossible until fixed (blocks accept)
+        )
+        DATA_CHECK = (
+            "data-check"  # the hospital's data breaks the change (blocks accept)
+        )
+        PRIVACY = "privacy"  # it would widen who finds a patient: the admin decides
+        COUNTER_RESTART = "counter-restart"  # a new number series replaces an old one
 
     pack = models.CharField(max_length=64)
     kind = models.CharField(max_length=32)
@@ -39,6 +49,14 @@ class PackItem(models.Model):
     # The hospital's own row as it was when kept. Only recorded (the engine never compares
     # against it): the P1-T15b screen and the audit trail show what the hospital chose to keep
     kept_row_sha256 = models.CharField(max_length=64, blank=True, default="")
+    # The natural key of the row the item writes when it is not the item itself ("" for value
+    # sets and identifier configs, whose key is the item; pack forms move it: P1-T15b2b)
+    target = models.CharField(max_length=255, blank=True, default="")
+    # What held the item back, counts only (never a patient's value): a data check's counts,
+    # the content hash they were made for and the watermark of the data they read
+    # ("data-check"), a structural problem ("conflict"), an old series' count
+    # ("counter-restart"). Empty when nothing is held.
+    checks = models.JSONField(default=dict, blank=True)
     changed_at = models.DateTimeField()
 
     class Meta:

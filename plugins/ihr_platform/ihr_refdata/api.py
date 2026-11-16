@@ -31,6 +31,8 @@ from care.users.models import User
 from django.core.cache import cache
 from django.db import connection, transaction
 from django.http import QueryDict
+from django.utils import timezone
+from django.utils.dateparse import parse_datetime
 from ihr_audit import context as audit
 from ihr_identity.staff_access import IsHospitalAdmin
 from ihr_platform.models import Hospital
@@ -38,7 +40,7 @@ from ihr_platform.provisioning import runner
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
-from ihr_refdata import diff, engine, manifest
+from ihr_refdata import diff, engine, kinds
 from ihr_refdata.models import PackApply, PackItem
 
 PAGE, MAX_PAGE = 50, 200
@@ -47,7 +49,9 @@ MAX_ID = 2**63 - 1
 MAX_VERSION = 2**31 - 1
 RETRY_AFTER = "60"
 PER_USER_PER_MINUTE = 30
-IN_FLIGHT_SECONDS = 60  # the in-flight mark expires on its own if a process dies
+# The in-flight mark expires on its own if a process dies; it outlasts the longest decision
+# (an accept may run a data check: 30 s repeat query + 60 s regex scan, review E4)
+IN_FLIGHT_SECONDS = 150
 STATES = {"pending": PackItem.State.PENDING, "kept": PackItem.State.KEPT}
 WAITING = tuple(STATES.values())
 HEX = re.compile(r"^(?:[0-9a-f]{64})?$")
@@ -104,7 +108,7 @@ def _release(releases, pack, version):
 
 
 def _summary(record, row, item):
-    handler = engine.HANDLERS[record.kind]
+    handler = kinds.get(record.kind)
     return {
         "id": record.pk,
         "pack": record.pack,
@@ -131,7 +135,7 @@ def _waiting_item(record, releases):
 def detail(record, releases):
     """One item as the admin decides on it: the list fields, what accepting would do, and the
     three columns of every field the pack sets (never any other field of the row)."""
-    handler = engine.HANDLERS[record.kind]
+    handler = kinds.get(record.kind)
     row = handler.rows([record.item]).get(record.item)
     item = _waiting_item(record, releases)
     waiting = record.state in WAITING
@@ -151,10 +155,44 @@ def detail(record, releases):
         "pending_sha256": record.pending_sha256,
         "row_sha256": engine.row_sha256(handler, row),
         "effect": effect,
-        "blocked": record.reason if record.reason in engine.BLOCKING else "",
-        "conflicts": {},  # counts only (identifier and form kinds, P1-T15b2)
+        "blocked": blocked(record),
+        "conflicts": held(record),
         "fields": diff.fields(handler.FIELDS, hospital, pack, previous),
     }
+
+
+def blocked(record):
+    """The reason that refuses an accept now: a pending item's stored one. A kept item is
+    asked afresh at its accept (review E5), so a fixed problem never blocks it for good."""
+    if record.state == PackItem.State.PENDING and record.reason in engine.BLOCKING:
+        return record.reason
+    return ""
+
+
+def held(record):
+    """What holds the item back, as stored by the last apply (counts only, never a value; a
+    data check is never run in a GET): {} when nothing is stored."""
+    checks = record.checks or {}
+    if not checks:
+        return {}
+    out = {"counts": dict(checks.get("counts") or {})}
+    if "conflict" in checks:
+        out["conflict"] = checks["conflict"]
+    if "patients" in checks:
+        out["patients"] = checks["patients"]
+        out["complete"] = bool(checks.get("complete"))
+        if not out["complete"]:
+            out["note"] = (
+                "not fully checked: the hospital's data took too long to check"
+            )
+        elif checks["patients"]:
+            out["note"] = f"{checks['patients']} patients' edits would fail until fixed"
+        else:
+            out["note"] = "checked: no patient's edits would fail"
+    if at := parse_datetime(checks.get("at") or ""):
+        out["checked_at"] = at.isoformat()
+        out["age_seconds"] = max(0, int((timezone.now() - at).total_seconds()))
+    return out
 
 
 def _refused(status, detail_text, **flags):
@@ -186,8 +224,8 @@ class UpdatesView(APIView):
                     _bad("pack", "not a pack of this build")
                 rows = rows.filter(pack=pack)
             if kind := params.get("kind"):
-                if kind not in manifest.KINDS:
-                    _bad("kind", f"one of {', '.join(manifest.KINDS)}")
+                if kind not in kinds.names():
+                    _bad("kind", f"one of {', '.join(kinds.names())}")
                 rows = rows.filter(kind=kind)
         except _BadQueryError as bad:
             return Response(bad.body, status=400)
@@ -197,7 +235,7 @@ class UpdatesView(APIView):
         found = {}
         for kind in {r.kind for r in page}:
             slugs = [r.item for r in page if r.kind == kind]
-            found[kind] = engine.HANDLERS[kind].rows(slugs)
+            found[kind] = kinds.get(kind).rows(slugs)
         results = [
             _summary(r, found[r.kind].get(r.item), _waiting_item(r, releases))
             for r in page
@@ -263,7 +301,7 @@ class UpdateView(APIView):
             )
         if (record.pending_version, record.pending_sha256) != expect[:2]:
             return _refused(409, "This update changed since it was shown.", stale=True)
-        if accept and record.reason in engine.BLOCKING:
+        if accept and blocked(record):
             return _refused(
                 409,
                 f"It cannot be accepted until its {record.reason} is fixed.",
@@ -271,7 +309,7 @@ class UpdateView(APIView):
             )
         if not engine.recorded(release):
             return _refused(409, "This update is not released here yet.", stale=True)
-        handler = engine.HANDLERS[record.kind]
+        handler = kinds.get(record.kind)
         row = handler.rows([record.item]).get(record.item)
         if engine.row_sha256(handler, row) != expect[2]:
             return _refused(
