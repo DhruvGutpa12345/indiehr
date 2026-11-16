@@ -90,15 +90,28 @@ test("the Receptionist's front-desk screens (reception.ravi, alpha)", async ({
 
   await test.step("patient home: the front desk's actions, no tag card", async () => {
     await page.goto(homeUrl(base, stay));
-    await expect(page.getByText(stay.patientName).first()).toBeVisible();
     await expect(
-      page.getByRole("button", { name: /Create Encounter/ }).first(),
+      page.getByText(stay.patientName).filter({ visible: true }).first(),
     ).toBeVisible();
-    await expect(page.getByText(/View Accounts/).first()).toBeVisible();
+    await expect(
+      page
+        .getByRole("button", { name: /Create Encounter/ })
+        .filter({ visible: true })
+        .first(),
+    ).toBeVisible();
+    await expect(
+      page
+        .getByText(/View Accounts/)
+        .filter({ visible: true })
+        .first(),
+    ).toBeVisible();
     await expect(page.getByText(/Add tags|Manage tags/)).toHaveCount(0);
     await expectNoProjectedLabels(page, "patient home");
     // the encounter tab lists the visit; "View Encounter" opens the status page
-    const view = page.getByRole("link", { name: "View Encounter" }).first();
+    const view = page
+      .getByRole("link", { name: "View Encounter" })
+      .filter({ visible: true })
+      .first();
     await expect(view).toBeVisible();
     await view.click();
     await expect(page.locator('[data-ihr="encounter-status"]')).toBeVisible();
@@ -122,9 +135,15 @@ test("the Receptionist's front-desk screens (reception.ravi, alpha)", async ({
     ]);
 
     // Demography: identity, contact, address; never blood group, tags or plugin data
-    await expect(page.getByText(stay.patientName).first()).toBeVisible();
-    await expect(page.getByText("General Info").first()).toBeVisible();
-    await expect(page.getByText("Identifiers").first()).toBeVisible();
+    await expect(
+      page.getByText(stay.patientName).filter({ visible: true }).first(),
+    ).toBeVisible();
+    await expect(
+      page.getByText("General Info").filter({ visible: true }).first(),
+    ).toBeVisible();
+    await expect(
+      page.getByText("Identifiers").filter({ visible: true }).first(),
+    ).toBeVisible();
     await expect(page.getByText("Additional Details")).toHaveCount(0);
     await expect(page.getByRole("button", { name: "Edit" })).toHaveCount(1);
     await expectNoProjectedLabels(page, "Demography");
@@ -135,7 +154,10 @@ test("the Receptionist's front-desk screens (reception.ravi, alpha)", async ({
     await page.getByRole("tab", { name: "Encounters" }).click();
     await expect(page).toHaveURL(/\/encounters$/);
     await expect(
-      page.getByRole("link", { name: "View Encounter" }).first(),
+      page
+        .getByRole("link", { name: "View Encounter" })
+        .filter({ visible: true })
+        .first(),
     ).toBeVisible();
     await expectNoProjectedLabels(page, "the Encounters tab");
     await page.getByRole("tab", { name: "Accounts" }).click();
@@ -228,7 +250,9 @@ test("the Receptionist's front-desk screens (reception.ravi, alpha)", async ({
       if (url.pathname === "/api/v1/encounter/") asked.push(url.search);
     });
     await page.goto(`${base}/encounters/patients/all`);
-    await expect(page.getByText("Encounters").first()).toBeVisible();
+    await expect(
+      page.getByText("Encounters").filter({ visible: true }).first(),
+    ).toBeVisible();
     await page.waitForLoadState("networkidle");
     expect(asked.length, "the list asked for encounters").toBeGreaterThan(0);
     for (const search of asked) {
@@ -252,7 +276,9 @@ test("the Receptionist's front-desk screens (reception.ravi, alpha)", async ({
 
   await test.step("the account page shows its header, no tab", async () => {
     await page.goto(`${base}/billing/account/${stay.accountId}`);
-    await expect(page.getByText("Amount Due").first()).toBeVisible();
+    await expect(
+      page.getByText("Amount Due").filter({ visible: true }).first(),
+    ).toBeVisible();
     await expect(
       page.getByRole("tab", { name: /Invoices|Reports|Payments/ }),
     ).toHaveCount(0);

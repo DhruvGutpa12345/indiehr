@@ -124,7 +124,9 @@ for (const desk of DESKS) {
     await test.step("Bed Charge Items lists the bed by name", async () => {
       await page.getByRole("tab", { name: /^Bed Charge Items/ }).click();
       await expect(page).toHaveURL(/\/bed_charge_items$/);
-      await expect(page.getByText(stay.bedName).first()).toBeVisible();
+      await expect(
+        page.getByText(stay.bedName).filter({ visible: true }).first(),
+      ).toBeVisible();
       const addRoomRent = page.getByRole("button", {
         name: /Add Charge Items/,
       });
@@ -145,7 +147,9 @@ for (const desk of DESKS) {
 
     await test.step("the account's write buttons follow the role's own rights", async () => {
       await page.goto(`${base}/billing/account/${stay.accountId}/charge_items`);
-      await expect(page.getByText("Amount Due").first()).toBeVisible();
+      await expect(
+        page.getByText("Amount Due").filter({ visible: true }).first(),
+      ).toBeVisible();
       // both desks update the account (can_update_account): tags
       await expect(
         page.getByRole("button", { name: /^(Add|Manage) Tags$/ }),
