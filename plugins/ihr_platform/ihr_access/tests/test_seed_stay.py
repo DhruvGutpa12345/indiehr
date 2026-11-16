@@ -84,6 +84,34 @@ class SeedStay(SwapCase):
         account.refresh_from_db()
         self.assertEqual(account.primary_encounter_id, encounter.pk)
 
+    def test_the_stay_patient_gets_the_permanent_address_cares_form_would_give(self):
+        """CARE's demo patients have none, and CARE's edit form then refuses to save (the
+        front-desk spec edits this patient's phone)."""
+        _, encounter = self.outpatient_account()
+        self.free_bed()
+        patient = encounter.patient
+        type(patient).objects.filter(pk=patient.pk).update(
+            address="12 MG Road, Kochi", permanent_address=""
+        )
+
+        add_inpatient_stay()
+
+        patient.refresh_from_db()
+        self.assertEqual(patient.permanent_address, "12 MG Road, Kochi")
+
+    def test_a_permanent_address_already_set_is_left_alone(self):
+        _, encounter = self.outpatient_account()
+        self.free_bed()
+        patient = encounter.patient
+        type(patient).objects.filter(pk=patient.pk).update(
+            address="12 MG Road, Kochi", permanent_address="4 Station Road, Thrissur"
+        )
+
+        add_inpatient_stay()
+
+        patient.refresh_from_db()
+        self.assertEqual(patient.permanent_address, "4 Station Road, Thrissur")
+
     def test_running_it_again_changes_nothing(self):
         self.outpatient_account()
         self.free_bed()
