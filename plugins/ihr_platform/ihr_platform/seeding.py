@@ -88,20 +88,12 @@ def add_inpatient_stay():
     inside a hospital's schema; does nothing when that visit already has a bed stay, when no
     account has a visit, or when no bed is free. Returns the visit, or None.
 
-    CARE's demo patients have no permanent address and no emergency phone, which CARE's own
-    registration form always fills (it copies the current address and the phone unless told
-    otherwise): the edit form then refuses to save (an empty permanent address) or CARE answers
-    400 (an empty emergency phone is not a phone number). The stay's patient is the one the
-    front-desk screens edit, so it gets what CARE's form would have given it (P1-T11c2 CI,
-    2026-11-16).
     """
     from datetime import timedelta
 
     from care.emr.models.account import Account
     from care.emr.models.location import FacilityLocation, FacilityLocationEncounter
-    from care.emr.models.patient import Patient
     from django.db import transaction
-    from django.db.models import F, Q
     from django.utils import timezone
 
     account = (
@@ -141,10 +133,34 @@ def add_inpatient_stay():
         bed.current_encounter = encounter
         bed.system_availability_status = "reserved"
         bed.save()
-        Patient.objects.filter(pk=encounter.patient_id, permanent_address="").update(
+    return encounter
+
+
+def complete_demo_contacts():
+    """Give CARE's demo patients the permanent address and emergency phone its form would give.
+
+    CARE's own registration form always fills both (it copies the current address and the phone
+    unless told otherwise); CARE's demo data leaves them empty. CARE's edit form then refuses to
+    save (an empty permanent address), or CARE answers 400 (it sends the empty emergency phone,
+    which is not a phone number), so no demo patient could be edited from the web app. The
+    front-desk spec edits whichever inpatient it finds first (P1-T11c2 CI, 2026-11-16). Synthetic
+    data only; values already set are left alone, so it is safe to run again. Run inside a
+    hospital's schema. Returns the number of patients changed.
+    """
+    from care.emr.models.patient import Patient
+    from django.db import transaction
+    from django.db.models import F, Q
+
+    with transaction.atomic():
+        changed = set(
+            Patient.objects.filter(permanent_address="").values_list("pk", flat=True)
+        )
+        Patient.objects.filter(permanent_address="").update(
             permanent_address=F("address")
         )
-        Patient.objects.filter(pk=encounter.patient_id).filter(
+        empty_phone = Patient.objects.filter(
             Q(emergency_phone_number="") | Q(emergency_phone_number__isnull=True)
-        ).update(emergency_phone_number=F("phone_number"))
-    return encounter
+        )
+        changed |= set(empty_phone.values_list("pk", flat=True))
+        empty_phone.update(emergency_phone_number=F("phone_number"))
+    return len(changed)

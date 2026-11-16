@@ -22,7 +22,11 @@ from django_tenants.utils import schema_context
 from ihr_tenant_settings.models import HospitalProfile
 
 from ihr_platform.models import Domain, Hospital
-from ihr_platform.seeding import add_inpatient_stay, load_demo_data
+from ihr_platform.seeding import (
+    add_inpatient_stay,
+    complete_demo_contacts,
+    load_demo_data,
+)
 
 # Synthetic hospitals: names, places and phone numbers are made up.
 DEMO_HOSPITALS = {
@@ -145,6 +149,8 @@ class Command(BaseCommand):
                 current.save()
                 # an inpatient with a bed stay and an account: the billing desks' screens
                 stay = add_inpatient_stay()
+                # the contact fields CARE's form fills, so demo patients can be edited
+                complete_demo_contacts()
             created = _add_extra_users()
             created += _add_role_users()
             reset = _set_passwords(password)

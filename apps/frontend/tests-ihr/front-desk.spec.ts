@@ -187,7 +187,9 @@ test("the Receptionist's front-desk screens (reception.ravi, alpha)", async ({
         ["PUT", "PATCH"].includes(response.request().method()),
     );
     await page.getByRole("button", { name: /^Update/ }).click();
-    expect((await saved).status()).toBe(200);
+    const response = await saved;
+    // on failure, say which field the backend refused
+    expect(response.status(), await response.text()).toBe(200);
     // the patient now answers to the new number: the later steps (patient home searches by
     // phone) must use it, or CARE's search finds nobody and answers 403
     stay.phone = phone;
