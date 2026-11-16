@@ -208,6 +208,8 @@ test("the Receptionist's front-desk screens (reception.ravi, alpha)", async ({
     await expect(sheet).toBeVisible();
     // the tag picker is not offered (tags are projected away)
     await expect(sheet.getByText(/^Tags$/)).toHaveCount(0);
+    // the type of visit is required (the form refuses to send without it)
+    await sheet.getByText("Ambulatory", { exact: true }).click();
     const submit = sheet.getByRole("button", { name: /^Create Encounter/ });
     if (await submit.isDisabled()) {
       // pick a department (a preferred one may already be chosen)
