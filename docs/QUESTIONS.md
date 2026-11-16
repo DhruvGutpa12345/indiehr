@@ -874,6 +874,16 @@ An identifier-config item held because patients' data fails its rules (duplicate
 
 *Recommendation A now, B before identifier content ships (Phase 2):* at fleet scale, many held items could each add up to 90 s to a release window. Reverse: B (skip `run_data_checks` under `--startup`, add a beat job).
 
+### Q-K80 — Which organisations get a pack form's first version? (P1-T15b2b; auto-accepted by Claude, 2026-11-16, awaiting owner confirmation)
+
+CARE shows a form only through its organisation links, so a pack form's first version is linked to "the hospital" when it is created (design item 1). The rule for "the hospital" is the hospital-wide admin rule of Q-K76: every active top-level organisation. Those include the 36 state government organisations that `ihr_load_geography` adds.
+
+- **A ⭐ (taken).** Link v1 to the active top-level organisations **except** government ones (`org_type` `govt`). The admin then widens or narrows the links in CARE.
+- B. Link v1 to every top-level organisation, government ones included (the Q-K76 rule as it stands).
+- C. Wait for Q-K76 B (a recorded hospital root) and link v1 only to it.
+
+*Recommendation A now, C once Q-K76 B is built:* a form linked to every state is noise in CARE's lists and makes no sense for a hospital's own form. No form content ships before Phase 2 (test packs only). Reverse: one filter in the forms kind's link step.
+
 **Still open:** Q-B4 (final MVP module list: assumed as in PLAN.md Phase 2) and Q-B6/B7 (pricing, timeline). Q-F2 is moot while AI is deferred.
 
 ---
