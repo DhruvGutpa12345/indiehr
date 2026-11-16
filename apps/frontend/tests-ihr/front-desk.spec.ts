@@ -187,9 +187,7 @@ test("the Receptionist's front-desk screens (reception.ravi, alpha)", async ({
         ["PUT", "PATCH"].includes(response.request().method()),
     );
     await page.getByRole("button", { name: /^Update/ }).click();
-    const response = await saved;
-    // on failure, say which field the backend refused
-    expect(response.status(), await response.text()).toBe(200);
+    expect((await saved).status()).toBe(200);
     // the patient now answers to the new number: the later steps (patient home searches by
     // phone) must use it, or CARE's search finds nobody and answers 403
     stay.phone = phone;
@@ -212,12 +210,19 @@ test("the Receptionist's front-desk screens (reception.ravi, alpha)", async ({
     if (await submit.isDisabled()) {
       // pick a department (a preferred one may already be chosen)
       await sheet.getByRole("tab", { name: "All Organizations" }).click();
-      await sheet.getByRole("combobox").click();
+      // the department picker (the Status and Priority selects are comboboxes too)
+      await sheet
+        .getByRole("combobox")
+        .filter({ hasText: "Select Department" })
+        .filter({ visible: true })
+        .click();
       const option = page.getByRole("option").first();
       await option.waitFor();
       await option.click();
-      const confirm = page.getByRole("button", { name: "Confirm" });
-      if (await confirm.isVisible()) await confirm.click();
+      const confirm = page
+        .getByRole("button", { name: "Confirm" })
+        .filter({ visible: true });
+      if (await confirm.count()) await confirm.first().click();
       await expect(submit).toBeEnabled();
     }
     const created = page.waitForResponse(
