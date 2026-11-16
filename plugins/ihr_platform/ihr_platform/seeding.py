@@ -88,10 +88,12 @@ def add_inpatient_stay():
     inside a hospital's schema; does nothing when that visit already has a bed stay, when no
     account has a visit, or when no bed is free. Returns the visit, or None.
 
-    CARE's demo patients have no permanent address, which CARE's own registration form always
-    fills (it copies the current address unless told otherwise): the edit form then refuses to
-    save. The stay's patient is the one the front-desk screens edit, so it gets the address CARE
-    would have given it (P1-T11c2 CI, 2026-11-16).
+    CARE's demo patients have no permanent address and no emergency phone, which CARE's own
+    registration form always fills (it copies the current address and the phone unless told
+    otherwise): the edit form then refuses to save (an empty permanent address) or CARE answers
+    400 (an empty emergency phone is not a phone number). The stay's patient is the one the
+    front-desk screens edit, so it gets what CARE's form would have given it (P1-T11c2 CI,
+    2026-11-16).
     """
     from datetime import timedelta
 
@@ -99,7 +101,7 @@ def add_inpatient_stay():
     from care.emr.models.location import FacilityLocation, FacilityLocationEncounter
     from care.emr.models.patient import Patient
     from django.db import transaction
-    from django.db.models import F
+    from django.db.models import F, Q
     from django.utils import timezone
 
     account = (
@@ -142,4 +144,7 @@ def add_inpatient_stay():
         Patient.objects.filter(pk=encounter.patient_id, permanent_address="").update(
             permanent_address=F("address")
         )
+        Patient.objects.filter(pk=encounter.patient_id).filter(
+            Q(emergency_phone_number="") | Q(emergency_phone_number__isnull=True)
+        ).update(emergency_phone_number=F("phone_number"))
     return encounter
