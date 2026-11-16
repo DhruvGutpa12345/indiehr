@@ -412,6 +412,15 @@ class RestoreEndToEnd(SimpleTestCase):
 
     # --- the restore itself -----------------------------------------------------------------
 
+    def test_the_form_guards_are_this_builds_after_the_restore(self):
+        """P1-T15b2b item 5: the dump held the guards; the restore's migrate put this
+        build's back (never the dump's)."""
+        from ihr_refdata import forms_guard
+
+        self.assertIn("ihr_questionnaire_guard", self.doc["functions"])
+        with connection.cursor() as cursor:
+            self.assertEqual(forms_guard.problems(cursor, self.a.schema_name), [])
+
     def test_the_restore_finished_and_lifted_its_hold(self):
         self.assertEqual(self.code, 0, self.out + self.err)
         op = TenantOperation.objects.get(pk=self.op.pk)
@@ -1116,6 +1125,71 @@ class RefusalTests(SimpleTestCase):
         self.assertEqual(
             report["restored_to"][0], self.doc["facts"]["audit"]["seal_seq"]
         )
+
+    def test_a_dump_with_the_form_guards_passes(self):
+        """P1-T15b2b item 5: the answered-form guard is ours, so a dump holding it passes the
+        quarantine's checks and the pre-check, and it is never taken from the dump."""
+        from ihr_refdata import forms_guard
+
+        for name in forms_guard.FUNCTIONS:
+            self.assertIn(name, package.OUR_FUNCTIONS)
+            self.assertEqual(package.OUR_TRIGGERS[name], name)
+            self.assertIn(name, self.doc["functions"])
+        self.assertEqual(
+            package.OUR_TRIGGERS[forms_guard.TRUNCATE_TRIGGER],
+            forms_guard.ANSWER_FUNCTION,
+        )
+        self.assertEqual(self._run().precheck()["functions_differ"], [])
+
+    def test_a_tampered_guard_body_is_refused(self):
+        """P1-T15b2b item 5: with this build's migrations, a guard body that is not the live
+        one's was changed by hand in the source: refused, never merely reported."""
+        for name in ("ihr_questionnaire_guard", "ihr_questionnaire_answer_guard"):
+            with self.subTest(name):
+                doc = copy.deepcopy(self.doc)
+                doc["functions"][name] = "0" * 32
+                self.assertRefused("tampered guard", doc)
+
+    def test_a_tampered_guard_across_an_unrelated_migration_is_refused(self):
+        """Review G4: only ihr_refdata's migrations fix the guard, so a dump one CARE
+        migration behind is still held to this build's guard."""
+        doc = copy.deepcopy(self.doc)
+        doc["functions"]["ihr_questionnaire_answer_guard"] = "0" * 32
+        other = next(m for m in doc["facts"]["migrations"] if m[0] == "emr")
+        doc["facts"]["migrations"].remove(other)
+        self.assertRefused("tampered guard", doc)
+
+    def test_a_dump_without_the_guards_is_refused(self):
+        """Review G4: this build's migrations but no guard functions (dropped with CASCADE in
+        the source) is a tampered source too."""
+        doc = copy.deepcopy(self.doc)
+        for name in ("ihr_questionnaire_guard", "ihr_questionnaire_answer_guard"):
+            doc["functions"].pop(name)
+        self.assertRefused("tampered guard", doc)
+
+    def test_a_live_guard_edited_by_hand_does_not_refuse_a_good_dump(self):
+        """Review Q3: the dump is held to this build's guard, not the live schema's (edited
+        by hand, that hospital is gated; the restore's migrate puts it back)."""
+        with transaction.atomic():
+            with connection.cursor() as cursor:
+                cursor.execute(
+                    f'ALTER FUNCTION "{TEST_SCHEMA}".ihr_questionnaire_guard() '
+                    "SET work_mem = '64kB'"
+                )
+            report = self._run().precheck()
+            transaction.set_rollback(True)
+        self.assertEqual(report["functions_differ"], ["ihr_questionnaire_guard"])
+
+    def test_an_older_builds_guard_is_reported_not_refused(self):
+        doc = copy.deepcopy(self.doc)
+        doc["functions"]["ihr_questionnaire_guard"] = "0" * 32
+        doc["facts"]["migrations"] = [
+            m
+            for m in doc["facts"]["migrations"]
+            if m != ["ihr_refdata", "0004_forms_guard"]
+        ]
+        report = self._run(doc).precheck()
+        self.assertEqual(report["functions_differ"], ["ihr_questionnaire_guard"])
 
     def test_not_through_the_quarantine(self):
         doc = copy.deepcopy(self.doc)

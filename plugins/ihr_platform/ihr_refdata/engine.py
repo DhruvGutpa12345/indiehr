@@ -68,7 +68,8 @@ MAX_CHANGES = (
     500  # entries of PackApply.changes; the total is in counts["changes_total"]
 )
 # Reasons that refuse an accept until fixed (P1-T15b2/b3 set them; keep stays allowed)
-BLOCKING = frozenset(("conflict", "missing-link", "data-check"))
+MISSING_LINK = "missing-link"  # Q-K68 A: a row the item must link to is not there yet
+BLOCKING = frozenset(("conflict", MISSING_LINK, "data-check"))
 # Reasons the start-up short-circuit still reconciles for (item 11): the others wait only on
 # the admin (edited, unknown-origin, deleted, privacy, counter-restart, a removal)
 RERUN = BLOCKING
@@ -305,7 +306,9 @@ def _apply_release(release, operator, *, dry_run, recheck=False):
             and last.sha256 == release.sha256
             and not recheck
             and not _needs_reconcile(release, handler)
-            and handler.all_present(_expected_rows(release, handler))
+            and handler.all_present(
+                _expected_rows(release, handler), targets=_targets(release.pack)
+            )
         ):
             return Result(release.pack, release.version, "unchanged")
         done = _reconcile(release, handler, dry_run=dry_run, recheck=recheck)
@@ -373,6 +376,14 @@ def _expected_rows(release, handler):
     ]
 
 
+def _targets(pack, records=None):
+    """{item: target} of this pack's records that name their row (forms: item 2)."""
+    if records is None:
+        records = PackItem.objects.filter(pack=pack).exclude(target="")
+        return dict(records.values_list("item", "target"))
+    return {r.item: r.target for r in records if r.target}
+
+
 def checks_result(handler, row, item, names, content_hash, mark, at):
     """A data check run now, as stored on the record (counts only, never a value)."""
     found = handler.run_data_checks(row, item, names)
@@ -403,7 +414,7 @@ def recheck_conflicts(schema, release, keys):
     handler = kinds.get(release.kind)
     items = release.by_item()
     with schema_context(schema), transaction.atomic():
-        found = handler.rows(keys)
+        found = handler.rows(keys, targets=_targets(release.pack))
         for key in keys:
             item = items.get(key)
             why = handler.conflict(key, found.get(key), item) if item else ""
@@ -445,7 +456,8 @@ def _reconcile(release, handler, *, dry_run, recheck=False):  # noqa: PLR0912, P
     records = {
         r.item: r for r in PackItem.objects.filter(pack=release.pack, kind=release.kind)
     }
-    rows = handler.rows(set(items) | set(records))
+    targets = _targets(release.pack, records.values())
+    rows = handler.rows(set(items) | set(records), targets=targets)
     # Rows this release takes out of the pack (a counter-restart looks at them, item 10)
     leaving = [
         rows[slug]
@@ -461,8 +473,8 @@ def _reconcile(release, handler, *, dry_run, recheck=False):  # noqa: PLR0912, P
     written = []
     changes = []  # [{item, facility, change}]: what this apply did, item by item
 
-    def listed(slug, change):
-        changes.append({"item": slug, "facility": None, "change": change})
+    def listed(slug, change, **extra):
+        changes.append({"item": slug, "facility": None, "change": change, **extra})
 
     def note(record, slug, **values):
         """Write the record's new values; True when anything changed."""
@@ -533,7 +545,9 @@ def _reconcile(release, handler, *, dry_run, recheck=False):  # noqa: PLR0912, P
     def moved(slug, row):
         """True when the row changed since it was read (E3): read again under its lock, so
         a hospital edit committed meanwhile is never overwritten."""
-        fresh = handler.rows([slug], lock=not dry_run).get(slug)
+        fresh = handler.rows(
+            [slug], lock=not dry_run, targets={slug: targets.get(slug, "")}
+        ).get(slug)
         if row is None or fresh is None:
             return fresh is not row
         return handler.decision_hash(fresh) != handler.decision_hash(row) or getattr(
@@ -549,6 +563,8 @@ def _reconcile(release, handler, *, dry_run, recheck=False):  # noqa: PLR0912, P
             return (Reason.EDITED if edited else Reason.UNKNOWN_ORIGIN), {}
         if why := handler.conflict(slug, row, item):
             return Reason.CONFLICT, {"conflict": why}
+        if why := handler.missing_link(slug, row, item):
+            return MISSING_LINK, {"missing-link": why}
         found = {}
         if names := handler.data_checks(row, item):
             found = data_checked(record, slug, row, item, content_hash, names)
@@ -571,12 +587,17 @@ def _reconcile(release, handler, *, dry_run, recheck=False):  # noqa: PLR0912, P
         """A deletion waits as "deleted", or as what only the admin may take (Q7)."""
         return handler.admin_reason(row, item, leaving)[0] or Reason.DELETED
 
-    def wrote(slug, change):
+    def wrote(slug, change, holder=None, done=None):
+        """A write of ``slug``; ``holder``: the row that now holds the item (the kind's
+        record_target and change list entry come from it, item 2)."""
         nonlocal writes
         counts[change] += 1
         writes += 1
         written.append(slug)
-        listed(slug, change)
+        extra = handler.change(holder) if holder is not None else {}
+        if done is not None and holder is not None:
+            done["target"] = handler.record_target(items[slug], holder)
+        listed(slug, change, **extra)
 
     for slug, item in items.items():
         new = handler.item_hash(item)
@@ -585,7 +606,7 @@ def _reconcile(release, handler, *, dry_run, recheck=False):  # noqa: PLR0912, P
             _CURRENT,
             applied_version=release.version,
             applied_sha256=new,
-            target=handler.target(item),
+            target=handler.record_target(item, row),
         )
         if row is None and record is not None and record.pending_sha256 == new:
             # A create the admin kept, or one held for a counter-restart, stays so for this
@@ -604,9 +625,8 @@ def _reconcile(release, handler, *, dry_run, recheck=False):  # noqa: PLR0912, P
             if held:
                 hold(record, slug, held, new, checks)
                 continue
-            if not dry_run:
-                handler.create(item)
-            wrote(slug, "created")
+            holder = None if dry_run else handler.create(item)
+            wrote(slug, "created", holder, done)
             note(record, slug, **done)
         elif row.deleted and handler.RESTORE_DELETED:
             # CARE binds these slugs in code: a deleted one breaks every write bound to it
@@ -614,9 +634,8 @@ def _reconcile(release, handler, *, dry_run, recheck=False):  # noqa: PLR0912, P
             if held:
                 hold(record, slug, held, new, checks)
                 continue
-            if not dry_run:
-                handler.write(row, item, restore=True)
-            wrote(slug, "restored")
+            holder = None if dry_run else handler.write(row, item, restore=True)
+            wrote(slug, "restored", holder, done)
             note(record, slug, **done)
         elif row.deleted:
             # The hospital deleted it (item 11): its own choice, like an edit. Waits only
@@ -649,9 +668,8 @@ def _reconcile(release, handler, *, dry_run, recheck=False):  # noqa: PLR0912, P
             if not handler.usable(row):
                 # Same meaning, but a list CARE's lookup iterates over is missing (CARE's API
                 # can store compose without "exclude"): the pack's canonical compose (C2)
-                if not dry_run:
-                    handler.write(row, item)
-                wrote(slug, "repaired")
+                holder = None if dry_run else handler.write(row, item)
+                wrote(slug, "repaired", holder, done)
                 note(record, slug, **done)
             elif record is not None and (
                 record.state == State.CURRENT and record.applied_sha256 == new
@@ -690,9 +708,8 @@ def _reconcile(release, handler, *, dry_run, recheck=False):  # noqa: PLR0912, P
             if held:
                 hold(record, slug, held, new, checks)
                 continue
-            if not dry_run:
-                handler.write(row, item)
-            wrote(slug, "updated")
+            holder = None if dry_run else handler.write(row, item)
+            wrote(slug, "updated", holder, done)
             note(record, slug, **done)
         else:
             waiting(record, slug, new, row, item)
@@ -885,7 +902,9 @@ def decide(  # noqa: PLR0912, PLR0915 (one decision, every check of it)
                 msg = f"{pack}:{slug} cannot be accepted until its {found.reason} is fixed"
                 raise BlockedError(msg)
             handler.lock(slug)
-            row = handler.rows([slug], lock=True).get(slug)
+            row = handler.rows([slug], lock=True, targets={slug: found.target}).get(
+                slug
+            )
             if expect is not None and row_sha256(handler, row) != expect[2]:
                 msg = (
                     f"the hospital's {slug} was changed since it was shown: look again"
@@ -905,13 +924,14 @@ def decide(  # noqa: PLR0912, PLR0915 (one decision, every check of it)
                 found.applied_version = release.version
             else:
                 if row is None:
-                    handler.create(item)
+                    holder = handler.create(item)
                 else:
-                    handler.write(row, item, restore=True)
+                    holder = handler.write(row, item, restore=True)
                 found.state = State.CURRENT
                 found.applied_version = release.version
                 found.applied_sha256 = expected
-                found.target = handler.target(item)
+                # in the same transaction as the write (item 2)
+                found.target = handler.record_target(item, holder)
                 if handler.RECHECK_CONFLICTS:
                     transaction.on_commit(
                         partial(
@@ -952,6 +972,9 @@ def _accept_checks(handler, record, pack, slug, row, item):
     A failed one is stored on the item by ``decide`` (Q9)."""
     if why := handler.conflict(slug, row, item):
         msg = f"{pack}:{slug} cannot be accepted until its conflict is fixed: {why}"
+        raise BlockedError(msg)
+    if why := handler.missing_link(slug, row, item):
+        msg = f"{pack}:{slug} cannot be accepted until its missing link is there: {why}"
         raise BlockedError(msg)
     if names := handler.data_checks(row, item):
         mark = handler.watermark(row)

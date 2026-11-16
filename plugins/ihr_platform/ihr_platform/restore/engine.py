@@ -586,6 +586,27 @@ class Restore:
                 for name, md5 in doc.get("functions", {}).items()
                 if live_functions.get(name) != md5
             )
+            # The answered-form guard (P1-T15b2b item 5; reviews G4, Q3): a dump with exactly
+            # this build's ihr_refdata migrations (the ones that fix the guard) must hold this
+            # build's guard functions, compared with this build's own definition, never the
+            # live schema's (edited by hand, that hospital is gated and the restore's migrate
+            # puts it back). One that differs, or is missing, was changed in the source:
+            # refused. Any other dump's difference is only reported (functions_differ).
+            if self._guard_migrations_are_this_builds(doc):
+                from ihr_refdata import forms_guard
+
+                expected = forms_guard.expected_md5s(cursor, h.schema_name)
+                held = doc.get("functions", {})
+                tampered = sorted(
+                    name for name, md5 in expected.items() if held.get(name) != md5
+                )
+                if tampered:
+                    msg = (
+                        f"the dump's {', '.join(tampered)} are missing or differ from this "
+                        "build's although its ihr_refdata migrations are this build's: a "
+                        "tampered guard (restore another dump)"
+                    )
+                    raise Refused(msg)
             found["shape"] = self._shape_reference(cursor, doc)
             live_tables = set(package.tables(cursor.cursor, h.schema_name))
             missing = sorted(
@@ -680,6 +701,17 @@ class Restore:
             )
         )
         return found
+
+    @staticmethod
+    def _guard_migrations_are_this_builds(doc):
+        """The dump's applied ihr_refdata migrations are exactly this build's (other apps'
+        migrations do not bear on the guard; review G4)."""
+        from ihr_refdata import forms_guard
+
+        held = {
+            name for app, name in doc["facts"]["migrations"] if app == "ihr_refdata"
+        }
+        return held == set(forms_guard.migration_names())
 
     def _shape_reference(self, cursor, doc):
         """The package's tables, columns, defaults, constraints, indexes and sequences against

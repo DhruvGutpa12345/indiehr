@@ -1,5 +1,5 @@
-"""The kinds a reference pack can hold, and the contract every kind keeps (P1-T15b2a;
-docs/reviews/p1-t15b/design.md §3.1 and "After the attack" items 7-11 and 13).
+"""The kinds a reference pack can hold, and the contract every kind keeps (P1-T15b2a, b2b;
+docs/reviews/p1-t15b/design.md §3.1 and "After the attack" items 2, 7-11 and 13).
 
 A kind is a module; the engine, the manifest and the decision API reach it only through
 ``get(kind)``, which fills the optional names with their defaults. ``ihr_refdata.tests.
@@ -11,10 +11,15 @@ Required (no default):
     FIELDS                    the fields a pack sets (and the admin is shown)
     check_item(item)          shape only, no database (prepare runs in ``public``)
     item_hash(item), row_hash(row), retired_hash(row), decision_hash(row)
-    rows(keys, *, lock=False) {key: row}, soft-deleted rows included
-    all_present(keys)         True when there is nothing to do without a pack change
+    rows(keys, *, lock=False, targets=None)
+                              {key: row}, soft-deleted rows included. ``targets``: {key: the
+                              record's target}; a kind whose row is not the key (forms) resolves
+                              by it, and the others ignore it (item 2)
+    all_present(keys, targets=None)
+                              True when there is nothing to do without a pack change
     create(item), write(row, item, *, restore=False), retire(row), is_retired(row)
-                              writes, always ``.save()`` (CARE's post_save signals fire)
+                              writes, always ``.save()`` (CARE's post_save signals fire);
+                              create and write return the row that now holds the item
     label(row, item), effect(row, item), shown(row=, item=, *, retire=False)
                               what the admin is shown (P1-T15b1)
 
@@ -25,8 +30,15 @@ Optional (default):
                               edit, pending "deleted" only when the pack changes the item
     check_release(versions)   checks across every release of one pack (none)
     target(item)              the natural key of the row when it is not the item ("")
+    record_target(item, row)  what PackItem.target records once ``row`` holds the item: the
+                              engine moves it in the same transaction as the write (item 2; "")
+    change(row)               what the change list adds beside a write of ``row`` ({})
+    notes(row, item)          extra counts for the item detail ({}; forms: item 12)
     lock(key)                 serialises writers of one key (nothing)
     conflict(key, row, item)  "" or why nothing can be written (structural; blocks accept)
+    missing_link(key, row, item)
+                              "" or why a row it must link to is missing (pending
+                              "missing-link", asked again at every apply; blocks accept; Q-K68)
     RECHECK_CONFLICTS         False; True: conflict() is asked again after the write commits
                               (writers outside the engine do not take ``lock``)
     data_checks(row, item)    the data checks this change needs (none)
@@ -42,7 +54,7 @@ import inspect
 
 from django.core.exceptions import ImproperlyConfigured
 
-from ihr_refdata import identifiers, valuesets
+from ihr_refdata import forms, identifiers, valuesets
 
 SCOPES = ("hospital", "facility")
 REQUIRED = (
@@ -75,8 +87,12 @@ DEFAULTS = {
     "RECHECK_CONFLICTS": False,
     "check_release": _none,
     "target": lambda item: "",
+    "record_target": lambda item, row: "",
+    "change": lambda row: {},
+    "notes": lambda row, item: {},
     "lock": _none,
     "conflict": lambda key, row, item: "",
+    "missing_link": lambda key, row, item: "",
     "data_checks": lambda row, item: (),
     "run_data_checks": lambda row, item, names: {
         "counts": {},
@@ -99,8 +115,11 @@ class Kind:
         if missing:
             msg = f"pack kind {module.__name__} lacks {', '.join(missing)}"
             raise ImproperlyConfigured(msg)
-        if "lock" not in inspect.signature(module.rows).parameters:
-            msg = f"pack kind {module.__name__}: rows() must take lock="
+        if not {"lock", "targets"} <= set(inspect.signature(module.rows).parameters):
+            msg = f"pack kind {module.__name__}: rows() must take lock= and targets="
+            raise ImproperlyConfigured(msg)
+        if "targets" not in inspect.signature(module.all_present).parameters:
+            msg = f"pack kind {module.__name__}: all_present() must take targets="
             raise ImproperlyConfigured(msg)
         self.module = module
 
@@ -116,7 +135,7 @@ class Kind:
         return f"<kind {self.module.KIND}>"
 
 
-_REGISTRY = {module.KIND: Kind(module) for module in (valuesets, identifiers)}
+_REGISTRY = {module.KIND: Kind(module) for module in (valuesets, identifiers, forms)}
 
 
 def names():

@@ -21,6 +21,8 @@ from rest_framework.exceptions import ValidationError
 from rest_framework.views import set_rollback
 
 PREFIX = "ihr_role_placement:"
+# The answered-form guard (ihr_refdata/forms_guard.py, P1-T15b2b) refuses the same way
+PREFIXES = (PREFIX, "ihr_forms:")
 CHECK_VIOLATION = "23514"
 MARKER = "ihr_guard"
 
@@ -34,9 +36,10 @@ def placement_refusal(exc):
         return None
     diag = getattr(cause, "diag", None)
     message = getattr(diag, "message_primary", None) or ""
-    if not message.startswith(PREFIX):
-        return None
-    return message[len(PREFIX) :].strip()
+    for prefix in PREFIXES:
+        if message.startswith(prefix):
+            return message[len(prefix) :].strip()
+    return None
 
 
 # CARE modules that bind ``emr_exception_handler`` by name at import (``from ... import``) and

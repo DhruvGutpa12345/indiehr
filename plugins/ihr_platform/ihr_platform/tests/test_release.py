@@ -794,6 +794,40 @@ class FleetTests(SimpleTestCase):
         self.assertIn("testhosp: role placement guard repaired", out)
         self.assertEqual(guard_problems(), [])
 
+    def test_check_reports_and_migrate_repairs_a_disabled_forms_guard(self):
+        """The answered-form guard of a hospital already current (P1-T15b2b, review Q4):
+        check names a disabled answer trigger and changes nothing; a migrate run puts it back
+        although no migration is new to the hospital."""
+        from ihr_refdata import forms_guard
+
+        def guard_problems():
+            with connection.cursor() as cursor:
+                return forms_guard.problems(cursor, TEST_SCHEMA)
+
+        self.assertEqual(guard_problems(), [])
+        self.addCleanup(forms_guard.ensure, connection, TEST_SCHEMA)
+        with connection.cursor() as cursor:
+            cursor.execute(
+                f'ALTER TABLE "{TEST_SCHEMA}".emr_formsubmission '
+                f"DISABLE TRIGGER {forms_guard.ANSWER_FUNCTION}"
+            )
+        self.assertEqual(len(guard_problems()), 1)
+        _, out, _, _ = self._run(["check"], slugs=["testhosp"], record=True)
+        self.assertTrue(
+            any(
+                line.startswith("testhosp: answered-form guard: ")
+                and "emr_formsubmission" in line
+                and "disabled" in line
+                for line in out
+            ),
+            out,
+        )
+        self.assertEqual(len(guard_problems()), 1)  # check only reports
+        with mock.patch.object(fleet, "needs_migrate", return_value=False):
+            _, out, _, _ = self._run(["migrate"], slugs=["testhosp"])
+        self.assertIn("testhosp: answered-form guard repaired", out)
+        self.assertEqual(guard_problems(), [])
+
     def test_a_failed_grant_repair_still_repairs_the_placement_guard(self):
         """Second review of C1: a hospital already current whose grant repair fails is held,
         and its placement guard is still put back in the same run."""

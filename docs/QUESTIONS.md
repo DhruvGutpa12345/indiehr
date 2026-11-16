@@ -884,6 +884,26 @@ CARE shows a form only through its organisation links, so a pack form's first ve
 
 *Recommendation A now, C once Q-K76 B is built:* a form linked to every state is noise in CARE's lists and makes no sense for a hospital's own form. No form content ships before Phase 2 (test packs only). Reverse: one filter in the forms kind's link step.
 
+### Q-K81 — What happens to a pack form in a hospital that has only government organisations? (P1-T15b2b review E1/E2; auto-accepted by Claude, 2026-11-16, awaiting owner confirmation)
+
+A newly provisioned hospital has only the state government organisations that `ihr_load_geography` adds, so under Q-K80 A a pack form's first version has nothing to link to. A form with no links is invisible on a hospital host.
+
+- **A ⭐ (taken).** Hold v1 as pending `missing-link` (Q-K68 A) until the hospital has an active non-government top-level organisation; it is re-checked at every apply and then created and linked. Accept is refused while it waits.
+- B. Link v1 to the admin's state organisation (overrides Q-K80 A).
+- C. Settle Q-K76 B first (a recorded hospital root) and link v1 only to it.
+
+*Recommendation A now, C before form content ships (Phase 2):* nothing is written that no one can see, and no form content ships before Phase 2. Reverse: change `forms.missing_link` and the link step in `forms.py`.
+
+### Q-K82 — How will a DPDP erasure get past the answered-form guard? (P1-T15b2b review Q2; auto-accepted by Claude, 2026-11-16, awaiting owner confirmation)
+
+The answer-side triggers (Q-K66 A) refuse every hard delete and TRUNCATE of form answers, also through a cascade from a patient or visit, and also from an owner-only SECURITY DEFINER function. Only Django's flush between tests turns `ihr.answers_truncate` on.
+
+- **A ⭐ (taken).** Keep the refusal; decide the erasure path in P4-T1 (DPDP), with the retention rules.
+- B. Now: a bypass setting the trigger checks, usable only by the owner role.
+- C. Now: erase by redacting answers in place (the row stays, the content goes).
+
+*Recommendation A:* no erasure feature exists yet, and the right answer depends on the retention rules (medical records are kept for years). Reverse: add the chosen path to `forms_guard.py` with its own test and mutation row.
+
 **Still open:** Q-B4 (final MVP module list: assumed as in PLAN.md Phase 2) and Q-B6/B7 (pricing, timeline). Q-F2 is moot while AI is deferred.
 
 ---

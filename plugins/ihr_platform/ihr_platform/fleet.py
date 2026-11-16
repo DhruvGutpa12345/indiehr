@@ -842,24 +842,39 @@ class Fleet:
         hospital: db_roles' "controls" gate, placement.runtime_problems_by_schema)."""
         from django.db import DatabaseError
         from ihr_access import placement
+        from ihr_refdata import forms_guard
 
         slug = entry.hospital.slug
-        try:
-            if placement.ensure(connection, entry.hospital.schema_name):
-                self.out(f"{slug}: role placement guard repaired")
-        except DatabaseError as exc:
-            connection.set_schema_to_public()
-            self.out(f"{slug}: role placement guard: {release.safe_error(exc)}"[:300])
+        # The answered-form guard (P1-T15b2b) is repaired the same way
+        for what, guard in (
+            ("role placement guard", placement),
+            ("answered-form guard", forms_guard),
+        ):
+            try:
+                if guard.ensure(connection, entry.hospital.schema_name):
+                    self.out(f"{slug}: {what} repaired")
+            except DatabaseError as exc:
+                connection.set_schema_to_public()
+                self.out(f"{slug}: {what}: {release.safe_error(exc)}"[:300])
 
     def _placement_findings(self, entry):
         """Report only (ihr_fleet_run check): why this hospital's role placement guard does not
         hold (P1-T11b1, review C1). A migrate run repairs it."""
         from ihr_access import placement
+        from ihr_refdata import forms_guard
 
+        found = []
         with connection.cursor() as cursor:
-            found = placement.problems(cursor, entry.hospital.schema_name)
+            for what, guard in (
+                ("role placement guard", placement),
+                ("answered-form guard", forms_guard),
+            ):
+                found += [
+                    f"{what}: {p}"
+                    for p in guard.problems(cursor, entry.hospital.schema_name)
+                ]
         for problem in found[:10]:
-            self.out(f"{entry.hospital.slug}: role placement guard: {problem}")
+            self.out(f"{entry.hospital.slug}: {problem}")
         return len(found)
 
     def _fallback(self, entry, result):

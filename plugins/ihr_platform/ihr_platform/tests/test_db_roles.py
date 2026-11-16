@@ -1023,6 +1023,48 @@ class GrantsTests(AppRoleCase):
                     )
                 self.assertEqual(fetch("SELECT current_user")[0], db_roles.APP)
 
+    def test_a_broken_forms_guard_gates_its_hospital(self):
+        """P1-T15b2b: the answered-form guard is a control like the placement guard: a
+        trigger disabled or dropped, or a function changed since it was installed, gates that
+        hospital; an older build's guard, unchanged as installed, does not."""
+        from ihr_refdata import forms_guard
+
+        function = f'"{TEST_SCHEMA}".{forms_guard.ANSWER_FUNCTION}()'
+        table = f'"{TEST_SCHEMA}".emr_questionnaireresponse'
+        name = forms_guard.ANSWER_FUNCTION
+        older_build = mock.patch.object(forms_guard, "VERSION", "0" * 64)
+        for statements, gated, patch in (
+            ([], False, None),
+            ([f"ALTER TABLE {table} DISABLE TRIGGER {name}"], True, None),
+            ([f"DROP TRIGGER {name} ON {table}"], True, None),
+            ([f"ALTER FUNCTION {function} SET work_mem = '64kB'"], True, None),
+            ([], False, older_build),
+        ):
+            with self.subTest(statements=statements, older_build=bool(patch)):
+                found_gated = {}
+                with transaction.atomic():
+                    with as_owner(), connection.cursor() as cursor:
+                        for statement in statements:
+                            cursor.execute(statement)
+                    with (
+                        mock.patch.object(db_roles, "app_problems", return_value=[]),
+                        mock.patch.object(db_roles, "_emit"),
+                        patch or contextlib.nullcontext(),
+                    ):
+                        if patch:
+                            with connection.cursor() as cursor:
+                                self.assertTrue(
+                                    forms_guard.problems(cursor, TEST_SCHEMA)
+                                )
+                        db_roles.check_connection(connection, "app", gated=found_gated)
+                    transaction.set_rollback(True)
+                texts = [t for _, t in found_gated.get(TEST_SCHEMA, [])]
+                self.assertEqual(any(name in t for t in texts), gated, texts)
+                if gated:
+                    self.assertIn(
+                        "controls", {r for r, _ in found_gated[TEST_SCHEMA]}, texts
+                    )
+
     def test_required_mode_needs_large_objects_closed(self):
         """Second review of S8: the app's large objects are a write channel only the
         superuser can close (P1-T19b, as postgres); required mode checks it was."""

@@ -3,6 +3,7 @@
 import json
 import shutil
 import tempfile
+import uuid
 from pathlib import Path
 
 from django.db import connection
@@ -57,6 +58,36 @@ def idc(name, *, status="active", display=None, **config):
             "retrieve_config": retrieve,
             **config,
         },
+    }
+
+
+FORM_NAMESPACE = uuid.UUID("6f1c2a52-6b0e-4b8e-9c56-1d2f3e4a5b6c")  # test forms only
+
+
+def question(key, version, link="q1", text=None, **extra):
+    """A question of a test form: its id fixed by (key, version, link), so a release that
+    ships the same form_version again ships the same content."""
+    return {
+        "link_id": link,
+        "id": str(uuid.uuid5(FORM_NAMESPACE, f"{key}/{version}/{link}")),
+        "text": text or f"{key} v{version} {link}?",
+        "type": "string",
+        **extra,
+    }
+
+
+def form(key, version, *, status="active", title=None, questions=None, **fields):
+    """A form item (kind questionnaire) for a test pack: no real form content ships."""
+    return {
+        "slug": key,
+        "form_version": version,
+        "title": title or f"Test form {key} v{version}",
+        "description": f"A test form ({key})",
+        "subject_type": "patient",
+        "status": status,
+        "styling_metadata": {},
+        "questions": questions or [question(key, version)],
+        **fields,
     }
 
 

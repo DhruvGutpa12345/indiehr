@@ -136,7 +136,7 @@ def detail(record, releases):
     """One item as the admin decides on it: the list fields, what accepting would do, and the
     three columns of every field the pack sets (never any other field of the row)."""
     handler = kinds.get(record.kind)
-    row = handler.rows([record.item]).get(record.item)
+    row = _row(handler, record)
     item = _waiting_item(record, releases)
     waiting = record.state in WAITING
     effect = handler.effect(row, item) if waiting else ""
@@ -150,7 +150,7 @@ def detail(record, releases):
     applied = _release(releases, record.pack, record.applied_version)
     before = applied.by_item().get(record.item) if applied is not None else None
     previous = handler.shown(item=before) if before is not None else None
-    return {
+    out = {
         **_summary(record, row, item),
         "pending_sha256": record.pending_sha256,
         "row_sha256": engine.row_sha256(handler, row),
@@ -159,6 +159,17 @@ def detail(record, releases):
         "conflicts": held(record),
         "fields": diff.fields(handler.FIELDS, hospital, pack, previous),
     }
+    # A kind's own counts (forms: what a new version leaves on the current one, item 12)
+    if waiting and (notes := handler.notes(row, item)):
+        out["notes"] = notes
+    return out
+
+
+def _row(handler, record):
+    """The hospital row the record's item writes (by the record's target where it has one)."""
+    return handler.rows([record.item], targets={record.item: record.target}).get(
+        record.item
+    )
 
 
 def blocked(record):
@@ -178,6 +189,8 @@ def held(record):
     out = {"counts": dict(checks.get("counts") or {})}
     if "conflict" in checks:
         out["conflict"] = checks["conflict"]
+    if "missing-link" in checks:
+        out["missing_link"] = checks["missing-link"]
     if "patients" in checks:
         out["patients"] = checks["patients"]
         out["complete"] = bool(checks.get("complete"))
@@ -234,8 +247,10 @@ class UpdatesView(APIView):
         page = list(rows[offset : offset + limit])
         found = {}
         for kind in {r.kind for r in page}:
-            slugs = [r.item for r in page if r.kind == kind]
-            found[kind] = kinds.get(kind).rows(slugs)
+            mine = [r for r in page if r.kind == kind]
+            found[kind] = kinds.get(kind).rows(
+                [r.item for r in mine], targets={r.item: r.target for r in mine}
+            )
         results = [
             _summary(r, found[r.kind].get(r.item), _waiting_item(r, releases))
             for r in page
@@ -310,7 +325,7 @@ class UpdateView(APIView):
         if not engine.recorded(release):
             return _refused(409, "This update is not released here yet.", stale=True)
         handler = kinds.get(record.kind)
-        row = handler.rows([record.item]).get(record.item)
+        row = _row(handler, record)
         if engine.row_sha256(handler, row) != expect[2]:
             return _refused(
                 409,

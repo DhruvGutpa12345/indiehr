@@ -153,7 +153,7 @@ def retired_hash(row):
 # --- reading and writing the hospital's rows ----------------------------------------------
 
 
-def rows(slugs, *, lock=False):
+def rows(slugs, *, lock=False, targets=None):
     """{slug: row} for these slugs, soft-deleted rows included (they still hold the slug).
     ``lock``: rows locked for update (a decision re-checks the row it writes)."""
     model = _model()
@@ -190,7 +190,7 @@ def shown(row=None, item=None, *, retire=False):
     return fields
 
 
-def all_present(slugs):
+def all_present(slugs, targets=None):
     """True when every slug has a row that is not soft-deleted and whose compose CARE's
     lookup can read (cheap: one count)."""
     model = _model()

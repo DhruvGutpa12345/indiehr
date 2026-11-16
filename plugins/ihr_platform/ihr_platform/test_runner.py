@@ -152,6 +152,31 @@ def _point_new_connection_at_test_tenant(sender, connection, **kwargs):
         connection.set_schema(TEST_SCHEMA)
 
 
+def _flush_allowing_answer_truncate(teardown):
+    """Django's flush between TransactionTestCases TRUNCATEs every table, the answer tables
+    too, whose guard refuses a TRUNCATE unless the session says so (ihr_refdata/forms_guard.py,
+    review G2): said for that flush only, on the test databases only."""
+    from ihr_refdata.forms_guard import TRUNCATE_SETTING
+
+    def say(aliases, value):
+        for alias in aliases:
+            with connections[alias].cursor() as cursor:
+                cursor.execute(
+                    "SELECT set_config(%s, %s, false)", [TRUNCATE_SETTING, value]
+                )
+
+    def flushing(self):
+        aliases = self._databases_names(include_mirrors=False)
+        say(aliases, "on")
+        try:
+            return teardown(self)
+        finally:
+            say(aliases, "off")
+
+    flushing.ihr_answers_truncate = True
+    return flushing
+
+
 def _flatten(suite):
     for item in suite:
         if isinstance(item, unittest.TestSuite):
@@ -233,6 +258,13 @@ class TenantTestRunner(DiscoverRunner):
 
         connection.set_tenant(tenant)
         _initialised_connections.add(connections["default"])
+        from django.test import TransactionTestCase
+
+        teardown = TransactionTestCase._fixture_teardown  # noqa: SLF001
+        if not getattr(teardown, "ihr_answers_truncate", False):
+            TransactionTestCase._fixture_teardown = (  # noqa: SLF001
+                _flush_allowing_answer_truncate(teardown)
+            )
         connection_created.connect(_point_new_connection_at_test_tenant)
         if roles:
             from ihr_platform import testing

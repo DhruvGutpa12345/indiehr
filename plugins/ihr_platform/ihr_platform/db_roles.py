@@ -1658,15 +1658,27 @@ def check_connection(  # noqa: PLR0912 (one flat list of verdicts)
 
 
 def _placement_problems(cursor, schemas):
-    """{schema: [problem]} of the role placement guard (ihr_access/placement.py), when
-    ihr_access is installed (it is in every tenant-mode setting)."""
+    """{schema: [problem]} of the role placement guard (ihr_access/placement.py) and the
+    answered-form guard (ihr_refdata/forms_guard.py, P1-T15b2b), when their apps are installed
+    (they are in every tenant-mode setting)."""
     from django.apps import apps
 
-    if not apps.is_installed("ihr_access"):
-        return {}
-    from ihr_access import placement
+    found = {}
+    if apps.is_installed("ihr_access"):
+        from ihr_access import placement
 
-    return placement.runtime_problems_by_schema(cursor, schemas)
+        for schema, texts in placement.runtime_problems_by_schema(
+            cursor, schemas
+        ).items():
+            found.setdefault(schema, []).extend(texts)
+    if apps.is_installed("ihr_refdata"):
+        from ihr_refdata import forms_guard
+
+        for schema, texts in forms_guard.runtime_problems_by_schema(
+            cursor, schemas
+        ).items():
+            found.setdefault(schema, []).extend(texts)
+    return found
 
 
 def _refuse(connection, declared_role, found):

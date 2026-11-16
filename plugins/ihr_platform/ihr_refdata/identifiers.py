@@ -191,7 +191,7 @@ def _by_key(queryset):
     return queryset.annotate(ihr_key=Lower(KT("config__system")))
 
 
-def rows(keys, *, lock=False):
+def rows(keys, *, lock=False, targets=None):
     """{key: row} for hospital-wide rows whose system is the key in any case. The live row is
     preferred (the newest); a deleted one only when no live one exists. ``row.ihr_live`` is
     how many live rows match (two or more is a conflict)."""
@@ -213,7 +213,7 @@ def rows(keys, *, lock=False):
     return out
 
 
-def all_present(keys):
+def all_present(keys, targets=None):
     """True when every key has a hospital-wide row in any state (item 11: a deleted one is the
     hospital's own; nothing to do for it until the pack changes)."""
     model, _ = _models()
