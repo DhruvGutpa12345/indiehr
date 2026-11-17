@@ -1,5 +1,7 @@
 # P1-T15b design: pack decisions API, identifier configs and forms, per-facility kinds (attacked 2026-11-16; see the last section)
 
+Synced with the code on 2026-11-17 (drift rows 1–5, 14–17 of docs/egm/2026-11-17-drift-p1-t15b.md).
+
 Builds on P1-T15a (docs/reviews/p1-t15/design.md; its "After the attack" items win there).
 Owner rules: Q-T10 (automatic for unedited rows, with a visible change list; edited rows need
 the admin's OK; nothing deleted), Q-K12 (identifier and form content is the owner's or
@@ -36,17 +38,19 @@ clinical), TENANCY §5-§7. New decisions are Q-K60 onward (§5), auto-accepted,
   identifier key is a URI.
 - **List query:** `state=pending|kept` (default both), `pack=`, `kind=`, `facility=<uuid>` (b3),
   `limit` (default 50, max 200), `offset`. Unknown values are a 400. Sorted by pack, then item.
-- **List body:** `{count, results: [{id, pack, kind, item, label, facility: {id, name} | null,
-  state, reason, applied_version, pending_version, changed_at}]}`. `label` is the row's display
+- **List body:** `{count, results: [{id, pack, kind, item, label, facility, state, reason, applied_version, pending_version, changed_at}]}`. `facility` is the facility's external id as
+  a bare string, or null for a hospital-wide item (no name; `api.py:122-124`). `label` is the row's display
   name: value set name, identifier `display`, form title, definition title.
-- **Detail body:** the list fields plus `pending_sha256`, `effect` (`update`, `create`,
-  `restore`, `retire`, `new-form-version`), `blocked` (`""`, `conflict`, `missing-link`; accept
+- **Detail body:** the list fields plus `pending_sha256`, `effect` (`create`, `update`,
+  `restore`, `retire`; forms return `new-version` or `status-only` instead of `update`, see
+  `forms.py:368-375`), `blocked` (`""`, `conflict`, `data-check`, `missing-link`; accept
   is refused while set), `conflicts` (counts only, §3.3) and `fields`:
   - one entry per field the pack sets: `{field, hospital, pack, previous}`. `previous` is what
     the pack last applied, rebuilt from the applied version's file (released files stay in the
     manifest for good). It is null when that version is unknown (unknown-origin);
-  - large JSON fields (`compose`, `questions`, `config`) are shown as up to 100
-    `{path, hospital, pack}` changes, each value cut to 200 characters, with `truncated: true`.
+  - large JSON fields (`compose`, `questions`, `config`) are one entry `{field, changes,
+    truncated}`: `changes` holds up to 100 `{path, hospital, pack, previous}` items, each value
+    cut to 200 characters, and `truncated` is true when anything was cut (`diff.py:63-81`).
 - **POST body:** `{action: "accept"|"keep", version: <int>, sha256: <hex>, reason: <text>}`.
   `version` and `sha256` are the `pending_version` and `pending_sha256` the admin was shown.
 - **History query:** `pack=`, `limit`, `offset`. Body rows: `{id, pack, version, outcome, at,
@@ -80,7 +84,9 @@ clinical), TENANCY §5-§7. New decisions are Q-K60 onward (§5), auto-accepted,
   expect=(version, sha256), facility=…, record=False)`.
 - **Operator:** `user-<user pk>`, so the actor is `packs:user-<pk>`. This fits the existing
   operator rule (1-64 of `[A-Za-z0-9._@-]`). `check_operator` reserves the `user-` prefix, so
-  a CLI operator cannot pose as a staff decision.
+  a CLI operator cannot pose as a staff decision. The names `startup`, `check`, `facility-task` and
+  `facility-beat` are reserved too (`management/commands/ihr_pack_apply.py:48`); the last two
+  are the actors `packs:facility-task` and `packs:facility-beat` of b3 (`tasks.py:47-48`).
 - **Reason:** `engine.normal_reason` (one line, 1-300 characters, a role or a ticket). The
   view adds it to the audit context once (`audit.extend(job="packs", via="api", action, item,
   reason)`), as `ihr_pack_pending` does. The engine never re-adds it.
@@ -114,15 +120,20 @@ clinical), TENANCY §5-§7. New decisions are Q-K60 onward (§5), auto-accepted,
 | lock busy (pack apply, release, dump, restore) | 409 | `{detail, busy: true}`, `Retry-After: 60` |
 
 - The busy text never names the other job.
+- **Limits:** at most 30 decisions per user per minute, answered 429 beyond that. The counter is
+  bumped before the body is validated, so refused and invalid requests count too (`api.py:315`,
+  `411-418`). Every 429 carries `Retry-After: 60`, as the busy 409 does (`api.py:229`).
 
 ### 2.6 The visible change list (Q-K61)
 
 - New column `PackApply.changes` (JSON list, migration `0002`). Written only with an `applied`
   row: `[{item, facility, change}]`, where `change` is `created`, `updated`, `restored`,
-  `repaired`, `retired`, `new-form-version` or `pending`, and the record-only `resolved` (a
+  `repaired`, `retired` or `pending`, and the record-only `resolved` (a
   waiting or kept change the pack withdrew, or the row now holds), `adopted` (a row that
   already held the pack's content) and `kept` (a kept item following a newer release); every
-  write of an applied row is listed (review T2). At most 500 entries plus
+  write of an applied row is listed (review T2). A new form version is listed as `updated`
+  (`engine.py:962`) with extra keys: `previous` (the old slug), `links: "copied"`, `copied` and
+  `stranded`; a first version has `links: "linked-to-hospital"` (`forms.py:500-546`). At most 500 entries plus
   `changes_total` in `counts`. Decisions keep `counts = {item, reason}`.
 - A re-apply that writes nothing still writes nothing.
 
@@ -157,8 +168,13 @@ clinical), TENANCY §5-§7. New decisions are Q-K60 onward (§5), auto-accepted,
 
 ### 3.1 The contract (`ihr_refdata/kinds.py`)
 
-`valuesets.py` stays a module and only gains attributes; the engine reaches every kind through
-`kinds.get(kind)`, which fills defaults. A test checks every registered kind against the contract.
+The contract is the docstring of `ihr_refdata/kinds.py` (lines ~8-58); that file is
+authoritative, and the table below is the b2a core. `valuesets.py` stays a module and only
+gains attributes; the engine reaches every kind through `kinds.get(kind)`, which fills defaults.
+A test checks every registered kind against the contract. Later work added hooks that the table
+does not list: `record_target`, `change`, `notes`, `lock`, `missing_link`, `RECHECK_CONFLICTS`,
+`data_checks`, `run_data_checks`, `watermark`, `admin_reason`, `LINKS`, `linkable` and
+`stale_hash`, and a required `decision_hash` and `FIELDS`.
 
 | Name | Meaning | valueset |
 |---|---|---|
@@ -173,7 +189,7 @@ clinical), TENANCY §5-§7. New decisions are Q-K60 onward (§5), auto-accepted,
 | `all_present(keys, …)` | nothing to do without a pack change | as now |
 | `create`, `write(row, item, restore=)`, `retire`, `is_retired(row)` | writes, always `.save()` (post_save signals fire) | as now; `is_retired` replaces `valuesets.RETIRED` in engine.py:352 |
 | `usable`, `make_usable` | optional | as now |
-| `fields(row_or_item)`, `label(…)` | for the b1 difference | the four fields, `name` |
+| `FIELDS`, `shown(row=, item=, retire=)`, `label(row, item)`, `effect(row, item)` | for the b1 difference (`FIELDS` is a tuple of names; `shown` returns the fields as compared) | the four fields, `name`, `create/update/restore/retire` |
 
 - Engine changes are mechanical. The registry replaces `HANDLERS` and `manifest.KINDS`.
   `row.deleted` with `RESTORE_DELETED=False` goes to pending `deleted` (accept restores, then
@@ -219,10 +235,12 @@ clinical), TENANCY §5-§7. New decisions are Q-K60 onward (§5), auto-accepted,
 ### 3.3 `questionnaire` (forms)
 
 - **Pack item:** `{slug: <form key>, form_version: <int ≥ 1>, title, description,
-  subject_type, status (active|draft), styling_metadata, questions}`. The key is at most 40
-  characters and follows CARE's slug pattern.
+  subject_type, status (active|draft), styling_metadata, questions}`. The key is 2–30
+  characters of CARE's slug pattern, lower case (`forms.py:55`; it was 40 before the attack,
+  see "After the attack" item 3).
 - **A new version is a new form (Q-K65):**
-  - the CARE row's slug is `<key>-v<form_version>`, its `version` is `str(form_version)`, and
+  - the CARE row's slug is `ihr-pack-<key>-v<form_version>` (with a `-2`…`-9` suffix when a
+    foreign row holds it; "After the attack" item 3), its `version` is `str(form_version)`, and
     `PackItem.target` names it;
   - `write()` never updates content in place: it creates the new row, copies the previous
     version's `QuestionnaireOrganization` and `QuestionnaireFacilityOrganization` links with
@@ -234,14 +252,16 @@ clinical), TENANCY §5-§7. New decisions are Q-K60 onward (§5), auto-accepted,
 - **Immutability:** `check_release` refuses (PackError, fleet-wide) when one
   `(key, form_version)` has two different hashes across a pack's releases, or when a key's
   form_version goes down. A content change must come with a new form_version.
-- **Hash and "edited":** canonical JSON of title, description, subject_type, status,
-  styling_metadata and questions. Org links are the hospital's own and never counted. "Edited"
+- **Hash and "edited":** canonical JSON of form_version, title, description, subject_type,
+  status, styling_metadata and questions (`forms.py:103-113`). Org links are the hospital's own and never counted. "Edited"
   means the row named by `target` differs from what the pack wrote. Today only a superuser
   can edit in place, and superusers are refused on hospital hosts
   (`IHR_STAFF_REFUSE_SUPERUSERS`); the rule still holds for the shell and future upstream
   changes.
-- **Adopt and conflict:** a row already at `<key>-v<N>` with equal content is adopted; with
-  other content it is a `conflict` (accept is refused until it is renamed).
+- **Adopt and conflict:** the engine never adopts a foreign row: `rows()` finds only the row the
+  record's `target` names (`forms.py:296-310`). A foreign row at the slug is skipped for the
+  next free `-2`…`-9` suffix; only ten taken slugs are a `conflict`. (Changed after the attack:
+  the first design adopted an equal-content row; see item 3.)
 - **Removal:** the current row is retired. **Deleted row:** pending `deleted`.
 - **check_item** checks shape only: types, unique `link_id` and `id` in the nested tree, slug
   pattern. Full CARE validation (coded fields may touch the database) runs in a test on every
@@ -268,9 +288,9 @@ clinical), TENANCY §5-§7. New decisions are Q-K60 onward (§5), auto-accepted,
   answers. A soft delete is free.
 - **The race.** An UPDATE takes FOR NO KEY UPDATE on the form row, and a foreign-key check
   only takes FOR KEY SHARE, so an answer being inserted could commit against content changed
-  at the same moment. Fix: a trigger BEFORE INSERT, and BEFORE UPDATE OF `questionnaire_id`,
-  on both answer tables runs `SELECT 1 FROM emr_questionnaire WHERE id = NEW.questionnaire_id
-  FOR SHARE`. That lock conflicts with the guard's update, so one waits for the other and the
+  at the same moment. Fix: a trigger BEFORE INSERT on both answer tables runs `SELECT 1 FROM
+  emr_questionnaire WHERE id = NEW.questionnaire_id FOR SHARE` (insert only, `forms_guard.py:200-203`;
+  an UPDATE of `questionnaire_id` is refused outright, see "After the attack" item 4). That lock conflicts with the guard's update, so one waits for the other and the
   guard's check sees the committed answer.
 - **How a hospital changes a form:**
   - a pack form changes only by a new pack form_version (§3.3);
@@ -302,8 +322,9 @@ clinical), TENANCY §5-§7. New decisions are Q-K60 onward (§5), auto-accepted,
 - **Which facilities (Q-K67):** every facility of the hospital that is not deleted.
   - A facility created later gets the items from a Celery task queued on commit of its
     creation (Facility `post_save` created, tenant-aware Celery). The task takes the hospital
-    lock; if busy, it retries 3 times with backoff and then leaves the facility to the next
-    start-up apply, which is the backstop;
+    lock; if busy, it retries 3 times with backoff and then leaves the facility to the 15-minute beat job
+    `ihr_refdata.fill_facilities`, which is the backstop (`tasks.py:209-216`; the next start-up
+    was the first design's backstop);
   - the task, the start-up and `ihr_pack_apply` all call the same engine function.
 - **PackItem keying (migration `0004`):** a nullable `facility` FK (PROTECT); `item` = the
   pack key (CARE's `slug_value`); `target` = CARE's stored slug `f-<facility external
