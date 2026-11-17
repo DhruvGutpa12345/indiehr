@@ -75,3 +75,6 @@ infra/**/*.auto.tfvars
 
 # Browser specs (P1-T1d): failure screenshots and JSON
 apps/frontend/test-results-ihr/
+
+# Local code graph (graphify, 2026-11-17): rebuilt by git hooks, never committed
+graphify-out/
