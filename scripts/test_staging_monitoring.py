@@ -330,7 +330,9 @@ class AuditWatch(unittest.TestCase):
                      "AuditWatchFullCheckStale", "AuditWatchFullCheckAbsent", "AuditWatchFailing",
                      "AuditRehashOverdue", "AuditCheckpointLost", "AuditHospitalsNotComparable"):
             self.assertIn(want, names)
-        for want in ("AuditHospitalsUnchecked", "AuditHospitalsRestoring", "AuditCheckpointUnseeded"):
+        for want in ("AuditHospitalsUnchecked", "AuditHospitalsRestoring", "AuditCheckpointUnseeded",
+                     "AuditDatabaseRestoredUnannounced", "AuditRestorePlanAbandoned",
+                     "AuditWholeRestoreUnanchored", "AuditWholeRestoreUncorroborated"):
             self.assertIn(want, names)
         audit = [r for f, r in rules() if f == "audit.yml"]
         # every pass has a staleness rule and an absent() rule (A9), on the time it last ENDED
@@ -450,8 +452,9 @@ class AuditWatchOperations(unittest.TestCase):
         self.assertNotIn("IHR_BACKEND_IMAGE=", new)  # this build, not the outgoing one
 
     def test_a_restoring_rollback_says_what_the_watch_will_report(self):
-        """C1: a whole-database restore leaves cut chains no event excuses yet: the rollback
-        says so before it is confirmed, and P1-T22c (still open) carries the restore events for it."""
+        """C1: a whole-database restore leaves cut chains no event excuses: the rollback says so
+        before it is confirmed; P1-T22c1 writes restore events for the hospitals it carries, and
+        what stays cut (a refused hospital, P1-T22c2's disaster restore) is named."""
         rollback = func("rollback")
         said = rollback[rollback.index("What this rollback does and loses"):rollback.index("Type the release tag")]
         for want in ("AuditChainBroken", "AuditFingerprintMismatch", "P1-T22c", "never a silence"):

@@ -9,7 +9,10 @@
 # match its pattern is named "invalid-slug" (S6). Once per new restore or offboarding event in
 # the fingerprint bucket it writes
 #   "ihr-audit: hospital=<slug> event=<restore|offboarding> outcome=recorded"
-# (AuditEventRecorded: a human confirms each one was theirs; review S4). So an alert holds while the problem lasts, each hospital is its own alert
+# (AuditEventRecorded: a human confirms each one was theirs; review S4), and once per
+# whole-database restore's result (P1-T22c)
+#   "ihr-audit: restore=<id8> event=whole-database hospitals=<n> outcome=recorded"
+# (AuditWholeRestoreRecorded). So an alert holds while the problem lasts, each hospital is its own alert
 # (a second hospital breaking is mailed even while the first is silenced; review A5), and it can
 # be silenced one hospital at a time. What to do: deploy/staging/README.md, "Audit watch":
 # scripts/staging.sh manage ihr_audit_verify --slug <the hospital named> says what is wrong.
@@ -56,3 +59,13 @@ groups:
         annotations:
           summary: 'A {{ $labels.event }} event of hospital {{ $labels.hospital }} was written to the fingerprint bucket'
           action: 'Confirm it was a restore or an offboarding you ran (deploy/staging/README.md, Audit watch, Restores and offboarding); if not, treat it as an incident: the add-only writer key (secrets/anchor-write.env, Celery) was used by someone else'
+      # P1-T22c: once per whole-database restore's result (rollback --restore). The watch prints
+      # the first 8 hex digits of a restore id it parsed (a uuid), never other text from the bucket
+      - alert: AuditWholeRestoreRecorded
+        expr: '_time:1h source:=container service:in(audit-watch) "ihr-audit: restore=" | extract_regexp "^ihr-audit: restore=(?P<restore>[0-9a-f]{8}) event=whole-database hospitals=(?P<hospitals>[0-9]{1,6}) outcome=recorded$" | filter restore:~"^[0-9a-f]{8}$" | stats by (restore, hospitals) count() as results'
+        labels:
+          severity: warning
+          service: audit-watch
+        annotations:
+          summary: 'A whole-database restore ({{ $labels.restore }}, {{ $labels.hospitals }} hospitals) was recorded in the fingerprint bucket'
+          action: 'Confirm its restore id is the one your rollback logged (deploy/staging/releases/releases.log, supersede=; deploy/staging/README.md, Audit watch, Whole-database restores) and run scripts/staging.sh audit-supersede status <id>; if no rollback of yours made it, treat it as an incident: the events key was used by someone else'

@@ -7,6 +7,8 @@ nothing more, and a locked fingerprint can be removed by nobody, the admin key i
 
 Keys (environment): S3_ADMIN_*, S3_FILES_* (CARE's patient files), S3_PICTURES_* (CARE's staff
 photos and facility covers; P1-T20b), S3_ANCHOR_WRITE_*, S3_ANCHOR_READ_*, optional
+S3_ANCHOR_EVENTS_* with --anchor-suffix (P1-T22c: the writer then adds fingerprints only, the events
+key events, plans and results only),
 S3_LOGS_ARCHIVE_*, S3_DUMPS_* (P1-T22a) and S3_RETIRED_CARE_* (the combined key P1-T20b
 retired: it must be dead).
 
@@ -98,6 +100,7 @@ def main():
     p.add_argument("--patient", required=True)
     p.add_argument("--facility", required=True)
     p.add_argument("--anchor", required=True)
+    p.add_argument("--anchor-suffix", default="", help="the platform's suffix (anchors/<suffix>/): with S3_ANCHOR_EVENTS_*, the scoped writer keys are checked (P1-T22c)")
     p.add_argument("--public-endpoint", help="the address browsers use (presigned URLs)")
     p.add_argument("--origin", help="a web app origin that CORS must allow")
     p.add_argument("--insecure", action="store_true", help="skip TLS checks on the public address")
@@ -147,24 +150,41 @@ def main():
         print("== No retired combined key on this machine (set up after P1-T20b): nothing to retire")
     check("the patient files key deletes its file", "ok", outcome(lambda: files.delete_object(Bucket=a.patient, Key=key)))
 
-    print("== Fingerprint writer: add only")
-    akey = f"anchors/ihr-key-check/{run}.json"
+    # P1-T22c (Q-K91): with the events key, Celery's writer adds fingerprints only, under
+    # anchors/<suffix>/, and the events key events, plans and results only. Its test object goes
+    # under anchors/ihr-events/ihr-key-check/, a folder no reader of this platform lists
+    scoped = bool(os.environ.get("S3_ANCHOR_EVENTS_KEY")) and bool(a.anchor_suffix)
+    if scoped:
+        events_key = client(a.endpoint, "ANCHOR_EVENTS")
+        print("== Fingerprint writer (Celery): fingerprints of its platform only (P1-T22c)")
+        for what, k in (("add outside its platform's fingerprints", f"anchors/ihr-key-check/{run}-w"),
+                        ("add an event", f"anchors/ihr-events/ihr-key-check/{run}-w"),
+                        ("add a restore plan", f"anchors/ihr-restores/ihr-key-check/{run}-w/plan.json")):
+            check(what, "denied", outcome(lambda k=k: writer.put_object(Bucket=a.anchor, Key=k, Body=b"x")))
+        print("== Events key (owner-run restores): events, plans and results only, add only")
+        adder, akey = events_key, f"anchors/ihr-events/ihr-key-check/{run}.json"
+        check("add a fingerprint", "denied", outcome(lambda: events_key.put_object(Bucket=a.anchor, Key=f"anchors/{a.anchor_suffix}/ihr-key-check/{run}-e", Body=b"x")))
+        check("add outside anchors/ihr-events/ and ihr-restores/", "denied", outcome(lambda: events_key.put_object(Bucket=a.anchor, Key=f"anchors/ihr-key-check/{run}-e", Body=b"x")))
+    else:
+        print("== Fingerprint writer: add only")
+        adder, akey = writer, f"anchors/ihr-key-check/{run}.json"
     body = b'{"check": true}'
     md5 = base64.b64encode(hashlib.md5(body).digest()).decode()  # noqa: S324 (S3 Content-MD5)
-    check("add a fingerprint (If-None-Match, Content-MD5)", "ok", outcome(lambda: writer.put_object(Bucket=a.anchor, Key=akey, Body=body, ContentMD5=md5, IfNoneMatch="*")))
-    check("write the same name twice", "denied", outcome(lambda: writer.put_object(Bucket=a.anchor, Key=akey, Body=b"y", IfNoneMatch="*")))
-    check("add outside anchors/", "denied", outcome(lambda: writer.put_object(Bucket=a.anchor, Key=f"other/{run}", Body=b"x")))
-    check("read", "denied", outcome(lambda: writer.get_object(Bucket=a.anchor, Key=akey)))
-    check("list", "denied", outcome(lambda: writer.list_objects_v2(Bucket=a.anchor)))
+    check("add an object (If-None-Match, Content-MD5)", "ok", outcome(lambda: adder.put_object(Bucket=a.anchor, Key=akey, Body=body, ContentMD5=md5, IfNoneMatch="*")))
+    check("write the same name twice", "denied", outcome(lambda: adder.put_object(Bucket=a.anchor, Key=akey, Body=b"y", IfNoneMatch="*")))
+    check("add outside anchors/", "denied", outcome(lambda: adder.put_object(Bucket=a.anchor, Key=f"other/{run}", Body=b"x")))
+    check("read", "denied", outcome(lambda: adder.get_object(Bucket=a.anchor, Key=akey)))
+    check("list", "denied", outcome(lambda: adder.list_objects_v2(Bucket=a.anchor)))
     versions = admin.list_object_versions(Bucket=a.anchor, Prefix=akey).get("Versions", [])
     vid = versions[0]["VersionId"] if versions else "none"
     soon = datetime.now(UTC) + timedelta(seconds=5)
-    check("delete the version", "denied", outcome(lambda: writer.delete_object(Bucket=a.anchor, Key=akey, VersionId=vid)))
-    check("hide it with a delete marker", "denied", outcome(lambda: writer.delete_object(Bucket=a.anchor, Key=akey)))
-    check("shorten its retention", "denied", outcome(lambda: writer.put_object_retention(Bucket=a.anchor, Key=akey, VersionId=vid, Retention={"Mode": "GOVERNANCE", "RetainUntilDate": soon})))
-    check("delete with the governance bypass", "denied", outcome(lambda: writer.delete_object(Bucket=a.anchor, Key=akey, VersionId=vid, BypassGovernanceRetention=True)))
-    check("add with its own short retention", "denied", outcome(lambda: writer.put_object(Bucket=a.anchor, Key=f"{akey}.2", Body=b"x", ObjectLockMode="GOVERNANCE", ObjectLockRetainUntilDate=soon)))
-    check("change the bucket's lock", "denied", outcome(lambda: writer.put_object_lock_configuration(Bucket=a.anchor, ObjectLockConfiguration={"ObjectLockEnabled": "Enabled", "Rule": {"DefaultRetention": {"Mode": "GOVERNANCE", "Days": 1}}})))
+    for who, c in (("", adder), *((("the fingerprint writer: ", writer),) if scoped else ())):
+        check(f"{who}delete the version", "denied", outcome(lambda c=c: c.delete_object(Bucket=a.anchor, Key=akey, VersionId=vid)))
+        check(f"{who}hide it with a delete marker", "denied", outcome(lambda c=c: c.delete_object(Bucket=a.anchor, Key=akey)))
+    check("shorten its retention", "denied", outcome(lambda: adder.put_object_retention(Bucket=a.anchor, Key=akey, VersionId=vid, Retention={"Mode": "GOVERNANCE", "RetainUntilDate": soon})))
+    check("delete with the governance bypass", "denied", outcome(lambda: adder.delete_object(Bucket=a.anchor, Key=akey, VersionId=vid, BypassGovernanceRetention=True)))
+    check("add with its own short retention", "denied", outcome(lambda: adder.put_object(Bucket=a.anchor, Key=f"{akey}.2", Body=b"x", ObjectLockMode="GOVERNANCE", ObjectLockRetainUntilDate=soon)))
+    check("change the bucket's lock", "denied", outcome(lambda: adder.put_object_lock_configuration(Bucket=a.anchor, ObjectLockConfiguration={"ObjectLockEnabled": "Enabled", "Rule": {"DefaultRetention": {"Mode": "GOVERNANCE", "Days": 1}}})))
 
     if a.log_archive and os.environ.get("S3_LOGS_ARCHIVE_KEY"):
         print("== Log archive key (P1-T9c): add and read under logs/, never delete or unlock")
@@ -237,7 +257,7 @@ def main():
 
     print("== Fingerprint reader: read and list only")
     check("read a version", "ok", outcome(lambda: reader.get_object(Bucket=a.anchor, Key=akey, VersionId=vid)))
-    check("list versions", "ok", outcome(lambda: reader.list_object_versions(Bucket=a.anchor, Prefix="anchors/ihr-key-check/")))
+    check("list versions", "ok", outcome(lambda: reader.list_object_versions(Bucket=a.anchor, Prefix=akey)))
     check("read the lock settings", "ok", outcome(lambda: reader.get_object_lock_configuration(Bucket=a.anchor)))
     check("add", "denied", outcome(lambda: reader.put_object(Bucket=a.anchor, Key=f"anchors/ihr-key-check/{run}-r", Body=b"x")))
     check("delete the version", "denied", outcome(lambda: reader.delete_object(Bucket=a.anchor, Key=akey, VersionId=vid)))

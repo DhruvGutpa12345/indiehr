@@ -6,9 +6,14 @@ and hash. Nobody can change or delete it until its retention ends, not even the 
 database owner. A rewritten or shortened chain no longer matches the fingerprints written
 before the change: ``ihr_audit_verify`` checks every hospital against every fingerprint.
 
-Two credentials, read from the environment when used (never Django settings):
-    IHR_AUDIT_ANCHOR_WRITE_KEY / _SECRET   may only add objects (the hourly job, Celery)
-    IHR_AUDIT_ANCHOR_READ_KEY / _SECRET    may only read and list (verify, export)
+Three credentials, read from the environment when used (never Django settings):
+    IHR_AUDIT_ANCHOR_WRITE_KEY / _SECRET   may only add fingerprints, under anchors/<suffix>/
+                                           (the hourly job, Celery)
+    IHR_AUDIT_ANCHOR_EVENTS_KEY / _SECRET  may only add restore and offboarding events and
+                                           whole-database restore plans and results, under
+                                           anchors/ihr-events/ and anchors/ihr-restores/ (the
+                                           owner-run restore one-offs only; P1-T22c Q-K91)
+    IHR_AUDIT_ANCHOR_READ_KEY / _SECRET    may only read and list (verify, export, the watch)
 plus IHR_AUDIT_ANCHOR_ENDPOINT (empty for AWS), _BUCKET and _REGION (default ap-south-1).
 
 IHR_AUDIT_ANCHOR_LOCK_MODE (P1-T8c, ADR-011 §3): COMPLIANCE (default) requires a bucket whose
@@ -82,9 +87,31 @@ def prefix():
     return f"anchors/{suffix}/"
 
 
+class ScopeError(PermissionError):
+    """A key this store's role never adds (Q-K91): Celery's writer adds fingerprints only,
+    the events key events, plans and results only. The bucket's own policy refuses it too;
+    this check names the mistake before a request is sent."""
+
+
+def scope(role):
+    """The key prefixes a writer role may add objects under (``WRITE``: this platform's
+    fingerprints; ``EVENTS``: its events, plans and results). The reader adds nothing."""
+    suffix = prefix()[len("anchors/") :]
+    if role == "WRITE":
+        return (prefix(),)
+    if role == "EVENTS":
+        return (f"anchors/ihr-events/{suffix}", f"anchors/ihr-restores/{suffix}")
+    return ()
+
+
 class S3Store:
-    def __init__(self, role, quick=False):
+    def __init__(self, role, quick=False, scope_as=None):
+        """``scope_as``: the role whose prefixes this store may add under (default its own).
+        Only events.writer_store passes it: until the events key exists on a site, its events
+        are added with the fingerprint writer's key (the transition of Q-K91)."""
         env = os.environ
+        self.role = role
+        self.scope = scope(scope_as or role)
         key = env.get(f"IHR_AUDIT_ANCHOR_{role}_KEY", "")
         secret = env.get(f"IHR_AUDIT_ANCHOR_{role}_SECRET", "")
         self.bucket = env.get("IHR_AUDIT_ANCHOR_BUCKET", "")
@@ -110,6 +137,9 @@ class S3Store:
         )
 
     def put(self, key, body):
+        if not any(key.startswith(p) for p in self.scope):
+            msg = f"the {self.role} key never adds {key[:120]!r} (Q-K91)"
+            raise ScopeError(msg)
         md5 = base64.b64encode(hashlib.md5(body).digest()).decode()  # noqa: S324 (S3 integrity header)
         self.client.put_object(
             Bucket=self.bucket,
@@ -564,6 +594,44 @@ def check(hospital_uuid, fps):
             "missing from the newest fingerprint although earlier ones list it"
         )
     return problems
+
+
+def claims_at(store, when, days=3):
+    """The newest fingerprint the storage received at or before ``when``: (its key, its
+    claims {uuid: (seq, hash, slug)}), or (None, {}). Reads the day folders of ``when`` and up
+    to ``days`` - 1 days before it. An object with more than one version, hidden, unreadable or
+    whose stated time is far from the storage's is passed over (never used as proof). A
+    whole-database restore's lower bound per hospital comes from here (P1-T22c, S3)."""
+    when = when.astimezone(UTC)
+    for back in range(days):
+        day = (when - timedelta(days=back)).date()
+        listed = {}
+        for key, version, stored in store.versions(f"{prefix()}{day:%Y/%m/%d}/"):
+            listed.setdefault(key, []).append((version, stored))
+        best = None
+        for key, versions in listed.items():
+            if len(versions) != 1 or versions[0][0] is None:
+                continue
+            version, stored = versions[0]
+            if stored > when or (best and (stored, key) <= (best[2], best[0])):
+                continue
+            best = (key, version, stored)
+        while best:
+            key, version, stored = best
+            try:
+                found = _parse(key, version, store.get(key, version))
+            except Exception:
+                found = None
+            if found is not None and abs(found.written_at - stored) <= CLOCK_SKEW:
+                return key, found.hospitals
+            listed.pop(key, None)
+            rest = [
+                (k, v[0][0], v[0][1])
+                for k, v in listed.items()
+                if len(v) == 1 and v[0][0] is not None and v[0][1] <= when
+            ]
+            best = max(rest, key=lambda r: (r[2], r[0])) if rest else None
+    return None, {}
 
 
 def find_covering(hospital_uuid, low, high, start, store=None, max_reads=1000):

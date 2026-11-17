@@ -11,6 +11,7 @@ scripts/staging.sh. A line is ``key=value`` words separated by single spaces:
       rp_time=<epoch|-> [rp_from=<tag>] audit=<ok|problems|timeout|skipped|-> [seal=... seal_s=N]
       [via=release|plain] [migrations=none|started] [finished=<ISO 8601>]
     kind=rollback tag=<the release rolled back to> from=<the release left> restored=<restore point|no>
+        [supersede=<whole-database restore id|none>]   (P1-T22c: with a restore only)
       time=...
 
 Values are image ids, fingerprints, names and times only: never a setting or a secret (a value
@@ -65,6 +66,7 @@ LSN_RE = re.compile(r"^([0-9A-F]{1,8}/[0-9A-F]{1,8}|-)$")
 # release-<tag>-<epoch> (the epoch: unique per window; names without it are from before the review)
 POINT_RE = re.compile(r"^release-[0-9a-f]{12}(-dirty-[0-9a-f]{8})?(-[0-9]{10})?$")
 CHOICES = {"via": ("release", "plain"), "migrations": ("none", "started")}
+SUPERSEDE_RE = re.compile(r"^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$")
 KINDS = ("release", "rollback", "attempt")
 IMAGES = ("backend", "frontend", "postgres", "keycloak", "acmedns", "grafana")
 REQUIRED = {
@@ -108,6 +110,13 @@ def check(fields):
         raise LogError("restore_point is not a release's restore point")
     if fields.get("restored", "no") != "no" and not POINT_RE.match(fields["restored"]):
         raise LogError("restored is not a release's restore point")
+    # P1-T22c: a rollback with a restore names its whole-database restore's id (the audit
+    # watch's AuditWholeRestoreRecorded mail names it too), or none (no fingerprint storage)
+    if "supersede" in fields:
+        if kind != "rollback" or fields.get("restored", "no") == "no":
+            raise LogError("supersede belongs to a rollback with a restore")
+        if fields["supersede"] != "none" and not SUPERSEDE_RE.match(fields["supersede"]):
+            raise LogError("supersede is a restore id or none")
     for key, allowed in CHOICES.items():
         if key in fields and fields[key] not in allowed:
             raise LogError(f"{key} is one of {', '.join(allowed)}")

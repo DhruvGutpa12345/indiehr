@@ -2119,6 +2119,62 @@
     "CONTAINER_NAME": "indiehr-staging-celery-worker-1",
     "COM_DOCKER_COMPOSE_SERVICE": "celery-worker"
    }
+  },
+  {
+   "count": 1,
+   "record": {
+    "MESSAGE": "ihr-audit: restore=0a1b2c3d event=whole-database hospitals=2 outcome=recorded",
+    "_HOSTNAME": "srv1",
+    "PRIORITY": "3",
+    "CONTAINER_NAME": "indiehr-staging-audit-watch-1",
+    "COM_DOCKER_COMPOSE_SERVICE": "audit-watch",
+    "_TRANSPORT": "journal",
+    "_COMM": "dockerd",
+    "_UID": "0",
+    "_SYSTEMD_UNIT": "docker.service"
+   }
+  },
+  {
+   "count": 1,
+   "record": {
+    "MESSAGE": "ihr-audit: restore=0a1b2c3e event=whole-database hospitals=2 outcome=recorded (forged)",
+    "_HOSTNAME": "srv1",
+    "PRIORITY": "3",
+    "CONTAINER_NAME": "indiehr-staging-audit-watch-1",
+    "COM_DOCKER_COMPOSE_SERVICE": "audit-watch",
+    "_TRANSPORT": "journal",
+    "_COMM": "dockerd",
+    "_UID": "0",
+    "_SYSTEMD_UNIT": "docker.service"
+   }
+  },
+  {
+   "count": 1,
+   "record": {
+    "MESSAGE": "ihr-audit: restore=0A1B2C3F event=whole-database hospitals=2 outcome=recorded",
+    "_HOSTNAME": "srv1",
+    "PRIORITY": "3",
+    "CONTAINER_NAME": "indiehr-staging-audit-watch-1",
+    "COM_DOCKER_COMPOSE_SERVICE": "audit-watch",
+    "_TRANSPORT": "journal",
+    "_COMM": "dockerd",
+    "_UID": "0",
+    "_SYSTEMD_UNIT": "docker.service"
+   }
+  },
+  {
+   "count": 1,
+   "record": {
+    "MESSAGE": "ihr-audit: restore=0a1b2c40 event=whole-database hospitals=2 outcome=recorded",
+    "_HOSTNAME": "srv1",
+    "PRIORITY": "3",
+    "CONTAINER_NAME": "indiehr-staging-backend-1",
+    "COM_DOCKER_COMPOSE_SERVICE": "backend",
+    "_TRANSPORT": "journal",
+    "_COMM": "dockerd",
+    "_UID": "0",
+    "_SYSTEMD_UNIT": "docker.service"
+   }
   }
  ],
  "expect": {
@@ -2210,6 +2266,9 @@
   "PackFacilityDeferred": [
    "lambda",
    "omicron"
+  ],
+  "AuditWholeRestoreRecorded": [
+   "0a1b2c3d"
   ]
  },
  "expect_state": {
@@ -2234,6 +2293,7 @@
   "MrdRecordsRefused": "firing",
   "MrdRecordsVolume": "firing",
   "MrdRecordsOffHours": "firing",
-  "PackFacilityDeferred": "pending"
+  "PackFacilityDeferred": "pending",
+  "AuditWholeRestoreRecorded": "firing"
  }
 }

@@ -1,0 +1,268 @@
+# P1-T22c1 review fix: one uninterrupted rollback --restore on the final tree (local staging proof, synthetic hospitals alpha and beta, 17-11-2026).
+# Images: A = the final working tree + one label (the target, release N), B = the final working tree (release N+1). Docker progress, deprecation and INFO lines filtered out.
+
+### 2026-11-17T16:31:18+05:30 setup: init --local, s3-init, mail-init --test, backup-init --local
+rc=0
+### 2026-11-17T16:31:39+05:30 release N (target A): release-note, up, alpha+beta, keycloak sync, smoke, release-record
+ok    HSTS on the web app (max-age=31536000; includeSubDomains)
+ok    API schema not public (404)
+ok    no query strings in the logs (0)
+Logged release 5706194f1e17-dirty-222b7268 in /home/ubuntu/AI Projects/IndieHR/deploy/staging/releases/releases.log
+rc=0 (354 s)
+### 2026-11-17T16:37:54+05:30 hospitals
+[('alpha', 'active'), ('beta', 'active')]
+### 2026-11-17T16:37:56+05:30 backup-now full
+### 2026-11-17T16:38:16+05:30 release --now to B
+== Release 5706194f1e17-dirty-0cf5a2e2 (hospitals' schema ce746f8e109d, platform's 4a19d4af1dc7) by proof
+== [15 s] Checking the audit trail (outgoing build, before the hold)
+== [18 s] Holding every hospital
+== [22 s] Stopping the workers: celery-worker celery-beat provisioner staff-worker
+== [32 s] Draining
+== [32 s] Sealing and fingerprinting the audit trail (outgoing build)
+== [35 s] Restore point
+== [38 s] Platform (public) migrations
+== [45 s] Hospital migrations (ihr_fleet_run, as scripts/staging.sh fleet)
+== [51 s] Sealing what the migrations wrote (new build)
+== [53 s] Starting release 5706194f1e17-dirty-0cf5a2e2
+== [107 s] Smoke
+ok    token issuer is the public https address (https://auth.app.ihr-proof.in/realms/indiehr)
+Logged release 5706194f1e17-dirty-0cf5a2e2 in /home/ubuntu/AI Projects/IndieHR/deploy/staging/releases/releases.log
+== Release 5706194f1e17-dirty-0cf5a2e2 finished in 127 s
+rc=0 (127 s)
+### 2026-11-17T16:40:36+05:30 two rounds of profile edits per hospital, each sealed and fingerprinted (celery: --seal --anchor)
+
+### 2026-11-17T16:41:08+05:30 rollback --restore --operator proof (typed tag on stdin), one uninterrupted run on the final tree
+== Rolling back from 5706194f1e17-dirty-0cf5a2e2 (the running release) to 5706194f1e17-dirty-222b7268
+== What this rollback does and loses:
+- every hospital is offline until it ends (the stack stops; the restore replays WAL from backup 20261117-163756F);
+- the database (every hospital, the platform and Keycloak) goes back to restore point release-5706194f1e17-dirty-0cf5a2e2-1794913731,
+  taken at 2026-11-17T16:38:52+05:30 for release 5706194f1e17-dirty-0cf5a2e2, with every hospital held at the start of its window:
+  everything written after it is lost (nothing, if no hospital was served since);
+- Keycloak's changes since then are lost too: invitations, password and authenticator resets,
+  accounts disabled or removed (re-do them; the realm sync runs at the start);
+- the audit trail goes back too: first every hospital is held and sealed, and each hospital's audit tail
+  after the point is exported (deploy/staging/supersede/<id>/, personal data, mode 600) and a plan written
+  to the fingerprint bucket; after the restore the tails are archived back and a restore event written per
+  hospital, so the audit watch accepts the cut (one AuditEventRecorded per hospital and one
+  AuditWholeRestoreRecorded: confirm their restore id is this rollback's, logged in releases.log). Hospitals
+  made after the point are gone and stay reported until offboarded by hand (P1-T22c2 closes them: --accept-absent).
+  A hospital the load refuses (named) stays cut: AuditChainBroken, AuditFingerprintMismatch (critical);
+  record the rollback as an incident (P1-T22c: what the restore events do not cover stays an alert), never a silence;
+- the current database is kept beside it (volume indiehr-staging_pgdata-pre-rollback-5706194f1e17-dirty-0cf5a2e2-20261117164109, about 44 MB).
+Type the release tag to roll back to (5706194f1e17-dirty-222b7268) to go on:
+not confirmed: nothing changed
+ROLLBACK STOPPED (exit 1): nothing was changed
+rc=1 (2 s)
+### 2026-11-17T16:41:25+05:30 rollback --restore --operator proof (the typed tag fed by yes: a docker step before the confirmation drains a one-line stdin; first try above refused 'not confirmed', nothing changed)
+== Rolling back from 5706194f1e17-dirty-0cf5a2e2 (the running release) to 5706194f1e17-dirty-222b7268
+== What this rollback does and loses:
+- every hospital is offline until it ends (the stack stops; the restore replays WAL from backup 20261117-163756F);
+- the database (every hospital, the platform and Keycloak) goes back to restore point release-5706194f1e17-dirty-0cf5a2e2-1794913731,
+  taken at 2026-11-17T16:38:52+05:30 for release 5706194f1e17-dirty-0cf5a2e2, with every hospital held at the start of its window:
+  everything written after it is lost (nothing, if no hospital was served since);
+- Keycloak's changes since then are lost too: invitations, password and authenticator resets,
+  accounts disabled or removed (re-do them; the realm sync runs at the start);
+- the audit trail goes back too: first every hospital is held and sealed, and each hospital's audit tail
+  after the point is exported (deploy/staging/supersede/<id>/, personal data, mode 600) and a plan written
+  to the fingerprint bucket; after the restore the tails are archived back and a restore event written per
+  hospital, so the audit watch accepts the cut (one AuditEventRecorded per hospital and one
+  AuditWholeRestoreRecorded: confirm their restore id is this rollback's, logged in releases.log). Hospitals
+  made after the point are gone and stay reported until offboarded by hand (P1-T22c2 closes them: --accept-absent).
+  A hospital the load refuses (named) stays cut: AuditChainBroken, AuditFingerprintMismatch (critical);
+  record the rollback as an incident (P1-T22c: what the restore events do not cover stays an alert), never a silence;
+- the current database is kept beside it (volume indiehr-staging_pgdata-pre-rollback-5706194f1e17-dirty-0cf5a2e2-20261117164127, about 44 MB).
+Type the release tag to roll back to (5706194f1e17-dirty-222b7268) to go on:
+not confirmed: nothing changed
+ROLLBACK STOPPED (exit 1): nothing was changed
+rc=1 (2 s)
+### 2026-11-17T16:42:14+05:30 rollback --restore --operator proof (the typed tag repeated in 64-byte lines: a docker step before the confirmation reads stdin in power-of-two chunks; the two tries above were refused 'not confirmed', nothing changed)
+== Rolling back from 5706194f1e17-dirty-0cf5a2e2 (the running release) to 5706194f1e17-dirty-222b7268
+== What this rollback does and loses:
+- every hospital is offline until it ends (the stack stops; the restore replays WAL from backup 20261117-163756F);
+- the database (every hospital, the platform and Keycloak) goes back to restore point release-5706194f1e17-dirty-0cf5a2e2-1794913731,
+  taken at 2026-11-17T16:38:52+05:30 for release 5706194f1e17-dirty-0cf5a2e2, with every hospital held at the start of its window:
+  everything written after it is lost (nothing, if no hospital was served since);
+- Keycloak's changes since then are lost too: invitations, password and authenticator resets,
+  accounts disabled or removed (re-do them; the realm sync runs at the start);
+- the audit trail goes back too: first every hospital is held and sealed, and each hospital's audit tail
+  after the point is exported (deploy/staging/supersede/<id>/, personal data, mode 600) and a plan written
+  to the fingerprint bucket; after the restore the tails are archived back and a restore event written per
+  hospital, so the audit watch accepts the cut (one AuditEventRecorded per hospital and one
+  AuditWholeRestoreRecorded: confirm their restore id is this rollback's, logged in releases.log). Hospitals
+  made after the point are gone and stay reported until offboarded by hand (P1-T22c2 closes them: --accept-absent).
+  A hospital the load refuses (named) stays cut: AuditChainBroken, AuditFingerprintMismatch (critical);
+  record the rollback as an incident (P1-T22c: what the restore events do not cover stays an alert), never a silence;
+- the current database is kept beside it (volume indiehr-staging_pgdata-pre-rollback-5706194f1e17-dirty-0cf5a2e2-20261117164215, about 41 MB).
+Type the release tag to roll back to (5706194f1e17-dirty-222b7268) to go on:
+== [1 s] Holding every hospital, stopping the workers, draining
+fleet run 6c331058-7c43-446d-9ab9-c2ffce91bd16: hold for 2 hospital(s), 2 at a time
+alpha: done
+alpha: held on purpose (ihr_fleet_run release)
+beta: done
+beta: held on purpose (ihr_fleet_run release)
+fleet run 6c331058-7c43-446d-9ab9-c2ffce91bd16: finished, 2 done
+drained (0 s)
+== [15 s] Sealing and fingerprinting the audit trail (the build being left)
+115 objects imported automatically (use -v 2 for details).
+
+fingerprint written: anchors/app.ihr-proof.in/2026/11/17/20261117T111231Z-d0273395.json
+== Exporting every hospital's audit tail after release-5706194f1e17-dirty-0cf5a2e2-1794913731 (restore e8382e48-b45e-49a5-846a-6b59980e2210; the audit watch's read-only role)
+ihr-supersede: hospital=alpha outcome=exported
+ihr-supersede: hospital=beta outcome=exported
+exported e8382e48-b45e-49a5-846a-6b59980e2210: 2 exported; old timeline 00000001
+== The plan (the fingerprint bucket, write-once)
+ihr-supersede: restore=e8382e48 outcome=planned
+plan written: anchors/ihr-restores/app.ihr-proof.in/e8382e48-b45e-49a5-846a-6b59980e2210/plan.json
+== [23 s] Stopping the stack (its volumes stay: never down -v)
+== [33 s] Keeping the current database in indiehr-staging_pgdata-pre-rollback-5706194f1e17-dirty-0cf5a2e2-20261117164215
+== [34 s] Restoring to release-5706194f1e17-dirty-0cf5a2e2-1794913731 (with 5706194f1e17-dirty-222b7268's Postgres image)
+indiehr-postgres:staging -> sha256:011858c78a079d6f767f9696e667ef0b609e9f179652e88ae76bc256f29ae49a
+== Restore to release-5706194f1e17-dirty-0cf5a2e2-1794913731 from backup 20261117-163756F into indiehr-staging_pgdata
+spool: 1 pushed, 0 set aside
+Restored. Next: scripts/staging.sh up (it pushes the new timeline), then scripts/staging.sh backup-now full
+indiehr-backend:staging -> sha256:222b726858644f66bbba32cf4266ffdcac7f7b0c44fdfaceddad9d06cdaea826
+indiehr-frontend:local -> sha256:79b4fc9cb098b7222c7b6788af31caafe63804e760a57ad89caac61401928283
+indiehr-keycloak:staging -> sha256:800ac768d9ea4026e88aa23bf297c692a93ac57578214461ee7494a99f96877a
+== A checkout (a proof on this machine): its stack files are git's; check out 5706194f1e17-dirty-222b7268's commit if they changed
+== [53 s] The audit tails back into the restored database (restore e8382e48-b45e-49a5-846a-6b59980e2210)
+== Loading the audit tails back (restore e8382e48-b45e-49a5-846a-6b59980e2210)
+ihr-supersede: hospital=alpha outcome=loaded step=load
+ihr-supersede: hospital=beta outcome=loaded step=load
+ihr-supersede: restore=e8382e48 outcome=loaded
+alpha: loaded (generation 1, fork at seal 2)
+beta: loaded (generation 1, fork at seal 1)
+== [66 s] Starting 5706194f1e17-dirty-222b7268
+client key backend: kept backend-O0urp9Ag20kwvzuW
+client key onboarding: kept onboarding-pSczQKqQVA0VFS-l
+client key staff: kept staff-GA8ahgSk7734VDq9
+bucket ihr-staging-files: exists
+bucket ihr-staging-files: CORS for https://*.app.ihr-proof.in
+bucket ihr-staging-facility: exists
+bucket ihr-staging-facility: CORS for https://*.app.ihr-proof.in
+bucket ihr-staging-files: private (no bucket policy)
+bucket ihr-staging-facility: private (no bucket policy)
+bucket ihr-staging-files: versioned, old versions kept 35 days
+bucket ihr-staging-facility: versioned, old versions kept 35 days
+bucket ihr-audit-anchors: default retention COMPLIANCE 3650 days (unchanged)
+bucket ihr-backups: exists
+bucket ihr-backups: private (no bucket policy)
+bucket ihr-log-archive: default retention GOVERNANCE 400 days (unchanged)
+bucket ihr-log-archive: private (no bucket policy)
+bucket ihr-dumps: default retention GOVERNANCE 30 days (unchanged)
+bucket ihr-dumps: private (no bucket policy)
+database role ok: owner (migrate)
+[standard:public] === Starting migration
+[standard:public] Operations to perform:
+[standard:public]   Apply all migrations: admin, auth, authtoken, contenttypes, emr, facility, ihr_access, ihr_audit, ihr_identity, ihr_platform, ihr_refdata, ihr_refdata_registry, ihr_tenant_settings, ihr_terminology, security, sessions, sites, users
+[standard:public] Running migrations:
+[standard:public]   No migrations to apply.
+public tenant ready: IndieHR platform (public / public)
+fleet run 61e94f00-7cb1-4382-9fbc-6dccc4c05d71: check, roles, packs for 2 hospital(s), 2 at a time
+alpha: care-valuesets v1 unchanged
+beta: care-valuesets v1 unchanged
+alpha: held
+ihr-fleet: hospital=alpha outcome=held
+beta: held
+ihr-fleet: hospital=beta outcome=held
+fleet run 61e94f00-7cb1-4382-9fbc-6dccc4c05d71: incomplete, 2 held
+operator realm indiehr-ops: console ready
+alpha: ihr-h-alpha -> organisation cd4d97eb-dc26-4161-bbc8-85d2827a8a76
+beta: ihr-h-beta -> organisation de1db655-8b3d-40f5-b7f0-52b4b28b9aae
+Keycloak matches the baseline.
+SERVICE         STATUS
+backend         Up 48 seconds (healthy)
+backup          Up About a minute (healthy)
+celery-beat     Up 30 seconds (healthy)
+celery-worker   Up 30 seconds (healthy)
+db              Up About a minute (healthy)
+frontend        Up 30 seconds (healthy)
+keycloak        Up About a minute (healthy)
+provisioner     Up Less than a second
+redis           Up About a minute (healthy)
+s3              Up About a minute (healthy)
+smtp-test       Up About a minute (healthy)
+staff-worker    Up Less than a second
+traefik         Up About a minute (healthy)
+fleet run e371e97e-273f-46e3-a0e5-e10450f3ccee: release for 2 hospital(s), 2 at a time
+alpha: done
+beta: done
+fleet run e371e97e-273f-46e3-a0e5-e10450f3ccee: finished, 2 done
+fleet run c0f9fe5c-8466-4848-aba1-7328310bcd87: roles for 2 hospital(s), 2 at a time
+alpha: done
+beta: done
+fleet run c0f9fe5c-8466-4848-aba1-7328310bcd87: finished, 2 done
+removed 1 window(s)
+ok    http redirects to https (301 https://console.app.ihr-proof.in/ops/)
+ok    operator console (302)
+ok    console: back-channel logout not public (418)
+ok    console: API not public (418)
+ok    console: health not public (418)
+ok    Keycloak hospitals' realm (200)
+ok    Keycloak operators' realm (200)
+ok    Keycloak admin console not public (418)
+ok    Keycloak master realm not public (418)
+ok    sign-in submissions limited per address (yes)
+ok    token issuer is the public https address (https://auth.app.ihr-proof.in/realms/indiehr)
+ok    client key backend: active backend key backend-O0urp9Ag20kwvzuW is 0 days old
+ok    client key onboarding: active onboarding key onboarding-pSczQKqQVA0VFS-l is 0 days old
+ok    client key staff: active staff key staff-GA8ahgSk7734VDq9 is 0 days old
+ok    Keycloak holds each client's current public keys (sync --check) (0)
+ok    web app signs in to Keycloak with its key (probe) (0)
+ok    files: nothing at the root (418)
+ok    files: fingerprint bucket not public (418)
+ok    files: patient files need a signature (403)
+ok    files: hospital pictures need a signature (P1-T20b) (403)
+ok    backups healthy (WAL pushed, check passing, backup within 26 h) (healthy)
+ok    status address for the uptime check (200 OK)
+ok    status host: nothing else served (418)
+ok    ops host closed (reserved, SSH tunnel only) (418)
+ok    terminology: bundled code systems active (8)
+ok    unknown hospital address: no branding (404)
+ok    hospital alpha served (not held: 503 upgrading) (200)
+ok    hospital beta served (not held: 503 upgrading) (200)
+ok    bare suffix not served (404)
+ok    HSTS on the console (max-age=31536000)
+ok    hospital web app (200)
+ok    hospital branding (public) (200)
+ok    hospital profile needs sign-in (403)
+ok    CARE's own staff login is off (404)
+ok    HSTS on the web app (max-age=31536000; includeSubDomains)
+ok    API schema not public (404)
+ok    no query strings in the logs (0)
+== Rolled back to 5706194f1e17-dirty-222b7268 with a restore in 184 s (audit: restore e8382e48-b45e-49a5-846a-6b59980e2210)
+== Full backup of the restored database
+The database as it was is in volume indiehr-staging_pgdata-pre-rollback-5706194f1e17-dirty-0cf5a2e2-20261117164215: once you are sure, docker volume rm indiehr-staging_pgdata-pre-rollback-5706194f1e17-dirty-0cf5a2e2-20261117164215
+rc=0 (204 s)
+### 2026-11-17T16:46:07+05:30 after the rollback: audit-supersede status, ihr_audit_verify --all (backend: the reader key)
+restore e8382e48-b45e-49a5-846a-6b59980e2210: plan anchors/ihr-restores/app.ihr-proof.in/e8382e48-b45e-49a5-846a-6b59980e2210/plan.json, result anchors/ihr-restores/app.ihr-proof.in/e8382e48-b45e-49a5-846a-6b59980e2210/result.json
+  alpha: exported -> loaded; seals 2..5; generation 1
+  beta: exported -> loaded; seals 1..4; generation 1
+5 outside fingerprints read
+restore event anchors/ihr-events/app.ihr-proof.in/2026/11/17/20261117T111320Z-restore-0a9a2b4e-ed94-4b8f-9d75-300a66c7ac11-7e2b1487.json excuses nothing: its superseded segment is unreadable (ArchiveUnreadableError)
+restore event anchors/ihr-events/app.ihr-proof.in/2026/11/17/20261117T111320Z-restore-3d2ca347-7ba2-4947-83cf-09157fc1e368-5d4cee09.json excuses nothing: its superseded segment is unreadable (ArchiveUnreadableError)
+alpha: 3 seals, 856 entries sealed, 0 not yet, head 91fbaea10a4ac0ec
+  seal 3 differs from its fingerprint of 2026-11-17T11:09:09+00:00 (the trail was rewritten)
+  seal 4, fingerprinted at 2026-11-17T11:10:47+00:00, is missing (the trail was cut)
+  seal 5, fingerprinted at 2026-11-17T11:10:58+00:00, is missing (the trail was cut)
+beta: 2 seals, 854 entries sealed, 0 not yet, head a1dc077995a11de9
+  seal 2 differs from its fingerprint of 2026-11-17T11:09:09+00:00 (the trail was rewritten)
+  seal 3, fingerprinted at 2026-11-17T11:10:47+00:00, is missing (the trail was cut)
+  seal 4, fingerprinted at 2026-11-17T11:10:58+00:00, is missing (the trail was cut)
+verify rc=0
+ls: cannot access 'deploy/staging/releases/rollback-hold': No such file or directory
+### 2026-11-17T16:46:25+05:30 ihr_audit_verify --all as the owner (migrate one-off) with the reader key only (the app role has no archive rights, by design: the backend's run above cannot read the superseded segments)
+5 outside fingerprints read
+6 fingerprint claims accounted for by restore events
+  6 of them by whole-database restore e8382e48-b45e-49a5-846a-6b59980e2210
+alpha: 3 seals, 856 entries sealed, 0 not yet, head 91fbaea10a4ac0ec
+beta: 2 seals, 854 entries sealed, 0 not yet, head a1dc077995a11de9
+audit trail OK
+verify rc=0
+### 2026-11-17T16:46:39+05:30 audit-supersede load run again after up, fleet release and new seals (review T2/E2: before the fix this refused every hospital, F = L at the head)
+== Loading the audit tails back (restore e8382e48-b45e-49a5-846a-6b59980e2210)
+ihr-supersede: hospital=alpha outcome=loaded step=load
+ihr-supersede: hospital=beta outcome=loaded step=load
+ihr-supersede: restore=e8382e48 outcome=loaded
+alpha: loaded (generation 1, fork at seal 2)
+beta: loaded (generation 1, fork at seal 1)
+load rc=0

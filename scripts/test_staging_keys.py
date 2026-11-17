@@ -134,7 +134,9 @@ class KeyTool(unittest.TestCase):
         # Never log what the tool or the sync prints; never let a service keep running unlogged
         for name, svc in SERVICES.items():
             if (svc.get("logging") or {}).get("driver") == "none":
-                self.assertIn(name, ("admin", "keytool"))
+                # audit-supersede (P1-T22c1 review T1): its output is a tar of audit entries
+                self.assertIn(name, ("admin", "keytool", "audit-supersede"))
+                self.assertEqual(svc.get("restart"), "no", name)
 
 
 class Secrets(unittest.TestCase):

@@ -33,7 +33,19 @@ audit.yml) accept from this service alone, and once per new restore or offboardi
 
     ihr-audit: hospital=<slug> event=<restore|offboarding> outcome=recorded
 
-(AuditEventRecorded: a human confirms each one). The slug comes from the database's own
+(AuditEventRecorded: a human confirms each one), and once per whole-database restore's result
+(P1-T22c; AuditWholeRestoreRecorded: its restore id must match releases.log or the incident)
+
+    ihr-audit: restore=<id8> event=whole-database hospitals=<n> outcome=recorded
+
+The database's timeline (P1-T22c, Q-K89): every fast and incremental pass records it in the
+watch's own state (``timelines``: each timeline seen, first and last seen). A change no
+whole-database restore's result explains (a result naming the new timeline whose plan names the
+old one, stored on either side of the change: events.corroborated) counts in
+``ihr_audit_timeline_unexplained`` (every change the history keeps, not only the latest;
+AuditDatabaseRestoredUnannounced, critical), and the
+history is handed to the events' checks: an event of a result the history contradicts excuses
+nothing. The slug comes from the database's own
 hospital row, or the watch's own record of it (checked against its pattern; one that does not
 match is named ``invalid-slug``, never dropped), never from text in the bucket (A5).
 
@@ -65,6 +77,7 @@ import time
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from itertools import pairwise
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
@@ -171,6 +184,20 @@ def log_line(slug, check):
     return f"ihr-audit: hospital={slug} check={check} outcome=failed"
 
 
+def restore_line(restore_id, hospitals):
+    """Once per whole-database restore's result (P1-T22c). The id comes from a parsed result
+    (a uuid, checked); only its first 8 digits are shown."""
+    rid = str(restore_id)[:8]
+    rid = rid if re.match(r"^[0-9a-f]{8}$", rid) else "invalid"
+    return (
+        f"ihr-audit: restore={rid} event=whole-database hospitals={int(hospitals)} "
+        "outcome=recorded"
+    )
+
+
+TIMELINES_KEPT = 20
+
+
 def event_line(slug, kind):
     """The fixed line of a new restore or offboarding event (AuditEventRecorded)."""
     return f"ihr-audit: hospital={slug} event={kind} outcome=recorded"
@@ -233,6 +260,10 @@ class State:
             # uuid -> ISO time the watch first saw the hospital held (HOLD_GRACE_SECONDS: an
             # owner who re-dates upgrading_since cannot stretch the grace)
             "held_seen": {},
+            # P1-T22c: [{"timeline", "first", "last"}], oldest first: the database's timelines
+            # as this watch saw them (never the database's own record)
+            "timelines": [],
+            "results_seen": [],  # whole-database restore ids already named
         }
         with contextlib.suppress(OSError, ValueError):
             self.data.update(json.loads(self.path.read_text()))
@@ -492,6 +523,7 @@ class Watch:
         from ihr_platform.models import Hospital as Model
 
         now = _now()
+        self._timeline()  # the timeline history every minute (P1-T22c)
         hospitals = _hospitals()
         g = self.gauges.set
         with connection.cursor() as cursor:
@@ -575,14 +607,90 @@ class Watch:
 
     # --- incremental -------------------------------------------------------------------------
 
+    def _timeline(self):
+        """Record the database's timeline now in the watch's own history; returns a copy of
+        the history (oldest first) and the timeline (None: unreadable, nothing recorded)."""
+        now = _now().isoformat()
+        current = events.current_timeline()
+        with self.state.lock:
+            history = self.state.data.setdefault("timelines", [])
+            if current is not None:
+                if history and history[-1].get("timeline") == current:
+                    history[-1]["last"] = now
+                else:
+                    history.append({"timeline": current, "first": now, "last": now})
+                    del history[:-TIMELINES_KEPT]
+            return [dict(h) for h in history], current
+
     def _events(self):
         store = self.store
+        history, current = self._timeline()
         if store is None:
             return events.Events(read_ok=False), "not configured"
         try:
-            return events.read(store, self.segments), ""
+            return (
+                events.read(store, self.segments, timeline=current, history=history),
+                "",
+            )
         except Exception as exc:  # unreadable: nothing is excused
             return events.Events(read_ok=False), type(exc).__name__
+
+    def _whole_restores(self, found_events):
+        """P1-T22c: the timeline gauge, the result count, abandoned plans, and one line per
+        new result."""
+        g = self.gauges.set
+        if not found_events.read_ok:
+            return 0  # unknown: the gauges keep their last values
+        with self.state.lock:
+            history = [dict(h) for h in self.state.data.get("timelines", [])]
+            seen = set(self.state.data.get("results_seen", []))
+        # Every change the history keeps, not only the latest (review T7): an unannounced
+        # restore followed by an explained one stays unexplained
+        unexplained = 0
+        for before, after in pairwise(history):
+            explained = False
+            for result in found_events.results.values():
+                plan = found_events.plans.get(result.restore_id)
+                if (
+                    plan is not None
+                    and result.new_timeline == after["timeline"]
+                    and plan.old_timeline == before["timeline"]
+                    and not events.corroborated(plan, result, history)
+                ):
+                    explained = True
+            unexplained += not explained
+        g("ihr_audit_timeline_unexplained", unexplained)
+        g(
+            "ihr_audit_whole_restores_uncorroborated",
+            len(found_events.uncorroborated & set(found_events.results)),
+        )
+        g("ihr_audit_whole_restores", len(found_events.results))
+        g(
+            "ihr_audit_whole_restores_unanchored",
+            len(found_events.unanchored),
+        )
+        stale = _now() - timedelta(hours=24)
+        g(
+            "ihr_audit_restore_plans_abandoned",
+            sum(
+                1
+                for rid, plan in found_events.plans.items()
+                if rid not in found_events.results
+                and plan.stored < stale
+                and plan.old_timeline == found_events.timeline
+                and not found_events.superseded_plan(plan)
+            ),
+        )
+        new = []
+        for rid, result in sorted(found_events.results.items()):
+            if rid in seen:
+                continue
+            _emit(restore_line(rid, len(result.hospitals)))
+            new.append(rid)
+        if new:
+            with self.state.lock:
+                self.state.data["results_seen"] = sorted(seen | set(new))
+        return len(new)
 
     def _fingerprints(self, found_events, since):
         """(fingerprints or None, why not)."""
@@ -914,6 +1022,7 @@ class Watch:
             store_classes["unknown_hospital"], len(unknown)
         )
         new_events = self._new_events(found_events, slugs)
+        new_events += self._whole_restores(found_events)
         g = self.gauges.set
         g("ihr_audit_hospitals_checked", checked)
         g("ihr_audit_hospitals_not_comparable", not_comparable)

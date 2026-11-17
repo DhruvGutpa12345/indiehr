@@ -58,6 +58,7 @@ AUDIT_LINE = r"^ihr-audit: hospital=(?P<hospital>[a-z][a-z0-9-]{2,30}) check=(?:
 AUDIT_SEAL_LINE = r"^ihr-audit: hospital=(?P<hospital>[a-z][a-z0-9-]{2,30}) check=seal outcome=failed$"
 # A new restore or offboarding event, named once (P1-T21 review S4)
 AUDIT_EVENT_LINE = r"^ihr-audit: hospital=(?P<hospital>[a-z][a-z0-9-]{2,30}) event=(?P<event>restore|offboarding) outcome=recorded$"
+WHOLE_RESTORE_LINE = r"^ihr-audit: restore=(?P<restore>[0-9a-f]{8}) event=whole-database hospitals=(?P<hospitals>[0-9]{1,6}) outcome=recorded$"
 # The services each alert reads: the ones that run its command (packs: the start-up one-shot;
 # fleet: that one-shot, `staging.sh fleet`, and the worker's per-minute report, S3; audit: the
 # audit watch alone)
@@ -349,6 +350,13 @@ class LogAlerts(unittest.TestCase):
                                  r'\| filter hospital:~"\^\[a-z\]\[a-z0-9-\]\{2,30\}\$" ')
                 allowed = r"^\$(labels\.hospital|labels\.event|value)$"
                 self.assertNotIn("{{", r["annotations"]["action"], r["alert"])
+            elif r["alert"] == "AuditWholeRestoreRecorded":
+                self.assertEqual(by, ["restore, hospitals"], r["alert"])
+                self.assertRegex(r["expr"], r'^_time:1h source:=container service:in\(audit-watch\) "ihr-audit: restore=" '
+                                 r'\| extract_regexp "' + re.escape(WHOLE_RESTORE_LINE) + r'" '
+                                 r'\| filter restore:~"\^\[0-9a-f\]\{8\}\$" ')
+                allowed = r"^\$(labels\.restore|labels\.hospitals|value)$"
+                self.assertNotIn("{{", r["annotations"]["action"], r["alert"])
             elif r["alert"] == "DumpHospitalFailed":
                 self.assertEqual(by, ["hospital, reason"], r["alert"])
                 self.assertRegex(r["expr"], r'^_time:24h source:=container service:in\(dumper\) "ihr-dump: hospital=" '
@@ -412,6 +420,7 @@ class LogAlerts(unittest.TestCase):
             for ref in re.findall(r"\{\{(.*?)\}\}", r["annotations"]["summary"]):
                 self.assertRegex(ref.strip(), allowed, r["alert"])
         self.assertEqual(sorted(names), ["AuditEventRecorded", "AuditHospitalCheckFailed", "AuditHospitalSealLate",
+                                         "AuditWholeRestoreRecorded",
                                          "BatchRequestRefused", "DatabaseRoleLoginFailed", "DatabaseRoleRefused", "DatabaseSchemaGated",
                                          "DumpHospitalFailed", "DumpHospitalHeld",
                                          "FailedSignInsFromAddress", "HospitalNotServed", "HospitalRestoreFailed",
@@ -629,6 +638,22 @@ class LogAlerts(unittest.TestCase):
         watch = (ROOT / "plugins" / "ihr_platform" / "ihr_audit" / "watch.py").read_text()
         self.assertIn('return f"ihr-audit: hospital={slug} event={kind} outcome=recorded"', watch)
 
+    def test_whole_restore_line_is_ours_alone(self):
+        """P1-T22c: once per whole-database restore's result, from the watch's own whole line,
+        naming the restore id's first 8 digits and the number of hospitals only."""
+        [rule] = [r for _, r in self.rules() if r["alert"] == "AuditWholeRestoreRecorded"]
+        self.assertEqual(rule["labels"]["severity"], "warning")
+        self.assertIn("source:=container service:in(audit-watch) ", rule["expr"])
+        line = re.compile(WHOLE_RESTORE_LINE)
+        self.assertEqual(line.match("ihr-audit: restore=0a1b2c3d event=whole-database hospitals=12 outcome=recorded")["restore"], "0a1b2c3d")
+        for forged in ("ihr-audit: restore=0a1b2c3d event=whole-database hospitals=2 outcome=recorded (x)",
+                       "ihr-audit: restore=0A1B2C3D event=whole-database hospitals=2 outcome=recorded",
+                       "ihr-audit: restore=0a1b2c3 event=whole-database hospitals=2 outcome=recorded",
+                       "ihr-audit: restore=0a1b2c3d event=restore hospitals=2 outcome=recorded"):
+            self.assertIsNone(line.search(forged), forged)
+        watch = (ROOT / "plugins" / "ihr_platform" / "ihr_audit" / "watch.py").read_text()
+        self.assertIn('f"ihr-audit: restore={rid} event=whole-database hospitals={int(hospitals)} "', watch)
+
     def test_db_role_line_is_ours_alone(self):
         """P1-T19a: only our whole refusal line, a known role and a reason code; never a request
         path or a longer line. The code writes exactly this line (db_roles.refusal_line)."""
@@ -715,6 +740,17 @@ class LogAlerts(unittest.TestCase):
         services = compose["services"]
         self.assertEqual(services["admin"]["logging"]["driver"], "none")
         self.assertNotEqual(services["migrate"]["logging"]["driver"], "none")
+        # P1-T22c1 review T1: the export one-off writes audit entries (personal data) to its
+        # standard output, which a log driver would put into the journal and the archive
+        self.assertEqual(services["audit-supersede"]["logging"]["driver"], "none")
+        self.assertIn('run --rm --no-deps -T audit-supersede', STAGING_SH)
+
+    def test_exported_audit_tails_are_never_committed(self):
+        """P1-T22c1 review T3: the export's folder holds audit entries; the repo is public."""
+        import subprocess
+        for path in ("deploy/staging/supersede/x/export.tar", "deploy/staging/supersede/x/state"):
+            got = subprocess.run(["git", "-C", str(ROOT), "check-ignore", "-q", path], check=False)
+            self.assertEqual(got.returncode, 0, f"{path} is not git-ignored")
 
     def test_holds_and_routing(self):
         """The hold before mailing is part of each alert's meaning (README table); the per-address
@@ -728,6 +764,7 @@ class LogAlerts(unittest.TestCase):
                                  "DatabaseSchemaGated": None, "DatabaseRoleLoginFailed": None,
                                  "BatchRequestRefused": None, "AuditHospitalCheckFailed": None,
                                  "AuditHospitalSealLate": None, "AuditEventRecorded": None,
+                                 "AuditWholeRestoreRecorded": None,
                                  "DumpHospitalFailed": None, "DumpHospitalHeld": None,
                                  "HospitalRestoreFailed": None, "ParkedSchemaOverdue": None,
                                  "MrdRecordsRefused": None, "MrdRecordsVolume": None,

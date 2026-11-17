@@ -47,6 +47,7 @@ KEY_LABEL = {"PackApplyFailed": "hospital", "PackFacilityDeferred": "hospital", 
              "DatabaseRoleRefused": "reason", "DatabaseSchemaGated": "schema", "DatabaseRoleLoginFailed": "role",
              "BatchRequestRefused": "hospital", "AuditHospitalCheckFailed": "hospital",
              "AuditHospitalSealLate": "hospital", "AuditEventRecorded": "hospital",
+             "AuditWholeRestoreRecorded": "restore",
              "DumpHospitalFailed": "hospital", "DumpHospitalHeld": "hospital",
              "HospitalRestoreFailed": "hospital", "ParkedSchemaOverdue": "schema",
              "MrdRecordsRefused": "hospital", "MrdRecordsVolume": "hospital", "MrdRecordsOffHours": "hospital"}

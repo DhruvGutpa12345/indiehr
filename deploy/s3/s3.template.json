@@ -55,6 +55,18 @@
       ]
     },
     {
+      "name": "ihr-anchor-events",
+      "credentials": [
+        {
+          "accessKey": "@ANCHOR_EVENTS_KEY@",
+          "secretKey": "@ANCHOR_EVENTS_SECRET@"
+        }
+      ],
+      "policyNames": [
+        "ihr-anchor-events"
+      ]
+    },
+    {
       "name": "ihr-anchor-reader",
       "credentials": [
         {
@@ -108,7 +120,11 @@
   "policies": [
     {
       "name": "ihr-anchor-write",
-      "content": "{\"Version\":\"2012-10-17\",\"Statement\":[{\"Effect\":\"Allow\",\"Action\":[\"s3:PutObject\"],\"Resource\":[\"arn:aws:s3:::@ANCHOR_BUCKET@/anchors/*\"]}]}"
+      "content": "{\"Version\":\"2012-10-17\",\"Statement\":[{\"Effect\":\"Allow\",\"Action\":[\"s3:PutObject\"],\"Resource\":[\"arn:aws:s3:::@ANCHOR_BUCKET@/@ANCHOR_WRITE_PREFIX@*\"]}]}"
+    },
+    {
+      "name": "ihr-anchor-events",
+      "content": "{\"Version\":\"2012-10-17\",\"Statement\":[{\"Effect\":\"Allow\",\"Action\":[\"s3:PutObject\"],\"Resource\":[\"arn:aws:s3:::@ANCHOR_BUCKET@/anchors/ihr-events/*\",\"arn:aws:s3:::@ANCHOR_BUCKET@/anchors/ihr-restores/*\"]}]}"
     },
     {
       "name": "ihr-anchor-read",

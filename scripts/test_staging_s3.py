@@ -36,6 +36,8 @@ _Loader.add_multi_constructor("!", lambda loader, suffix, node: loader.construct
 OVERLAY = yaml.load((STAGING / "compose.s3.yaml").read_text(), Loader=_Loader)
 DEV = yaml.load((ROOT / "deploy" / "dev" / "care-local.override.yaml").read_text(), Loader=_Loader)
 TEMPLATE = json.loads((S3 / "s3.template.json").read_text())
+STAGING_COMPOSE_TEXT = (STAGING / "compose.yaml").read_text()
+STAGING_MONITORING_TEXT = (STAGING / "compose.monitoring.yaml").read_text()
 START = (S3 / "start.sh").read_text()
 BASE = yaml.load((STAGING / "compose.yaml").read_text(), Loader=_Loader)
 ROUTES = (STAGING / "traefik" / "routes.yml").read_text()
@@ -166,7 +168,67 @@ class Identities(unittest.TestCase):
         st = self.policy("ihr-anchor-write")["Statement"]
         self.assertEqual(len(st), 1)
         self.assertEqual(st[0]["Action"], ["s3:PutObject"])
-        self.assertEqual(st[0]["Resource"], ["arn:aws:s3:::@ANCHOR_BUCKET@/anchors/*"])
+        # P1-T22c (Q-K91): its platform's fingerprints only once the events key exists
+        self.assertEqual(st[0]["Resource"], ["arn:aws:s3:::@ANCHOR_BUCKET@/@ANCHOR_WRITE_PREFIX@*"])
+
+    def test_events_key_adds_events_plans_and_results_only(self):
+        """P1-T22c (Q-K91): the events key adds under anchors/ihr-events/ and
+        anchors/ihr-restores/ only; never reads, lists or deletes."""
+        e = self.identity("ihr-anchor-events")
+        self.assertNotIn("actions", e)
+        self.assertEqual(e["policyNames"], ["ihr-anchor-events"])
+        st = self.policy("ihr-anchor-events")["Statement"]
+        self.assertEqual(len(st), 1)
+        self.assertEqual(st[0]["Action"], ["s3:PutObject"])
+        self.assertEqual(
+            st[0]["Resource"],
+            ["arn:aws:s3:::@ANCHOR_BUCKET@/anchors/ihr-events/*", "arn:aws:s3:::@ANCHOR_BUCKET@/anchors/ihr-restores/*"],
+        )
+
+    def test_writer_scoped_only_with_an_events_key(self):
+        """start.sh: with the events key the writer's prefix is anchors/<suffix>/ (the suffix is
+        required); without one the identity gets a random key nobody holds and the writer keeps
+        anchors/ (the transition, said in the runbook)."""
+        rendered = {}
+        for events_key in ("", "ihr0123456789abcdef0123"):
+            with tempfile.TemporaryDirectory() as d:
+                tmpl = Path(d) / "s3.template.json"
+                tmpl.write_text((S3 / "s3.template.json").read_text())
+                script = START.split("# shellcheck disable=SC2086", 1)[0]
+                script = script.replace("/etc/seaweedfs/s3.template.json", str(tmpl)).replace("/tmp/s3.json", str(Path(d) / "out.json"))
+                env = {"PATH": os.environ["PATH"], "IHR_S3_ANCHOR_SUFFIX": "app.example.in"}
+                for k in START.split('KEYS="', 1)[1].split('"', 1)[0].split():
+                    env[k] = "ihr" + "a1" * 10
+                for b in START.split('BUCKETS="', 1)[1].split('"', 1)[0].split():
+                    env[b] = "bucket-" + b.lower().replace("_", "-")[7:]
+                env.pop("IHR_S3_ANCHOR_EVENTS_KEY")
+                env.pop("IHR_S3_ANCHOR_EVENTS_SECRET")
+                if events_key:
+                    env["IHR_S3_ANCHOR_EVENTS_KEY"] = events_key
+                    env["IHR_S3_ANCHOR_EVENTS_SECRET"] = "b2" * 20
+                out = subprocess.run(["sh", "-c", script], env=env, capture_output=True, text=True, timeout=30)
+                self.assertEqual(out.returncode, 0, out.stderr)
+                rendered[bool(events_key)] = json.loads((Path(d) / "out.json").read_text())
+                if events_key:
+                    env.pop("IHR_S3_ANCHOR_SUFFIX")
+                    out = subprocess.run(["sh", "-c", script], env=env, capture_output=True, text=True, timeout=30)
+                    self.assertNotEqual(out.returncode, 0)
+                    self.assertIn("IHR_S3_ANCHOR_SUFFIX", out.stderr)
+
+        def writer(doc):
+            pol = next(p for p in doc["policies"] if p["name"] == "ihr-anchor-write")
+            return json.loads(pol["content"])["Statement"][0]["Resource"]
+
+        self.assertEqual(writer(rendered[True]), ["arn:aws:s3:::bucket-anchor-bucket/anchors/app.example.in/*"])
+        self.assertEqual(writer(rendered[False]), ["arn:aws:s3:::bucket-anchor-bucket/anchors/*"])
+        events = next(i for i in rendered[False]["identities"] if i["name"] == "ihr-anchor-events")
+        self.assertNotEqual(events["credentials"][0]["accessKey"], "ihr" + "a1" * 10)
+
+    def test_the_events_key_never_reaches_a_server_or_a_container(self):
+        self.assertIn("--exclude=secrets/anchor-events.env", DEPLOY_SH)
+        for doc in (STAGING_COMPOSE_TEXT, STAGING_MONITORING_TEXT):
+            self.assertNotIn("anchor-events.env", doc)
+        self.assertIn("IHR_S3_ANCHOR_SUFFIX: ${IHR_TENANT_DOMAIN_SUFFIX:?}", (STAGING / "compose.s3.yaml").read_text())
 
     def test_reader_may_only_read(self):
         r = self.identity("ihr-anchor-reader")

@@ -358,9 +358,13 @@ remote "mkdir -p -m 700 $REL_REMOTE && (umask 077 && cat > $REL_REMOTE/stack-$TA
 
 # ---- 4. Site settings and secrets, mode 600, through the SSH connection only -----------------
 log "Sending .env and secrets/ from $ENV_DIR (mode 600)"
-# Not the workers' Keycloak secrets of before P1-T8d2: they sign with keys made on the server
+# Not the workers' Keycloak secrets of before P1-T8d2: they sign with keys made on the server.
+# Never the events key's file (P1-T22c, Q-K91): the owner's, for restore one-offs only (exported
+# in the owner's shell on the server). With IHR_S3=local the gateway's own identity file
+# (s3-gateway.env, sent) must hold its secret to check it: on the server's disk then, never in an
+# app container's env (deploy/staging/README.md, "The events key")
 # now, and an old copy left here must not travel again (delete it: deploy/staging/README.md)
-tar -C "$ENV_DIR" --exclude=secrets/provisioner.env --exclude=secrets/staff-worker.env -cf - .env secrets \
+tar -C "$ENV_DIR" --exclude=secrets/provisioner.env --exclude=secrets/staff-worker.env --exclude=secrets/anchor-events.env -cf - .env secrets \
   | remote "umask 077 && mkdir -p $REMOTE_ROOT/deploy/staging \
       && tar -C $REMOTE_ROOT/deploy/staging --no-same-owner -xf - \
       && chmod 700 $REMOTE_ROOT/deploy/staging/secrets \

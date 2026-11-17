@@ -47,6 +47,7 @@ deploy/dev/staff-worker.env
 deploy/dev/client-keys/
 deploy/dev/audit-anchor-read.env
 deploy/dev/audit-anchor-write.env
+deploy/dev/audit-anchor-events.env
 deploy/dev/s3-gateway.env
 deploy/dev/s3-care.env
 # The combined CARE key P1-T20b retired (dead; kept for the live check)
@@ -63,6 +64,8 @@ deploy/staging/generated/
 deploy/staging/releases/
 # A single-hospital restore's package while it runs (P1-T22b): personal data, never committed
 deploy/staging/restore/
+# A whole-database restore's exported audit tails (P1-T22c): personal data, never committed
+deploy/staging/supersede/
 
 # OpenTofu (P1-T8b4): providers, state, plans and real settings never go into git
 infra/**/.terraform/

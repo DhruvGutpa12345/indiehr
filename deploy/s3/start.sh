@@ -18,6 +18,7 @@ CONFIG=/tmp/s3.json
 KEYS="IHR_S3_ADMIN_KEY IHR_S3_ADMIN_SECRET IHR_S3_FILES_KEY IHR_S3_FILES_SECRET
 IHR_S3_PICTURES_KEY IHR_S3_PICTURES_SECRET
 IHR_S3_ANCHOR_WRITE_KEY IHR_S3_ANCHOR_WRITE_SECRET IHR_S3_ANCHOR_READ_KEY IHR_S3_ANCHOR_READ_SECRET
+IHR_S3_ANCHOR_EVENTS_KEY IHR_S3_ANCHOR_EVENTS_SECRET
 IHR_S3_BACKUP_KEY IHR_S3_BACKUP_SECRET IHR_S3_LOGS_ARCHIVE_KEY IHR_S3_LOGS_ARCHIVE_SECRET
 IHR_S3_DUMPS_KEY IHR_S3_DUMPS_SECRET"
 BUCKETS="IHR_S3_PATIENT_BUCKET IHR_S3_FACILITY_BUCKET IHR_S3_ANCHOR_BUCKET IHR_S3_BACKUP_BUCKET IHR_S3_LOGS_ARCHIVE_BUCKET
@@ -28,6 +29,21 @@ IHR_S3_DUMPS_BUCKET"
 if [ -z "${IHR_S3_DUMPS_KEY:-}" ]; then
   IHR_S3_DUMPS_KEY="ihr$(od -An -N10 -tx1 /dev/urandom | tr -d ' \n')"
   IHR_S3_DUMPS_SECRET="$(od -An -N20 -tx1 /dev/urandom | tr -d ' \n')"
+fi
+# The events key (P1-T22c, Q-K91): restore and offboarding events and whole-database restore plans
+# and results, under anchors/ihr-events/ and anchors/ihr-restores/ only. Where it exists, Celery's
+# fingerprint writer adds under anchors/<platform suffix>/ only (IHR_S3_ANCHOR_SUFFIX). Where it
+# does not (a site set up before P1-T22c), the identity gets a random key nobody holds and the
+# writer keeps anchors/ (it then also writes the events: no boundary, the runbook says so)
+if [ -n "${IHR_S3_ANCHOR_EVENTS_KEY:-}" ]; then
+  case "${IHR_S3_ANCHOR_SUFFIX:-}" in
+    ""|*[!a-z0-9.-]*|.*|*..*) echo "s3: IHR_S3_ANCHOR_SUFFIX missing or not a domain (the events key needs it)" >&2; exit 1 ;;
+  esac
+  ANCHOR_WRITE_PREFIX="anchors/$IHR_S3_ANCHOR_SUFFIX/"
+else
+  IHR_S3_ANCHOR_EVENTS_KEY="ihr$(od -An -N10 -tx1 /dev/urandom | tr -d ' \n')"
+  IHR_S3_ANCHOR_EVENTS_SECRET="$(od -An -N20 -tx1 /dev/urandom | tr -d ' \n')"
+  ANCHOR_WRITE_PREFIX="anchors/"
 fi
 x=""
 for v in $KEYS; do
@@ -54,6 +70,8 @@ sed -e "s|@ADMIN_KEY@|$IHR_S3_ADMIN_KEY|g" -e "s|@ADMIN_SECRET@|$IHR_S3_ADMIN_SE
     -e "s|@PICTURES_KEY@|$IHR_S3_PICTURES_KEY|g" -e "s|@PICTURES_SECRET@|$IHR_S3_PICTURES_SECRET|g" \
     -e "s|@ANCHOR_WRITE_KEY@|$IHR_S3_ANCHOR_WRITE_KEY|g" -e "s|@ANCHOR_WRITE_SECRET@|$IHR_S3_ANCHOR_WRITE_SECRET|g" \
     -e "s|@ANCHOR_READ_KEY@|$IHR_S3_ANCHOR_READ_KEY|g" -e "s|@ANCHOR_READ_SECRET@|$IHR_S3_ANCHOR_READ_SECRET|g" \
+    -e "s|@ANCHOR_EVENTS_KEY@|$IHR_S3_ANCHOR_EVENTS_KEY|g" -e "s|@ANCHOR_EVENTS_SECRET@|$IHR_S3_ANCHOR_EVENTS_SECRET|g" \
+    -e "s|@ANCHOR_WRITE_PREFIX@|$ANCHOR_WRITE_PREFIX|g" \
     -e "s|@PATIENT_BUCKET@|$IHR_S3_PATIENT_BUCKET|g" -e "s|@FACILITY_BUCKET@|$IHR_S3_FACILITY_BUCKET|g" \
     -e "s|@BACKUP_KEY@|$IHR_S3_BACKUP_KEY|g" -e "s|@BACKUP_SECRET@|$IHR_S3_BACKUP_SECRET|g" \
     -e "s|@BACKUP_BUCKET@|$IHR_S3_BACKUP_BUCKET|g" \

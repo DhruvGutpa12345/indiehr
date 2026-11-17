@@ -220,6 +220,46 @@ groups:
         annotations:
           summary: "{{ $value | printf \"%.0f\" }} restore or offboarding event object(s) in the bucket are not ours or were written twice"
 
+      # P1-T22c (Q-K89): the database's timeline changed (a whole-database restore, a failover,
+      # pg_upgrade or a server move) and no whole-database restore's result explains it: a
+      # restore nobody announced. Critical at once: the hourly fingerprints may hide nothing yet
+      - alert: AuditDatabaseRestoredUnannounced
+        expr: ihr_audit_timeline_unexplained > 0
+        labels:
+          severity: critical
+          service: audit-watch
+        annotations:
+          summary: "The database's timeline changed and no whole-database restore's result explains it: was the database restored without staging.sh rollback --restore?"
+
+      # P1-T22c1 review Q7/T5: a whole-database restore's plan with no result for a day on the
+      # timeline it was made on (a rollback that stopped before the restore and was not run
+      # again); a result the timeline chain does not anchor (its events excuse nothing); a
+      # result whose timeline change the watch's own history cannot judge (a watch that never
+      # saw the old timeline: S2 then rests on the bucket alone). Warnings: look, then record
+      - alert: AuditRestorePlanAbandoned
+        expr: ihr_audit_restore_plans_abandoned > 0
+        labels:
+          severity: warning
+          service: audit-watch
+        annotations:
+          summary: "{{ $value | printf \"%.0f\" }} whole-database restore plan(s) have had no result for a day and the database never left their timeline: run rollback --restore again, or record the stopped rollback (deploy/staging/README.md, Whole-database restores)"
+
+      - alert: AuditWholeRestoreUnanchored
+        expr: ihr_audit_whole_restores_unanchored > 0
+        labels:
+          severity: warning
+          service: audit-watch
+        annotations:
+          summary: "{{ $value | printf \"%.0f\" }} whole-database restore result(s) are not anchored to the database's timeline: their events excuse nothing (ihr_audit_verify --all names why)"
+
+      - alert: AuditWholeRestoreUncorroborated
+        expr: ihr_audit_whole_restores_uncorroborated > 0
+        labels:
+          severity: warning
+          service: audit-watch
+        annotations:
+          summary: "{{ $value | printf \"%.0f\" }} whole-database restore(s) whose timeline change the audit watch never saw (its history starts after it): confirm the restore id against releases.log"
+
   - name: audit-sealing
     rules:
       # Finished entries waiting with no new seal (A6): a seal resets it, a long transaction

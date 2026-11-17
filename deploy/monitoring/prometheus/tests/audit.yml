@@ -582,3 +582,70 @@ tests:
           - exp_labels: {severity: warning, service: audit-watch, job: audit-watch}
             exp_annotations:
               summary: "The audit watch has no checkpoint for 2 hospital(s) and cannot seed one while the fingerprints are unreadable"
+
+  - name: a database timeline change no restore's result explains (P1-T22c)
+    interval: 1m
+    input_series:
+      - series: 'ihr_audit_timeline_unexplained{job="audit-watch"}'
+        values: '0x9 1x9 0x9'
+    alert_rule_test:
+      - eval_time: 5m
+        alertname: AuditDatabaseRestoredUnannounced
+        exp_alerts: []
+      - eval_time: 12m
+        alertname: AuditDatabaseRestoredUnannounced
+        exp_alerts:
+          - exp_labels: {severity: critical, service: audit-watch, job: audit-watch}
+            exp_annotations:
+              summary: "The database's timeline changed and no whole-database restore's result explains it: was the database restored without staging.sh rollback --restore?"
+      - eval_time: 25m
+        alertname: AuditDatabaseRestoredUnannounced
+        exp_alerts: []
+
+  - name: two unexplained timeline changes still alert (P1-T22c1 review T7)
+    interval: 1m
+    input_series:
+      - series: 'ihr_audit_timeline_unexplained{job="audit-watch"}'
+        values: '2x9'
+    alert_rule_test:
+      - eval_time: 5m
+        alertname: AuditDatabaseRestoredUnannounced
+        exp_alerts:
+          - exp_labels: {severity: critical, service: audit-watch, job: audit-watch}
+            exp_annotations:
+              summary: "The database's timeline changed and no whole-database restore's result explains it: was the database restored without staging.sh rollback --restore?"
+
+  - name: abandoned plans, unanchored and uncorroborated results (P1-T22c1 review Q7, T5)
+    interval: 1m
+    input_series:
+      - series: 'ihr_audit_restore_plans_abandoned{job="audit-watch"}'
+        values: '0x4 1x5'
+      - series: 'ihr_audit_whole_restores_unanchored{job="audit-watch"}'
+        values: '0x4 2x5'
+      - series: 'ihr_audit_whole_restores_uncorroborated{job="audit-watch"}'
+        values: '0x4 1x5'
+    alert_rule_test:
+      - eval_time: 2m
+        alertname: AuditRestorePlanAbandoned
+        exp_alerts: []
+      - eval_time: 7m
+        alertname: AuditRestorePlanAbandoned
+        exp_alerts:
+          - exp_labels: {severity: warning, service: audit-watch, job: audit-watch}
+            exp_annotations:
+              summary: "1 whole-database restore plan(s) have had no result for a day and the database never left their timeline: run rollback --restore again, or record the stopped rollback (deploy/staging/README.md, Whole-database restores)"
+      - eval_time: 2m
+        alertname: AuditWholeRestoreUnanchored
+        exp_alerts: []
+      - eval_time: 7m
+        alertname: AuditWholeRestoreUnanchored
+        exp_alerts:
+          - exp_labels: {severity: warning, service: audit-watch, job: audit-watch}
+            exp_annotations:
+              summary: "2 whole-database restore result(s) are not anchored to the database's timeline: their events excuse nothing (ihr_audit_verify --all names why)"
+      - eval_time: 7m
+        alertname: AuditWholeRestoreUncorroborated
+        exp_alerts:
+          - exp_labels: {severity: warning, service: audit-watch, job: audit-watch}
+            exp_annotations:
+              summary: "1 whole-database restore(s) whose timeline change the audit watch never saw (its history starts after it): confirm the restore id against releases.log"

@@ -110,6 +110,18 @@ class Lines(unittest.TestCase):
         with self.assertRaises(rl.LogError):
             rl.parse_words([w for w in good if not w.startswith("keycloak=")])  # all four images
 
+    def test_a_rollback_with_a_restore_names_its_whole_database_restore(self):
+        """P1-T22c: supersede=<restore id|none>, on a rollback with a restore only."""
+        rid = "0b3c2d1e-4f5a-4b6c-8d7e-9f0a1b2c3d4e"
+        base = ["kind=rollback", f"tag={A}", f"from={RUNNING}", f"restored={point(RUNNING)}", "time=2026-11-17T10:00:00+05:30"]
+        for value in (rid, "none"):
+            self.assertEqual(rl.parse_words([*base, f"supersede={value}"])["supersede"], value)
+        for bad in ("x", rid.upper(), "0b3c2d1e-4f5a-1b6c-8d7e-9f0a1b2c3d4e"):
+            with self.assertRaises(rl.LogError, msg=bad):
+                rl.parse_words([*base, f"supersede={bad}"])
+        with self.assertRaises(rl.LogError):
+            rl.parse_words([*base[:3], "restored=no", base[4], f"supersede={rid}"])
+
     def test_restore_point_names_are_unique_per_window(self):
         """D4/O9: release-<tag>-<epoch> (Postgres stops at the first point of a name); the name
         a pre-review line has still reads; staging.sh makes and restores exactly these."""
@@ -461,6 +473,94 @@ class RollbackScript(unittest.TestCase):
         self.assertEqual(body.count('names="'), 1)
         self.assertIn('rel_point_images "$names" "$plan"', body)
         self.assertIn('[[ -n "$target" && "$leave" != "$target" ]] || die', body)  # D1
+
+    def test_audit_tails_exported_before_and_loaded_after_the_restore(self):
+        """P1-T22c (flow a): after the typed tag, every hospital held, the workers stopped,
+        drained, sealed with the build being left, the tails exported and the plan written;
+        only then down and the restore; the load before up, logged with the restore id."""
+        body = func("rollback")
+        order = [
+            'read -r answer <&8',
+            'old_manage ihr_fleet_run hold --operator "$op"',
+            'compose stop "${REL_WORKERS[@]}"',
+            'rel_drain "$hold_at"',
+            'rel_seal "$(running_backend_id)"',
+            'supersede_export "$rp" "$rp_time" "$op"',
+            # review E1/Q2: the absent check on the export's draft, then the write-once plan
+            'absent="$(sup_absent "$sup")"',
+            '((accept_absent == 0))',
+            'supersede_plan "$sup" "$op"',
+            'compose down',
+            # review Q4: the rollback's own holds go with the database being replaced
+            'rm -f "$REL_ROLLBACK_HOLD"',
+            'restore_live --target-name "$rp"',
+            '"supersede=$sup"',
+            'rel_point_images "backend frontend keycloak acmedns grafana" "$plan"',
+            'supersede_load "$sup" "$op"',
+            '"$ROOT/scripts/staging.sh" up',
+        ]
+        at = [body.index(s) for s in order[:-1]] + [body.rindex(order[-1])]  # the restore's up
+        self.assertEqual(at, sorted(at), order)
+        self.assertIn("REL_RB_STAGE=5", body)
+        # its own holds are accepted by a run again (F1); the marker goes with a finished rollback
+        self.assertIn('-f "$REL_ROLLBACK_HOLD"', body)
+        self.assertIn('rm -f "$REL_ROLLBACK_HOLD"', body)
+        # hospitals made after the point: refused without --accept-absent (F6)
+        self.assertIn("((accept_absent == 0))", body)
+        export = func("supersede_export")
+        # the export as the watch's read-only role; the plan only in supersede_plan, the
+        # owner's one-off, after the rollback's checks of the draft (review E1/Q2)
+        self.assertIn("audit-supersede", export)
+        self.assertNotIn("ihr_audit_supersede plan", export)
+        self.assertIn("sup_image_ok", export)
+        plan = func("supersede_plan")
+        self.assertIn("ihr_audit_supersede plan", plan)
+        self.assertIn('"$dir/planned"', plan)
+
+    def test_a_fleet_release_ends_a_stopped_rollbacks_hold_marker(self):
+        """P1-T22c1 review Q4: the marker that lets a second rollback --restore accept its own
+        holds is ended by serving the hospitals again (fleet release), and by the restore."""
+        dispatch = STAGING_SH.split('\n  fleet)\n', 1)[1].split(" ;;\n", 1)[0]
+        self.assertIn('[[ "${2:-}" != release ]] || rm -f "$REL_ROLLBACK_HOLD"', dispatch)
+        body = func("rollback")
+        self.assertLess(body.index('rm -f "$REL_ROLLBACK_HOLD"'), body.index("restore_live --target-name"))
+        self.assertGreater(body.index('rm -f "$REL_ROLLBACK_HOLD"'), body.index("REL_RB_STAGE=3"))
+
+    def test_hospital_restore_passes_the_events_key(self):
+        """P1-T22c1 review Q1: once a site has the events key the gateway refuses events from
+        the fingerprint writer, so a single-hospital restore's event needs the events key."""
+        keys = func("restore_keys")
+        self.assertIn('"$SECRETS/anchor-events.env"', keys)
+        self.assertIn("restore_envs+=(-e IHR_AUDIT_ANCHOR_EVENTS_KEY -e IHR_AUDIT_ANCHOR_EVENTS_SECRET)", keys)
+
+    def test_a_restore_removes_its_containers_when_it_ends(self):
+        """P1-T22c live proof: rollback replaces restore_live's EXIT trap on return, so the
+        restore's own containers were left behind and a second rollback --restore stopped on
+        their names. restore_live removes them itself after recovery."""
+        body = func("restore_live")
+        self.assertGreater(body.rindex("docker rm -f ihr-restore ihr-restore-spool ihr-restore-recovery"),
+                           body.index("wait_promoted ihr-restore-recovery"))
+
+    def test_the_trap_names_the_audit_load(self):
+        trap = func("rel_rollback_exit")
+        self.assertIn("5) echo \"ROLLBACK STOPPED BEFORE THE RESTORE", trap)
+        self.assertIn("audit-supersede load $REL_RB_SUP", trap)
+        for stage in ("3)", "4)"):
+            line = next(x for x in trap.splitlines() if x.strip().startswith(stage))
+            self.assertIn("${load}", line)
+        self.assertIn("/abandoned", trap)
+        # review Q8: stage 5 says whether the hold took, and that a written plan stays
+        line = next(x for x in trap.splitlines() if x.strip().startswith("5)"))
+        self.assertIn("$held", line)
+        self.assertNotIn("every hospital is held", line)
+        self.assertIn('failed) held="the hold FAILED', trap)
+        self.assertIn("plan stays in the fingerprint bucket", trap)
+        body = func("rollback")
+        self.assertIn("REL_RB_HELD=failed", body)
+
+    def test_up_warns_while_a_load_is_pending(self):
+        self.assertIn("sup_pending", func("up"))
+        self.assertNotIn("sup_pending", func("up").split("WARNING", 1)[0].split("for pend")[0])
 
     def test_target_images_checked_before_any_change(self):
         """D5: every target image is checked before the question and `down`; the tags are never

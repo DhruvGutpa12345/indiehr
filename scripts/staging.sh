@@ -14,7 +14,10 @@
 #                                                the new images in the announced window (P1-T18b):
 #                                                hold all, stop workers, drain, seal, restore point,
 #                                                migrate, start, smoke every hospital, log it
-#   scripts/staging.sh rollback [--restore] [--operator NAME]
+#   scripts/staging.sh rollback [--restore [--accept-absent]] [--operator NAME]
+#   scripts/staging.sh audit-supersede load <id> [--operator NAME] [--image REF] | status <id> [--json] | pending
+#                                                a whole-database restore's audit tails (P1-T22c)
+#   scripts/staging.sh s3-events-key             the events key for this folder's own stand-in (P1-T22c)
 #                                                back to the release before (--restore: to the
 #                                                restore point of the one left; loses later writes)
 #   scripts/staging.sh releases                  the logged releases in force, newest last
@@ -815,6 +818,12 @@ up() {  # up [--new-database]: the flag only where an empty database is really m
   fi
   compose up -d --wait db redis
   touch "$DIR/.db-created"
+  # A whole-database restore whose audit load has not finished (P1-T22c, F9): warned, never waited
+  # for (the audit watch reports the cut until it has run)
+  local pend
+  for pend in $(sup_pending); do
+    echo "WARNING: whole-database restore $pend has no result yet: run scripts/staging.sh audit-supersede load $pend --operator <you> (before this start, if you can)" >&2
+  done
   # The database's two roles (P1-T19b), re-asserted as postgres at every start: passwords from
   # the secrets, no stored settings in any database, no memberships, large objects closed (a
   # role may ALTER ROLE itself: design.md, known limit 1). A database of the single role is
@@ -1304,6 +1313,9 @@ restore_live() {  # restore [--target T | --target-name NAME [--set LABEL]]: a l
   docker stop -t 60 ihr-restore-recovery >/dev/null
   docker run --rm --user 70:70 --network none -v "$vol:/var/lib/postgresql" --entrypoint sh \
     "$(env_get IHR_POSTGRES_IMAGE)" -c 'rm -f /var/lib/postgresql/.ihr-restore-incomplete'
+  # Its containers go now too: inside a rollback the trap above is replaced on return, and a later
+  # restore on this host would find their names taken (P1-T22c live proof: a second rollback)
+  docker rm -f ihr-restore ihr-restore-spool ihr-restore-recovery >/dev/null 2>&1 || true
   echo "Restored. Next: scripts/staging.sh up (it pushes the new timeline), then scripts/staging.sh backup-now full"
 }
 
@@ -2025,18 +2037,198 @@ release_finish() {  # release_finish <operator> [--checked]: close the window an
   compose run --rm --no-deps -T migrate python manage.py ihr_fleet_run window --clear --operator "$op"
 }
 
+# ---- A whole-database restore and the audit chain (P1-T22c1; docs/reviews/p1-t22c/design.md) --
+# Before `rollback --restore` replaces the database, every hospital's audit tail after the restore
+# point is exported (the audit watch's read-only role) and a plan written to the fingerprint
+# bucket; after the restore, before `up`, the tails are archived back and a restore event per
+# hospital written (ihr_audit/supersede.py), so the audit watch and ihr_audit_verify accept the
+# cut instead of alerting for good. Each restore has its folder $DIR/supersede/<id>/ (mode 700:
+# export.tar holds audit entries, personal data, as the copy of the database beside it does;
+# state; loaded once the result is written).
+SUPERSEDE_DIR="$DIR/supersede"
+SUP_TAG=ihr-supersede
+SUP_RE='^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$'
+supersede_wanted() {  # fingerprints are written here (else there is nothing to account for)
+  grep -q '^IHR_AUDIT_ANCHOR_WRITE_KEY=.' "$SECRETS/anchor-write.env" 2>/dev/null
+}
+supersede_keys() {  # sets sup_envs: the reader key and the events key for one owner one-off.
+  # The events key (Q-K91) is the owner's: secrets/anchor-events.env in a local proof; on a
+  # server IHR_AUDIT_ANCHOR_EVENTS_KEY/_SECRET exported in the owner's shell (never in an app
+  # container's env; with IHR_S3=local the gateway's identity file holds its secret: README).
+  # Without one, the fingerprint writer's key adds the events (a site set up before P1-T22c: no
+  # boundary from Celery, which holds that key; said, never silent)
+  local f k v
+  sup_envs=()
+  for f in "$SECRETS/anchor-read.env" "$SECRETS/anchor-events.env"; do
+    [[ -f "$f" ]] || continue
+    while IFS='=' read -r k v; do
+      if [[ "$k" =~ ^IHR_AUDIT_ANCHOR_[A-Z_]+$ ]]; then export "$k=$v"; fi
+    done < "$f"
+  done
+  if [[ -z "${IHR_AUDIT_ANCHOR_EVENTS_KEY:-}" ]]; then
+    echo "WARNING: no events key here (secrets/anchor-events.env, or IHR_AUDIT_ANCHOR_EVENTS_KEY/_SECRET in this shell): the restore's events go with the fingerprint writer's key, which Celery holds too (Q-K91: not a security boundary until s3-events-key or the provider's events key is set up)" >&2
+    while IFS='=' read -r k v; do
+      if [[ "$k" =~ ^IHR_AUDIT_ANCHOR_WRITE_(KEY|SECRET)$ ]]; then export "$k=$v"; fi
+    done < "$SECRETS/anchor-write.env"
+  fi
+  for k in IHR_AUDIT_ANCHOR_ENDPOINT IHR_AUDIT_ANCHOR_BUCKET IHR_AUDIT_ANCHOR_REGION IHR_AUDIT_ANCHOR_LOCK_MODE \
+    IHR_AUDIT_ANCHOR_READ_KEY IHR_AUDIT_ANCHOR_READ_SECRET IHR_AUDIT_ANCHOR_EVENTS_KEY IHR_AUDIT_ANCHOR_EVENTS_SECRET \
+    IHR_AUDIT_ANCHOR_WRITE_KEY IHR_AUDIT_ANCHOR_WRITE_SECRET; do
+    [[ -z "${!k:-}" ]] || sup_envs+=(-e "$k")
+  done
+}
+sup_image_ok() {  # sup_image_ok <image>: it has the tool (a build of P1-T22c or later)
+  docker run --rm --network none --entrypoint python "$1" -c 'import ihr_audit.supersede' >/dev/null 2>&1
+}
+sup_get() { sed -n "s/^$2=//p" "$SUPERSEDE_DIR/$1/state" 2>/dev/null | tail -1; }
+sup_pending() {  # the restores exported here whose load has not written its result
+  local d
+  for d in "$SUPERSEDE_DIR"/*/; do
+    [[ -d "$d" && -f "$d/state" && ! -f "$d/loaded" && ! -f "$d/abandoned" ]] || continue
+    basename "$d"
+  done
+}
+sup_absent() {  # sup_absent <id>: the slugs the plan's draft calls absent (made after the point)
+  tar -xOf "$SUPERSEDE_DIR/$1/export.tar" plan.json 2>/dev/null | python3 -c '
+import json, sys
+doc = json.load(sys.stdin)
+print(" ".join(sorted(h["slug"] for h in doc["hospitals"].values() if h["outcome"] == "absent")))'
+}
+supersede_export() {  # supersede_export <restore point> <its epoch> <operator>: sets SUP_ID (or
+  # none: the leaving build has no tool). The export with the running database (old_manage's
+  # image: the build being left); the plan (supersede_plan) only after the export's draft passed
+  # the rollback's own checks (absent hospitals: review E1/Q2), a plan being write-once
+  local point="$1" at="$2" op="$3" img repo id dir
+  SUP_ID=none
+  img="$(image_id "$(env_get IHR_BACKEND_IMAGE)")"
+  if ! sup_image_ok "$img"; then
+    echo "WARNING: the build being left has no ihr_audit_supersede (it is older than P1-T22c): no restore events; the audit watch will report every hospital sealed since the point as cut (record it as an incident)" >&2
+    return 0
+  fi
+  id="$(python3 -c 'import uuid; print(uuid.uuid4())')"
+  dir="$SUPERSEDE_DIR/$id"
+  (umask 077; mkdir -p "$dir")
+  chmod 700 "$SUPERSEDE_DIR" "$dir"
+  repo="$(repo_of "$(env_get IHR_BACKEND_IMAGE)"):$SUP_TAG"
+  docker tag "$img" "$repo"
+  (umask 077; printf 'id=%s\nimage=%s\npoint=%s\npoint_time=%s\noperator=%s\n' "$id" "$img" "$point" "$at" "$op" > "$dir/state")
+  echo "== Exporting every hospital's audit tail after $point (restore $id; the audit watch's read-only role)"
+  (umask 077; IHR_BACKEND_IMAGE="$repo" compose --profile admin run --rm --no-deps -T audit-supersede \
+    export --restore-id "$id" --point "$point" --point-time "$at" --image "$img" --operator "$op" > "$dir/export.tar") \
+    || die "the audit export failed (above): nothing was restored"
+  SUP_ID="$id"
+}
+supersede_plan() {  # supersede_plan <id> <operator>: the plan, written once to the fingerprint
+  # bucket, before anything is replaced. From here on the plan stays (write-once): a rollback
+  # that stops before the restore is run again (its next plan, from the same timeline, with a
+  # result, supersedes this one: events.Events.superseded_plan)
+  local id="$1" op="$2" repo dir="$SUPERSEDE_DIR/$1"
+  repo="$(repo_of "$(env_get IHR_BACKEND_IMAGE)"):$SUP_TAG"
+  echo "== The plan (the fingerprint bucket, write-once)"
+  # (a subshell: the events key is exported for this one-off only, never kept in this shell)
+  ( supersede_keys
+    IHR_BACKEND_IMAGE="$repo" compose run --rm --no-deps -T ${sup_envs[@]+"${sup_envs[@]}"} migrate \
+      python manage.py ihr_audit_supersede plan "$id" --operator "$op" < "$dir/export.tar" ) \
+    || die "the restore's plan could not be written (above): nothing was restored"
+  (umask 077; date -Iseconds > "$dir/planned")
+}
+supersede_load() {  # supersede_load <id> <operator> [image]: the restored database (running), the
+  # owner's one-off of the image the export ran from (or, after a fix, a newer build of the tool
+  # the operator names: recorded in state); then the result. Run again after a failure
+  local id="$1" op="$2" img repo dir="$SUPERSEDE_DIR/$1"
+  [[ "$id" =~ $SUP_RE && -f "$dir/state" && -f "$dir/export.tar" ]] || die "no exported restore $id here ($dir)"
+  img="$(sup_get "$id" image)"
+  if [[ -n "${3:-}" ]]; then
+    img="$(image_id "$3")" || die "no image $3"
+    sup_image_ok "$img" || die "$3 has no ihr_audit_supersede"
+    (umask 077; echo "load_image=$img" >> "$dir/state")
+  fi
+  docker image inspect "$img" >/dev/null 2>&1 || die "the image the export ran from ($img) is no longer here: load needs the same tool"
+  repo="$(repo_of "$(env_get IHR_BACKEND_IMAGE)"):$SUP_TAG"
+  docker tag "$img" "$repo"
+  echo "== Loading the audit tails back (restore $id)"
+  ( supersede_keys
+    IHR_BACKEND_IMAGE="$repo" compose run --rm --no-deps -T ${sup_envs[@]+"${sup_envs[@]}"} migrate \
+      python manage.py ihr_audit_supersede load "$id" --operator "$op" < "$dir/export.tar" ) || return 1
+  (umask 077; date -Iseconds > "$dir/loaded")
+}
+audit_supersede_cmd() {  # audit-supersede load <id> [--operator NAME] [--image REF] | status <id> [--json] | pending
+  local action="${1:-}" id="${2:-}" op="" json=() repo image=""
+  shift 2 2>/dev/null || shift $#
+  while (($#)); do
+    case "$1" in
+      --operator) op="${2:?--operator NAME}"; shift ;;
+      --image) image="${2:?--image REF}"; shift ;;
+      --json) json=(--json) ;;
+      *) die "usage: scripts/staging.sh audit-supersede load <id> [--operator NAME] | status <id> [--json] | pending" ;;
+    esac
+    shift
+  done
+  case "$action" in
+    pending) sup_pending; return 0 ;;
+    load|status) [[ "$id" =~ $SUP_RE ]] || die "a restore id (uuid) please" ;;
+    *) die "usage: scripts/staging.sh audit-supersede load <id> [--operator NAME] | status <id> [--json] | pending" ;;
+  esac
+  if [[ "$action" == load ]]; then
+    rel_lock
+    [[ -n "$(compose ps -q db 2>/dev/null || true)" ]] || compose up -d --wait db redis
+    supersede_load "$id" "$(rel_operator "$op")" "$image" || die "the load did not finish (above): fix the cause and run it again (each step is checked before it is done)"
+    return 0
+  fi
+  repo="$(repo_of "$(env_get IHR_BACKEND_IMAGE)")"
+  if [[ -f "$SUPERSEDE_DIR/$id/state" ]] && docker image inspect "$(sup_get "$id" image)" >/dev/null 2>&1; then
+    docker tag "$(sup_get "$id" image)" "$repo:$SUP_TAG"; repo="$repo:$SUP_TAG"
+  else repo="$(env_get IHR_BACKEND_IMAGE)"; fi
+  IHR_BACKEND_IMAGE="$repo" compose --profile admin run --rm --no-deps -T audit-supersede status "$id" ${json[@]+"${json[@]}"}
+}
+s3_events_key() {  # s3-events-key: the events key (P1-T22c, Q-K91) for a stand-in set up before
+  # it, in this folder only (a proof; a server's key is made on the owner's machine and kept in the
+  # password manager). The gateway then lets Celery's writer add fingerprints only (`up` restarts it)
+  local f="$SECRETS/s3-gateway.env" k s
+  [[ "$(env_get IHR_S3)" == local ]] || die "s3-events-key is for this folder's own object storage (IHR_S3=local); a provider's events key is made in its console"
+  if ! grep -q '^IHR_S3_ANCHOR_EVENTS_KEY=' "$f"; then
+    k="ihr$(python3 -c 'import secrets;print(secrets.token_hex(10))')"; s="$(python3 -c 'import secrets;print(secrets.token_hex(20))')"
+    { cat "$f"; printf 'IHR_S3_ANCHOR_EVENTS_KEY=%s\nIHR_S3_ANCHOR_EVENTS_SECRET=%s\n' "$k" "$s"; } | write_secret s3-gateway.env.new
+    mv "$SECRETS/s3-gateway.env.new" "$f"
+  fi
+  k="$(sed -n 's/^IHR_S3_ANCHOR_EVENTS_KEY=//p' "$f")"; s="$(sed -n 's/^IHR_S3_ANCHOR_EVENTS_SECRET=//p' "$f")"
+  printf '# The events key (P1-T22c, Q-K91): owner-run restore one-offs only, never a container env_file\nIHR_AUDIT_ANCHOR_ENDPOINT=http://s3:8333\nIHR_AUDIT_ANCHOR_LOCK_MODE=COMPLIANCE\nIHR_AUDIT_ANCHOR_BUCKET=%s\nIHR_AUDIT_ANCHOR_EVENTS_KEY=%s\nIHR_AUDIT_ANCHOR_EVENTS_SECRET=%s\n' \
+    "$(env_get IHR_S3_ANCHOR_BUCKET)" "$k" "$s" | write_secret anchor-events.env
+  echo "Events key in secrets/anchor-events.env (mode 600). Restart the gateway: scripts/staging.sh up"
+}
+
 # The EXIT trap of rollback (globals). Stage 0: nothing changed; 1: images re-pointed (no
 # restore); 2: the stack stopped; 3: the database being replaced; 4: restored and logged (D5)
-REL_RB_STAGE="" REL_RB_PLAN="" REL_RB_TARGET="" REL_RB_RP="" REL_RB_SET="" REL_RB_ASIDE=""
+# 5 (P1-T22c): every hospital held, the workers stopped and the audit tails being exported; the
+# database unchanged (stage 2 follows it)
+REL_RB_STAGE="" REL_RB_PLAN="" REL_RB_TARGET="" REL_RB_RP="" REL_RB_SET="" REL_RB_ASIDE="" REL_RB_SUP=""
+REL_RB_HELD=""  # stage 5: held (every hospital held), failed (the hold failed), none (no backend ran)
+REL_ROLLBACK_HOLD="$DIR/releases/rollback-hold"
 rel_rollback_exit() {  # rel_rollback_exit <exit status>: where a rollback stopped, and the way on
-  local rc="$1"
+  local rc="$1" load="" held="" plan=""
   [[ -z "$REL_RB_PLAN" ]] || rm -f "$REL_RB_PLAN"
   ((rc != 0)) || return 0
+  # Before the database is replaced, an exported restore is never loaded: its folder is marked so
+  # `up` stops warning about it. A plan already written stays in the bucket (write-once): run
+  # rollback --restore again, whose plan from the same timeline, once it has its result,
+  # supersedes it; else the audit watch reports it after a day (AuditRestorePlanAbandoned)
+  if [[ -n "$REL_RB_SUP" && "$REL_RB_SUP" != none && ( "$REL_RB_STAGE" == 5 || "$REL_RB_STAGE" == 2 ) ]]; then
+    (umask 077; date -Iseconds > "$SUPERSEDE_DIR/$REL_RB_SUP/abandoned") 2>/dev/null || true
+    [[ ! -f "$SUPERSEDE_DIR/$REL_RB_SUP/planned" ]] \
+      || plan=" Restore $REL_RB_SUP's plan stays in the fingerprint bucket (write-once): run rollback --restore again to supersede it, or record the stopped rollback (AuditRestorePlanAbandoned after a day)."
+  fi
+  [[ -z "$REL_RB_SUP" || "$REL_RB_SUP" == none ]] || load="scripts/staging.sh audit-supersede load $REL_RB_SUP --operator <you> (before up: the restore's audit events, P1-T22c), "
+  case "$REL_RB_HELD" in
+    held) held="every hospital is held (503 upgrading) and the workers are stopped" ;;
+    failed) held="the hold FAILED (above): hospitals may still be served, check scripts/staging.sh fleet status; the workers are stopped" ;;
+    *) held="no backend ran, so nothing was held" ;;
+  esac
   case "$REL_RB_STAGE" in
+    5) echo "ROLLBACK STOPPED BEFORE THE RESTORE (exit $rc): $held; the database and the images are unchanged.${plan} Serve them again: scripts/staging.sh up, then scripts/staging.sh fleet release --operator <you>; or fix the cause and run scripts/staging.sh rollback --restore again (it accepts its own holds)" >&2 ;;
     1) echo "ROLLBACK DID NOT FINISH (exit $rc): this stack's images point at $REL_RB_TARGET; the database was not touched. Fix the cause (above) and run scripts/staging.sh rollback again: it does the same steps again" >&2 ;;
     2) echo "ROLLBACK STOPPED WITH THE STACK DOWN (exit $rc): the database and the images are unchanged. Start it again: scripts/staging.sh up (then fleet release and fleet window --clear if hospitals are held)" >&2 ;;
-    3) echo "ROLLBACK STOPPED DURING THE RESTORE (exit $rc): the stack is down and its database volume is being replaced (Postgres's tag points at $REL_RB_TARGET's image). Finish the restore: scripts/staging.sh restore --target-name $REL_RB_RP --set $REL_RB_SET --replace-database; then the remaining steps by hand (deploy/staging/README.md, Releases).${REL_RB_ASIDE:+ The database as it was is in volume $REL_RB_ASIDE.}" >&2 ;;
-    4) echo "ROLLBACK DID NOT FINISH (exit $rc): the database is restored to $REL_RB_RP and the rollback to $REL_RB_TARGET is logged; do not run rollback again. Finish by hand: scripts/staging.sh up, fleet release --operator <you>, fleet window --clear --operator <you>, smoke, backup-now full${REL_RB_ASIDE:+ (the database as it was: volume $REL_RB_ASIDE)}" >&2 ;;
+    3) echo "ROLLBACK STOPPED DURING THE RESTORE (exit $rc): the stack is down and its database volume is being replaced (Postgres's tag points at $REL_RB_TARGET's image). Finish the restore: scripts/staging.sh restore --target-name $REL_RB_RP --set $REL_RB_SET --replace-database; then ${load}the remaining steps by hand (deploy/staging/README.md, Releases).${REL_RB_ASIDE:+ The database as it was is in volume $REL_RB_ASIDE.}" >&2 ;;
+    4) echo "ROLLBACK DID NOT FINISH (exit $rc): the database is restored to $REL_RB_RP and the rollback to $REL_RB_TARGET is logged; do not run rollback again. Finish by hand: ${load}scripts/staging.sh up, fleet release --operator <you>, fleet window --clear --operator <you>, smoke, backup-now full${REL_RB_ASIDE:+ (the database as it was: volume $REL_RB_ASIDE)}" >&2 ;;
     *) echo "ROLLBACK STOPPED (exit $rc): nothing was changed" >&2 ;;
   esac
 }
@@ -2091,11 +2283,13 @@ rel_roles_guard() {  # rel_roles_guard <target tag>: never back to a release fro
 rollback() {  # rollback [--restore] [--operator NAME]: back to the release before the running one
   local restore=0 op="" running plan answer project="${IHR_PROJECT:-indiehr-staging}" t0
   local need free margin floor aside="" set leave target rp rp_time rp_of lsn keep_copy=0 names held
+  local accept_absent=0 sup=none absent hold_at
   while (($#)); do
     case "$1" in
       --restore) restore=1 ;;
+      --accept-absent) accept_absent=1 ;;
       --operator) op="${2:?--operator NAME}"; shift ;;
-      *) die "usage: scripts/staging.sh rollback [--restore] [--operator NAME]" ;;
+      *) die "usage: scripts/staging.sh rollback [--restore [--accept-absent]] [--operator NAME]" ;;
     esac
     shift
   done
@@ -2115,8 +2309,10 @@ rollback() {  # rollback [--restore] [--operator NAME]: back to the release befo
   plan="$(mktemp "$REL_DIR/.plan.XXXXXX")"
   REL_RB_PLAN="$plan"
   trap 'rel_rollback_exit $?' EXIT
-  # A window's holds with no release in progress to explain them: not a rollback's to guess (D2)
-  if [[ ! -f "$REL_ATTEMPT" ]]; then
+  # A window's holds with no release in progress to explain them: not a rollback's to guess (D2).
+  # A rollback --restore that held them itself and stopped before the restore (stage 5) left its
+  # marker: its own holds are accepted (P1-T22c, F1)
+  if [[ ! -f "$REL_ATTEMPT" && ! ( "$restore" == 1 && -f "$REL_ROLLBACK_HOLD" ) ]]; then
     held="$(rel_held_count)"
     [[ ! "$held" =~ ^[1-9][0-9]*$ ]] || die "$held hospital(s) are held for a window, but no release is in progress (releases/attempt): nothing here says what held them. Serve them with scripts/staging.sh fleet release --operator $op and clear the window (fleet window --clear --operator $op), or find the release that held them"
   fi
@@ -2189,15 +2385,59 @@ rollback() {  # rollback [--restore] [--operator NAME]: back to the release befo
   echo "  everything written after it is lost (nothing, if no hospital was served since);"
   echo "- Keycloak's changes since then are lost too: invitations, password and authenticator resets,"
   echo "  accounts disabled or removed (re-do them; the realm sync runs at the start);"
-  echo "- the audit trail goes back too: fingerprints stored after it no longer match it, and the audit watch"
-  echo "  reports every hospital sealed since as cut or rewritten (AuditChainBroken, AuditFingerprintMismatch,"
-  echo "  critical) until restore events for this rollback exist (P1-T22c; nothing writes them yet). Record it as"
-  echo "  an incident, never a silence; a checkpoint is never reset by hand;"
+  if supersede_wanted; then
+    echo "- the audit trail goes back too: first every hospital is held and sealed, and each hospital's audit tail"
+    echo "  after the point is exported (deploy/staging/supersede/<id>/, personal data, mode 600) and a plan written"
+    echo "  to the fingerprint bucket; after the restore the tails are archived back and a restore event written per"
+    echo "  hospital, so the audit watch accepts the cut (one AuditEventRecorded per hospital and one"
+    echo "  AuditWholeRestoreRecorded: confirm their restore id is this rollback's, logged in releases.log). Hospitals"
+    echo "  made after the point are gone and stay reported until offboarded by hand (P1-T22c2 closes them: --accept-absent)."
+    echo "  A hospital the load refuses (named) stays cut: AuditChainBroken, AuditFingerprintMismatch (critical);"
+  else
+    echo "- the audit trail goes back too; no fingerprint storage here, so nothing to reconcile;"
+  fi
+  echo "  record the rollback as an incident (P1-T22c: what the restore events do not cover stays an alert), never a silence;"
   if ((keep_copy)); then echo "- the current database is kept beside it (volume $aside, about $need MB)."
   else echo "- the current database is REPLACED: not enough disk to keep a copy ($free MB free; $need MB plus a ${floor} MB floor needed)."; fi
   echo "Type the release tag to roll back to ($target) to go on:"
   read -r answer <&8 || true
   [[ "$answer" == "$target" ]] || die "not confirmed: nothing changed"
+  if supersede_wanted; then
+    # P1-T22c (flow a): hold, stop the workers, drain, seal and fingerprint with the build being
+    # left (best effort, as a release does: F2), then the export and the plan. Nothing in the
+    # database changes before the plan is in the bucket
+    REL_RB_STAGE=5
+    (umask 077; date -Iseconds > "$REL_ROLLBACK_HOLD")
+    REL_RB_HELD=none
+    if [[ -n "$(compose ps -q backend 2>/dev/null || true)" ]]; then
+      echo "== [$((SECONDS - t0)) s] Holding every hospital, stopping the workers, draining"
+      REL_RB_HELD=held
+      old_manage ihr_fleet_run hold --operator "$op" || { REL_RB_HELD=failed; echo "WARNING: the hold failed (above); going on: the workers are stopped next" >&2; }
+      hold_at="$(rel_sql "SELECT now()" 2>/dev/null || true)"
+      compose stop "${REL_WORKERS[@]}"
+      [[ -z "$(env_get IHR_DUMPS)" ]] || compose stop dumper
+      [[ -z "$hold_at" ]] || rel_drain "$hold_at"
+      echo "== [$((SECONDS - t0)) s] Sealing and fingerprinting the audit trail (the build being left)"
+      rel_seal "$(running_backend_id)" >/dev/null
+    else
+      compose up -d --wait db redis
+    fi
+    supersede_export "$rp" "$rp_time" "$op"
+    sup="$SUP_ID"
+    REL_RB_SUP="$sup"
+    if [[ "$sup" != none ]]; then
+      # Q-K85/F6: hospitals made after the point are gone after it, and this build does not close
+      # them yet (P1-T22c2): their fingerprints keep alerting until each is offboarded by hand.
+      # Checked on the export's draft, before the plan is written (review E1/Q2: a refusal here
+      # leaves no write-once plan behind)
+      absent="$(sup_absent "$sup")"
+      if [[ -n "$absent" ]] && ((accept_absent == 0)); then
+        die "hospitals made after $rp would be gone and keep alerting (AuditFingerprintMismatch, unknown hospital): $absent. Run again with --accept-absent once you have decided (their data after the point is lost), or fix forward"
+      fi
+      [[ -z "$absent" ]] || echo "WARNING: hospitals made after the point, gone after the restore (accepted): $absent" >&2
+      supersede_plan "$sup" "$op"
+    fi
+  fi
   echo "== [$((SECONDS - t0)) s] Stopping the stack (its volumes stay: never down -v)"
   REL_RB_STAGE=2
   compose down
@@ -2213,15 +2453,26 @@ rollback() {  # rollback [--restore] [--operator NAME]: back to the release befo
   fi
   echo "== [$((SECONDS - t0)) s] Restoring to $rp (with $target's Postgres image)"
   REL_RB_STAGE=3
+  # The rollback's own holds go with the database being replaced: its marker must not let a
+  # later rollback --restore accept holds no release explains (D2; review Q4)
+  rm -f "$REL_ROLLBACK_HOLD"
   rel_point_images "postgres" "$plan"
   restore_live --target-name "$rp" --set "$set" --replace-database
   trap 'rel_rollback_exit $?' EXIT  # restore_live set its own
   # The database is the target's now: logged at once (a failure below is not a rollback to repeat)
   REL_RB_STAGE=4
-  (umask 077; rlog line kind=rollback "tag=$target" "from=$leave" "restored=$rp" "time=$(date -Iseconds)" >> "$REL_LOG")
+  (umask 077; rlog line kind=rollback "tag=$target" "from=$leave" "restored=$rp" "supersede=$sup" "time=$(date -Iseconds)" >> "$REL_LOG")
   rm -f "$REL_ATTEMPT"
   rel_point_images "backend frontend keycloak acmedns grafana" "$plan"
   rel_unpack_stack "$target"
+  if [[ "$sup" != none ]]; then
+    # Before up, and after the tags are the target's (a load that stops leaves stage 4's way on
+    # true: load, then up). The load runs from the image the export ran from (its own tag). The
+    # audit watch first sees the restored database with its events already there
+    echo "== [$((SECONDS - t0)) s] The audit tails back into the restored database (restore $sup)"
+    compose up -d --wait db redis
+    supersede_load "$sup" "$op" || die "the audit load did not finish (above)"
+  fi
   echo "== [$((SECONDS - t0)) s] Starting $target"
   "$ROOT/scripts/staging.sh" up
   # The restore point was taken with every hospital held for the window: serve them again, then
@@ -2230,7 +2481,8 @@ rollback() {  # rollback [--restore] [--operator NAME]: back to the release befo
   "$ROOT/scripts/staging.sh" fleet roles --operator "$op" || true
   "$ROOT/scripts/staging.sh" fleet window --clear --operator "$op"
   "$ROOT/scripts/staging.sh" smoke || die "restored and started $target, but the smoke checks fail (above)"
-  echo "== Rolled back to $target with a restore in $((SECONDS - t0)) s"
+  rm -f "$REL_ROLLBACK_HOLD"
+  echo "== Rolled back to $target with a restore in $((SECONDS - t0)) s${sup:+ (audit: restore $sup)}"
   # A full backup of the new timeline at once: a later restore never has to reach back past this
   # one, or past an older point (D4/O9)
   echo "== Full backup of the restored database"
@@ -2368,11 +2620,11 @@ s3_init() {  # SeaweedFS keys into secrets/, CARE's and the fingerprint keys int
     || die "FILE_UPLOAD_BUCKET / FACILITY_S3_BUCKET in secrets/app.env are not two bucket names"
   hex() { python3 -c "import secrets;print(secrets.token_hex($1))"; }
   declare -A key
-  for k in ADMIN $S3_CARE_IDS ANCHOR_WRITE ANCHOR_READ BACKUP LOGS_ARCHIVE DUMPS; do key[${k}_KEY]="ihr$(hex 10)"; key[${k}_SECRET]="$(hex 20)"; done
+  for k in ADMIN $S3_CARE_IDS ANCHOR_WRITE ANCHOR_READ ANCHOR_EVENTS BACKUP LOGS_ARCHIVE DUMPS; do key[${k}_KEY]="ihr$(hex 10)"; key[${k}_SECRET]="$(hex 20)"; done
   local SECRETS_TARGET="$sec"
   {
     echo "# SeaweedFS identities (P1-T8b3), written by scripts/staging.sh s3-init; the s3 container only."
-    for k in ADMIN $S3_CARE_IDS ANCHOR_WRITE ANCHOR_READ BACKUP LOGS_ARCHIVE DUMPS; do
+    for k in ADMIN $S3_CARE_IDS ANCHOR_WRITE ANCHOR_READ ANCHOR_EVENTS BACKUP LOGS_ARCHIVE DUMPS; do
       echo "IHR_S3_${k}_KEY=${key[${k}_KEY]}"
       echo "IHR_S3_${k}_SECRET=${key[${k}_SECRET]}"
     done
@@ -2390,6 +2642,10 @@ s3_init() {  # SeaweedFS keys into secrets/, CARE's and the fingerprint keys int
     "$S3_ANCHOR_BUCKET_DEFAULT" "${key[ANCHOR_WRITE_KEY]}" "${key[ANCHOR_WRITE_SECRET]}" | write_secret anchor-write.env
   printf 'IHR_AUDIT_ANCHOR_ENDPOINT=http://s3:8333\nIHR_AUDIT_ANCHOR_LOCK_MODE=COMPLIANCE\nIHR_AUDIT_ANCHOR_BUCKET=%s\nIHR_AUDIT_ANCHOR_READ_KEY=%s\nIHR_AUDIT_ANCHOR_READ_SECRET=%s\n' \
     "$S3_ANCHOR_BUCKET_DEFAULT" "${key[ANCHOR_READ_KEY]}" "${key[ANCHOR_READ_SECRET]}" | write_secret anchor-read.env
+  # The events key (P1-T22c, Q-K91): the owner's, for restore one-offs only. deploy.sh never sends
+  # it; on a server it is exported in the owner's shell when a restore runs (password manager)
+  printf '# The events key (P1-T22c, Q-K91): owner-run restore one-offs only, never a container env_file\nIHR_AUDIT_ANCHOR_ENDPOINT=http://s3:8333\nIHR_AUDIT_ANCHOR_LOCK_MODE=COMPLIANCE\nIHR_AUDIT_ANCHOR_BUCKET=%s\nIHR_AUDIT_ANCHOR_EVENTS_KEY=%s\nIHR_AUDIT_ANCHOR_EVENTS_SECRET=%s\n' \
+    "$S3_ANCHOR_BUCKET_DEFAULT" "${key[ANCHOR_EVENTS_KEY]}" "${key[ANCHOR_EVENTS_SECRET]}" | write_secret anchor-events.env
   {
     echo "# Object storage on this server: SeaweedFS (P1-T8b3; scripts/staging.sh s3-init)"
     echo "IHR_S3=local"
@@ -2410,7 +2666,7 @@ s3_init() {  # SeaweedFS keys into secrets/, CARE's and the fingerprint keys int
 s3_tool() {  # s3_tool <script> <args>: a deploy/s3 script with the S3_* keys through the environment
   local script="$1" k v envs=()
   shift
-  for k in ADMIN $S3_CARE_IDS ANCHOR_WRITE ANCHOR_READ LOGS_ARCHIVE DUMPS; do
+  for k in ADMIN $S3_CARE_IDS ANCHOR_WRITE ANCHOR_READ ANCHOR_EVENTS LOGS_ARCHIVE DUMPS; do
     for v in KEY SECRET; do
       export "S3_${k}_${v}=$(sed -n "s/^IHR_S3_${k}_${v}=//p" "$SECRETS/s3-gateway.env")"
       envs+=(-e "S3_${k}_${v}")
@@ -2579,7 +2835,7 @@ s3_check() {  # every key and lock, and the public paths through Traefik (files.
   # checked by `cert` and smoke, so these requests skip TLS verification
   s3_tool check_keys.py --public-endpoint "https://files.$suffix:8443" --origin "https://alpha.$suffix" --insecure --size-limit \
     --log-archive "$(v="$(env_get IHR_S3_LOGS_ARCHIVE_BUCKET)"; echo "${v:-ihr-log-archive}")" \
-    --dumps "$(v="$(env_get IHR_S3_DUMPS_BUCKET)"; echo "${v:-ihr-dumps}")"
+    --dumps "$(v="$(env_get IHR_S3_DUMPS_BUCKET)"; echo "${v:-ihr-dumps}")" --anchor-suffix "$suffix"
 }
 
 # ---- Wildcard certificate (P1-T8b2, compose.acme.yaml) ---------------------------------------
@@ -3036,7 +3292,7 @@ MON_TEST_DEADMAN="http://heartbeat-stub:8080/ping"
 DEADMAN_RE='^https://[a-z0-9.-]+(:[0-9]+)?(/[A-Za-z0-9._~-]+)+$'
 
 # Set-up services that run once and exit; never reported as "not running" (host-metrics.sh)
-MON_ONESHOTS='migrate|admin|keytool|s3-tool|traefik-data|alertmanager-data|logs-data|grafana-data|audit-watch-data'
+MON_ONESHOTS='migrate|admin|keytool|s3-tool|traefik-data|alertmanager-data|logs-data|grafana-data|audit-watch-data|audit-supersede'
 
 monitoring_init() {  # monitoring_init <alert-recipient> [--from A] [--host H] [--port P] [--user U] | --test
   local envf="$OUT/.env" sec="$OUT/secrets" to="" from="" host="smtp.zeptomail.in" port=587
@@ -4238,15 +4494,25 @@ restore_volume() {  # restore_volume <slug>: the name of that hospital's package
 }
 restore_keys() {  # restore_keys [files]: the fingerprint bucket's reader and add-only keys (the
   # restore writes a fingerprint and its event and runs the whole audit check), exported for this
-  # run's one-off only; [files] also the file buckets' key that may list versions
+  # run's one-off only; [files] also the file buckets' key that may list versions.
+  # The events key (P1-T22c, Q-K91) too: once a site has one, the gateway lets the fingerprint
+  # writer add fingerprints only, so the restore's event goes with the events key
+  # (secrets/anchor-events.env in a local proof; IHR_AUDIT_ANCHOR_EVENTS_KEY/_SECRET exported in
+  # the owner's shell on a server; review Q1)
   local f k v
   restore_envs=()
-  for f in "$SECRETS/anchor-read.env" "$SECRETS/anchor-write.env"; do
+  for f in "$SECRETS/anchor-read.env" "$SECRETS/anchor-write.env" "$SECRETS/anchor-events.env"; do
     [[ -f "$f" ]] || continue
     while IFS='=' read -r k v; do
       if [[ "$k" =~ ^IHR_AUDIT_ANCHOR_[A-Z_]+$ ]]; then export "$k=$v"; restore_envs+=(-e "$k"); fi
     done < "$f"
   done
+  if [[ -n "${IHR_AUDIT_ANCHOR_EVENTS_KEY:-}" && -n "${IHR_AUDIT_ANCHOR_EVENTS_SECRET:-}" ]]; then
+    [[ " ${restore_envs[*]} " == *" IHR_AUDIT_ANCHOR_EVENTS_KEY "* ]] \
+      || restore_envs+=(-e IHR_AUDIT_ANCHOR_EVENTS_KEY -e IHR_AUDIT_ANCHOR_EVENTS_SECRET)
+  elif supersede_wanted; then
+    echo "WARNING: no events key here (secrets/anchor-events.env, or IHR_AUDIT_ANCHOR_EVENTS_KEY/_SECRET in this shell): the restore event goes with the fingerprint writer's key, which a gateway with an events key refuses (AccessDenied at the event step: export the events key and --resume)" >&2
+  fi
   [[ "${1:-}" == files ]] || return 0
   if [[ "$(env_get IHR_S3)" == local ]]; then
     # A proof's SeaweedFS: its admin key lists versions and copies them back
@@ -4550,6 +4816,9 @@ case "${1:-}" in
   # Before the move of the roles (P1-T19b) the owner's one-off cannot log in (ihr_owner does not
   # exist yet): release and hold then run in the running backend too, as ihr (review C1)
   fleet)
+    # Serving the hospitals again ends a stopped rollback --restore's claim on the holds (its
+    # marker): a later rollback then judges any hold anew (D2; P1-T22c1 review Q4)
+    [[ "${2:-}" != release ]] || rm -f "$REL_ROLLBACK_HOLD"
     if [[ -n "$(compose ps -q backend 2>/dev/null || true)" ]] \
       && { [[ "${2:-}" == window ]] || { [[ "${2:-}" =~ ^(release|hold)$ ]] && { rel_db_single || rel_outgoing_unmigrated; }; }; }; then
       old_manage ihr_fleet_run "${@:2}"
@@ -4565,6 +4834,8 @@ case "${1:-}" in
     fi ;;
   release) release "${@:2}" ;;
   rollback) rollback "${@:2}" ;;
+  audit-supersede) audit_supersede_cmd "${@:2}" ;;
+  s3-events-key) s3_events_key ;;
   releases) rlog state "$REL_LOG" "$REL_ATTEMPT" ;;
   # Internal steps of scripts/deploy.sh (a plain start of a release without migrations)
   release-note) rel_lock; release_note ;;

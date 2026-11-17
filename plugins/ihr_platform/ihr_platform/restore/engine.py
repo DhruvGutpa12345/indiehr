@@ -691,6 +691,8 @@ class Restore:
                 raise Refused(msg)
         if o.drill:
             found["others_before"] = self._others()
+        else:
+            self._no_pending_whole_restore()
         self.say(
             f"{h.slug}: the package of {found['dump_at']} ({len(doc['tables'])} tables, {need} "
             f"bytes) restores seal {found['restored_to'][0]}; "
@@ -701,6 +703,61 @@ class Restore:
             )
         )
         return found
+
+    def _bucket_events(self):
+        """The restore and offboarding events (and whole-database plans and results) in the
+        fingerprint bucket, or None where no bucket is read (a drill; dev without one)."""
+        from ihr_audit import anchor, events
+
+        if self.options.drill:
+            return None
+        try:
+            return events.read()
+        except anchor.NotConfiguredError:
+            if settings.DEBUG:
+                return None
+            msg = "the fingerprint bucket's reader key is not set (anchor-read.env)"
+            raise StepFailed(msg) from None
+
+    def _no_pending_whole_restore(self):
+        """A whole-database restore whose load has not finished (P1-T22c) owns every
+        hospital's next generation: refused until ``audit-supersede load`` has run."""
+        from ihr_audit import anchor, events
+
+        if self.options.drill:
+            return
+        try:
+            found = events.read()
+        except anchor.NotConfiguredError:
+            return  # no bucket to read here: the audit step names the missing key
+        pending = found.pending_loads()
+        if pending:
+            msg = (
+                f"whole-database restore {pending[0]} is not loaded yet: run scripts/staging.sh "
+                f"audit-supersede load {pending[0]} first"
+            )
+            raise Refused(msg)
+
+    def _generation(self, cursor, hospital_uuid):
+        """This operation's generation if a run of it recorded one, else the next one: from the
+        database and the bucket's restore events both (P1-T22c: the database alone can be
+        behind the bucket after a whole-database restore)."""
+        from ihr_audit import archive
+
+        mine = archive.generation_of(cursor, hospital_uuid, self.op.pk)
+        if mine:
+            return mine
+        found = self._bucket_events()
+        if found is not None and not found.read_ok:
+            msg = "the fingerprint bucket's events could not be read"
+            raise StepFailed(msg)
+        if found is not None and (unsure := found.generation_unsure(hospital_uuid)):
+            raise StepFailed(unsure)
+        in_bucket = found.generation(hospital_uuid) if found is not None else None
+        try:
+            return archive.next_generation(cursor, hospital_uuid, in_bucket)
+        except archive.GenerationError as exc:
+            raise StepFailed(str(exc)) from None
 
     @staticmethod
     def _guard_migrations_are_this_builds(doc):
@@ -1578,9 +1635,7 @@ class Restore:
         operator = self.options.operator
         with connection.cursor() as cursor:
             # This operation's record if a run of it got that far, else the next generation
-            generation = archive.generation_of(
-                cursor, uuid, self.op.pk
-            ) or archive.next_generation(cursor, uuid)
+            generation = self._generation(cursor, uuid)
         dump = json.dumps(self.op.input.get("source", {}), sort_keys=True)[:200]
         with transaction.atomic(), connection.cursor() as cursor:
             existing = archive.recorded(cursor, uuid, generation)

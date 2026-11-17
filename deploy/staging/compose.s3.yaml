@@ -34,6 +34,8 @@ services:
       IHR_S3_PATIENT_BUCKET: ${IHR_S3_PATIENT_BUCKET:?}
       IHR_S3_FACILITY_BUCKET: ${IHR_S3_FACILITY_BUCKET:?}
       IHR_S3_ANCHOR_BUCKET: ${IHR_S3_ANCHOR_BUCKET:?}
+      # The fingerprint writer's own prefix once the events key exists (P1-T22c, Q-K91)
+      IHR_S3_ANCHOR_SUFFIX: ${IHR_TENANT_DOMAIN_SUFFIX:?}
       # Backups in a proof (P1-T8c, backup-init --local); a real server's go to another region
       IHR_S3_BACKUP_BUCKET: ${IHR_S3_BACKUP_BUCKET:-ihr-backups}
       # The log archive in a proof (P1-T9c, logs-archive-init --local); a real server's goes to

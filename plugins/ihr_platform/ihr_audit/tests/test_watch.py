@@ -991,7 +991,8 @@ class ReviewWatchTests(WatchCase):
             self.assertTrue(bounded.partial)
             self.assertLess(bounded.checkpoint.seq, first.checkpoint.seq)
             cp = bounded.checkpoint
-            for _ in range(200):
+            # (a cap only: the test schema's chain grows with every test that seals)
+            for _ in range(2000):
                 step = incremental.check_from_checkpoint(
                     cursor, TEST_SCHEMA, self.uuid, cp, None, self.events, max_entries=1
                 )

@@ -832,6 +832,7 @@ redone by its catch-up run).
 | HospitalNotServed | exactly the `ihr-fleet:` line above (outcome failed, deferred or held), from the `migrate` container (the one-shot and `staging.sh fleet`) or the worker's per-minute report (`celery-worker`; dev: `celery`), in the last 24 hours | critical |
 | AuditHospitalCheckFailed / AuditHospitalSealLate | exactly the audit watch's `ihr-audit:` line (chain, fingerprint, triggers or unchecked / seal), from the `audit-watch` service alone, in the last 30 / 10 minutes (see "Audit watch") | critical / warning |
 | AuditEventRecorded | exactly the audit watch's `ihr-audit: hospital=<slug> event=<restore\|offboarding> outcome=recorded` line, once per new event, in the last hour | warning |
+| AuditWholeRestoreRecorded | exactly the audit watch's `ihr-audit: restore=<id8> event=whole-database hospitals=<n> outcome=recorded` line, once per whole-database restore's result, in the last hour (P1-T22c) | warning |
 
 Fix the cause, then `scripts/staging.sh manage ihr_pack_apply --slug <slug> --operator <you>`
 (`<you>`: 1-64 letters, digits or `. _ @ -`; recorded as `packs:<you>`).
@@ -1142,6 +1143,11 @@ measure` is bounded (the last 7 days, 200,000 entries a hospital); `--full` runs
 | AuditHospitalCheckFailed (log) | the watch's line for chain, fingerprint, triggers or unchecked, in 30 min; the mail names the hospital | critical |
 | AuditHospitalSealLate (log) | the watch's line for seal, in 10 min; the mail names the hospital | warning |
 | AuditEventRecorded (log) | a new restore or offboarding event in the bucket, once; the mail names the hospital | warning |
+| AuditWholeRestoreRecorded (log) | a whole-database restore's result in the bucket, once; the mail names the restore id's first 8 digits and the number of hospitals (P1-T22c) | warning |
+| AuditDatabaseRestoredUnannounced | the database's timeline changed and no whole-database restore's result explains it (`ihr_audit_timeline_unexplained`: the number of changes the watch keeps that none explains; P1-T22c) | critical |
+| AuditRestorePlanAbandoned | a whole-database restore's plan has had no result for a day and the database is still on its timeline (a rollback stopped before its restore and was not run again; `ihr_audit_restore_plans_abandoned`) | warning |
+| AuditWholeRestoreUnanchored | a whole-database restore's result the timeline chain does not anchor: its events excuse nothing (`ihr_audit_whole_restores_unanchored`) | warning |
+| AuditWholeRestoreUncorroborated | a whole-database restore's result whose timeline change the watch's own history never saw (`ihr_audit_whole_restores_uncorroborated`): confirm its restore id against `releases.log` | warning |
 
 **Runbooks.**
 
@@ -1150,10 +1156,10 @@ measure` is bounded (the last 7 days, 200,000 entries a hospital); `--full` runs
   `scripts/staging.sh manage ihr_audit_verify --slug <the hospital named>`: it names the seal,
   the entry window or the fingerprint. Do not "fix" the trail: it is evidence. A checkpoint is
   never reset by hand. After a genuine restore the restore's event clears it (P1-T22); a restore
-  without one stays a cut. **`staging.sh rollback --restore`** (or `restore --target`) puts the
-  whole database back: every hospital sealed since the restore point reads as cut until P1-T22c
-  writes restore events for it (nothing does yet). Run it only for a real incident, record it as
-  one, and never silence the alerts.
+  without one stays a cut. **`staging.sh rollback --restore`** writes one per hospital it rolls
+  back (P1-T22c, "Whole-database restores" below); **`staging.sh restore --target`** (a disaster
+  restore) does not yet (P1-T22c2): every hospital sealed since its target reads as cut. Run it
+  only for a real incident, record it as one, and never silence the alerts.
 - **AuditHospitalsUnchecked / a `check=unchecked` line.** The watch cannot read that hospital's
   trail: `scripts/staging.sh logs audit-watch` names the error. A lock held past 10 s (a
   migration, or someone holding the trail's tables), a statement over 5 minutes (a very long
@@ -1165,8 +1171,9 @@ measure` is bounded (the last 7 days, 200,000 entries a hospital); `--full` runs
 - **AuditCheckpointUnseeded.** The fingerprints cannot be read (AuditFingerprintsUnreadable) and
   the watch has no checkpoint for some hospitals: it never seeds them from seal 1 blindly. Fix the
   reader; the next pass seeds them from the newest fingerprint.
-- **AuditEventRecorded.** Confirm the restore or offboarding was yours. If not, the add-only
-  writer key (`secrets/anchor-write.env`, which Celery holds) was used: an incident. An
+- **AuditEventRecorded.** Confirm the restore or offboarding was yours. If not, the events key
+  (or, on a site without one yet, the add-only writer key `secrets/anchor-write.env`, which Celery
+  holds) was used: an incident. An
   offboarding event closes a hospital only if the watch saw it offboarding or archived and its
   final seal is the newest fingerprint's; otherwise it is a bad event (AuditEventInvalid) until
   you review it and list its object key in `acknowledged_objects.txt`.
@@ -1212,6 +1219,77 @@ must. Order for an offboarding (TENANCY §7.7): seal, let the hourly fingerprint
 seal, write the event with that seal, then drop the schema and delete the hospital's row in one
 transaction. Each new event is mailed once (AuditEventRecorded); a hospital held for a restore
 counts in AuditHospitalsRestoring until the hold ends.
+
+**Whole-database restores (P1-T22c1; design `docs/reviews/p1-t22c/design.md`).** A
+`rollback --restore` puts every hospital and the platform back to the window's restore point T;
+the fingerprints stored after T stay in the bucket. So the rollback, after you typed the tag:
+1. holds every hospital (`ihr_fleet_run hold`, by the build being left; a rollback that stops here
+   marks its holds in `releases/rollback-hold`, which a second `rollback --restore` accepts), stops
+   the workers and the dumper, drains, seals and writes a fingerprint (best effort, as a release);
+2. exports each hospital's audit tail after T (`audit-supersede` one-off: the audit watch's
+   read-only role and the reader key; one tar `deploy/staging/supersede/<id>/export.tar`, mode 600
+   in a 700 folder: audit entries are personal data, kept beside the copy of the database);
+   T's lower bound per hospital is the newest fingerprint stored at or before the restore point
+   (the release's own fingerprint of its sealed head). A hospital whose first seal after that
+   fingerprint was sealed before T (the release's seal did not run: a stale fingerprint), or whose
+   database records fewer restore generations than the bucket, is refused here by name, before
+   anything changes; then the `--accept-absent` check on the export;
+3. writes the **plan** (`anchors/ihr-restores/<suffix>/<id>/plan.json`, write-once) from the
+   owner's one-off with the **events key**; only then `down`, the copy, the restore;
+4. starts the database alone and **loads** (`ihr_audit_supersede load`, the owner, before `up`):
+   per hospital the restored chain must end exactly at T's lower bound (F = L; else refused,
+   named), the tail is archived as the next restore generation (the bucket's count of restore
+   events + 1, the database's count must agree), an ordinary restore event is written (with
+   `cause: whole-database` and the restore id) and a `restore` entry added to the trail; archive
+   generations the restore took away are loaded back as they were; then the **result** with the
+   new timeline. Logged in `releases.log` as `supersede=<id>`.
+
+The watch then mails one AuditEventRecorded per hospital and one AuditWholeRestoreRecorded:
+confirm the restore id is the one in `releases.log`, and run
+`scripts/staging.sh audit-supersede status <id>` (per hospital: planned, outcome, seals, generation,
+any problem). This build also requires, beyond the archived segment, a plan stored before the event,
+a result naming it, the plan's lower bound read again from the fingerprints, and the result's new
+timeline being the database's now (older restores through the chain: each plan's old timeline is
+the previous result's new one). The watch records the database's timeline each pass; a change no
+result explains raises **AuditDatabaseRestoredUnannounced** (critical; every change the watch
+keeps is judged, not only the latest). Three warnings follow the restores: **AuditRestorePlanAbandoned**
+(a plan with no result for a day while the database is still on its timeline),
+**AuditWholeRestoreUnanchored** (a result the timeline chain does not anchor: its events excuse
+nothing; `ihr_audit_verify --all` says why) and **AuditWholeRestoreUncorroborated** (a result
+whose timeline change the watch's own history never saw, e.g. a new watch volume: confirm the
+restore id against `releases.log`). The rollback's target build
+(older than P1-T22c) accepts the events on the segment rule alone.
+
+- **A rollback that stopped.** Before the restore (stage 5: held, exporting): the database and
+  the images are unchanged; its message says whether the hold took. If the plan was already
+  written it **stays in the bucket** (write-once): run `rollback --restore` again (its new plan,
+  from the same timeline, supersedes the old one once it has its result), or `up` then
+  `fleet release` (which also ends the rollback's `releases/rollback-hold` marker) and record the
+  stopped rollback: the watch then reports the plan after a day (AuditRestorePlanAbandoned,
+  warning). During or after the restore, run
+  `scripts/staging.sh audit-supersede load <id> --operator <you>` before `up` (`up` warns while one
+  has no result); it is safe to run again (each step is checked before it is done), also after
+  `up` and `fleet release`: the restored chain is read at T's lower bound, not at its head, so
+  seals added since do not refuse it. One load runs at a time (a second one is refused).
+  After a rollback to a build older than P1-T22c1 on a local gateway (`IHR_S3=local`), its `up`
+  recreates the gateway without the events identity: run the load before `up`, as the rollback
+  does (a load after it needs the events key unset, so the writer's key adds the events).
+- **Hospitals made after T** are gone after the restore and keep alerting (unknown hospital) until
+  offboarded by hand: the rollback refuses without `--accept-absent` (P1-T22c2 closes them).
+- **The events key** (Q-K91) is made by `s3-init` (a proof: `secrets/anchor-events.env`;
+  `s3-events-key` adds one to an older proof folder) and is the owner's: `deploy.sh` never sends
+  `anchor-events.env`, and no app container's env holds it; on a server export
+  `IHR_AUDIT_ANCHOR_EVENTS_KEY`/`_SECRET` in your shell for the rollback and for
+  `hospital-restore` (its event goes with the events key too). **Limit:** with this folder's own
+  gateway (`IHR_S3=local`) the gateway must know the key to check it, so its identity file
+  `secrets/s3-gateway.env` (sent by `deploy.sh`, with the admin key it already holds) carries the
+  events key's secret on the server's disk; Celery still never sees it. A provider bucket keeps
+  it in the provider's IAM only.
+  With it the gateway lets Celery's writer add fingerprints only (`anchors/<suffix>/`). **Until a
+  site has it** (and on a provider bucket until its events user exists), the events go with the
+  writer's key, which Celery holds: the plan, result and timeline checks are then defence in
+  depth, not a security boundary; the archived-segment rule (the original must be kept) still is.
+- `scripts/staging.sh restore --target` (a disaster restore) has no plan yet (P1-T22c2).
 
 **Proven on the local staging stack (P1-T21):** a seal rewritten by the database owner raised
 AuditChainBroken, AuditFingerprintMismatch and AuditHospitalCheckFailed (naming the hospital) by

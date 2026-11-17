@@ -30,13 +30,37 @@ ENTRIES = "ihr_restore_superseded_entry"
 _COLUMNS = "id, txid, at, kind, actor, context, tbl, op, row_pk, patients, data, salt"
 
 
-def next_generation(cursor, hospital_uuid):
-    """The generation the hospital's next restore takes: one more than its records."""
+class GenerationError(ValueError):
+    """The database records a restore generation the bucket has no event for."""
+
+
+def generations_in_db(cursor, hospital_uuid):
     cursor.execute(
         "SELECT coalesce(max(generation), 0) FROM public.ihr_restore_record WHERE hospital = %s",
         [str(hospital_uuid)],
     )
-    return cursor.fetchone()[0] + 1
+    return cursor.fetchone()[0]
+
+
+def next_generation(cursor, hospital_uuid, in_bucket=None):
+    """The generation the hospital's next restore takes: one more than both its records here
+    and its restore events in the bucket (``in_bucket``; None where no bucket is read: a
+    drill, or dev without one). After a whole-database restore the database can hold fewer
+    generations than the bucket (P1-T22c): a generation taken from the database alone would be
+    one the bucket already has, and the new restore would get no event of its own. A database
+    ahead of the bucket is refused: a restore recorded its segment but never wrote its event
+    (resume that restore first)."""
+    in_db = generations_in_db(cursor, hospital_uuid)
+    if in_bucket is None:
+        return in_db + 1
+    if in_db > in_bucket:
+        msg = (
+            f"the database records restore generation {in_db} of this hospital, the bucket "
+            f"only {in_bucket} restore events: resume the restore whose event is missing "
+            "first"
+        )
+        raise GenerationError(msg)
+    return max(in_db, in_bucket) + 1
 
 
 def generation_of(cursor, hospital_uuid, operation):

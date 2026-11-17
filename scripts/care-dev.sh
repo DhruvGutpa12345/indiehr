@@ -71,6 +71,11 @@ s3_secrets() {
   if ! grep -q '^IHR_S3_BACKUP_KEY=' "$S3_ENV"; then
     (umask 077; printf 'IHR_S3_BACKUP_KEY=ihr%s\nIHR_S3_BACKUP_SECRET=%s\n' "$(hex 10)" "$(hex 20)" >> "$S3_ENV")
   fi
+  # Added in P1-T22c (Q-K91): the events key (restore events, whole-database restore plans and
+  # results). With it the gateway lets Celery's writer add fingerprints only (anchors/localhost/)
+  if ! grep -q '^IHR_S3_ANCHOR_EVENTS_KEY=' "$S3_ENV"; then
+    (umask 077; printf 'IHR_S3_ANCHOR_EVENTS_KEY=ihr%s\nIHR_S3_ANCHOR_EVENTS_SECRET=%s\n' "$(hex 10)" "$(hex 20)" >> "$S3_ENV")
+  fi
   # Added in P1-T9c (the log archive's identity; the shared start.sh needs it): the same, once
   if ! grep -q '^IHR_S3_LOGS_ARCHIVE_KEY=' "$S3_ENV"; then
     (umask 077; printf 'IHR_S3_LOGS_ARCHIVE_KEY=ihr%s\nIHR_S3_LOGS_ARCHIVE_SECRET=%s\n' "$(hex 10)" "$(hex 20)" >> "$S3_ENV")
@@ -101,7 +106,10 @@ IHR_AUDIT_ANCHOR_BUCKET=$ANCHOR_BUCKET"
    printf '# Audit fingerprint writer (P1-T6b), from s3-gateway.env by scripts/care-dev.sh. Never commit.\n%s\nIHR_AUDIT_ANCHOR_WRITE_KEY=%s\nIHR_AUDIT_ANCHOR_WRITE_SECRET=%s\n' \
      "$common" "$(s3v ANCHOR_WRITE_KEY)" "$(s3v ANCHOR_WRITE_SECRET)" > "$ROOT/deploy/dev/audit-anchor-write.env"
    printf '# Audit fingerprint reader (P1-T6b), from s3-gateway.env by scripts/care-dev.sh. Never commit.\n%s\nIHR_AUDIT_ANCHOR_READ_KEY=%s\nIHR_AUDIT_ANCHOR_READ_SECRET=%s\n' \
-     "$common" "$(s3v ANCHOR_READ_KEY)" "$(s3v ANCHOR_READ_SECRET)" > "$ROOT/deploy/dev/audit-anchor-read.env")
+     "$common" "$(s3v ANCHOR_READ_KEY)" "$(s3v ANCHOR_READ_SECRET)" > "$ROOT/deploy/dev/audit-anchor-read.env"
+   # The events key (P1-T22c, Q-K91): never in a container's env_file; owner-run one-offs only
+   printf '# Audit events, plans and results (P1-T22c), from s3-gateway.env by scripts/care-dev.sh. Never commit; no container holds it.\n%s\nIHR_AUDIT_ANCHOR_EVENTS_KEY=%s\nIHR_AUDIT_ANCHOR_EVENTS_SECRET=%s\n' \
+     "$common" "$(s3v ANCHOR_EVENTS_KEY)" "$(s3v ANCHOR_EVENTS_SECRET)" > "$ROOT/deploy/dev/audit-anchor-events.env")
   # After the derived files: the recreated containers read the new keys
   if ((split)); then s3_after_split; fi
 }
@@ -110,7 +118,7 @@ s3_tool() {  # s3_tool <script> <args>: a deploy/s3 script in the dev backend im
   # the S3_* keys mapped from s3-gateway.env through the environment (never on a command line)
   local script="$1" k v envs=()
   shift
-  for k in ADMIN FILES PICTURES ANCHOR_WRITE ANCHOR_READ; do
+  for k in ADMIN FILES PICTURES ANCHOR_WRITE ANCHOR_READ ANCHOR_EVENTS; do
     for v in KEY SECRET; do
       export "S3_${k}_${v}=$(sed -n "s/^IHR_S3_${k}_${v}=//p" "$S3_ENV")"
       envs+=(-e "S3_${k}_${v}")
@@ -277,6 +285,8 @@ SQL
 # production uses COMPLIANCE for 10 years (P1-T8). `up` creates the bucket; this re-seals and
 # writes a fingerprint at once.
 audit_anchors() {
+  # The gateway reads its identities when it starts: the events key and the writer's scope (P1-T22c)
+  "${COMPOSE[@]}" up -d --wait --force-recreate s3
   s3_buckets
   "${COMPOSE[@]}" up -d --wait --force-recreate backend celery
   "${COMPOSE[@]}" exec -T backend python manage.py ihr_audit_verify --all --seal 2>&1 | tail -3 || true
@@ -359,7 +369,7 @@ case "${1:-}" in
     ;;
   keycloak) keycloak_cmd "${@:2}" ;;
   audit-anchors) audit_anchors ;;
-  s3-check) s3_tool check_keys.py --origin http://alpha.localhost:8080 ;;
+  s3-check) s3_tool check_keys.py --origin http://alpha.localhost:8080 --anchor-suffix localhost ;;
   provision) kc_manage ihr_provision "${@:2}" ;;
   provision-demo)
     # A synthetic hospital brought live by the provisioning engine (P1-T5a). Its first admin's

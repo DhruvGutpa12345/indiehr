@@ -276,6 +276,40 @@ services:
   # holder, on this server only: never on the deploying machine, never backed up (owner,
   # 11-11-2026). A lost key is replaced by a new one, enrolled with the bootstrap credential.
   # No network and no logs: it prints only kids, ages and public keys.
+  # One-off (P1-T22c, scripts/staging.sh rollback --restore): before a whole-database restore,
+  # every hospital's audit tail after the restore point, read with the audit watch's read-only
+  # role and the fingerprint bucket's reader key only, onto standard output (one tar); nothing
+  # else held (no app.env, no writer key: secure.watch_problems refuses any). The plan is then
+  # written by the owner's migrate one-off with the events key (ihr_audit/supersede.py).
+  # No logs (review T1): its standard output is the tar of audit entries (personal data), and
+  # Docker's log driver records a run container's output too; the journal, the log store and
+  # the 400-day archive must never hold it. Its ihr-supersede: lines reach the operator's
+  # terminal (stderr); the load's, under migrate, reach the journal
+  audit-supersede:
+    <<: *hardening
+    image: ${IHR_BACKEND_IMAGE:?set IHR_BACKEND_IMAGE}
+    profiles: ["admin"]
+    restart: "no"
+    logging:
+      driver: none
+    entrypoint: ["python", "manage.py", "ihr_audit_supersede"]
+    env_file:
+      - secrets/audit-watch.env
+      - secrets/anchor-read.env
+    environment:
+      DJANGO_SETTINGS_MODULE: ihr_platform.settings.watch
+      IHR_ENVIRONMENT: ${IHR_ENVIRONMENT:-staging}
+      IHR_TENANT_DOMAIN_SUFFIX: ${IHR_TENANT_DOMAIN_SUFFIX:?}
+      IHR_DB_ROLES: required
+      IHR_DB_ROLE: watch
+      HOME: /tmp
+    read_only: true
+    tmpfs:
+      - /tmp:size=16m,mode=1777
+    networks: [internal, edge]
+    healthcheck:
+      disable: true
+
   keytool:
     <<: *hardening
     image: ${IHR_BACKEND_IMAGE:?set IHR_BACKEND_IMAGE}

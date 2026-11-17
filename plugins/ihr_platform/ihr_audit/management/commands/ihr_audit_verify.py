@@ -8,6 +8,9 @@ checked against every outside fingerprint (anchor.py; reader credentials from th
 environment; ``--since`` limits that to recent ones for frequent runs). ``--anchor`` writes a fingerprint first (needs the writer credentials). Exit
 status 1 on any problem, so it can run from cron or CI.
 
+P1-T22c: whole-database restores' plans and results are read too; their events are checked
+against them and the database's timeline (events.check_whole), and what each excused is shown.
+
 P1-T21: restore and offboarding events in the bucket (events.py) are honoured: a fingerprint
 claim a verified restore event accounts for is not a problem, and an offboarded hospital's
 fingerprints are closed. ``--from-checkpoint <dir>`` checks each chain incrementally from the
@@ -67,7 +70,7 @@ class Command(BaseCommand):
         if not self.as_json:
             self.stdout.write(style(text) if style else text)
 
-    def _anchors(self, options):
+    def _anchors(self, options):  # noqa: PLR0912 (one flat report)
         """(fingerprints or None when not checked, platform problems). A storage outage
         is a problem, but the local checks still run."""
         written = []
@@ -118,11 +121,30 @@ class Command(BaseCommand):
             self._say(
                 f"{fps.excused} fingerprint claims accounted for by restore events"
             )
+        # P1-T22c: per whole-database restore, what it excused and why an event of it
+        # excuses nothing (the claims it would have excused are reported below as they are)
+        for rid, n in sorted(self.events.excused_by.items()):
+            if rid:
+                self._say(f"  {n} of them by whole-database restore {rid}")
+        for evs in self.events.restores.values():
+            for event in evs:
+                if event.cause and event.problems:
+                    self._say(
+                        f"restore event {events.shown(event.key)} excuses nothing: "
+                        f"{event.problems[0]}",
+                        self.style.WARNING,
+                    )
+        pending = [
+            f"whole-database restore {rid}: the database was restored but its audit load "
+            f"has not finished (scripts/staging.sh audit-supersede load {rid})"
+            for rid in self.events.pending_loads()
+        ]
         return fps, (
             written
             + fps.problems
             + events_problems
             + self.events.problems
+            + pending
             + anchor.platform_problems(fps, now=options["as_of"])
         )
 
