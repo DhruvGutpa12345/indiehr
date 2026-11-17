@@ -904,6 +904,86 @@ The answer-side triggers (Q-K66 A) refuse every hard delete and TRUNCATE of form
 
 *Recommendation A:* no erasure feature exists yet, and the right answer depends on the retention rules (medical records are kept for years). Reverse: add the chosen path to `forms_guard.py` with its own test and mutation row.
 
+### Q-K83 — How does the audit trail get across a whole-database restore? (P1-T22c design; auto-accepted by Claude, 2026-11-17, awaiting owner confirmation)
+
+A whole-database restore puts every hospital back to one moment T, but the fingerprint bucket keeps claims for seals made after T. Verify and the watch read that as tampering.
+
+- **A ⭐ (taken).** Export each hospital's tail since T before the restore, record a plan in the bucket, reload the tail into the existing archive tables afterwards, and write ordinary restore events.
+- B. Keep the tails in the bucket only; verify reads them there.
+- C. Write events without tails ("trust the operator").
+
+*Recommendation A:* it is the only one that the older build a rollback ends on can still verify, and it keeps the evidence. B needs the decryption key in the watch; C would let an owner hide a rewrite. Reverse: a new design; A keeps no new tables, so nothing is lost by switching later.
+
+### Q-K84 — Where do the exported tails (packages) live? (P1-T22c design; auto-accepted by Claude, 2026-11-17, awaiting owner confirmation)
+
+A package holds one hospital's superseded seals and entries, so it holds personal data.
+
+- **A ⭐ (taken).** Local copy plus the dumps bucket, encrypted with the dump key. Without dumps (`IHR_DUMPS` off) a whole-database restore that would export is refused unless `--local-packages-only --reason`, and the plan records that choice. Local copies are deleted once the result and the bucket copy verify.
+- B. Local only.
+- C. The fingerprint bucket, encrypted (no: 10-year retention of personal data).
+
+*Recommendation A:* it survives a dead server mid-rollback and is the same data class as the dumps. Reverse: drop the bucket copy step in `audit-supersede export`.
+
+### Q-K85 — What happens to hospitals onboarded after T? (P1-T22c design; auto-accepted by Claude, 2026-11-17, awaiting owner confirmation)
+
+They are gone from the restored database, so the watch reports "fingerprinted but no longer in the database". The new `absent` event closes that, but it could also hide a deleted live hospital.
+
+- **A ⭐ (taken).** `absent` is accepted only when no fingerprint of that uuid was stored before the plan's T minus clock skew, the plan lists it as absent with L = 0, and the timeline checks pass. The slug stays reserved (re-onboarding gets a new slug). A rollback to a build before P1-T22c still alerts for such hospitals: it lists them and needs `--accept-absent`.
+- B. Same slug allowed again, with an owner override written to the bucket.
+- C. Alert until the hospital is offboarded.
+
+*Recommendation A:* it keeps "slugs never reused" and cannot close a live hospital. Reverse: B or C change one check in `unknown_hospitals`.
+
+### Q-K86 — Rollback to a build that cannot hold the tails? (P1-T22c design; auto-accepted by Claude, 2026-11-17, awaiting owner confirmation)
+
+A build before P1-T22b has no archive tables. A build between P1-T22b and P1-T22c has them, but reads generations from the database only and does not know `absent`.
+
+- **A ⭐ (taken).** Refuse a target before P1-T22b (fix forward). For a pre-P1-T22c target, refuse `--accept-unreadable` and list hospitals made after T (`--accept-absent`).
+- B. Allow both; the cuts stay as alerts.
+
+*Recommendation A:* B leaves an alert nobody can clear. Reverse: remove the refusal in `rel_rollback` (staging.sh).
+
+### Q-K87 — A hospital's tail cannot be read at all (lost)? (P1-T22c design; auto-accepted by Claude, 2026-11-17, awaiting owner confirmation)
+
+No readable copy exists (damaged schema, or seals after the repository's last archived WAL).
+
+- **A ⭐ (taken).** Stays critical (AuditChainBroken) until `accept-loss <id> --slug --reason "<incident>"`, which moves it to a permanent AuditLostTail warning that never excuses or hides the claims. "Lost" applies only to claims stored after the source's provable end (newest archived WAL, or the copy's end) recorded in the plan; never to a hospital any source exported; and accept-loss never clears a mismatch at or below the restored head.
+- B. Silence the alert per hospital.
+
+*Recommendation A:* B hides evidence. Reverse: B is an alert silence in Alertmanager; no code.
+
+### Q-K88 — May `restore --target` run without an export? (P1-T22c design; auto-accepted by Claude, 2026-11-17, awaiting owner confirmation)
+
+- **A ⭐ (taken).** Refused unless `--no-supersede --reason "<incident>"`, which writes a plan and result with every hospital `lost`: the timeline change is explained and the cuts stay. In a disaster (flow b) the restore to T and `up` come first; export from the repository copy and load follow, so hospitals are served without waiting for two full restores.
+- B. Allowed with a warning only.
+
+*Recommendation A:* an unexplained cut must leave a record. Reverse: drop the check in `restore`; flow b still works.
+
+### Q-K89 — Should a changed database timeline be checked? (P1-T22c design; auto-accepted by Claude, 2026-11-17, awaiting owner confirmation)
+
+The watch records the Postgres timeline each pass.
+
+- **A ⭐ (taken).** Yes. Results form a chain: each plan's old timeline equals the previous result's new timeline; only the newest result must equal the current timeline, and older events are accepted through the chain. A plan's old timeline must differ from its result's new one, the result is stored after the plan, and the watch's own timeline history must show the change between their stored times. An unexplained change is critical. `audit-supersede announce-timeline --reason` records a pg_upgrade or a server move (no hospitals).
+- B. No, events alone. Revisit if a standby failover is added (it changes the timeline too).
+
+*Recommendation A.* Reverse: B removes the watch check and the chain test; events then rest on the segment rule only.
+
+### Q-K90 — How long are packages kept? (P1-T22c design; auto-accepted by Claude, 2026-11-17, awaiting owner confirmation)
+
+- **A ⭐ (taken).** As the dumps, except packages holding unsealed-only, lost or refused content, which are kept as long as the archive (nothing else holds those entries). Local copies are deleted once the result and the bucket copy verify.
+- B. 400 days for every package, like the log archive.
+
+*Recommendation A:* the archive tables and backups already keep what was loaded. Reverse: change the prefix rule in `deploy/dumps/expire.py`.
+
+### Q-K91 — Who holds the key that writes restore plans, results and events? (P1-T22c attack S1; auto-accepted by Claude, 2026-11-17, awaiting owner confirmation)
+
+Celery holds the fingerprint writer key, so with the owner password a compromise could write a restore event in the older shape and skip the new checks.
+
+- **A ⭐ (taken).** A separate add-only key scoped to `anchors/ihr-events/` and `anchors/ihr-restores/`, made on the owner's deploying machine and kept in the owner's password manager (like the dumps key). Servers never hold it except inside the owner-run restore one-off. Celery's key is limited to `anchors/<suffix>/` hourly fingerprints. Until the key exists, the new checks are documented as not a security boundary.
+- B. Keep one writer key (Celery holds it).
+
+*Recommendation A:* B makes the plan, result and timeline checks decoration against a Celery compromise. Reverse: B, with the checks documented as defence in depth only.
+
 **Still open:** Q-B4 (final MVP module list: assumed as in PLAN.md Phase 2) and Q-B6/B7 (pricing, timeline). Q-F2 is moot while AI is deferred.
 
 ---
