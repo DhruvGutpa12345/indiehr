@@ -1,0 +1,9 @@
+# CI: CARE's plain suite (Backend job) runs with --parallel --shuffle. This makes our
+# CI-only runner importable so each parallel worker gets its own Redis database
+# (deploy/ci/python/ihr_ci_runner.py). No CARE code or test changes.
+services:
+  backend:
+    volumes:
+      - ../../deploy/ci/python:/ihr/ci:ro
+    environment:
+      PYTHONPATH: "/ihr/ci"

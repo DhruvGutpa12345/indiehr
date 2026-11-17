@@ -164,7 +164,12 @@ jobs:
           echo "Postgres image for this run: $PG_IMAGE"
 
       - name: Start services
-        run: make up || (docker compose -f docker-compose.yaml -f docker-compose.local.yaml logs && exit 1)
+        # plain.override.yaml mounts our CI-only test runner (one Redis database per
+        # parallel worker; deploy/ci/python/ihr_ci_runner.py). No CARE code changes.
+        run: |
+          files="docker-compose.local.yaml -f ../../deploy/ci/plain.override.yaml"
+          if [ -f docker-compose.override.ci.yaml ]; then files="$files -f docker-compose.override.ci.yaml"; fi
+          make up docker_config_file="$files" || (docker compose -f docker-compose.yaml -f docker-compose.local.yaml logs && exit 1)
 
       - name: Report Postgres version
         run: docker compose exec -T db psql -U postgres -tAc "select version()"
@@ -175,8 +180,14 @@ jobs:
       - name: Validate fixtures load
         run: make load-fixtures
 
+      - name: Test the per-worker cache runner
+        run: docker compose exec -T -w /ihr/ci backend python -m unittest -v test_ihr_ci_runner
+
       - name: Run test suite
-        run: make test
+        # Same as `make test` (--keepdb --parallel --shuffle), with each parallel worker on
+        # its own Redis database: CARE tests that call cache.clear() flushed the shared one
+        # and broke other workers' rate-limit and favourites tests (CI flakes, 2026-11-17).
+        run: docker compose exec -T backend bash -c "python manage.py test --keepdb --parallel --shuffle --testrunner=ihr_ci_runner.PerWorkerCacheRunner"
 
       - name: Service logs on failure
         if: failure()
