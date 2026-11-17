@@ -423,7 +423,7 @@ class ReleaseScript(unittest.TestCase):
         self.assertNotIn("load_all", py)
         compile(py, "REL_SEAL_PY", "exec")
         check = func("rel_audit_check")
-        self.assertIn('compose exec -T backend timeout "$REL_AUDIT_SECONDS" python manage.py ihr_audit_verify --all', check)
+        self.assertIn('compose exec -T -e IHR_DB_LIMITS=worker backend timeout "$REL_AUDIT_SECONDS" python manage.py ihr_audit_verify --all', check)
         self.assertNotIn("--seal", check)
 
     def test_workers_stopped_by_the_window_are_not_paged(self):

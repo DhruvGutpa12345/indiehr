@@ -40,7 +40,7 @@ groups:
       # Thirty minutes: a refused container restart-loops and repeats the line; the alert
       # resolves soon after it starts cleanly
       - alert: DatabaseRoleRefused
-        expr: '_time:30m source:=container service:in(backend, celery, celery-worker, celery-beat, staff-worker, provisioner, migrate, audit-watch) "ihr-db-role: refused" | extract_regexp "^ihr-db-role: refused role=(?P<role>app|owner|watch|none) reason=(?P<reason>[a-z_]{3,24})$" | filter reason:~"^[a-z_]{3,24}$" | stats by (reason) count() as refusals'
+        expr: '_time:30m source:=container service:in(backend, backchannel, celery, celery-worker, celery-beat, staff-worker, provisioner, migrate, audit-watch) "ihr-db-role: refused" | extract_regexp "^ihr-db-role: refused role=(?P<role>app|owner|watch|none) reason=(?P<reason>[a-z_]{3,24})$" | filter reason:~"^[a-z_]{3,24}$" | stats by (reason) count() as refusals'
         labels:
           severity: critical
           service: database
@@ -50,7 +50,7 @@ groups:
       # Fifteen minutes: the worker repeats its lines every minute while a schema stays gated;
       # the alert resolves soon after the app containers restart with the grants repaired
       - alert: DatabaseSchemaGated
-        expr: '_time:15m source:=container service:in(backend, celery, celery-worker, celery-beat, staff-worker) "ihr-db-role: gated" | extract_regexp "^ihr-db-role: gated schema=(?P<schema>h_[a-z0-9]{10}) reason=(?P<reason>controls|extra_privileges)$" | filter schema:~"^h_[a-z0-9]{10}$" | stats by (schema) count() as lines'
+        expr: '_time:15m source:=container service:in(backend, backchannel, celery, celery-worker, celery-beat, staff-worker) "ihr-db-role: gated" | extract_regexp "^ihr-db-role: gated schema=(?P<schema>h_[a-z0-9]{10}) reason=(?P<reason>controls|extra_privileges)$" | filter schema:~"^h_[a-z0-9]{10}$" | stats by (schema) count() as lines'
         labels:
           severity: critical
           service: database
@@ -66,3 +66,18 @@ groups:
         annotations:
           summary: 'Postgres refused the password of {{ $labels.role }} ({{ $value }} times in 10 minutes): its password may have been changed by whoever can log in as it'
           action: 'Set both roles again from the secrets as postgres with scripts/staging.sh db-roles --assert (passwords, stored settings in every database, memberships; every up does it too; the refusal names the databases), treat it as a sign the role was used by someone else, then restart the app containers (scripts/staging.sh up)'
+      # Ten minutes, more than five (P1-T23): Postgres's own lines for a statement cancelled by the
+      # process's statement_timeout or lock_timeout (a request blocked by a held lock is cut off by the
+      # 10 s lock limit first, so that cause shows as kind=lock) or a session ended by
+      # idle_in_transaction_session_timeout
+      # (ihr_platform/db_limits.py: web 30 s / 60 s, worker 300 s / 300 s). One now and then is a
+      # slow request; a run of them is a lock held by something, a missing index, or a request
+      # that waits on an outside service inside its transaction. The terse log carries no value.
+      - alert: DatabaseStatementTimeouts
+        expr: '_time:10m source:=container service:=db ("canceling statement due to" OR "terminating connection due to idle-in-transaction") | extract_regexp "(?:ERROR|FATAL): +(?:canceling statement due to|terminating connection due to) (?P<kind>statement|lock|idle-in-transaction) timeout$" | filter kind:~"^(statement|lock|idle-in-transaction)$" | stats by (kind) count() as cancels | filter cancels:>5'
+        labels:
+          severity: warning
+          service: database
+        annotations:
+          summary: 'Postgres ended {{ $value }} {{ $labels.kind }} time-outs in 10 minutes: requests or tasks are being cut off by the database limits'
+          action: 'Find which process: docker compose logs for backend and the workers around the same time (the request or task that failed), pg_stat_activity for what holds the locks or sits idle in a transaction, and the limits in ihr_platform/db_limits.py; do not raise a limit before the cause is known'

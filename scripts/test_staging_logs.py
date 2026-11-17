@@ -83,11 +83,14 @@ HOSPITAL_LINES = {"PackApplyFailed": ("ihr-packs", PACKS_LINE, "migrate, celery"
 # A refused database role (deploy/logs/alerts/db-roles.yml, P1-T19a): our whole fixed line, a
 # role and a reason code (never a value), from the services that run as a declared role
 DB_ROLE_LINE = r"^ihr-db-role: refused role=(?P<role>app|owner|watch|none) reason=(?P<reason>[a-z_]{3,24})$"
-DB_ROLE_SERVICES = "backend, celery, celery-worker, celery-beat, staff-worker, provisioner, migrate, audit-watch"
+DB_ROLE_SERVICES = "backend, backchannel, celery, celery-worker, celery-beat, staff-worker, provisioner, migrate, audit-watch"
+# Postgres's own lines for a statement or an idle transaction ended by a limit (P1-T23)
+TIMEOUT_LINE = (r"(?:ERROR|FATAL): +(?:canceling statement due to|terminating connection due to) "
+                r"(?P<kind>statement|lock|idle-in-transaction) timeout$")
 # A hospital schema an app process does not serve (P1-T19a review C2 and its second review): the
 # app services only, a hospital-shaped schema and a fixed reason
 GATED_LINE = r"^ihr-db-role: gated schema=(?P<schema>h_[a-z0-9]{10}) reason=(?P<reason>controls|extra_privileges)$"
-GATED_SERVICES = "backend, celery, celery-worker, celery-beat, staff-worker"
+GATED_SERVICES = "backend, backchannel, celery, celery-worker, celery-beat, staff-worker"
 # A refused batch sub-request (deploy/logs/alerts/batch.yml, P1-T20a): our whole fixed line from
 # the web backend, a slug-shaped hospital, a reason code, a method and a URL name (no values)
 BATCH_LINE = (r"^ihr-batch: refused hospital=(?P<hospital>[a-z][a-z0-9-]{2,30}) "
@@ -389,6 +392,14 @@ class LogAlerts(unittest.TestCase):
                                  + r"\) \"ihr-db-role: gated\" \| extract_regexp \"" + re.escape(GATED_LINE) + r"\" ")
                 allowed = r"^\$(labels\.schema|value)$"
                 self.assertNotIn("{{", r["annotations"]["action"], r["alert"])
+            elif r["alert"] == "DatabaseStatementTimeouts":
+                self.assertEqual(by, ["kind"], r["alert"])
+                # the db container's own lines only, and more than five of them
+                self.assertRegex(r["expr"], r'^_time:\d+m source:=container service:=db \("canceling statement due to" OR '
+                                 r'"terminating connection due to idle-in-transaction"\) \| extract_regexp "' + re.escape(TIMEOUT_LINE) + r'" ')
+                self.assertTrue(r["expr"].endswith("| filter cancels:>5"), r["alert"])
+                allowed = r"^\$(labels\.kind|value)$"
+                self.assertNotIn("{{", r["annotations"]["action"], r["alert"])
             elif r["alert"] == "BatchRequestRefused":
                 self.assertEqual(by, ["hospital"], r["alert"])
                 # the web backend writes it (it runs the batch); our whole fixed line only
@@ -422,6 +433,7 @@ class LogAlerts(unittest.TestCase):
         self.assertEqual(sorted(names), ["AuditEventRecorded", "AuditHospitalCheckFailed", "AuditHospitalSealLate",
                                          "AuditWholeRestoreRecorded",
                                          "BatchRequestRefused", "DatabaseRoleLoginFailed", "DatabaseRoleRefused", "DatabaseSchemaGated",
+                                         "DatabaseStatementTimeouts",
                                          "DumpHospitalFailed", "DumpHospitalHeld",
                                          "FailedSignInsFromAddress", "HospitalNotServed", "HospitalRestoreFailed",
                                          "MrdRecordsOffHours", "MrdRecordsRefused", "MrdRecordsVolume",
@@ -705,6 +717,23 @@ class LogAlerts(unittest.TestCase):
                       'FATAL:  password authentication failed for user "ihr_apps"'):
             self.assertIsNone(line.search(other), other)
 
+    def test_timeout_lines_are_postgres_own(self):
+        """P1-T23: only the db container's whole line for a limit that ended a statement or an
+        idle transaction; a request path or a longer message never counts."""
+        [rule] = [r for _, r in self.rules() if r["alert"] == "DatabaseStatementTimeouts"]
+        self.assertEqual(rule["labels"]["severity"], "warning")
+        line = re.compile(TIMEOUT_LINE)
+        self.assertEqual(line.search("2026-11-13 04:30:00.123 UTC [57] ERROR:  canceling statement due to statement timeout")["kind"], "statement")
+        self.assertEqual(line.search("2026-11-13 04:30:00.123 UTC [57] FATAL:  terminating connection due to idle-in-transaction timeout")["kind"], "idle-in-transaction")
+        # a request blocked by a held lock is cut off by lock_timeout (10 s) before the statement
+        # one (30 s): the first cause the alert names must reach it (P1-T23 review B4)
+        self.assertEqual(line.search("2026-11-13 04:30:00.123 UTC [57] ERROR:  canceling statement due to lock timeout")["kind"], "lock")
+        self.assertIn("statement|lock|idle-in-transaction", rule["expr"])
+        for other in ("ERROR:  canceling statement due to user request",
+                      "ERROR:  canceling statement due to lock timeout (forged)",
+                      "ERROR:  canceling statement due to statement timeout (forged)"):
+            self.assertIsNone(line.search(other), other)
+
     def test_fleet_runs_reach_the_alert(self):
         """S3 (P1-T18a review): an operator's fleet run and its --resume run in a logged
         container the rule reads ("migrate"), never the unlogged admin one; the worker's
@@ -762,6 +791,7 @@ class LogAlerts(unittest.TestCase):
                                  "HospitalNotServed": None,
                                  "ReleaseWindowOverrun": None, "DatabaseRoleRefused": None,
                                  "DatabaseSchemaGated": None, "DatabaseRoleLoginFailed": None,
+                                 "DatabaseStatementTimeouts": None,
                                  "BatchRequestRefused": None, "AuditHospitalCheckFailed": None,
                                  "AuditHospitalSealLate": None, "AuditEventRecorded": None,
                                  "AuditWholeRestoreRecorded": None,

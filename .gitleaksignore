@@ -18,3 +18,6 @@ scripts/local-vm.sh:generic-api-key:26
 
 # 2026-11-09 P1-T8b4: public fingerprint of OpenTofu's release signing key (get.opentofu.org/opentofu.asc), not a secret
 .github/workflows/apps.yml:generic-api-key:532
+
+# 2026-11-17 P1-T23: RFC 6238 published TOTP test vector (base32 of "12345678901234567890") in a unit test, not a secret
+scripts/test_load_test.py:generic-api-key:37

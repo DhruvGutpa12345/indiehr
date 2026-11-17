@@ -33,11 +33,12 @@ PLATFORM = ROOT / "plugins" / "ihr_platform" / "ihr_platform"
 DB_ROLES_PY = (PLATFORM / "db_roles.py").read_text()
 README = (STAGING / "README.md").read_text()
 
-APP_SERVICES = ("backend", "celery-worker", "celery-beat", "staff-worker")
+APP_SERVICES = ("backend", "backchannel", "celery-worker", "celery-beat", "staff-worker")
 OWNER_SERVICES = ("migrate", "admin", "provisioner")
 CHECKED = {  # the service and the process its pre-start check guards (ihr_db_role_check --for)
     "migrate": "migrate",
     "backend": "backend",
+    "backchannel": "backchannel",
     "celery-worker": "celery-worker",
     "celery-beat": "celery-beat",
     "provisioner": "provisioner",
@@ -97,7 +98,7 @@ class Compose(unittest.TestCase):
                 self.assertEqual(cmd.count("ihr_db_role_check"), 1)
                 # before the process itself (and, for migrate, before migrate_schemas)
                 rest = cmd.split(check, 1)[1]
-                self.assertRegex(rest, r"(collectstatic|exec celery|touch /tmp/healthy|migrate_schemas|exec python manage.py ihr_provision_worker)")
+                self.assertRegex(rest, r"(collectstatic|exec gunicorn|exec celery|touch /tmp/healthy|migrate_schemas|exec python manage.py ihr_provision_worker)")
         self.assertIn("ihr_provision_worker --role onboarding", command_text("provisioner"))
         self.assertIn("ihr_provision_worker --role staff", command_text("staff-worker"))
         # the processes named are the ones the command knows
@@ -360,7 +361,7 @@ class Roles(unittest.TestCase):
         # a running database of the single role is refused before db is recreated (its settings
         # changed with the split: recreating it would cut the old stack off)
         self.assertLess(up.index('== single ]]; then'), up.index("compose up -d --wait db redis"))
-        at = up.index("split) db_roles_apply ;;")
+        at = up.index("split) db_roles_apply; db_server_check ;;")
         self.assertLess(up.index("compose up -d --wait db redis"), at)
         self.assertLess(at, up.index("compose run --rm --no-deps -T migrate"))
         self.assertIn("single) die", up)
@@ -369,7 +370,7 @@ class Roles(unittest.TestCase):
     def test_the_move_runs_under_a_full_stop(self):
         stopped = func("db_roles_move_stopped")
         self.assertLess(stopped.index('compose stop "${DB_APP_SERVICES[@]}"'), stopped.index("db_roles_apply --move"))
-        self.assertIn("DB_APP_SERVICES=(backend frontend celery-worker celery-beat provisioner staff-worker)", STAGING_SH)
+        self.assertIn("DB_APP_SERVICES=(backend backchannel frontend celery-worker celery-beat provisioner staff-worker)", STAGING_SH)
         cmd = func("db_roles_cmd")
         migrate = cmd[cmd.index("    --migrate)\n"):]
         steps = ["db_need_split_secrets", "rel_lock", 'die "a release is in progress',

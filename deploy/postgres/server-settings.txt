@@ -1,0 +1,14 @@
+# Postgres server settings every IndieHR database container carries (P1-T23, Q-K94).
+# One name=value per line. scripts/test_staging_postgres.py checks that the staging db command
+# (deploy/staging/compose.yaml), the dev override (deploy/dev/care-local.override.yaml), CI's
+# override (deploy/ci/tenancy.override.yaml) and the two recovery starts in scripts/staging.sh
+# all carry each line. Per environment, and so not listed here: shared_buffers, max_connections.
+#
+# 64 (the default) ran out in a transaction that read a few hospitals (P1-T1c, scale-results §6);
+# one hospital's restore load holds 3,794 locks for 1,101 relations (P1-T22b). The table is
+# max_locks_per_transaction x (max_connections + prepared transactions) slots, so 256 x 100.
+# A server that recovers from this one's WAL (the restore drill, a real restore) must carry at
+# least this value too: Postgres refuses to replay a parameter change to a smaller one.
+max_locks_per_transaction=256
+# Planner hint only (no memory is taken); the 8 GB server's page cache is about 3 GB
+effective_cache_size=3GB

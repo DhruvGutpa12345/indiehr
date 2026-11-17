@@ -144,6 +144,8 @@ def problems(settings, environ):  # noqa: PLR0912, PLR0915 (one flat list of rul
     found += (
         mail_problems(settings)
         + db_role_problems(settings)
+        + db_limits_problems(settings)
+        + service_problems(settings)
         + storage_problems(settings)
     )
     return found
@@ -220,6 +222,37 @@ def db_role_problems(settings):
         found.append(
             "IHR_DB_ROLE=owner with the backend's or the staff worker's client key: the web "
             "app and the staff worker always use the app role."
+        )
+    return found
+
+
+def db_limits_problems(settings):
+    """The statement, lock and idle-in-transaction limits of the process's profile
+    (P1-T23, db_limits.py) are never switched off on a server."""
+    if settings.get("IHR_DB_LIMITS", "") in ("", "off"):
+        return [
+            "IHR_DB_LIMITS must not be off on a server (P1-T23): the statement, lock and "
+            "idle-in-transaction limits of the process's profile (db_limits.py) apply."
+        ]
+    return []
+
+
+def service_problems(settings):
+    """The back-channel logout service (P1-T23, Q-K95) is a small web process that signs
+    nothing and writes only through the app role: never the owner, no client key."""
+    service = settings.get("IHR_SERVICE", "")
+    if service not in ("", "backchannel"):
+        return [f"IHR_SERVICE must be empty or backchannel, not {service!r}."]
+    if service != "backchannel":
+        return []
+    found = []
+    if settings.get("IHR_DB_ROLE") != "app":
+        found.append("The backchannel service always uses the app database role.")
+    if settings.get("IHR_CLIENT_KEY_PURPOSE"):
+        found.append("The backchannel service signs nothing: no client key purpose.")
+    if settings.get("IHR_DB_LIMITS") != "web":
+        found.append(
+            "The backchannel service runs the web database limits (IHR_DB_LIMITS=web)."
         )
     return found
 
@@ -318,6 +351,8 @@ def watch_problems(settings, environ):
         or settings.get("IHR_DB_ROLE") != "watch"
     ):
         found.append("IHR_DB_ROLES must be required and IHR_DB_ROLE watch (P1-T21).")
+    if settings.get("IHR_DB_LIMITS") != "watch":
+        found.append("IHR_DB_LIMITS must be watch (P1-T23).")
     if not WATCH_DB_USER_RE.match(environ.get("DATABASE_URL", "")):
         found.append("DATABASE_URL must be the ihr_audit_watch role's address.")
     if not environ.get("IHR_AUDIT_ANCHOR_READ_KEY", "").strip():

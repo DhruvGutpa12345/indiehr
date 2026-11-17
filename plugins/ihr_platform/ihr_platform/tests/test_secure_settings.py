@@ -68,6 +68,7 @@ GOOD_SETTINGS = {
     },
     "IHR_DB_ROLES": "required",
     "IHR_DB_ROLE": "app",
+    "IHR_DB_LIMITS": "web",
     "FACILITY_IMAGE_URL_FUNCTION": "ihr_platform.storage.facility_image_url",
     "FACILITY_CDN": None,
     "BUCKET_HAS_FINE_ACL": False,
@@ -84,6 +85,20 @@ GOOD_SETTINGS = {
 class SecureRulesTests(SimpleTestCase):
     def test_safe_settings_pass(self):
         self.assertEqual(secure.problems(GOOD_SETTINGS, GOOD_ENV), [])
+
+    def test_database_limits_are_never_off_on_a_server(self):
+        """P1-T23: IHR_DB_LIMITS=off (or nothing) is refused; any profile is accepted."""
+        for value in ("off", ""):
+            with self.subTest(value=value):
+                found = secure.problems(
+                    GOOD_SETTINGS | {"IHR_DB_LIMITS": value}, GOOD_ENV
+                )
+                self.assertEqual(len(found), 1, found)
+                self.assertIn("IHR_DB_LIMITS", found[0])
+        for value in ("web", "worker", "owner"):
+            self.assertEqual(
+                secure.problems(GOOD_SETTINGS | {"IHR_DB_LIMITS": value}, GOOD_ENV), []
+            )
 
     def test_each_unsafe_setting_is_named(self):
         cases = {

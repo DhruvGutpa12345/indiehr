@@ -670,6 +670,7 @@ class WatchSettingsTests(SimpleTestCase):
         "IHR_TENANT_DOMAIN_SUFFIX": "app.example.in",
         "IHR_DB_ROLES": "required",
         "IHR_DB_ROLE": "watch",
+        "IHR_DB_LIMITS": "watch",
     }
 
     def test_the_watch_settings_pass(self):
@@ -682,6 +683,7 @@ class WatchSettingsTests(SimpleTestCase):
 
         for settings, env, want in (
             ({"IHR_DB_ROLE": "app"}, {}, "IHR_DB_ROLE watch"),
+            ({"IHR_DB_LIMITS": "web"}, {}, "IHR_DB_LIMITS must be watch"),
             (
                 {},
                 {"DATABASE_URL": "postgres://ihr_app:x@db:5432/ihr"},

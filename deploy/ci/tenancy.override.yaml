@@ -11,3 +11,8 @@ services:
       - ../../plugins:/ihr/plugins:ro
     environment:
       PYTHONPATH: "/ihr/plugins/ihr_platform"
+  # The same server settings as staging (deploy/postgres/server-settings.txt, P1-T23), so the
+  # suite runs with the lock table the product needs and a restore's locks fit
+  db:
+    command: ["postgres", "-c", "max_locks_per_transaction=256", "-c", "effective_cache_size=3GB"]
+    shm_size: 1g

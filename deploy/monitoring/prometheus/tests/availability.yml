@@ -169,6 +169,12 @@ tests:
         values: '0x10'
       - series: 'ihr_container_running{service="backend"}'
         values: '1x10'
+      # The back-channel logout service (P1-T23): a crash or OOM kill is a critical page, like
+      # the backend's (without it logouts reach a hospital only at its next 60 s refresh)
+      - series: 'ihr_container_running{service="backchannel"}'
+        values: '0x10'
+      - series: 'ihr_container_unhealthy{service="backchannel"}'
+        values: '0 0 1x10'
       - series: 'ihr_container_unhealthy{service="backup"}'
         values: '0 0 1x10'
       - series: 'ihr_container_unhealthy{service="backend"}'
@@ -181,6 +187,9 @@ tests:
       - eval_time: 6m
         alertname: ContainerNotRunning
         exp_alerts:
+          - exp_labels: {severity: critical, service: backchannel}
+            exp_annotations:
+              summary: "Container backchannel is not running"
           - exp_labels: {severity: critical, service: db}
             exp_annotations:
               summary: "Container db is not running"
@@ -190,6 +199,9 @@ tests:
       - eval_time: 8m
         alertname: ContainerUnhealthy
         exp_alerts:
+          - exp_labels: {severity: critical, service: backchannel}
+            exp_annotations:
+              summary: "Container backchannel reports unhealthy"
           - exp_labels: {severity: critical, service: backup}
             exp_annotations:
               summary: "Container backup reports unhealthy"

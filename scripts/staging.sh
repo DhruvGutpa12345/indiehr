@@ -342,7 +342,7 @@ DB_DUMP_URL_RE='^IHR_DUMP_DATABASE_URL=postgres://ihr_dump:([A-Za-z0-9_-]{32,})@
 dumper_db_env() {  # dumper_db_env <password>: secrets/dumper-db.env's text (to write_secret)
   printf '# The nightly dumper'"'"'s address (P1-T22a): ihr_dump, pg_read_all_data only; the dumper container only\nIHR_DUMP_DATABASE_URL=postgres://ihr_dump:%s@db:5432/ihr\n' "$1"
 }
-DB_APP_SERVICES=(backend frontend celery-worker celery-beat provisioner staff-worker)
+DB_APP_SERVICES=(backend backchannel frontend celery-worker celery-beat provisioner staff-worker)
 db_password() {  # db_password <app|owner|watch|dump> [secrets dir]: that role's password from its address; nothing if absent
   local f re line var=DATABASE_URL
   case "$1" in
@@ -510,6 +510,65 @@ db_roles_apply() {  # db_roles_apply [--move]: (the move, then) the roles re-ass
     [[ "${1:-}" != --move ]] || printf '%s\n' "$DB_ROLES_MOVE_SQL"
     printf '%s\n' "$DB_ROLES_SQL"
   } | pg_su -1 -q -d ihr >/dev/null
+}
+# The database container's own settings (P1-T23, Q-K94), asserted at every up and release and by
+# db-roles --assert: the server lines of deploy/postgres/server-settings.txt as the running
+# server shows them (max_locks_per_transaction at least the file's, the rest equal), shared_buffers
+# as .env says, /dev/shm as large as IHR_PG_SHM (default 256m; Docker's 64 MB failed at about 158
+# hospitals, P1-T1c), and no setting stored for the whole database or cluster (a role's are reset
+# by db_roles_apply). Prints every problem, then fails; nothing is changed. With --warn it prints
+# them and returns 0 (a release, before anything is held: the window recreates the container).
+to_kb() {  # to_kb 1g|256m|512MB|768MB: kibibytes, or nothing
+  local v="${1,,}"
+  [[ "$v" =~ ^([0-9]+)(k|m|g)b?$ ]] || return 1
+  case "${BASH_REMATCH[2]}" in
+    k) echo "${BASH_REMATCH[1]}" ;;
+    m) echo $((BASH_REMATCH[1] * 1024)) ;;
+    g) echo $((BASH_REMATCH[1] * 1048576)) ;;
+  esac
+}
+db_server_check() {
+  local line name want got sql="" problems=() have_kb want_kb sb out stored warn=0
+  [[ "${1:-}" == --warn ]] && warn=1
+  for line in "${PG_SERVER_SETTINGS[@]}"; do
+    [[ "$line" == -c ]] && continue
+    name="${line%%=*}"
+    sql+="${sql:+ UNION ALL }SELECT '$name' || '=' || current_setting('$name')"
+  done
+  sb="$(env_get IHR_PG_SHARED_BUFFERS)"; sb="${sb:-512MB}"
+  sql+=" UNION ALL SELECT 'shared_buffers=' || current_setting('shared_buffers')"
+  sql+=" UNION ALL SELECT 'stored_database_settings=' || count(*) FROM pg_db_role_setting WHERE setrole = 0"
+  out="$(pg_su -d postgres -Atc "$sql")" || die "could not read the database server's settings"
+  for line in "${PG_SERVER_SETTINGS[@]}"; do
+    [[ "$line" == -c ]] && continue
+    name="${line%%=*}"; want="${line#*=}"
+    got="$(sed -n "s/^$name=//p" <<< "$out")"
+    if [[ "$name" == max_locks_per_transaction ]]; then
+      [[ "$got" =~ ^[0-9]+$ ]] && ((got >= want)) || problems+=("$name is ${got:-unreadable}, at least $want is needed (deploy/postgres/server-settings.txt)")
+    elif [[ "${got,,}" != "${want,,}" ]]; then
+      problems+=("$name is ${got:-unreadable}, deploy/postgres/server-settings.txt says $want")
+    fi
+  done
+  got="$(sed -n 's/^shared_buffers=//p' <<< "$out")"
+  [[ "${got,,}" == "${sb,,}" ]] || problems+=("shared_buffers is ${got:-unreadable}, .env says $sb (IHR_PG_SHARED_BUFFERS)")
+  stored="$(sed -n 's/^stored_database_settings=//p' <<< "$out")"
+  [[ "$stored" == 0 ]] || problems+=("${stored:-unreadable} setting(s) are stored for the whole database or cluster (pg_db_role_setting, no role): ALTER DATABASE ihr RESET ALL, as postgres")
+  want_kb="$(to_kb "$(env_get IHR_PG_SHM || true)" 2>/dev/null || true)"; want_kb="${want_kb:-262144}"
+  have_kb="$(compose exec -T db df -Pk /dev/shm 2>/dev/null | awk 'NR == 2 { print $2 }')" || have_kb=""
+  if [[ ! "$have_kb" =~ ^[0-9]+$ ]]; then
+    problems+=("could not read /dev/shm in the database container")
+  elif ((have_kb * 100 < want_kb * 95)); then
+    problems+=("/dev/shm is $((have_kb / 1024)) MiB, $((want_kb / 1024)) MiB is needed (shm_size, IHR_PG_SHM)")
+  fi
+  if ((${#problems[@]})); then
+    printf 'database server: %s\n' "${problems[@]}" >&2
+    if ((warn)); then
+      echo "WARNING: the running database container does not carry this build's settings (above): the release recreates it, alone, inside its window (a few seconds, every hospital already held)" >&2
+      return 0
+    fi
+    die "the database container does not carry this build's settings: scripts/staging.sh up recreates it (a restart is needed for max_locks_per_transaction and shared_buffers)"
+  fi
+  echo "Database server settings ok: ${PG_SERVER_SETTINGS[*]//-c /}, shared_buffers $sb, /dev/shm $((have_kb / 1024)) MiB, no stored database settings."
 }
 db_split_secrets() {  # db-split-secrets: the split roles' secrets (P1-T19b), on the deploying
   # machine as s3-init (IHR_STAGING_OUT: elsewhere): a NEW owner password, never the old shared
@@ -741,6 +800,7 @@ db_roles_cmd() {  # db-roles --migrate [--operator NAME] | --serve-previous [--o
       db_need_split_secrets
       [[ "$(db_roles_state)" == split ]] || die "the database's roles are not split: scripts/staging.sh db-roles --migrate"
       db_roles_apply
+      db_server_check
       echo "Re-asserted ihr_owner and ihr_app (passwords from the secrets, no stored settings in any database, no memberships) and the large-object revoke."
       echo "Restart the app containers so each checks its role again: scripts/staging.sh up" ;;
     --serve-previous) op="$(rel_operator "$op")"; db_serve_previous "$op" ;;
@@ -829,7 +889,7 @@ up() {  # up [--new-database]: the flag only where an empty database is really m
   # role may ALTER ROLE itself: design.md, known limit 1). A database of the single role is
   # moved only under a full stop, never by a plain start
   case "$(db_roles_state || echo unreadable)" in
-    split) db_roles_apply ;;
+    split) db_roles_apply; db_server_check ;;
     single) die "the database still has its single role ihr: move it first, under a full stop (scripts/staging.sh db-roles --migrate, or scripts/staging.sh release; deploy/staging/README.md, Moving to split roles)" ;;
     *) die "could not read the database's roles (or it has neither ihr nor ihr_owner)" ;;
   esac
@@ -858,7 +918,8 @@ up() {  # up [--new-database]: the flag only where an empty database is really m
   # The new backend first: on a server from before P1-T8d2 its clients are still public and
   # ignore the assertion it now sends, so sign-ins go on while the old backend is replaced.
   # The old workers stop: after the sync below their secrets are dead.
-  compose up -d --wait --no-deps backend
+  # (with the back-channel logout service, P1-T23: Keycloak posts logout tokens to it once the sync below has told it)
+  compose up -d --wait --no-deps backend backchannel
   compose stop provisioner staff-worker
   # Keycloak learns the current public keys (clients switch to keys; after a restore its
   # database may hold older ones: sign-ins wait only for this step)
@@ -901,6 +962,15 @@ db_guard() {  # db_guard <new 0|1>: never an empty database where one is to be r
 
 # Restored copies log like the live database (compose.yaml, P1-T9a): no query values
 PG_LOG_PRIVACY=(-c log_min_duration_statement=-1 -c log_min_error_statement=panic -c log_error_verbosity=terse)
+
+# The server settings of every database container (deploy/postgres/server-settings.txt, P1-T23),
+# as -c options: a restored copy replays the live server's parameter changes and refuses to
+# start with a smaller max_locks_per_transaction than the original's
+PG_SERVER_SETTINGS=()
+while IFS= read -r _line; do
+  [[ "$_line" =~ ^[a-z_]+=[A-Za-z0-9]+$ ]] && PG_SERVER_SETTINGS+=(-c "$_line")
+done < "$ROOT/deploy/postgres/server-settings.txt"
+unset _line
 
 # The database volume's state (PGDATA: compose.yaml): "restoring" while a real restore is unfinished
 PG_STATE='if [ -e /var/lib/postgresql/.ihr-restore-incomplete ]; then echo restoring; elif [ -e /var/lib/postgresql/18/docker/PG_VERSION ]; then echo db; else echo empty; fi'
@@ -1210,10 +1280,11 @@ restore_drill() {  # a copy of the database from the backups, checked, then remo
   if docker start -a "$DRILL-restore"; then i=0; else i=$?; fi
   ((i == 0)) || die "restore failed"
   # The copy never archives into the repository (archive_mode=off); it fetches WAL to recover.
-  # Recovery needs at least the original's max_connections (100, compose.yaml).
+  # Recovery needs at least the original's max_connections (100, compose.yaml) and
+  # max_locks_per_transaction (256, deploy/postgres/server-settings.txt; P1-T23).
   # cluster_name: how ihr_hospital_restore --drill knows the database is this copy (P1-T22b)
   pg_container "$DRILL" "$DRILL:/var/lib/postgresql" postgres -c archive_mode=off \
-    -c shared_buffers=128MB -c max_connections=100 -c cluster_name=ihr-restore-drill "${PG_LOG_PRIVACY[@]}"
+    -c shared_buffers=128MB -c max_connections=100 "${PG_SERVER_SETTINGS[@]}" -c cluster_name=ihr-restore-drill "${PG_LOG_PRIVACY[@]}"
   docker start "$DRILL" >/dev/null
   wait_promoted "$DRILL"
   # The copy's own moment: its last replayed transaction (what the fingerprints are checked at)
@@ -1306,7 +1377,7 @@ restore_live() {  # restore [--target T | --target-name NAME [--set LABEL]]: a l
   # timeline's history file reaches the repository, so later restores can follow it
   pg_container ihr-restore-recovery "$vol:/var/lib/postgresql,${project}_walspool:/var/spool/ihr-wal" \
     postgres -c archive_mode=on -c "archive_command=/usr/local/bin/ihr-pgbackrest-spool %p %f" \
-    -c max_connections=100 "${PG_LOG_PRIVACY[@]}"
+    -c max_connections=100 "${PG_SERVER_SETTINGS[@]}" "${PG_LOG_PRIVACY[@]}"
   docker start ihr-restore-recovery >/dev/null
   wait_promoted ihr-restore-recovery
   docker exec ihr-restore-recovery psql -U postgres -Atc "CHECKPOINT" >/dev/null
@@ -1505,7 +1576,7 @@ rel_audit_check() {  # rel_audit_check: the whole audit check (triggers, hash ch
     echo "audit: skipped, no fingerprint storage set up here (secrets/anchor-write.env)" >&2
     echo skipped; return 0
   fi
-  compose exec -T backend timeout "$REL_AUDIT_SECONDS" python manage.py ihr_audit_verify --all >&2 || rc=$?
+  compose exec -T -e IHR_DB_LIMITS=worker backend timeout "$REL_AUDIT_SECONDS" python manage.py ihr_audit_verify --all >&2 || rc=$?
   case "$rc" in
     0) echo ok ;;
     124) echo "WARNING: the audit check did not end within $REL_AUDIT_SECONDS s (IHR_RELEASE_AUDIT_SECONDS); going on" >&2; echo timeout ;;
@@ -1884,6 +1955,9 @@ release() {  # release [--now [--minutes N] [--note T]] [--operator NAME] | --fi
     [[ -z "${apps// /}" ]] || die "the backend is not running, but ${apps% } still run(s) and would write during the migrations. Stop the stack first (scripts/staging.sh down), or start the old backend again (scripts/staging.sh start-existing backend: its own container, as it was) so the release holds every hospital: nothing changed"
   fi
   release_tag_images "$tag"
+  # The running database's settings, read-only and before anything is held (P1-T23 review A1): a
+  # drift is only reported here; the window recreates the container (step 6b), never dies on it
+  [[ -z "$cid" ]] || db_server_check --warn
   echo "== Release $tag (hospitals' schema ${fps[0]:0:12}, platform's ${fps[1]:0:12}) by $op"
   # The restore point belongs to the open window, not to a build: an unfinished release's point is
   # carried over, whatever its build (the database has not been released since; D3/O4)
@@ -1984,6 +2058,13 @@ release() {  # release [--now [--minutes N] [--note T]] [--operator NAME] | --fi
     # release that moved them stopped before its migrations and runs again)
     db_roles_apply
   fi
+  # 6b. Only the database container recreated if this build's settings differ (a stack that is
+  # not serving did it above): a changed shared_buffers, /dev/shm or lock table needs a restart,
+  # and the serving path never recreates it otherwise (P1-T23 review A1). Compose leaves it alone
+  # when nothing changed; every hospital is held and the workers stopped, so the seconds it takes
+  # cost no request. Then the check, as everywhere
+  compose up -d --wait --no-deps db
+  db_server_check
   # 7. The new build: the roles checked (C6), the platform's schema, then each hospital (2 at a
   # time, logged for its alerts; the grants of every hospital schema converged as the owner)
   echo "== [$((SECONDS - t0)) s] Platform (public) migrations"
@@ -4587,7 +4668,7 @@ restore_restart() {  # only with hospital-restore --restart (review C5): every a
   # hospital's rows
   local svcs
   s3_keys_current  # (a restart never starts s3 itself, but every start path checks its keys first)
-  svcs="$(running_app_services backend celery-worker celery-beat staff-worker provisioner)" || die "could not list the running services"
+  svcs="$(running_app_services backend backchannel celery-worker celery-beat staff-worker provisioner)" || die "could not list the running services"
   [[ -z "$svcs" ]] || { echo "Restarting: $svcs"; read -ra s <<< "$svcs"; compose restart "${s[@]}" >/dev/null; }
 }
 restore_loop() {  # restore_loop <operation> <first rc>: on through restarts and the Keycloak step

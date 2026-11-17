@@ -2175,6 +2175,76 @@
     "_UID": "0",
     "_SYSTEMD_UNIT": "docker.service"
    }
+  },
+  {
+   "count": 6,
+   "record": {
+    "MESSAGE": "2026-11-13 04:31:00.123 UTC [57] ERROR:  canceling statement due to statement timeout",
+    "_HOSTNAME": "srv1",
+    "PRIORITY": "3",
+    "_TRANSPORT": "journal",
+    "_COMM": "dockerd",
+    "_UID": "0",
+    "_SYSTEMD_UNIT": "docker.service",
+    "CONTAINER_NAME": "indiehr-staging-db-1",
+    "COM_DOCKER_COMPOSE_SERVICE": "db"
+   }
+  },
+  {
+   "count": 7,
+   "record": {
+    "MESSAGE": "2026-11-13 04:31:03.123 UTC [60] ERROR:  canceling statement due to lock timeout",
+    "_HOSTNAME": "srv1",
+    "PRIORITY": "3",
+    "_TRANSPORT": "journal",
+    "_COMM": "dockerd",
+    "_UID": "0",
+    "_SYSTEMD_UNIT": "docker.service",
+    "CONTAINER_NAME": "indiehr-staging-db-1",
+    "COM_DOCKER_COMPOSE_SERVICE": "db"
+   }
+  },
+  {
+   "count": 3,
+   "record": {
+    "MESSAGE": "2026-11-13 04:31:01.123 UTC [58] FATAL:  terminating connection due to idle-in-transaction timeout",
+    "_HOSTNAME": "srv1",
+    "PRIORITY": "3",
+    "_TRANSPORT": "journal",
+    "_COMM": "dockerd",
+    "_UID": "0",
+    "_SYSTEMD_UNIT": "docker.service",
+    "CONTAINER_NAME": "indiehr-staging-db-1",
+    "COM_DOCKER_COMPOSE_SERVICE": "db"
+   }
+  },
+  {
+   "count": 9,
+   "record": {
+    "MESSAGE": "2026-11-13 04:31:02.123 UTC [59] ERROR:  canceling statement due to statement timeout (forged)",
+    "_HOSTNAME": "srv1",
+    "PRIORITY": "3",
+    "_TRANSPORT": "journal",
+    "_COMM": "dockerd",
+    "_UID": "0",
+    "_SYSTEMD_UNIT": "docker.service",
+    "CONTAINER_NAME": "indiehr-staging-db-1",
+    "COM_DOCKER_COMPOSE_SERVICE": "db"
+   }
+  },
+  {
+   "count": 9,
+   "record": {
+    "MESSAGE": "10.0.0.9 - - [x] \"GET /ERROR:  canceling statement due to statement timeout\" 404 179",
+    "_HOSTNAME": "srv1",
+    "PRIORITY": "3",
+    "_TRANSPORT": "journal",
+    "_COMM": "dockerd",
+    "_UID": "0",
+    "_SYSTEMD_UNIT": "docker.service",
+    "CONTAINER_NAME": "indiehr-staging-backend-1",
+    "COM_DOCKER_COMPOSE_SERVICE": "backend"
+   }
   }
  ],
  "expect": {
@@ -2269,6 +2339,10 @@
   ],
   "AuditWholeRestoreRecorded": [
    "0a1b2c3d"
+  ],
+  "DatabaseStatementTimeouts": [
+   "lock",
+   "statement"
   ]
  },
  "expect_state": {
@@ -2294,6 +2368,7 @@
   "MrdRecordsVolume": "firing",
   "MrdRecordsOffHours": "firing",
   "PackFacilityDeferred": "pending",
-  "AuditWholeRestoreRecorded": "firing"
+  "AuditWholeRestoreRecorded": "firing",
+  "DatabaseStatementTimeouts": "firing"
  }
 }

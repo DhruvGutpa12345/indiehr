@@ -199,3 +199,72 @@ class BackChannelLogoutTests(SimpleTestCase):
         token = testing.mint_logout(self.hospital, "sid-x")
         response = APIClient(HTTP_HOST=HOST).post(URL, {"logout_token": token})
         self.assertEqual(response.status_code, 404)
+
+    # The back-channel service (P1-T23, Q-K95): its own gunicorn answers this one path and
+    # nothing else, on any host (ihr_platform.urls_backchannel; IHR_SERVICE=backchannel)
+
+    def test_the_service_answers_the_logout_path_and_two_probes_only(self):
+        from django.test import override_settings
+
+        with override_settings(
+            ROOT_URLCONF="ihr_platform.urls_none",
+            PUBLIC_SCHEMA_URLCONF="ihr_platform.urls_backchannel",
+        ):
+            # the logout view itself is served (a bad token is 400, never 404)
+            self.assertEqual(
+                self.platform.post(URL, {"logout_token": "x"}).status_code, 400
+            )
+            connection.set_schema(TEST_SCHEMA)
+            self.assertEqual(self.platform.get("/ping/").status_code, 200)
+            health = self.platform.get("/health/")
+            self.assertEqual(health.status_code, 200)
+            self.assertEqual(health.json()["service"], "backchannel")
+            for path in (
+                "/ops/",
+                "/api/ihr/bootstrap/",
+                "/api/v1/users/getcurrentuser/",
+                "/api/ihr/audit/entries/",
+            ):
+                with self.subTest(path=path):
+                    self.assertEqual(self.platform.get(path).status_code, 404, path)
+            # a hospital's own address serves nothing either
+            hospital = APIClient(HTTP_HOST=HOST)
+            for path in (ME, "/api/ihr/bootstrap/", "/ping/"):
+                with self.subTest(hospital_path=path):
+                    self.assertEqual(hospital.get(path).status_code, 404, path)
+            connection.set_schema(TEST_SCHEMA)
+
+    def test_the_service_setting_is_checked(self):
+        from django.core.exceptions import ImproperlyConfigured
+        from ihr_platform.settings import secure
+        from ihr_platform.settings.tenancy import apply_tenancy
+
+        good = {
+            "IHR_SERVICE": "backchannel",
+            "IHR_DB_ROLE": "app",
+            "IHR_DB_LIMITS": "web",
+        }
+        self.assertEqual(secure.service_problems(good), [])
+        for change, text in (
+            ({"IHR_DB_ROLE": "owner"}, "app database role"),
+            ({"IHR_CLIENT_KEY_PURPOSE": "backend"}, "signs nothing"),
+            ({"IHR_DB_LIMITS": "worker"}, "IHR_DB_LIMITS=web"),
+            ({"IHR_SERVICE": "other"}, "IHR_SERVICE must be"),
+        ):
+            with self.subTest(change=change):
+                found = secure.service_problems({**good, **change})
+                self.assertTrue(any(text in p for p in found), found)
+        self.assertEqual(secure.service_problems({}), [])
+        with self.assertRaisesRegex(ImproperlyConfigured, "IHR_SERVICE"):
+            apply_tenancy(
+                {
+                    "IHR_SERVICE": "bogus",
+                    "INSTALLED_APPS": [],
+                    "DATABASES": {"default": {}},
+                    "MIDDLEWARE": [],
+                    "CACHES": {},
+                    "REST_FRAMEWORK": {},
+                    "SPECTACULAR_SETTINGS": {},
+                    "DEBUG": True,
+                }
+            )

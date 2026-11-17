@@ -62,7 +62,10 @@ services:
     # error, errors in their short form, no slow-statement logging
     command: ["postgres", "-c", "shared_buffers=64MB", "-c", "max_connections=40",
               "-c", "log_min_duration_statement=-1", "-c", "log_min_error_statement=panic",
-              "-c", "log_error_verbosity=terse"]
+              "-c", "log_error_verbosity=terse",
+              "-c", "max_locks_per_transaction=256", "-c", "effective_cache_size=3GB"]
+    # /dev/shm: Docker's 64 MB failed at about 158 hospitals (P1-T1c); a ceiling, not memory
+    shm_size: 256m
     ports: !override
       - "127.0.0.1:5433:5432"
 

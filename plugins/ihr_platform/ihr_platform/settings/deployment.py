@@ -39,6 +39,9 @@ IHR_KEYCLOAK_PUBLIC_URL = env("IHR_KEYCLOAK_PUBLIC_URL", default="")
 IHR_KEYCLOAK_URL = env("IHR_KEYCLOAK_URL", default="")
 IHR_CONSOLE_URL = env("IHR_CONSOLE_URL", default="")
 IHR_BACKCHANNEL_LOGOUT_URL = env("IHR_BACKCHANNEL_LOGOUT_URL", default="")
+# "backchannel": this container is the back-channel logout service (P1-T23): it serves that one
+# path and /ping/, /health/ (urls_backchannel.py)
+IHR_SERVICE = env("IHR_SERVICE", default="")
 IHR_SESSION_IDLE_SECONDS = env.int("IHR_SESSION_IDLE_SECONDS", default=1800)
 # Client keys (P1-T8d2): the key this container holds, if any (backend, onboarding, staff).
 IHR_CLIENT_KEY_PURPOSE = env("IHR_CLIENT_KEY_PURPOSE", default="")

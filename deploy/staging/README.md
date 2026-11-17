@@ -901,6 +901,7 @@ every app container since P1-T19b, see "Moving to split roles"):
 | DatabaseRoleRefused | `ihr-db-role: refused role=<app\|owner\|none> reason=<code>` from a service that runs as a declared role, in the last 30 minutes: that container serves nothing | critical |
 | DatabaseSchemaGated | `ihr-db-role: gated schema=<schema> reason=<extra_privileges\|controls>` from an app service (the worker repeats it every minute), in the last 15 minutes: that hospital schema is not served, and the shared app role may still hold the right | critical |
 | DatabaseRoleLoginFailed | Postgres's own `password authentication failed for user "<ihr_app\|ihr_owner\|...>"`, from the `db` container, in the last 10 minutes: a split role's password may have been changed by whoever could log in as it | critical |
+| DatabaseStatementTimeouts | Postgres's own `canceling statement due to statement timeout`, `... due to lock timeout` (a request blocked by a held lock is cut off by the 10 s lock limit first) or `terminating connection due to idle-in-transaction timeout`, from the `db` container, more than 5 times in 10 minutes (P1-T23: the limits of `ihr_platform/db_limits.py`, web 30 s statement and 60 s idle in a transaction, workers 300 s): look for what holds locks or sits idle in a transaction (`pg_stat_activity`), and which request or task was cut off, before raising any limit | warning |
 
 Runbook: `manage.py ihr_db_role_check --report` in the container names every finding (a
 refused container exits before its process starts and restart-loops: `docker compose logs
@@ -1463,6 +1464,58 @@ hundred audit entries each, so these are lower bounds):
 | `rollback` to the release before the split | refused, nothing changed | 0 s |
 | Live database restored to the pre-move point, `up` refused, then `db-roles --migrate` | moved (1 s), grants converged (3 s fleet-wide), `up`; holds lifted with `fleet release` / `fleet window --clear` (as the owner); smoke 0 FAIL | 120 s |
 | A hospital made after the move (owner), written by the web app (app) | grants converged at its migration; write and audit entry fine; report clean | 78 s |
+
+## Postgres operating rules and the back-channel service (P1-T23)
+
+**Process limits.** Every Django process opens its database sessions with three limits as startup
+options, from one table (`plugins/ihr_platform/ihr_platform/db_limits.py`, chosen by `IHR_DB_LIMITS`
+in compose, else derived from the process; a plain `compose exec backend python manage.py ...` on staging inherits the
+backend's `web`, since compose sets it on every service):
+
+| Profile | Processes | Statement | Lock | Idle in a transaction |
+|---|---|---|---|---|
+| `web` | backend, backchannel, celery-beat, dev runserver | 30 s | 10 s | 60 s |
+| `worker` | celery-worker, staff-worker, and an app-role one-off that asks for it (`-e IHR_DB_LIMITS=worker`, as the release's audit check does) | 300 s | 30 s | 300 s |
+| `owner` | migrate, admin, provisioner, restore, fleet runner, loaders | none | none (DDL paths set their own `SET LOCAL lock_timeout`) | 30 min |
+| `watch` | audit-watch | 300 s | 10 s | 60 s |
+| `test` | the test runner | 30 s | 10 s | 60 s |
+
+The audit export's snapshot sets its own 10 minutes idle. They are not a security control (a session
+may `SET` them again); they stop one stuck request or forgotten shell from holding locks for ever.
+The role check reads the live values back at the first connection and at every later one (reason
+`limits`, alert DatabaseRoleRefused), so a pooler that drops startup options is found. A cut-off
+shows as Postgres's `canceling statement due to statement timeout` (or `lock timeout`) or `terminating connection due to
+idle-in-transaction timeout`; more than five in ten minutes fires DatabaseStatementTimeouts: find what
+holds locks or sits idle (`pg_stat_activity`) before raising any limit.
+
+**Server settings** live in `deploy/postgres/server-settings.txt` and are carried by the staging
+`db` command, the dev override, CI's override and both recovery starts of `staging.sh`
+(`max_locks_per_transaction=256`: a restore holds 3,794 locks, and a copy that replays this server's WAL
+refuses to start with a smaller value; `effective_cache_size=3GB`). `/dev/shm` is 256 MB
+(`IHR_PG_SHM`; Docker's 64 MB failed at about 158 hospitals; measured need at the cap of 100 is under 64 MB). `/dev/shm` and
+`shared_buffers` are both charged to the db container's memory limit, so they plus about 512 MB for connections must fit in it
+(`scripts/test_staging_postgres.py`): a larger `IHR_PG_SHM` needs a larger `IHR_PG_MEMORY`. Until the 8 GB test, `shared_buffers` is
+512MB and the db limit 1536m; the 8 GB server's values are `IHR_PG_SHARED_BUFFERS=768MB` and
+`IHR_PG_MEMORY=2304m` in `.env` (about 80 MB per connection at 100 hospitals, P1-T1c).
+**Memory limits add up to more than the host (review B2).** With the 8 GB values the `mem_limit`s of the core services
+sum to about 7.1 GB, and monitoring, logs, dashboards, dumps and backup add about 3 GB more: the limits are ceilings, and
+only measured use fits in 8 GB. If use did reach the ceilings the kernel's OOM killer would choose among all processes, so
+the database (`oom_score_adj: -500`) and Keycloak (`-300`) are scored below the sidecars. The 8 GB load test records the real
+total (`docker stats`, host free memory, swap).
+
+`staging.sh up`, `release` and `db-roles --assert` check them (`db_server_check`): the lock table,
+the planner setting, `shared_buffers` against `.env`, `/dev/shm`, and no setting stored for the whole
+database (`ALTER DATABASE ... SET`; the role check refuses it too). A failure names each difference;
+`staging.sh up` recreates the db container with the current settings (a restart is needed for the lock
+table and `shared_buffers`).
+
+**The back-channel service.** Keycloak posts logout tokens to `http://backchannel:9000/api/ihr/backchannel-logout/`
+(its own small gunicorn: 1 worker x 2 threads, 256 MB, internal network only, no Traefik route, no client
+key; it answers that path, `/ping/` and `/health/` only). Before, the post landed in the same eight threads
+as the sign-out that waits for it. **Nothing to run by hand:** `staging.sh up` (and so every `release`) runs `ihr_keycloak_sync --realm --all` as the admin one-off (it holds the Keycloak bootstrap client; `staging.sh manage` does not, so it cannot run the sync), and each hospital's Keycloak client takes the new address there; until the first `up` of this build Keycloak keeps posting to `backend`, which still answers (as before, in the shared threads). To go back: set `IHR_BACKCHANNEL_LOGOUT_URL` to `backend` in `compose.yaml`, sync, drop the service.
+
+**Load test on an 8 GB server** (owner; blocked until there is one): see `docs/reviews/p1-t23/build.md`
+("The 8 GB load test") and `scripts/load-test.py`. Never reported from this machine.
 
 ## Releases (P1-T18b)
 

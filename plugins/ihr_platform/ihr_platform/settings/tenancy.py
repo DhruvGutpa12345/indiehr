@@ -68,6 +68,17 @@ def apply_tenancy(settings):  # noqa: PLR0915 (one flat list of settings)
     settings["TENANT_DOMAIN_MODEL"] = "ihr_platform.Domain"
     settings["PUBLIC_SCHEMA_URLCONF"] = "ihr_platform.urls_public"
     settings["SHOW_PUBLIC_IF_NO_TENANT_FOUND"] = False
+    # The back-channel logout service (P1-T23, Q-K95): its own small gunicorn that answers
+    # Keycloak's logout post and nothing else, on every host
+    settings.setdefault("IHR_SERVICE", os.environ.get("IHR_SERVICE", ""))
+    if settings["IHR_SERVICE"] not in ("", "backchannel"):
+        msg = f"IHR_SERVICE must be empty or backchannel, not {settings['IHR_SERVICE']!r}."
+        raise ImproperlyConfigured(msg)
+    if settings["IHR_SERVICE"] == "backchannel":
+        settings["ROOT_URLCONF"] = (
+            "ihr_platform.urls_none"  # a hospital's address: nothing
+        )
+        settings["PUBLIC_SCHEMA_URLCONF"] = "ihr_platform.urls_backchannel"
 
     middleware = [m for m in settings["MIDDLEWARE"] if "TenantMainMiddleware" not in m]
     settings["MIDDLEWARE"] = [
@@ -194,6 +205,16 @@ def apply_tenancy(settings):  # noqa: PLR0915 (one flat list of settings)
     if settings["IHR_DB_ROLES"] not in ("off", "test", "required"):
         msg = f"IHR_DB_ROLES must be off, test or required, not {settings['IHR_DB_ROLES']!r}."
         raise ImproperlyConfigured(msg)
+
+    # Statement, lock and idle-in-transaction limits of this process's database sessions
+    # (P1-T23, db_limits.py): a profile chosen by IHR_DB_LIMITS, else by what the process is.
+    from ihr_platform import db_limits
+
+    settings.setdefault("IHR_DB_LIMITS", db_limits.chosen(settings.get))
+    db_limits.apply_to_database_options(
+        settings["DATABASES"]["default"].setdefault("OPTIONS", {}),
+        settings["IHR_DB_LIMITS"],
+    )
 
     for cache in settings["CACHES"].values():
         cache["KEY_FUNCTION"] = "django_tenants.cache.make_key"

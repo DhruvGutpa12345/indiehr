@@ -959,6 +959,22 @@ def role_problems(cursor, current_mode):
                     "in each: scripts/staging.sh db-roles --assert)",
                 )
             )
+    # A setting stored for the whole database (or the cluster) would sit under every role's
+    # session; the process limits (db_limits.py, P1-T23) are startup options and win over it,
+    # so it would hide behind them (the limits check could not see it)
+    cursor.execute(
+        "SELECT ARRAY(SELECT split_part(c, '=', 1) FROM unnest(s.setconfig) c) "
+        "FROM pg_db_role_setting s WHERE s.setrole = 0 AND s.setdatabase IN "
+        "(0, (SELECT oid FROM pg_database WHERE datname = current_database()))"
+    )
+    for (names,) in cursor.fetchall():
+        problems.append(
+            (
+                "problem",
+                f"the database has stored settings ({', '.join(names)}): "
+                "ALTER DATABASE ... RESET ALL as postgres (P1-T23)",
+            )
+        )
     return problems
 
 
@@ -1279,6 +1295,7 @@ REASONS = (
     "check_failed",
     "roles_off",
     "controls",
+    "limits",
 )
 # Why a hospital schema is gated (C2): a right beyond the model for the app or PUBLIC there, or
 # a broken control there (its sealing functions: security, search path, owner, missing or
@@ -1290,6 +1307,7 @@ GATED_REASONS = ("controls", "extra_privileges")
 OWNER_PROCESSES = ("migrate", "admin", "provisioner")
 PROCESSES = (
     "backend",
+    "backchannel",
     "celery-worker",
     "celery-beat",
     "staff-worker",
@@ -1407,12 +1425,23 @@ def _identity_problems(user, session, superuser, attributes, member, stored, rol
     return found
 
 
+def limits_problems(cursor):
+    """The statement, lock and idle-in-transaction limits this connection shows against its
+    process's profile (P1-T23, db_limits.py): a pooler that drops startup options, or a role,
+    database or server setting that won over them, is found at the first connection and at
+    every later one. [(reason, text)]."""
+    from ihr_platform import db_limits
+
+    return [("limits", text) for text in db_limits.mismatches(cursor)]
+
+
 def reconnect_problems(cursor, role=APP):
     """Every new connection after the first (S2): an ordinary role can ALTER ROLE itself (SET
     a default, a password), so its identity, attributes, memberships and stored settings are
-    read again at each login. One small catalogue query."""
+    read again at each login. One small catalogue query, and the limits of the process's
+    profile (P1-T23)."""
     cursor.execute(_IDENTITY + " FROM pg_roles r WHERE r.rolname = current_user")
-    return _identity_problems(*cursor.fetchone(), role=role)
+    return _identity_problems(*cursor.fetchone(), role=role) + limits_problems(cursor)
 
 
 # What the watch role may never hold anywhere (P1-T21 A11): it only reads
@@ -1602,6 +1631,10 @@ def check_connection(  # noqa: PLR0912 (one flat list of verdicts)
     if declared_role not in DECLARED:
         return [("undeclared", "IHR_DB_ROLE must be app, owner or watch")]
     with connection.cursor() as cursor:
+        # The limits first, whatever the role (P1-T23): they are this process's own setting
+        found = limits_problems(cursor)
+        if found:
+            return found
         if declared_role == "owner":
             return owner_problems(cursor, argv, process)
         if declared_role == "watch":

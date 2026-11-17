@@ -44,9 +44,11 @@ x-app: &app
     IHR_KEYCLOAK_PUBLIC_URL: https://auth.${IHR_TENANT_DOMAIN_SUFFIX}
     IHR_KEYCLOAK_URL: http://keycloak:8080
     IHR_CONSOLE_URL: https://console.${IHR_TENANT_DOMAIN_SUFFIX}
-    IHR_BACKCHANNEL_LOGOUT_URL: http://backend:9000/api/ihr/backchannel-logout/
-    # Every hospital, the console, and the two internal names (health checks, back-channel)
-    DJANGO_ALLOWED_HOSTS: '[".${IHR_TENANT_DOMAIN_SUFFIX}", "localhost", "backend"]'
+    # Keycloak posts logout tokens to the backchannel service, never to the web app's threads
+    # (P1-T23, Q-K95): a sign-out holds a backend thread while Keycloak calls back
+    IHR_BACKCHANNEL_LOGOUT_URL: http://backchannel:9000/api/ihr/backchannel-logout/
+    # Every hospital, the console, and the internal names (health checks, back-channel)
+    DJANGO_ALLOWED_HOSTS: '[".${IHR_TENANT_DOMAIN_SUFFIX}", "localhost", "backend", "backchannel"]'
     # No terminology server until P1-T10: never CARE's default third party over plain HTTP
     SNOWSTORM_DEPLOYMENT_URL: http://127.0.0.1:9/fhir
     GUNICORN_WORKERS: ${IHR_GUNICORN_WORKERS:-2}
@@ -54,6 +56,11 @@ x-app: &app
     # service below declares the owner (only migrate, admin and the provisioner may)
     IHR_DB_ROLES: required
     IHR_DB_ROLE: app
+    # Statement, lock and idle-in-transaction limits of this process's database sessions
+    # (P1-T23, ihr_platform/db_limits.py): web unless a service below says otherwise
+    IHR_DB_LIMITS: web
+    # (so a `compose exec backend ...` one-off also gets web; one that may run long passes
+    # -e IHR_DB_LIMITS=worker, as the release's audit check does)
   # internal: database and Redis; edge: Keycloak, and the way out (S3, mail)
   networks: [internal, edge]
   depends_on:
@@ -142,6 +149,13 @@ services:
       - shared_buffers=${IHR_PG_SHARED_BUFFERS:-512MB}
       - -c
       - max_connections=100
+      # The server settings of every database container (deploy/postgres/server-settings.txt,
+      # P1-T23): the lock table (a hospital's restore holds 3,794 locks; the default 64 per
+      # connection ran out in P1-T1c) and the planner's cache size
+      - -c
+      - max_locks_per_transaction=256
+      - -c
+      - effective_cache_size=3GB
       # No query values in the logs (P1-T9a). Django binds parameters on the client side, so a
       # logged statement carries literal values (names and phone numbers in searches); an
       # error's DETAIL line carries the duplicate key's value. So: no slow-statement logging,
@@ -173,8 +187,19 @@ services:
       interval: 10s
       timeout: 5s
       retries: 10
+    # The 8 GB server's values (confirmed by the load test, P1-T23 Q-K94): IHR_PG_SHARED_BUFFERS
+    # 768MB, IHR_PG_MEMORY 2304m. Connections keep table definitions per hospital they served
+    # (about 80 MB each at 100 hospitals, P1-T1c), so the limit is the connections' share, not
+    # shared_buffers alone.
     mem_limit: ${IHR_PG_MEMORY:-1536m}
-    shm_size: 256m
+    # /dev/shm: 64 MB failed at about 158 hospitals (P1-T1c); measured need at the cap of 100 is
+    # under 64 MB. A tmpfs ceiling charged to mem_limit like shared_buffers: shm + shared_buffers
+    # + room for connections must fit in mem_limit (scripts/test_staging_postgres.py, P1-T23 B1)
+    shm_size: ${IHR_PG_SHM:-256m}
+    # If the host itself runs out of memory (the containers' limits add up to more than 8 GB
+    # with monitoring, logs, dashboards, dumps and backup on), the kernel picks its victim by
+    # this score: never the database before a sidecar (P1-T23 review B2)
+    oom_score_adj: -500
 
   redis:
     <<: *hardening
@@ -232,6 +257,7 @@ services:
     environment:
       <<: *app-env
       IHR_DB_ROLE: owner
+      IHR_DB_LIMITS: owner
     command:
       - bash
       - -c
@@ -239,7 +265,7 @@ services:
         python manage.py ihr_db_role_check --for migrate
         && python manage.py migrate_schemas --shared --noinput
         && python manage.py ihr_create_tenant --public --domain localhost
-        --domain console.${IHR_TENANT_DOMAIN_SUFFIX} --domain backend
+        --domain console.${IHR_TENANT_DOMAIN_SUFFIX} --domain backend --domain backchannel
         && python manage.py ihr_fleet_run check roles packs --record --startup
     depends_on:
       db:
@@ -263,6 +289,7 @@ services:
     environment:
       <<: *app-env
       IHR_DB_ROLE: owner
+      IHR_DB_LIMITS: owner
     logging:
       driver: none
     # The public keys the sync writes to Keycloak's clients (P1-T8d2); never a private key
@@ -373,6 +400,30 @@ services:
         --access-logfile - --error-logfile -
     mem_limit: ${IHR_BACKEND_MEMORY:-1g}
 
+  # Keycloak's back-channel logout (P1-T23, Q-K95; ADR-009): its own small gunicorn, so a
+  # sign-out that holds a backend thread while Keycloak calls back can never wait for itself.
+  # Same image and the app role; no Traefik route (only Keycloak reaches it, as
+  # http://backchannel:9000), no client key, no anchor key, internal network only. It answers
+  # the logout path, /ping/ and /health/ and nothing else (ihr_platform/urls_backchannel.py).
+  backchannel:
+    <<: *app
+    environment:
+      <<: *app-env
+      IHR_SERVICE: backchannel
+      GUNICORN_CMD_ARGS: "--worker-class gthread --threads 2"
+    networks: [internal]
+    command:
+      - bash
+      - -c
+      - >-
+        printf api > /tmp/container-role
+        && python manage.py ihr_db_role_check --for backchannel
+        && exec gunicorn --config python:config.gunicorn config.wsgi:application
+        --bind 0.0.0.0:9000 --chdir=/app --workers 1
+        --access-logformat '%(h)s %(t)s "%(m)s %(U)s" %(s)s %(B)s %(M)sms'
+        --access-logfile - --error-logfile -
+    mem_limit: 256m
+
   celery-worker:
     <<: *app
     env_file:
@@ -380,6 +431,9 @@ services:
       # The hourly audit fingerprint runs here: the add-only bucket key (P1-T6b). The web
       # app holds the read-only one; beat only schedules and needs neither.
       - secrets/anchor-write.env
+    environment:
+      <<: *app-env
+      IHR_DB_LIMITS: worker
     command:
       - bash
       - -c
@@ -407,6 +461,7 @@ services:
       <<: *app-env
       IHR_CLIENT_KEY_PURPOSE: onboarding
       IHR_DB_ROLE: owner
+      IHR_DB_LIMITS: owner
     volumes:
       - clientkey-onboarding:/run/ihr-keys:ro
       # The web app's public keys, for the client of each new hospital it creates
@@ -421,6 +476,7 @@ services:
     environment:
       <<: *app-env
       IHR_CLIENT_KEY_PURPOSE: staff
+      IHR_DB_LIMITS: worker
     volumes:
       - clientkey-staff:/run/ihr-keys:ro
     command: ["bash", "-c", "python manage.py ihr_db_role_check --for staff-worker && exec python manage.py ihr_provision_worker --role staff"]
@@ -494,6 +550,7 @@ services:
     # Keycloak's own shutdown takes up to 11 s (delay + timeout); Docker's default is 10
     stop_grace_period: 30s
     mem_limit: ${IHR_KEYCLOAK_MEMORY:-1g}
+    oom_score_adj: -300  # after the database, before sidecars (P1-T23 review B2)
 
   frontend:
     <<: *hardening

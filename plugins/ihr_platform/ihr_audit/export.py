@@ -66,6 +66,8 @@ CSV_HEADER = (
     # last, so earlier columns keep their places; a grant's reason is its ihr_records_grant entry
     "grants",
 )
+# How long the export's snapshot may wait for its client between two fetches
+IDLE = "10min"
 FORMULA_START = ("=", "+", "-", "@", "\t", "\r")
 IST = ZoneInfo("Asia/Kolkata")
 # Operations are stored as one letter (install.py)
@@ -423,6 +425,11 @@ def _snapshot():
     must not show its entries both as sealed and as not sealed yet."""
     with transaction.atomic(), connection.cursor() as cursor:
         cursor.execute("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ, READ ONLY")
+        # The snapshot sits idle between two fetches while the client reads: the web profile's
+        # 60 s idle limit (db_limits.py, P1-T23) would cut a slow download, so this one
+        # transaction gets 10 minutes. A client slower than that ends the stream: a JSONL
+        # export proves itself, so a cut file shows.
+        cursor.execute(f"SET LOCAL idle_in_transaction_session_timeout = '{IDLE}'")
         yield cursor
 
 

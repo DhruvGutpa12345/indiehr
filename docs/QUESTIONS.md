@@ -984,6 +984,52 @@ Celery holds the fingerprint writer key, so with the owner password a compromise
 
 *Recommendation A:* B makes the plan, result and timeline checks decoration against a Celery compromise. Reverse: B, with the checks documented as defence in depth only.
 
+### Q-K92 — Where do the database timeouts live? (P1-T23 design; auto-accepted by Claude, 2026-11-17, awaiting owner confirmation)
+
+- **A ⭐ (taken).** Per-process startup options from one code table (`ihr_platform/db_limits.py`, set in `apply_tenancy`). They reach dev, CI and staging whatever role connects, and keep the rule that a role stores no setting of its own (S9). Drift is caught three ways: the role check compares the live values with the process's profile (reason `limits`, at the first connection and every later one); `staging.sh up`, `release` and `db-roles --assert` check the server's lock table, `shared_buffers`, `/dev/shm` and any setting stored for the whole database; and the log alert DatabaseStatementTimeouts.
+- B. `ALTER ROLE ihr_app SET ...` with an allow-list in the role check: covers a non-Django client, weakens S9, misses dev.
+- C. Both.
+
+*Recommendation A.* Not a security control (any session may `SET` them again): they bound accidents and noisy neighbours. Reverse: B or C by turning `role_problems` into an exact allow-list. A metric alert on `max_locks_per_transaction` was not built: the pinned postgres-exporter has no settings collector; the up/release/assert check covers it.
+
+### Q-K93 — What are the limit values? (P1-T23 design; auto-accepted by Claude, 2026-11-17, awaiting owner confirmation)
+
+- **A ⭐ (taken).** Web (gunicorn, the back-channel service, beat, dev runserver): statement 30 s, lock 10 s, idle in a transaction 60 s. Worker (celery worker, staff worker, app-role one-offs): 300 s, 30 s, 300 s. Owner (migrate, admin, provisioner, restore, fleet runner, loaders): no statement or lock limit at session level (their DDL paths keep their own `SET LOCAL lock_timeout`), idle in a transaction 30 min. Tests: as web. The audit export's snapshot sets 10 min idle for itself.
+- B. Tighter web (15 s). C. No idle limit.
+
+*Recommendation A:* every request is one transaction (`ATOMIC_REQUESTS`) that sits idle while Python calls Keycloak (5 s) or S3. Reverse: edit `PROFILES`.
+
+### Q-K94 — How big is the database container? (P1-T23 design; auto-accepted by Claude, 2026-11-17, awaiting owner confirmation)
+
+- **A ⭐ (taken).** `max_locks_per_transaction` 256 (staging, dev, CI and both restore starts: a copy that replays this server's WAL refuses to start with a smaller value), `effective_cache_size` 3GB, `/dev/shm` 256 MB on staging and in dev (review B1: shm and `shared_buffers` are both charged to the container's limit, and 1 GB plus 512MB filled the 1536m limit; a larger `IHR_PG_SHM` needs a larger `IHR_PG_MEMORY`, checked by `scripts/test_staging_postgres.py`; the database and Keycloak carry negative `oom_score_adj` because the containers' limits sum to more than 8 GB, review B2). Until the 8 GB test, `shared_buffers` stays 512MB and the db limit 1536m; the 8 GB server's values are `IHR_PG_SHARED_BUFFERS=768MB` and `IHR_PG_MEMORY=2304m` in `.env`.
+- B. `/dev/shm` 256 MB as before.
+
+*Recommendation A.* Reverse via `.env` (`IHR_PG_SHM`) and `deploy/postgres/server-settings.txt`.
+
+### Q-K95 — Where does Keycloak's back-channel logout land? (P1-T23 design; auto-accepted by Claude, 2026-11-17, awaiting owner confirmation)
+
+A sign-out holds a backend thread while Keycloak posts the logout back into the same eight threads.
+
+- **A ⭐ (taken).** Its own `backchannel` service: the same image, gunicorn 1 worker x 2 threads, internal network only, no route, app role, no client key, serving the logout path, `/ping/` and `/health/` only; about 0.2 GB of memory (limit 256m). Existing hospitals' Keycloak clients take the new address at the next `staging.sh up` (it runs the sync). **Unmeasured:** the shared-pool storm against the own service (design L3) was not run, and the dev runserver cannot show the self-wait; the choice rests on reasoning until the 8 GB test. A crash, OOM kill or unhealthy `backchannel` pages through ContainerNotRunning / ContainerUnhealthy (critical; its image health check calls `/ping/`); logouts then fall back to the 60 s refresh.
+- B. A second gunicorn in the backend container. C. Share the pool and alert.
+
+*Recommendation A.* Reverse: point `IHR_BACKCHANNEL_LOGOUT_URL` back at `backend`, run the sync, drop the service.
+
+### Q-K96 — Should `transaction_timeout` be set? (P1-T23 design; auto-accepted by Claude, 2026-11-17, awaiting owner confirmation)
+
+- **A ⭐ (taken).** Not now. Restores, tests and long tasks are single transactions; the statement and idle limits are enough for requests. Revisit after the 8 GB test.
+- B. Web 120 s.
+
+### Q-K97 — How does the load test sign in? (P1-T23 design; auto-accepted by Claude, 2026-11-17, awaiting owner confirmation)
+
+- **A ⭐ (taken).** The real OIDC flow with seeded synthetic users (`scripts/load-test.py`; a one-time code from the user's seeded secret when the account has one). Nothing new on the server.
+- B. A staging-only command that mints sessions: faster, but a sign-in bypass that must never reach production.
+
+### Q-K98 — Load target and pass criteria (P1-T23 design; auto-accepted by Claude, 2026-11-17, awaiting owner confirmation)
+
+- **A ⭐ (taken).** 20 active staff per hospital, one request per 15 s each; levels 25, 50, 100 hospitals; pass: no OOM kill and no swap-in; p95 < 1 s and p99 < 3 s; errors < 0.5 % (none from timeouts on the request mix); every back-channel token delivered within 2 s; Celery queue drained within 60 s of each burst; the dump finishes in its window; db memory below its limit with 15 % margin. The cell cap becomes the lower of 100 and the passing level. **The 8 GB run is blocked on the owner** (no server); `docs/reviews/p1-t23/build.md` holds the plan.
+- B. The owner's own numbers per hospital size.
+
 **Still open:** Q-B4 (final MVP module list: assumed as in PLAN.md Phase 2) and Q-B6/B7 (pricing, timeline). Q-F2 is moot while AI is deferred.
 
 ---

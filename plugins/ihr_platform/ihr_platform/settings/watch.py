@@ -21,6 +21,7 @@ from config.settings.base import *  # noqa: E402, F403
 from config.settings.base import env  # noqa: E402
 from django.core.exceptions import ImproperlyConfigured  # noqa: E402
 
+from ihr_platform import db_limits  # noqa: E402
 from ihr_platform.settings import secure  # noqa: E402
 from ihr_platform.settings.tenancy import apply_tenancy  # noqa: E402
 
@@ -40,14 +41,13 @@ CACHES = {"default": {"BACKEND": "django.core.cache.backends.locmem.LocMemCache"
 DATABASES = {"default": env.db("DATABASE_URL", default="")}
 DATABASES["default"]["ATOMIC_REQUESTS"] = False
 DATABASES["default"]["CONN_MAX_AGE"] = 0
+IHR_DB_LIMITS = "watch"
 DATABASES["default"].setdefault("OPTIONS", {}).update(
     {
         "application_name": "ihr-audit-watch",
         # Read-only sessions, and no statement or idle transaction that can hold anything up
-        "options": (
-            "-c default_transaction_read_only=on -c statement_timeout=300000 "
-            "-c idle_in_transaction_session_timeout=60000 -c lock_timeout=10000"
-        ),
+        # (the "watch" profile of db_limits.py: 300 s statement, 10 s lock, 60 s idle)
+        "options": db_limits.options_string("watch", read_only=True),
     }
 )
 
