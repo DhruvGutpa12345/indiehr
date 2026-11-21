@@ -1,7 +1,7 @@
 # ADR-019: Database limits per process, and the back-channel logout pool
 
-- **Status:** Proposed. Q-K92…Q-K98 were auto-accepted by Claude on 2026-11-17 and await the
-  owner's confirmation.
+- **Status:** Accepted (Q-K92…Q-K98 confirmed by the owner 2026-11-21). The 8 GB load test runs on
+  the first paid staging server, before any pilot, and may still change the memory numbers.
 - **Context:** P1-T23, and Phase 1 review findings R1-09 and R1-10. The design is
   `docs/reviews/p1-t23/design.md` and the build is `docs/reviews/p1-t23/build.md`.
 

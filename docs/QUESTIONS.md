@@ -618,63 +618,63 @@ A payment record can be a payment, an advance, or an adjustment (a write-off or 
 
 *Recommendation A, with C later if you want it.* "Collected" should mean cash in the bank; an adjustment is not. The two figures then answer different questions, and the totals page (P1-T11c) can say so. Pinned by `ihr_access.tests.test_totals.OwnerTotals.test_owner_totals_count_and_sum` (an adjustment of ₹999 is not collected); the choice is `RECEIVED_TYPES` in `ihr_access/totals.py`. Failed, queued and partial payments are never counted (review A1, not a choice: CARE does not count them either).
 
-### Q-K47 — Where do our English web-app strings live? (P1-T11c design, docs/reviews/p1-t11/design-c.md §11, §13.7; auto-accepted by Claude, 2026-11-16, awaiting owner confirmation)
+### Q-K47 — Where do our English web-app strings live? (P1-T11c design, docs/reviews/p1-t11/design-c.md §11, §13.7; auto-accepted by Claude, 2026-11-16, confirmed by you 2026-11-21)
 
 - **A ⭐ (taken).** A new `deploy/locale/en.json` holds our `ihr_*` English keys only; `merge-locale.py` merges it into the web app at build; upstream `public/locale/en.json` goes back to upstream's text (the 27 keys we added there move). This is subtask P1-T11c0.
 - B. Keep adding `ihr_*` keys to upstream `en.json` as logged patches (as P1-T4b and P1-T7b did).
 
 *Recommendation A:* about 60 new keys would otherwise be a patch in a file every upstream sync touches; CI already merges our locale files before each build. Reverse: move the keys back into upstream `en.json` and drop the file.
 
-### Q-K48 — How do the Lab Technician and Store Keeper reach their lab or store? (P1-T11c; auto-accepted by Claude, 2026-11-16, awaiting owner confirmation)
+### Q-K48 — How do the Lab Technician and Store Keeper reach their lab or store? (P1-T11c; auto-accepted by Claude, 2026-11-16, confirmed by you 2026-11-21)
 
 - **A ⭐ (taken).** A "My places" menu item of ours lists the places they belong to (CARE's `location/?mine=true`) and links to the first page they may open. No permission changes.
 - B. Give both roles `can_read_healthcare_service` so CARE's Services menu works (a registry change; matrix rows and key snapshots change).
 
 *Recommendation A:* it changes no permission and keeps P1-T11b's reviewed matrix. Reverse: drop the menu item and add the grant.
 
-### Q-K49 — Who gets the stricter web-app menus? (P1-T11c, revised after the design attack (SS3); auto-accepted by Claude, 2026-11-16, awaiting owner confirmation)
+### Q-K49 — Who gets the stricter web-app menus? (P1-T11c, revised after the design attack (SS3); auto-accepted by Claude, 2026-11-16, confirmed by you 2026-11-21)
 
 - **A' ⭐ (taken).** Exactly the backend's own rule (`state.restricted`: holds one of our restricted roles and no clinical slug anywhere), published to the web app by a new `GET /api/ihr/my-access/`. CARE roles without clinical slugs keep CARE's menus.
 - B (withdrawn). Anyone without a clinical or patient-opening slug in this facility: it disagrees with the backend's rule.
 
 *Recommendation A':* the menus and the API then never disagree about who is restricted. Reverse: change the rule in one place (`my-access`).
 
-### Q-K50 — What does the front desk see when it opens a visit, and after creating one? (P1-T11c; auto-accepted by Claude, 2026-11-16, awaiting owner confirmation)
+### Q-K50 — What does the front desk see when it opens a visit, and after creating one? (P1-T11c; auto-accepted by Claude, 2026-11-16, confirmed by you 2026-11-21)
 
 - **A ⭐ (taken).** A status page of ours (status, class, dates, priority, visit number, status history; for the Cashier and TPA Desk also the bed (Q-K37a B) and the account link) for every visit link and after "create encounter".
 - B. Return to the patient's encounter tab after create, and hide "View encounter" for them.
 
 *Recommendation A:* one route wrap covers every link and the redirect; the billing desks need the bed and the account from the visit. Reverse: remove the route wrap.
 
-### Q-K51 — How does the MRD clerk pick the patient for a records grant? (P1-T11c, design attack SS2/FF3; auto-accepted by Claude, 2026-11-16, awaiting owner confirmation)
+### Q-K51 — How does the MRD clerk pick the patient for a records grant? (P1-T11c, design attack SS2/FF3; auto-accepted by Claude, 2026-11-16, confirmed by you 2026-11-21)
 
 - **A ⭐ (taken).** Only from the patient page (CARE's own verify flow: phone, year of birth); the records page takes `?patient=<id>` and has no search of its own.
 - B. CARE's two steps (phone, then year of birth and `search_retrieve`) inside our records page.
 
 *Recommendation A:* no second copy of CARE's knowledge check to keep in step. Reverse: add the two steps to the page.
 
-### Q-K52 — What does the Owner's "Visits" tile count? (P1-T11c; auto-accepted by Claude, 2026-11-16, awaiting owner confirmation)
+### Q-K52 — What does the Owner's "Visits" tile count? (P1-T11c; auto-accepted by Claude, 2026-11-16, confirmed by you 2026-11-21)
 
 - **A ⭐ (taken).** Visits excluding cancelled and entered-in-error.
 - B. All statuses, labelled "visits recorded, all statuses".
 
 *Recommendation A:* a cancelled or mistaken visit is not a visit the hospital served. Reverse: one filter in `totals.ts`.
 
-### Q-K53 — How are CARE's own three roles' menus pinned in the browser tests? (P1-T11c, design attack FF4; auto-accepted by Claude, 2026-11-16, awaiting owner confirmation)
+### Q-K53 — How are CARE's own three roles' menus pinned in the browser tests? (P1-T11c, design attack FF4; auto-accepted by Claude, 2026-11-16, confirmed by you 2026-11-21)
 
 - **A ⭐ (taken).** Hand-derived lists in `roles-menus.spec.ts` plus a unit test that the menu code in CARE mode deep-equals CARE's unpatched menus.
 - B. A recording-mode commit before the hooks, then an artifact download (one extra CI round and commit).
 
 *Recommendation A:* CI keeps artifacts only on failure, and the unit test already proves CARE's menus are untouched. Reverse: add the recording step.
 
-### Q-K54 — What does the menu show while the web app is still asking the backend who you are? (P1-T11c1 review C1-4, design-c.md §13.8; auto-accepted by Claude, 2026-11-16, awaiting owner confirmation)
+### Q-K54 — What does the menu show while the web app is still asking the backend who you are? (P1-T11c1 review C1-4, design-c.md §13.8; auto-accepted by Claude, 2026-11-16, confirmed by you 2026-11-21)
 
 - **A ⭐ (taken).** Only Overview and Users until `my-access` answers (and if it keeps failing, retried every 15 s): a restricted role never sees CARE's full menu flash, and a failed `my-access` never opens it. CARE's roles get their full menu one round trip later; during a backend outage clinicians also see only Overview and Users.
 - B. CARE's full menu while pending (design §13.2): no delay for clinicians, but a Receptionist briefly sees, and can click, menus that answer 403.
 
 *Recommendation A:* fail closed; the delay is one small request, cached for the session. Reverse: `PENDING_KEEP` in `src/Utils/ihr/menu.ts` (and its tests).
 
-### Q-K55 — May the Receptionist print an appointment slip? (P1-T11c2, design-c.md §13.8; auto-accepted by Claude, 2026-11-16, awaiting owner confirmation)
+### Q-K55 — May the Receptionist print an appointment slip? (P1-T11c2, design-c.md §13.8; auto-accepted by Claude, 2026-11-16, confirmed by you 2026-11-21)
 
 CARE's print page (`AppointmentPrint.tsx`) always also asks for the visit's charge items and invoice. The Receptionist holds neither `can_read_charge_item` nor `can_read_invoice`, so every print would answer 403.
 
@@ -683,7 +683,7 @@ CARE's print page (`AppointmentPrint.tsx`) always also asks for the visit's char
 
 *Recommendation A:* no new upstream edit and no dead end now; B is cheap if the front desk asks for printed slips. Reverse: add the print key to `DEMOGRAPHICS_KEYS` in `src/Utils/ihr/routeKeys.ts` plus the hook (B).
 
-### Q-K56 — Which billing buttons do the Cashier, TPA Desk and Receptionist see on an account? (P1-T11c2 review F3; auto-accepted by Claude, 2026-11-16, awaiting owner confirmation)
+### Q-K56 — Which billing buttons do the Cashier, TPA Desk and Receptionist see on an account? (P1-T11c2 review F3; auto-accepted by Claude, 2026-11-16, confirmed by you 2026-11-21)
 
 Design §3.3 listed only the account page's tabs; CARE drew every write button to everyone who opens the account, and the backend refuses most of them for our desks.
 
@@ -692,7 +692,7 @@ Design §3.3 listed only the account page's tabs; CARE drew every write button t
 
 *Recommendation A:* no dead ends at the desk. Reverse: make `ihrAccountActions` return CARE's value for restricted roles too.
 
-### Q-K57 — When does the web app treat a records grant as ended if it cannot reach the backend? (P1-T11c3 review F2/F4; auto-accepted by Claude, 2026-11-16, awaiting owner confirmation)
+### Q-K57 — When does the web app treat a records grant as ended if it cannot reach the backend? (P1-T11c3 review F2/F4; auto-accepted by Claude, 2026-11-16, confirmed by you 2026-11-21)
 
 The grant watcher (`IhrGrantWatcher.tsx`, rules in `records.ts` `watchStep`) asks `GET /api/ihr/records-access/` every 30 s, on focus, on any 403 and when a chart opens; each look gives up after 10 s.
 
@@ -702,35 +702,35 @@ The grant watcher (`IhrGrantWatcher.tsx`, rules in `records.ts` `watchStep`) ask
 
 *Recommendation A:* the backend already refuses every read after the end, so this only decides how long already-loaded data stays on screen (at most about 40 s). Reverse: `MAX_FAILURES_WHILE_HELD` in `records.ts`.
 
-### Q-K58 — What does the audit trail say about MRD listing their own grants? (P1-T11c3 backend; auto-accepted by Claude, 2026-11-16, awaiting owner confirmation)
+### Q-K58 — What does the audit trail say about MRD listing their own grants? (P1-T11c3 backend; auto-accepted by Claude, 2026-11-16, confirmed by you 2026-11-21)
 
 - **A ⭐ (taken).** The list request keeps its path's purpose `records` (as asking for and ending a grant do, b4's `PURPOSES`) but carries **no** `grants` key, so it never looks like a read of the record under a grant. The records page's list (`?names=1`) shows the patient's name and year of birth and is recorded as showing that patient.
 - B. Give list requests their own purpose (e.g. `admin`), splitting `ihr_audit/middleware.PURPOSES` by method.
 
 *Recommendation A:* the `grants` key is what tells a record read apart; one purpose per path keeps the audit rule simple. Reverse: split `PURPOSES` by method.
 
-### Q-K59 — May the grant watcher's 30-second poll show patients? (P1-T11c3 review BA1; auto-accepted by Claude, 2026-11-16, awaiting owner confirmation)
+### Q-K59 — May the grant watcher's 30-second poll show patients? (P1-T11c3 review BA1; auto-accepted by Claude, 2026-11-16, confirmed by you 2026-11-21)
 
 - **A ⭐ (taken).** No. The bare `GET /api/ihr/records-access/` returns ids and times only and writes no "patient shown" audit entry; names come only with `?names=1`, which the records page asks for. Without this, every MRD page would add a patient-shown audit entry every 30 s.
 - B. One list body for both (names always), accepting the audit noise.
 
 *Recommendation A.* Reverse: drop the `names` switch in `endpoints.py` and the `none:names` row of `list_params.txt`.
 
-### Q-K60 — Who decides pack items? (P1-T15b design; auto-accepted by Claude, 2026-11-16, awaiting owner confirmation)
+### Q-K60 — Who decides pack items? (P1-T15b design; auto-accepted by Claude, 2026-11-16, confirmed by you 2026-11-21)
 
 - **A ⭐ (taken).** Hospital-wide admins only, for every scope (the API's `IsHospitalAdmin`).
 - B. Facility admins decide their own facility's items.
 
 *Recommendation A:* one reviewed gate, and no facility content ships yet. B fits the facility packs of P1-T24. Reverse: widen the permission class in `ihr_refdata/api.py` and add a facility check.
 
-### Q-K61 — How does an admin see what a pack applied? (P1-T15b design, Q-T10; auto-accepted by Claude, 2026-11-16, awaiting owner confirmation)
+### Q-K61 — How does an admin see what a pack applied? (P1-T15b design, Q-T10; auto-accepted by Claude, 2026-11-16, confirmed by you 2026-11-21)
 
 - **A ⭐ (taken).** Each applied `PackApply` carries a per-item `changes` list (up to 500 items, plus the total).
 - B. Counts only, with details left to the audit trail.
 
 *Recommendation A:* Q-T10 asks for a list an admin can read. Reverse: store counts only and point to the audit trail.
 
-### Q-K62 — What happens to identifier changes that could break existing data? (P1-T15b design, item 8; auto-accepted by Claude, 2026-11-16, awaiting owner confirmation)
+### Q-K62 — What happens to identifier changes that could break existing data? (P1-T15b design, item 8; auto-accepted by Claude, 2026-11-16, confirmed by you 2026-11-21)
 
 - **A ⭐ (taken).** Automatic unless a data check fails: `unique` switched on while values repeat, or `regex` changed while stored values no longer match. Then the item is pending with reason `data-check`, the counts are stored, accept is refused until the data is fixed, and keep is allowed. Checks are bounded and never run in a GET.
 - B. Always wait for the admin.
@@ -739,7 +739,7 @@ The grant watcher (`IhrGrantWatcher.tsx`, rules in `records.ts` `watchStep`) ask
 
 *Recommendation A:* it keeps "automatic for unedited rows". CARE re-validates identifiers on every patient edit, so D would make front-desk demographic edits fail. Reverse: make every identifier change pending.
 
-### Q-K63 — What if the hospital deleted an identifier config or form that a pack ships? (P1-T15b design, item 11; auto-accepted by Claude, 2026-11-16, awaiting owner confirmation)
+### Q-K63 — What if the hospital deleted an identifier config or form that a pack ships? (P1-T15b design, item 11; auto-accepted by Claude, 2026-11-16, confirmed by you 2026-11-21)
 
 - **A ⭐ (taken).** A deletion is a local edit. The item turns pending `deleted` only when the pack's content for it changes. Keep stays kept. Accept restores it.
 - B. Restore automatically, as value sets are.
@@ -747,7 +747,7 @@ The grant watcher (`IhrGrantWatcher.tsx`, rules in `records.ts` `watchStep`) ask
 
 *Recommendation A:* CARE binds value-set slugs in code, but not these, and deleting one is the hospital's choice. Reverse: set the kind's restore flag.
 
-### Q-K64 — How do identifier configs reach every web process after a change? (P1-T15b design, S11; auto-accepted by Claude, 2026-11-16, awaiting owner confirmation)
+### Q-K64 — How do identifier configs reach every web process after a change? (P1-T15b design, S11; auto-accepted by Claude, 2026-11-16, confirmed by you 2026-11-21)
 
 CARE's `get_config` keeps a dict that is never cleared.
 
@@ -756,7 +756,7 @@ CARE's `get_config` keeps a dict that is never cleared.
 
 *Recommendation A:* CARE's own edits have the same fault, and a restart rule gets forgotten. Reverse: remove the swap and document the restart.
 
-### Q-K65 — How are pack form versions named and linked? (P1-T15b design, items 1-3; auto-accepted by Claude, 2026-11-16, awaiting owner confirmation)
+### Q-K65 — How are pack form versions named and linked? (P1-T15b design, items 1-3; auto-accepted by Claude, 2026-11-16, confirmed by you 2026-11-21)
 
 - **A ⭐ (taken).** Slug `ihr-pack-<key>-v<N>`. The old version is retired by status. Version 1 is linked to the hospital's top-level organisations, and later versions copy the previous version's links.
 - B. One slug moved to the newest row.
@@ -764,7 +764,7 @@ CARE's `get_config` keeps a dict that is never cleared.
 
 *Recommendation A:* slugs are unique and old answers must keep their form. An unlinked form is invisible to everyone on a hospital host, because superusers are refused there. Reverse: change the slug rule in `forms.py` (old answers keep the old slug).
 
-### Q-K66 — Where does the "answered form is never edited in place" guard live? (P1-T15b design, item 4; auto-accepted by Claude, 2026-11-16, awaiting owner confirmation)
+### Q-K66 — Where does the "answered form is never edited in place" guard live? (P1-T15b design, item 4; auto-accepted by Claude, 2026-11-16, confirmed by you 2026-11-21)
 
 - **A ⭐ (taken).** In database triggers. Form side: frozen columns and hard delete are refused. Answer side: hard delete of `QuestionnaireResponse` and `FormSubmission` rows is refused, the form link is fixed after insert, and the lock is taken (FOR SHARE) on insert. Soft delete stays free.
 - B. A viewset swap.
@@ -773,7 +773,7 @@ The answer-side trigger refuses hard deletes of patients' form answers. This bea
 
 *Recommendation A:* it covers every writer, including CARE's commented-out check and Django's cascade. Reverse: drop the answer-side triggers and rely on the form-side check.
 
-### Q-K67 — Which facilities get a per-facility pack? (P1-T15b design, item 14; auto-accepted by Claude, 2026-11-16, awaiting owner confirmation)
+### Q-K67 — Which facilities get a per-facility pack? (P1-T15b design, item 14; auto-accepted by Claude, 2026-11-16, confirmed by you 2026-11-21)
 
 - **A ⭐ (taken).** Every live facility. A new facility gets its packs from a deduplicated on-commit task (facility packs only). A 15-minute beat job per active hospital is the backstop.
 - B. The admin enrols facilities.
@@ -781,63 +781,63 @@ The answer-side trigger refuses hard deletes of patients' form answers. This bea
 
 *Recommendation A:* CARE's catalogue is per facility, and start-ups happen only on deploy. Reverse: remove the signal and the beat job.
 
-### Q-K68 — What if a pack item's link target is missing? (P1-T15b design; auto-accepted by Claude, 2026-11-16, awaiting owner confirmation)
+### Q-K68 — What if a pack item's link target is missing? (P1-T15b design; auto-accepted by Claude, 2026-11-16, confirmed by you 2026-11-21)
 
 - **A ⭐ (taken).** Write nothing. The item is pending `missing-link` and retried automatically.
 - B. Write it without that link.
 
 *Recommendation A:* a lab test without its specimen is wrong in a way staff would not notice. Reverse: let the handler skip the link.
 
-### Q-K69 — May packs carry prices? (P1-T15b design; auto-accepted by Claude, 2026-11-16, awaiting owner confirmation)
+### Q-K69 — May packs carry prices? (P1-T15b design; auto-accepted by Claude, 2026-11-16, confirmed by you 2026-11-21)
 
 - **A ⭐ (taken).** Never. Prices and stock stay the hospital's. A pack may ship charge item definitions without price components.
 - B. Packs ship prices.
 
 *Recommendation A:* money is the hospital's decision, and an unedited price would change "automatically". Reverse: allow price components in a kind's handler.
 
-### Q-K70 — How is the per-facility mechanism proven in b3? (P1-T15b design; auto-accepted by Claude, 2026-11-16, awaiting owner confirmation)
+### Q-K70 — How is the per-facility mechanism proven in b3? (P1-T15b design; auto-accepted by Claude, 2026-11-16, confirmed by you 2026-11-21)
 
 - **A ⭐ (taken).** Real CARE models with test-only handlers.
 - B. A test-only model and migration.
 
 *Recommendation A:* it proves CARE's slug prefix, id arrays and PROTECT, with no migration. Reverse: add the test model.
 
-### Q-K71 — Do identifier changes that loosen patient search wait for the admin? (P1-T15b design, item 7; auto-accepted by Claude, 2026-11-16, awaiting owner confirmation)
+### Q-K71 — Do identifier changes that loosen patient search wait for the admin? (P1-T15b design, item 7; auto-accepted by Claude, 2026-11-16, confirmed by you 2026-11-21)
 
 - **A ⭐ (taken).** Yes. Pending `privacy`, whatever the edit state: partial search turned on, a retrieve check (DOB, year of birth, OTP) turned off, or a new active hospital-wide config with such options.
 - B. Automatic for unedited rows (Q-T10 as written).
 
 *Recommendation A:* a pack must not widen who can find a patient by identifier without the hospital's OK. Reverse: drop the `privacy` rule in `identifiers.py`.
 
-### Q-K72 — What if a foreign form already sits at a pack form's slug? (P1-T15b design, item 3; auto-accepted by Claude, 2026-11-16, awaiting owner confirmation)
+### Q-K72 — What if a foreign form already sits at a pack form's slug? (P1-T15b design, item 3; auto-accepted by Claude, 2026-11-16, confirmed by you 2026-11-21)
 
 - **A ⭐ (taken).** `ihr-pack-` is a reserved namespace, enforced by the questionnaire trigger. If a foreign row is already there, the engine takes the next free suffix `-2` to `-9` and records it. Ten taken slugs is a `conflict`.
 - B. Block until the form is renamed.
 
 *Recommendation A:* renaming is impossible on a hospital host once a form has answers. Reverse: make a foreign row a `conflict`.
 
-### Q-K73 — What happens to drafts and templates on a retired form version? (P1-T15b design, item 12; auto-accepted by Claude, 2026-11-16, awaiting owner confirmation)
+### Q-K73 — What happens to drafts and templates on a retired form version? (P1-T15b design, item 12; auto-accepted by Claude, 2026-11-16, confirmed by you 2026-11-21)
 
 - **A ⭐ (taken).** The old version is retired at once. The change list and item detail count the stranded drafts and response templates.
 - B. Keep the old version active while drafts exist.
 
 *Recommendation A:* pack form versions are rare and reviewed, and B leaves two live versions. Reverse: add a drafts check before retiring.
 
-### Q-K74 — What if a new auto-numbered identifier replaces an old one? (P1-T15b design, item 10; auto-accepted by Claude, 2026-11-16, awaiting owner confirmation)
+### Q-K74 — What if a new auto-numbered identifier replaces an old one? (P1-T15b design, item 10; auto-accepted by Claude, 2026-11-16, confirmed by you 2026-11-21)
 
 - **A ⭐ (taken).** Pending `counter-restart`, with the old count shown. A `default_value` change on the same config is automatic.
 - B. Automatic, warned in the change list.
 
 *Recommendation A:* the new count starts at 0, and desk staff would see look-alike numbers. Reverse: drop the `counter-restart` reason.
 
-### Q-K75 — What if the hospital renames a catalogue slug a pack bound to? (P1-T15b design, item 13; auto-accepted by Claude, 2026-11-16, awaiting owner confirmation)
+### Q-K75 — What if the hospital renames a catalogue slug a pack bound to? (P1-T15b design, item 13; auto-accepted by Claude, 2026-11-16, confirmed by you 2026-11-21)
 
 - **A ⭐ (taken).** Accepted for the test-only kinds. A production facility kind must first bind by `external_id` (a renamed bound row is pending `edited`, never a create).
 - B. Bind in b3 now.
 
 *Recommendation A:* no facility content ships in P1-T15b, so binding lands with the first real kind (b4+). Reverse: add the `external_id` binding to b3.
 
-### Q-K76 — Who counts as a "hospital-wide admin"? (P1-T15b1 review, finding A3; auto-accepted by Claude, 2026-11-16, awaiting owner confirmation)
+### Q-K76 — Who counts as a "hospital-wide admin"? (P1-T15b1 review, finding A3; auto-accepted by Claude, 2026-11-16, confirmed by you 2026-11-21 (A now; B, the recorded hospital root, as its own task before the first pilot))
 
 The gate (`ihr_identity.staff_access.IsHospitalAdmin`, shared by the audit viewer of P1-T6b and the pack decisions of P1-T15b1) accepts an admin role on **any** active top-level organisation of the hospital. Nothing records which organisation is "the hospital": CARE's top-level organisations also include the government state organisations (`ihr_load_geography`) and role organisations, and the dev seed's admins hold their role on a role organisation.
 
@@ -847,7 +847,7 @@ The gate (`ihr_identity.staff_access.IsHospitalAdmin`, shared by the audit viewe
 
 *Recommendation A now, B before go-live:* B needs the provisioning flow and the seed to change together, and P1-T15b2a item 1 needs the same answer, so it is best built once as its own small task after you confirm. Nobody is given an admin role on a state organisation by our code today. Reverse: build B (a field plus a check in `hospital_wide_admin`).
 
-### Q-K77 — Should a deleted identifier config still answer lookups? (P1-T15b2a; auto-accepted by Claude, 2026-11-16, awaiting owner confirmation)
+### Q-K77 — Should a deleted identifier config still answer lookups? (P1-T15b2a; auto-accepted by Claude, 2026-11-16, confirmed by you 2026-11-21)
 
 Our replacement for CARE's identifier-config lookup (`ihr_platform/identifier_cache.py`, so every web process sees a changed config at once) reads through CARE's own Redis-backed cache, and that cache reads soft-deleted rows too. CARE's original raised "does not exist" for a deleted config.
 
@@ -856,7 +856,7 @@ Our replacement for CARE's identifier-config lookup (`ihr_platform/identifier_ca
 
 *Recommendation A:* an identifier already on a patient's record should keep displaying; nothing new can be recorded under a deleted config either way. Reverse: B.
 
-### Q-K78 — Exact or case-insensitive item names for value sets? (P1-T15b2a; auto-accepted by Claude, 2026-11-16, awaiting owner confirmation)
+### Q-K78 — Exact or case-insensitive item names for value sets? (P1-T15b2a; auto-accepted by Claude, 2026-11-16, confirmed by you 2026-11-21)
 
 Design item 13 said pack items are matched to rows by lower-case name "for every kind". As built, identifier configs match case-insensitively, but value sets keep CARE's exact slug match.
 
@@ -865,7 +865,7 @@ Design item 13 said pack items are matched to rows by lower-case name "for every
 
 *Recommendation A.* Reverse: one lookup in `valuesets.rows`.
 
-### Q-K79 — Re-check held identifier items at every start? (P1-T15b2a; auto-accepted by Claude, 2026-11-16, awaiting owner confirmation)
+### Q-K79 — Re-check held identifier items at every start? (P1-T15b2a; auto-accepted by Claude, 2026-11-16, confirmed by you 2026-11-21)
 
 An identifier-config item held because patients' data fails its rules (duplicates, values the new pattern refuses) is checked again at every start, because new patient data may have changed the answer. Each check is capped at 90 seconds and runs inside that hospital's start-up step.
 
@@ -874,7 +874,7 @@ An identifier-config item held because patients' data fails its rules (duplicate
 
 *Recommendation A now, B before identifier content ships (Phase 2):* at fleet scale, many held items could each add up to 90 s to a release window. Reverse: B (skip `run_data_checks` under `--startup`, add a beat job).
 
-### Q-K80 — Which organisations get a pack form's first version? (P1-T15b2b; auto-accepted by Claude, 2026-11-16, awaiting owner confirmation)
+### Q-K80 — Which organisations get a pack form's first version? (P1-T15b2b; auto-accepted by Claude, 2026-11-16, confirmed by you 2026-11-21)
 
 CARE shows a form only through its organisation links, so a pack form's first version is linked to "the hospital" when it is created (design item 1). The rule for "the hospital" is the hospital-wide admin rule of Q-K76: every active top-level organisation. Those include the 36 state government organisations that `ihr_load_geography` adds.
 
@@ -884,7 +884,7 @@ CARE shows a form only through its organisation links, so a pack form's first ve
 
 *Recommendation A now, C once Q-K76 B is built:* a form linked to every state is noise in CARE's lists and makes no sense for a hospital's own form. No form content ships before Phase 2 (test packs only). Reverse: one filter in the forms kind's link step.
 
-### Q-K81 — What happens to a pack form in a hospital that has only government organisations? (P1-T15b2b review E1/E2; auto-accepted by Claude, 2026-11-16, awaiting owner confirmation)
+### Q-K81 — What happens to a pack form in a hospital that has only government organisations? (P1-T15b2b review E1/E2; auto-accepted by Claude, 2026-11-16, confirmed by you 2026-11-21)
 
 A newly provisioned hospital has only the state government organisations that `ihr_load_geography` adds, so under Q-K80 A a pack form's first version has nothing to link to. A form with no links is invisible on a hospital host.
 
@@ -894,7 +894,7 @@ A newly provisioned hospital has only the state government organisations that `i
 
 *Recommendation A now, C before form content ships (Phase 2):* nothing is written that no one can see, and no form content ships before Phase 2. Reverse: change `forms.missing_link` and the link step in `forms.py`.
 
-### Q-K82 — How will a DPDP erasure get past the answered-form guard? (P1-T15b2b review Q2; auto-accepted by Claude, 2026-11-16, awaiting owner confirmation)
+### Q-K82 — How will a DPDP erasure get past the answered-form guard? (P1-T15b2b review Q2; auto-accepted by Claude, 2026-11-16, confirmed by you 2026-11-21)
 
 The answer-side triggers (Q-K66 A) refuse every hard delete and TRUNCATE of form answers, also through a cascade from a patient or visit, and also from an owner-only SECURITY DEFINER function. Only Django's flush between tests turns `ihr.answers_truncate` on.
 
@@ -904,7 +904,7 @@ The answer-side triggers (Q-K66 A) refuse every hard delete and TRUNCATE of form
 
 *Recommendation A:* no erasure feature exists yet, and the right answer depends on the retention rules (medical records are kept for years). Reverse: add the chosen path to `forms_guard.py` with its own test and mutation row.
 
-### Q-K83 — How does the audit trail get across a whole-database restore? (P1-T22c design; auto-accepted by Claude, 2026-11-17, awaiting owner confirmation)
+### Q-K83 — How does the audit trail get across a whole-database restore? (P1-T22c design; auto-accepted by Claude, 2026-11-17, confirmed by you 2026-11-21)
 
 A whole-database restore puts every hospital back to one moment T, but the fingerprint bucket keeps claims for seals made after T. Verify and the watch read that as tampering.
 
@@ -914,7 +914,7 @@ A whole-database restore puts every hospital back to one moment T, but the finge
 
 *Recommendation A:* it is the only one that the older build a rollback ends on can still verify, and it keeps the evidence. B needs the decryption key in the watch; C would let an owner hide a rewrite. Reverse: a new design; A keeps no new tables, so nothing is lost by switching later.
 
-### Q-K84 — Where do the exported tails (packages) live? (P1-T22c design; auto-accepted by Claude, 2026-11-17, awaiting owner confirmation)
+### Q-K84 — Where do the exported tails (packages) live? (P1-T22c design; auto-accepted by Claude, 2026-11-17, confirmed by you 2026-11-21)
 
 A package holds one hospital's superseded seals and entries, so it holds personal data.
 
@@ -924,7 +924,7 @@ A package holds one hospital's superseded seals and entries, so it holds persona
 
 *Recommendation A:* it survives a dead server mid-rollback and is the same data class as the dumps. Reverse: drop the bucket copy step in `audit-supersede export`.
 
-### Q-K85 — What happens to hospitals onboarded after T? (P1-T22c design; auto-accepted by Claude, 2026-11-17, awaiting owner confirmation)
+### Q-K85 — What happens to hospitals onboarded after T? (P1-T22c design; auto-accepted by Claude, 2026-11-17, confirmed by you 2026-11-21)
 
 They are gone from the restored database, so the watch reports "fingerprinted but no longer in the database". The new `absent` event closes that, but it could also hide a deleted live hospital.
 
@@ -934,7 +934,7 @@ They are gone from the restored database, so the watch reports "fingerprinted bu
 
 *Recommendation A:* it keeps "slugs never reused" and cannot close a live hospital. Reverse: B or C change one check in `unknown_hospitals`.
 
-### Q-K86 — Rollback to a build that cannot hold the tails? (P1-T22c design; auto-accepted by Claude, 2026-11-17, awaiting owner confirmation)
+### Q-K86 — Rollback to a build that cannot hold the tails? (P1-T22c design; auto-accepted by Claude, 2026-11-17, confirmed by you 2026-11-21)
 
 A build before P1-T22b has no archive tables. A build between P1-T22b and P1-T22c has them, but reads generations from the database only and does not know `absent`.
 
@@ -943,7 +943,7 @@ A build before P1-T22b has no archive tables. A build between P1-T22b and P1-T22
 
 *Recommendation A:* B leaves an alert nobody can clear. Reverse: remove the refusal in `rel_rollback` (staging.sh).
 
-### Q-K87 — A hospital's tail cannot be read at all (lost)? (P1-T22c design; auto-accepted by Claude, 2026-11-17, awaiting owner confirmation)
+### Q-K87 — A hospital's tail cannot be read at all (lost)? (P1-T22c design; auto-accepted by Claude, 2026-11-17, confirmed by you 2026-11-21)
 
 No readable copy exists (damaged schema, or seals after the repository's last archived WAL).
 
@@ -952,14 +952,14 @@ No readable copy exists (damaged schema, or seals after the repository's last ar
 
 *Recommendation A:* B hides evidence. Reverse: B is an alert silence in Alertmanager; no code.
 
-### Q-K88 — May `restore --target` run without an export? (P1-T22c design; auto-accepted by Claude, 2026-11-17, awaiting owner confirmation)
+### Q-K88 — May `restore --target` run without an export? (P1-T22c design; auto-accepted by Claude, 2026-11-17, confirmed by you 2026-11-21)
 
 - **A ⭐ (taken).** Refused unless `--no-supersede --reason "<incident>"`, which writes a plan and result with every hospital `lost`: the timeline change is explained and the cuts stay. In a disaster (flow b) the restore to T and `up` come first; export from the repository copy and load follow, so hospitals are served without waiting for two full restores.
 - B. Allowed with a warning only.
 
 *Recommendation A:* an unexplained cut must leave a record. Reverse: drop the check in `restore`; flow b still works.
 
-### Q-K89 — Should a changed database timeline be checked? (P1-T22c design; auto-accepted by Claude, 2026-11-17, awaiting owner confirmation)
+### Q-K89 — Should a changed database timeline be checked? (P1-T22c design; auto-accepted by Claude, 2026-11-17, confirmed by you 2026-11-21)
 
 The watch records the Postgres timeline each pass.
 
@@ -968,14 +968,14 @@ The watch records the Postgres timeline each pass.
 
 *Recommendation A.* Reverse: B removes the watch check and the chain test; events then rest on the segment rule only.
 
-### Q-K90 — How long are packages kept? (P1-T22c design; auto-accepted by Claude, 2026-11-17, awaiting owner confirmation)
+### Q-K90 — How long are packages kept? (P1-T22c design; auto-accepted by Claude, 2026-11-17, confirmed by you 2026-11-21)
 
 - **A ⭐ (taken).** As the dumps, except packages holding unsealed-only, lost or refused content, which are kept as long as the archive (nothing else holds those entries). Local copies are deleted once the result and the bucket copy verify.
 - B. 400 days for every package, like the log archive.
 
 *Recommendation A:* the archive tables and backups already keep what was loaded. Reverse: change the prefix rule in `deploy/dumps/expire.py`.
 
-### Q-K91 — Who holds the key that writes restore plans, results and events? (P1-T22c attack S1; auto-accepted by Claude, 2026-11-17, awaiting owner confirmation)
+### Q-K91 — Who holds the key that writes restore plans, results and events? (P1-T22c attack S1; auto-accepted by Claude, 2026-11-17, confirmed by you 2026-11-21)
 
 Celery holds the fingerprint writer key, so with the owner password a compromise could write a restore event in the older shape and skip the new checks.
 
@@ -984,7 +984,7 @@ Celery holds the fingerprint writer key, so with the owner password a compromise
 
 *Recommendation A:* B makes the plan, result and timeline checks decoration against a Celery compromise. Reverse: B, with the checks documented as defence in depth only.
 
-### Q-K92 — Where do the database timeouts live? (P1-T23 design; auto-accepted by Claude, 2026-11-17, awaiting owner confirmation)
+### Q-K92 — Where do the database timeouts live? (P1-T23 design; auto-accepted by Claude, 2026-11-17, confirmed by you 2026-11-21)
 
 - **A ⭐ (taken).** Per-process startup options from one code table (`ihr_platform/db_limits.py`, set in `apply_tenancy`). They reach dev, CI and staging whatever role connects, and keep the rule that a role stores no setting of its own (S9). Drift is caught three ways: the role check compares the live values with the process's profile (reason `limits`, at the first connection and every later one); `staging.sh up`, `release` and `db-roles --assert` check the server's lock table, `shared_buffers`, `/dev/shm` and any setting stored for the whole database; and the log alert DatabaseStatementTimeouts.
 - B. `ALTER ROLE ihr_app SET ...` with an allow-list in the role check: covers a non-Django client, weakens S9, misses dev.
@@ -992,21 +992,21 @@ Celery holds the fingerprint writer key, so with the owner password a compromise
 
 *Recommendation A.* Not a security control (any session may `SET` them again): they bound accidents and noisy neighbours. Reverse: B or C by turning `role_problems` into an exact allow-list. A metric alert on `max_locks_per_transaction` was not built: the pinned postgres-exporter has no settings collector; the up/release/assert check covers it.
 
-### Q-K93 — What are the limit values? (P1-T23 design; auto-accepted by Claude, 2026-11-17, awaiting owner confirmation)
+### Q-K93 — What are the limit values? (P1-T23 design; auto-accepted by Claude, 2026-11-17, confirmed by you 2026-11-21)
 
 - **A ⭐ (taken).** Web (gunicorn, the back-channel service, beat, dev runserver): statement 30 s, lock 10 s, idle in a transaction 60 s. Worker (celery worker, staff worker, app-role one-offs): 300 s, 30 s, 300 s. Owner (migrate, admin, provisioner, restore, fleet runner, loaders): no statement or lock limit at session level (their DDL paths keep their own `SET LOCAL lock_timeout`), idle in a transaction 30 min. Tests: as web. The audit export's snapshot sets 10 min idle for itself.
 - B. Tighter web (15 s). C. No idle limit.
 
 *Recommendation A:* every request is one transaction (`ATOMIC_REQUESTS`) that sits idle while Python calls Keycloak (5 s) or S3. Reverse: edit `PROFILES`.
 
-### Q-K94 — How big is the database container? (P1-T23 design; auto-accepted by Claude, 2026-11-17, awaiting owner confirmation)
+### Q-K94 — How big is the database container? (P1-T23 design; auto-accepted by Claude, 2026-11-17, confirmed by you 2026-11-21)
 
 - **A ⭐ (taken).** `max_locks_per_transaction` 256 (staging, dev, CI and both restore starts: a copy that replays this server's WAL refuses to start with a smaller value), `effective_cache_size` 3GB, `/dev/shm` 256 MB on staging and in dev (review B1: shm and `shared_buffers` are both charged to the container's limit, and 1 GB plus 512MB filled the 1536m limit; a larger `IHR_PG_SHM` needs a larger `IHR_PG_MEMORY`, checked by `scripts/test_staging_postgres.py`; the database and Keycloak carry negative `oom_score_adj` because the containers' limits sum to more than 8 GB, review B2). Until the 8 GB test, `shared_buffers` stays 512MB and the db limit 1536m; the 8 GB server's values are `IHR_PG_SHARED_BUFFERS=768MB` and `IHR_PG_MEMORY=2304m` in `.env`.
 - B. `/dev/shm` 256 MB as before.
 
 *Recommendation A.* Reverse via `.env` (`IHR_PG_SHM`) and `deploy/postgres/server-settings.txt`.
 
-### Q-K95 — Where does Keycloak's back-channel logout land? (P1-T23 design; auto-accepted by Claude, 2026-11-17, awaiting owner confirmation)
+### Q-K95 — Where does Keycloak's back-channel logout land? (P1-T23 design; auto-accepted by Claude, 2026-11-17, confirmed by you 2026-11-21)
 
 A sign-out holds a backend thread while Keycloak posts the logout back into the same eight threads.
 
@@ -1015,17 +1015,17 @@ A sign-out holds a backend thread while Keycloak posts the logout back into the 
 
 *Recommendation A.* Reverse: point `IHR_BACKCHANNEL_LOGOUT_URL` back at `backend`, run the sync, drop the service.
 
-### Q-K96 — Should `transaction_timeout` be set? (P1-T23 design; auto-accepted by Claude, 2026-11-17, awaiting owner confirmation)
+### Q-K96 — Should `transaction_timeout` be set? (P1-T23 design; auto-accepted by Claude, 2026-11-17, confirmed by you 2026-11-21)
 
 - **A ⭐ (taken).** Not now. Restores, tests and long tasks are single transactions; the statement and idle limits are enough for requests. Revisit after the 8 GB test.
 - B. Web 120 s.
 
-### Q-K97 — How does the load test sign in? (P1-T23 design; auto-accepted by Claude, 2026-11-17, awaiting owner confirmation)
+### Q-K97 — How does the load test sign in? (P1-T23 design; auto-accepted by Claude, 2026-11-17, confirmed by you 2026-11-21)
 
 - **A ⭐ (taken).** The real OIDC flow with seeded synthetic users (`scripts/load-test.py`; a one-time code from the user's seeded secret when the account has one). Nothing new on the server.
 - B. A staging-only command that mints sessions: faster, but a sign-in bypass that must never reach production.
 
-### Q-K98 — Load target and pass criteria (P1-T23 design; auto-accepted by Claude, 2026-11-17, awaiting owner confirmation)
+### Q-K98 — Load target and pass criteria (P1-T23 design; auto-accepted by Claude, 2026-11-17, confirmed by you 2026-11-21)
 
 - **A ⭐ (taken).** 20 active staff per hospital, one request per 15 s each; levels 25, 50, 100 hospitals; pass: no OOM kill and no swap-in; p95 < 1 s and p99 < 3 s; errors < 0.5 % (none from timeouts on the request mix); every back-channel token delivered within 2 s; Celery queue drained within 60 s of each burst; the dump finishes in its window; db memory below its limit with 15 % margin. The cell cap becomes the lower of 100 and the passing level. **The 8 GB run is blocked on the owner** (no server); `docs/reviews/p1-t23/build.md` holds the plan.
 - B. The owner's own numbers per hospital size.
