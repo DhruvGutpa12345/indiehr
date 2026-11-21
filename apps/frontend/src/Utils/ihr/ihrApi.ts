@@ -1,5 +1,10 @@
 // IndieHR P1-T11c: our own API routes in CARE's route-object shape (query(), mutate()).
 import type { MyAccess } from "@/Utils/ihr/access";
+import type {
+  AuditEntryDetail,
+  AuditList,
+  AuditStatus,
+} from "@/Utils/ihr/audit";
 import type { Grant, GrantList, GrantRequest } from "@/Utils/ihr/records";
 import type { Totals } from "@/Utils/ihr/totals";
 import { HttpMethod, Type } from "@/Utils/request/types";
@@ -46,5 +51,28 @@ export const ihrTotalsApi = {
     path: "/api/ihr/owner/totals/",
     method: HttpMethod.GET,
     TRes: Type<Totals>(),
+  },
+} as const;
+
+/**
+ * The audit trail (P1-T24a; hospital-wide admins only, the backend refuses everyone else).
+ * Every call is itself recorded, so the page never polls and never refetches on focus.
+ */
+export const ihrAuditApi = {
+  entries: {
+    path: "/api/ihr/audit/entries/",
+    method: HttpMethod.GET,
+    TRes: Type<AuditList>(),
+  },
+  /** One entry with its old and new values: only on opening an entry */
+  entry: {
+    path: "/api/ihr/audit/entries/{id}/",
+    method: HttpMethod.GET,
+    TRes: Type<AuditEntryDetail>(),
+  },
+  status: {
+    path: "/api/ihr/audit/status/",
+    method: HttpMethod.GET,
+    TRes: Type<AuditStatus>(),
   },
 } as const;

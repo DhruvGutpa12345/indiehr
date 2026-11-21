@@ -185,6 +185,70 @@ class ExportTests(ViewerCase):
         self.assertEqual(export.cell(None), "")
 
 
+class CrossSiteTests(ViewerCase):
+    """A2 (P1-T24 attack): the session cookie is SameSite=Lax and a GET needs no CSRF header,
+    so another site could send an admin's browser to an export and record the admin as having
+    viewed every patient in it. Every /api/ihr/audit/ route refuses a request whose
+    Sec-Fetch-Site is present and is neither same-origin nor none (a link on our own page, or
+    an address typed or bookmarked); a browser that sends no such header is let through."""
+
+    REFUSED = ("cross-site", "same-site")
+    ALLOWED = ("same-origin", "none", None)
+
+    def routes(self):
+        entry_id = self.get("entries/", size=1).json()["results"][0]["id"]
+        day = {"from": today(), "to": today()}
+        return {
+            "entries/": {},
+            f"entries/{entry_id}/": {},
+            "export/": day,
+            "status/": {},
+            "verifier.py": {},
+        }
+
+    def ask(self, path, params, site):
+        headers = {} if site is None else {"HTTP_SEC_FETCH_SITE": site}
+        return self.api.get(f"/api/ihr/audit/{path}", params, **headers)
+
+    def test_every_audit_route_has_the_guard_first(self):
+        from ihr_identity.staff_access import IsHospitalAdmin, NotCrossSite
+
+        from ihr_audit import urls
+
+        self.assertEqual(len(urls.urlpatterns), len(self.routes()))
+        for pattern in urls.urlpatterns:
+            with self.subTest(route=str(pattern.pattern)):
+                classes = pattern.callback.view_class.permission_classes
+                self.assertEqual(tuple(classes), (NotCrossSite, IsHospitalAdmin))
+
+    def test_cross_site_and_same_site_are_refused_and_record_no_patient(self):
+        for path, params in self.routes().items():
+            for site in self.REFUSED:
+                with self.subTest(route=path, site=site):
+                    since = mark()
+                    response = self.ask(path, params, site)
+                    self.assertEqual(response.status_code, 403, response.content[:200])
+                    self.assertEqual(
+                        response.json()["detail"], "Cross-site request refused."
+                    )
+                    refused = entries_since(since, kind="request")
+                    self.assertEqual([e["data"]["status"] for e in refused], [403])
+                    self.assertFalse(refused[0]["patients"])
+
+    def test_own_pages_typed_addresses_and_older_browsers_are_served(self):
+        for path, params in self.routes().items():
+            for site in self.ALLOWED:
+                with self.subTest(route=path, site=site):
+                    self.assertEqual(self.ask(path, params, site).status_code, 200)
+
+    def test_the_guard_refuses_before_the_admin_check(self):
+        """Same answer for a non-admin: nothing about who is an admin leaks cross-site."""
+        self.api.force_authenticate(self.admin)
+        response = self.ask("status/", {}, "cross-site")
+        self.assertEqual(response.status_code, 403)
+        self.assertEqual(response.json()["detail"], "Cross-site request refused.")
+
+
 class ProofTests(ViewerCase):
     def export_json(self, **extra):
         response = self.get(
@@ -414,6 +478,26 @@ class SecondReviewTests(ViewerCase):
         body = self.get(f"entries/{pk}/").content.decode()
         self.assertNotIn("9876543210", body)
         self.assertNotIn("123456", body)
+
+    def test_actor_exact_matches_one_actor_not_its_prefixes(self):
+        """P1-T24a review A3/W4: the page's actor link sends ``actor_exact`` (``actor = %s``),
+        so ``user:5:priya`` does not also show ``user:5:priya2`` (``actor`` stays a prefix)."""
+        with connection.cursor() as cursor:
+            for actor in ("user:5:priya", "user:5:priya2", "patient:***1234"):
+                cursor.execute(
+                    "INSERT INTO ihr_audit_entry (kind, actor, context) VALUES "
+                    "('request', %s, '{}')",
+                    [actor],
+                )
+        got = self.get("entries/", actor_exact="user:5:priya").json()["results"]
+        self.assertEqual({r["actor"] for r in got}, {"user:5:priya"})
+        prefix = self.get("entries/", actor="user:5:priya").json()["results"]
+        self.assertEqual(
+            {r["actor"] for r in prefix}, {"user:5:priya", "user:5:priya2"}
+        )
+        wild = self.get("entries/", actor_exact="user:5:%").json()["results"]
+        self.assertEqual(wild, [])  # no wildcard
+        self.assertEqual(self.get("entries/", actor_exact="x" * 300).status_code, 400)
 
     def test_staff_access_still_protects_every_organisation_admin(self):
         from ihr_identity.staff_access import hospital_wide_admin, organisation_admin

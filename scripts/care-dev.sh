@@ -180,7 +180,7 @@ EOT
 | care-billing | Staff | Charges, invoices, payments (cannot create billing accounts; see GAP_ANALYSIS) |
 | care-staff | Staff | Front desk / registration |
 | care-fac-admin | Facility Admin | Facility settings, billing accounts, tariffs, users |
-| care-admin | Administrator | Organisation-level admin |
+| care-admin | Administrator | Hospital-wide admin: audit trail, reference list updates (Keycloak login admin.priya on alpha, P1-T24a) |
 | care-volunteer | Volunteer | Read-mostly |
 | care-receptionist | Receptionist | Front desk: patient demographics only (P1-T11b) |
 | care-cashier | Cashier | Billing counter: accounts, charges, invoices, payments |

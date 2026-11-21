@@ -8,8 +8,9 @@
     GET /api/ihr/audit/status/           chain head and trigger coverage
     GET /api/ihr/audit/verifier.py       the auditor's checking script for JSON exports
 
-Only staff with an admin role on the whole hospital may use these (owner, 2026-11-08). Every
-call is itself recorded as a ``request`` entry with purpose "audit" (middleware.py), with the
+Only staff with an admin role on the whole hospital may use these (owner, 2026-11-08), and
+never from another site (``Sec-Fetch-Site`` cross-site or same-site is refused, P1-T24 attack
+A2; ``AUDIT_GATE``). Every call is itself recorded as a ``request`` entry with purpose "audit" (middleware.py), with the
 patients it showed: patient names are loaded as model instances so they count as shown.
 """
 
@@ -22,7 +23,7 @@ from pathlib import Path
 from care.emr.models import Patient
 from django.db import connection
 from django.http import FileResponse
-from ihr_identity.staff_access import IsHospitalAdmin
+from ihr_identity.staff_access import IsHospitalAdmin, NotCrossSite
 from psycopg import sql
 from rest_framework.exceptions import ValidationError
 from rest_framework.response import Response
@@ -42,6 +43,9 @@ COLUMNS = "id, at, kind, actor, context, tbl, op, row_pk, patients, data"
 
 
 MAX_ID = 2**63 - 1
+MAX_ACTOR = (
+    200  # views: the actor filters; the page cuts an address's actor at the same length
+)
 
 
 def _day(value, name):
@@ -90,6 +94,23 @@ def patient_id(params):
     return pid
 
 
+def _actor_where(params):
+    clauses, args = [], []
+    if exact := params.get("actor_exact"):
+        # the page's actor links: this one actor, not every actor that starts with it
+        if len(exact) > MAX_ACTOR:
+            raise ValidationError({"actor_exact": "Too long."})
+        clauses.append("actor = %s")
+        args.append(exact)
+    if actor := params.get("actor"):
+        escaped = (
+            actor[:200].replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+        )
+        clauses.append("actor LIKE %s")
+        args.append(escaped + "%")
+    return clauses, args
+
+
 def _where(params):
     clauses, args = [], []
     start, end = day_range(params)
@@ -118,12 +139,9 @@ def _where(params):
             raise ValidationError({"table": "Not a table name."})
         clauses.append("tbl = %s")
         args.append(table)
-    if actor := params.get("actor"):
-        escaped = (
-            actor[:200].replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
-        )
-        clauses.append("actor LIKE %s")
-        args.append(escaped + "%")
+    actor_clauses, actor_args = _actor_where(params)
+    clauses += actor_clauses
+    args += actor_args
     if before := params.get("before"):
         if not before.isdigit() or int(before) > MAX_ID:
             raise ValidationError({"before": "An entry id."})
@@ -187,8 +205,13 @@ def summary(row, patients, limit=PATIENTS_PER_ROW):
     return item
 
 
+# Every /api/ihr/audit/ route (test_viewer.CrossSiteTests checks each): a cross-site request is
+# refused first (P1-T24 attack A2), then only a hospital-wide admin is served.
+AUDIT_GATE = (NotCrossSite, IsHospitalAdmin)
+
+
 class EntriesView(APIView):
-    permission_classes = (IsHospitalAdmin,)
+    permission_classes = AUDIT_GATE
 
     def get(self, request):
         where, args = _where(request.query_params)
@@ -220,7 +243,7 @@ class EntriesView(APIView):
 
 
 class EntryView(APIView):
-    permission_classes = (IsHospitalAdmin,)
+    permission_classes = AUDIT_GATE
 
     def get(self, request, pk):
         if pk > MAX_ID:
@@ -245,7 +268,7 @@ class EntryView(APIView):
 
 
 class StatusView(APIView):
-    permission_classes = (IsHospitalAdmin,)
+    permission_classes = AUDIT_GATE
 
     def get(self, request):
         schema = connection.schema_name
@@ -281,7 +304,7 @@ class StatusView(APIView):
 
 
 class ExportView(APIView):
-    permission_classes = (IsHospitalAdmin,)
+    permission_classes = AUDIT_GATE
 
     def get(self, request):
         params = request.query_params
@@ -304,7 +327,7 @@ class ExportView(APIView):
 class VerifierView(APIView):
     """The stdlib-only script an outside auditor runs on a JSON export."""
 
-    permission_classes = (IsHospitalAdmin,)
+    permission_classes = AUDIT_GATE
 
     def get(self, request):
         return FileResponse(

@@ -22,6 +22,11 @@ export interface IhrSlugSets {
 export interface MyAccess {
   restricted: boolean;
   bills_here: boolean;
+  /**
+   * An admin role on an active top-level organisation, the audit trail's own gate
+   * (`IsHospitalAdmin`, P1-T24a). False for a superuser. Shows our admin pages in care mode.
+   */
+  hospital_admin: boolean;
 }
 
 export interface IhrAccessInput {
@@ -57,6 +62,8 @@ export interface IhrAccess {
   totals: boolean;
   /** the visit's bed is shown here (Cashier, TPA Desk; the backend's `bills_here`, Q-K37a B) */
   billingBed: boolean;
+  /** hospital-wide admin (the backend's `hospital_admin`): the audit trail page (P1-T24a) */
+  hospitalAdmin: boolean;
   /** the facility's permission list holds this slug (false while pending, for a superuser) */
   has: (slug: string) => boolean;
   /** a patient's permission list holds a clinical or patient-opening slug (F4: MRD under a grant) */
@@ -75,6 +82,7 @@ export function ihrAccess(input: IhrAccessInput, sets: IhrSlugSets): IhrAccess {
     records: false,
     totals: false,
     billingBed: false,
+    hospitalAdmin: false,
     has: () => false,
     opensPatient,
   };
@@ -105,6 +113,8 @@ export function ihrAccess(input: IhrAccessInput, sets: IhrSlugSets): IhrAccess {
     records: has(OUR_SLUGS.records),
     totals: has(OUR_SLUGS.totals),
     billingBed: restricted && myAccess.bills_here,
+    // restricted roles hold no admin role; a restricted answer never opens the admin pages
+    hospitalAdmin: !restricted && myAccess.hospital_admin === true,
     has,
     opensPatient,
   };

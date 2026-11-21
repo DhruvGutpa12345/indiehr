@@ -189,6 +189,7 @@ function roleAccess(role: string, extra: string[] = []): IhrAccess {
       myAccess: {
         restricted: SLUGS.restricted.includes(role),
         bills_here: SLUGS.bedForBilling.includes(role),
+        hospital_admin: false,
       },
       isSuperuser: false,
     },
@@ -262,7 +263,11 @@ describe("facility menu: pending and care", () => {
       const access = ihrAccess(
         {
           facilityPerms: [...perms],
-          myAccess: { restricted: false, bills_here: false },
+          myAccess: {
+            restricted: false,
+            bills_here: false,
+            hospital_admin: false,
+          },
           isSuperuser: false,
         },
         SLUGS,
@@ -279,7 +284,11 @@ describe("facility menu: pending and care", () => {
     const access = ihrAccess(
       {
         facilityPerms: SLUGS.grants["Owner"],
-        myAccess: { restricted: true, bills_here: false },
+        myAccess: {
+          restricted: true,
+          bills_here: false,
+          hospital_admin: false,
+        },
         isSuperuser: true,
       },
       SLUGS,
@@ -301,7 +310,11 @@ describe("facility menu: pending and care", () => {
       ihrAccess(
         {
           facilityPerms: [...SLUGS.grants["MRD"], "can_view_clinical_data"],
-          myAccess: { restricted: false, bills_here: false },
+          myAccess: {
+            restricted: false,
+            bills_here: false,
+            hospital_admin: false,
+          },
           isSuperuser: false,
         },
         SLUGS,
@@ -463,6 +476,55 @@ describe("our items and the overview shortcut", () => {
     assert.deepEqual(keys("Cashier"), []);
     assert.deepEqual(keys("MRD"), ["records"]);
     assert.deepEqual(keys("Owner"), ["totals"]);
+  });
+
+  it("offers the audit trail only to a hospital-wide admin in care mode (P1-T24a)", () => {
+    const admin = (
+      over: Partial<{ restricted: boolean; hospital_admin: boolean }>,
+      isSuperuser = false,
+      loading = false,
+    ) =>
+      ihrAccess(
+        {
+          facilityPerms: loading ? undefined : [],
+          myAccess: {
+            restricted: false,
+            bills_here: false,
+            hospital_admin: true,
+            ...over,
+          },
+          isSuperuser,
+        },
+        SLUGS,
+      );
+    assert.deepEqual(
+      ihrOurItems(admin({}), BASE).map((i) => i.key),
+      ["audit"],
+    );
+    assert.equal(ihrOurItems(admin({}), BASE)[0].url, `${BASE}/ihr/audit`);
+    // not for a non-admin, a restricted answer, a superuser, or while pending
+    assert.deepEqual(ihrOurItems(admin({ hospital_admin: false }), BASE), []);
+    assert.deepEqual(ihrOurItems(admin({ restricted: true }), BASE), []);
+    assert.deepEqual(ihrOurItems(admin({}, true), BASE), []);
+    assert.deepEqual(ihrOurItems(admin({}, false, true), BASE), []);
+    // none of the eight roles, the Radiologist included
+    for (const role of Object.keys(SLUGS.grants)) {
+      assert.ok(
+        !ihrOurItems(roleAccess(role), BASE).some((i) => i.key === "audit"),
+        role,
+      );
+    }
+    // and it is added after CARE's links, as the last item, with its own url
+    const links = ihrFacilityLinks(
+      careFacilityLinks(new Set()),
+      admin({}),
+      BASE,
+      makeOurs,
+    );
+    assert.deepEqual(links.at(-1), {
+      name: "ours_audit",
+      url: `${BASE}/ihr/audit`,
+    });
   });
 
   it("shows the Services shortcut only in care mode (hidden restricted and pending)", () => {

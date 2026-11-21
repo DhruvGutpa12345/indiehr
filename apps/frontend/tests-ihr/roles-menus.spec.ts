@@ -1,5 +1,6 @@
 // IndieHR P1-T11c1 (docs/reviews/p1-t11/design-c.md §3.1, §9.1, §13.2): the web app's sidebar for
-// each of the 11 seeded logins (our eight roles and CARE's Doctor, Nurse and Facility Admin).
+// each of the 12 seeded logins (our eight roles, CARE's Doctor, Nurse and Facility Admin, and the
+// seeded hospital-wide admin).
 //
 // - The sidebar's link names equal the expected list EXACTLY. CARE's roles' lists are derived by
 //   hand from facility-nav.tsx (Q-K53 A), so an upstream menu change fails here until a person
@@ -24,6 +25,7 @@ import {
 } from "./lib/fixtures";
 
 const NOT_FOR_ROLE = "This page is not part of your role";
+const AUDIT = "Audit trail";
 const SOME_ID = "00000000-0000-4000-8000-000000000001";
 
 // careConfig.encounterClasses: the build sets no REACT_ALLOWED_ENCOUNTER_CLASSES, so all six
@@ -160,8 +162,14 @@ const LOGINS: Login[] = [
   { username: "radiology.sunita", hospital: "alpha", menu: CARE_RADIOLOGIST },
   { username: "dr.meera", hospital: "alpha", menu: CARE_FULL },
   { username: "nurse.asha", hospital: "alpha", menu: CARE_FULL },
-  { username: "admin.bhavesh", hospital: "beta", menu: CARE_FULL },
+  // Hospital-wide admins (an admin role on a top-level organisation) also get the audit trail,
+  // as the last item (P1-T24a, Q-K110 A, Q-K111 A). admin.bhavesh is one in the dev seed too
+  // (CARE's fixture gives him that role); admin.priya is the seeded one on alpha (Q-K117).
+  { username: "admin.bhavesh", hospital: "beta", menu: [...CARE_FULL, AUDIT] },
+  { username: "admin.priya", hospital: "alpha", menu: [...CARE_FULL, AUDIT] },
 ];
+
+const HOSPITAL_ADMINS = new Set(["admin.bhavesh", "admin.priya"]);
 
 /** Location menus after "My places" (design §13.5) */
 const PLACES: Record<string, { place: string; menu: string[] }> = {
@@ -289,6 +297,21 @@ for (const login of LOGINS) {
       await expect(servicesShortcut.first()).toBeVisible();
     } else {
       await expect(servicesShortcut).toHaveCount(0);
+    }
+
+    if (!HOSPITAL_ADMINS.has(login.username)) {
+      // The audit trail is not part of any other role: the typed address says so, and the page
+      // asks the audit API for nothing (P1-T24a)
+      const auditCalls: string[] = [];
+      page.on("request", (request) => {
+        const url = new URL(request.url());
+        if (url.pathname.startsWith("/api/ihr/audit/")) {
+          auditCalls.push(`${request.method()} ${url.pathname}`);
+        }
+      });
+      await page.goto(`${origin}/facility/${facilityId}/ihr/audit`);
+      await expectNotForRole(page);
+      expect(auditCalls, "requests for the audit trail").toEqual([]);
     }
 
     if (login.username === "reception.ravi") {

@@ -29,5 +29,6 @@ that look wrong. The app keeps CARE's wording until you approve a row; approved 
 | 3 (P1-T7e) | `hi-batch-3.csv` | 1,492 | 246 | waiting for you |
 | 4 (P1-T7f) | `hi-batch-4.csv` | 65 | 8 | waiting for you |
 | 5 (P1-T11c3) | `hi-batch-5.csv` | 106 | 11 | waiting for you |
+| 6 (P1-T24a, audit trail page; T24b and T24c add rows) | `hi-batch-6.csv` | 73 | 0 | waiting for you |
 | Release gate notice (P1-T18a) | `hi-release-gate.csv` | 3 | 0 | waiting for you |
 | Upstream corrections (P1-T7c) | `hi-upstream-corrections.csv` | 211 (13 unsafe, 72 wrong meaning) | 70 | 13 unsafe approved and applied 08-11-2026; 198 waiting for you |

@@ -19,7 +19,7 @@ from care.facility.models import Facility
 from django.core.exceptions import ValidationError as DjangoValidationError
 from django.utils import timezone
 from ihr_audit import context
-from ihr_identity.staff_access import hospital_wide_admin
+from ihr_identity.staff_access import IsHospitalAdmin, hospital_wide_admin
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
@@ -155,7 +155,7 @@ class MyAccessView(APIView):
     """The web app's mode for the signed-in person (P1-T11c1; design-c.md §13.2, Q-K49 A').
 
     ``GET /api/ihr/my-access/[?facility=<uuid>]`` answers
-    ``{"restricted": <bool>, "bills_here": <bool>}``:
+    ``{"restricted": <bool>, "bills_here": <bool>, "hospital_admin": <bool>}``:
 
     - ``restricted``: the backend's own rule (``state.restricted``, this request's state), the
       one the guard and the swaps act on; a superuser is never restricted;
@@ -163,7 +163,12 @@ class MyAccessView(APIView):
       (``RequestState.bills_at``, Q-K37a B: the guard then shows them the visit's bed). False
       without ``facility``, for a facility id this hospital does not have (the schema is the
       hospital, so another hospital's facility is simply unknown here and answers as any
-      facility where one does not bill: existence is never told), and for a superuser.
+      facility where one does not bill: existence is never told), and for a superuser;
+    - ``hospital_admin``: the audit trail's and the pack decisions' own gate
+      (``IsHospitalAdmin``: an admin role on an active top-level organisation, never a service
+      account; P1-T24a, Q-K111 A), so the menu shows only what the backend serves. False for a
+      superuser, as ``restricted`` is (no superuser signs in on a hospital address, Q-T5). One
+      EXISTS query; the count is pinned in test_my_access.
 
     A ``facility`` that is not a UUID is 400. Staff sign-in only (IsAuthenticated, like every
     /api/ihr/ staff route); no patient data, no database write.
@@ -193,5 +198,8 @@ class MyAccessView(APIView):
                 "bills_here": False
                 if superuser or facility_pk is None
                 else bool(current.bills_at(facility_pk)),
+                "hospital_admin": False
+                if superuser
+                else IsHospitalAdmin().has_permission(request, self),
             }
         )

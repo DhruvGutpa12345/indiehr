@@ -168,3 +168,14 @@ translations follow in the next batch (and are corrected in earlier ones).
 | failed to … | … नहीं हो सका | |
 | are you sure? | क्या आप पक्का हैं? | |
 | today / yesterday / tomorrow | आज / कल / कल | Hindi uses कल for both; the context tells them apart |
+
+## Audit trail (P1-T24a)
+
+| English | Hindi | Note |
+|---|---|---|
+| audit trail | ऑडिट ट्रेल | ❓ Alternative: लेखा-परीक्षा रिकॉर्ड |
+| audit entry / entry | प्रविष्टि | ❓ one line of the trail |
+| sealed (a batch of entries) | सील | ❓ locked into the hash chain |
+| trigger (database) | ट्रिगर | ❓ |
+| fingerprint (outside) | फ़िंगरप्रिंट | ❓ hourly proof kept in a locked outside bucket |
+| request (a look at data) | अनुरोध | |

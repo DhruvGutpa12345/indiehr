@@ -33,6 +33,9 @@ DEMO_STAFF = [
     ),
     ("nurse.asha", "Asha", "Nair", {"alpha": "care-nurse"}, True),
     ("admin.bhavesh", "Bhavesh", "Rao", {"beta": "care-fac-admin"}, True),
+    # The hospital-wide admin (P1-T24a, Q-K117 A): audit trail and pack decisions on alpha;
+    # ihr_seed_demo (seeding.make_hospital_admin) gives care-admin that role and the facility
+    ("admin.priya", "Priya", "Deshpande", {"alpha": "care-admin"}, True),
     ("new.neha", "Neha", "Kulkarni", {"alpha": "care-staff"}, False),
     # Our eight roles (P1-T11b1), each in both hospitals
     *(

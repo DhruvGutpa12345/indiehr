@@ -20,8 +20,16 @@ const SLUGS = JSON.parse(
   ),
 ) as IhrSlugSets & { restricted: string[]; bedForBilling: string[] };
 
-const CARE: MyAccess = { restricted: false, bills_here: false };
-const RESTRICTED: MyAccess = { restricted: true, bills_here: false };
+const CARE: MyAccess = {
+  restricted: false,
+  bills_here: false,
+  hospital_admin: false,
+};
+const RESTRICTED: MyAccess = {
+  restricted: true,
+  bills_here: false,
+  hospital_admin: false,
+};
 
 function forRole(role: string, extra: string[] = []) {
   const perms = [...SLUGS.grants[role], ...extra];
@@ -29,6 +37,7 @@ function forRole(role: string, extra: string[] = []) {
   const myAccess: MyAccess = {
     restricted,
     bills_here: SLUGS.bedForBilling.includes(role),
+    hospital_admin: false,
   };
   const input: IhrAccessInput = {
     facilityPerms: perms,
@@ -200,6 +209,56 @@ describe("ihrAccess: items per role (design §3.1)", () => {
     assert.equal(a.totals, true);
     assert.equal(b.mode, "care");
     assert.equal(b.totals, true);
+  });
+});
+
+describe("ihrAccess: hospitalAdmin (P1-T24a, Q-K111 A)", () => {
+  const ADMIN: MyAccess = {
+    restricted: false,
+    bills_here: false,
+    hospital_admin: true,
+  };
+  const input = (
+    myAccess: MyAccess | null | undefined,
+    isSuperuser = false,
+  ) => ({
+    facilityPerms: [] as string[],
+    myAccess,
+    isSuperuser,
+  });
+
+  it("is true only for the backend's answer in care mode", () => {
+    assert.equal(ihrAccess(input(ADMIN), SLUGS).hospitalAdmin, true);
+    assert.equal(ihrAccess(input(CARE), SLUGS).hospitalAdmin, false);
+  });
+
+  it("is false for every restricted role, even if the answer said true", () => {
+    const wrong: MyAccess = { ...ADMIN, restricted: true };
+    assert.equal(ihrAccess(input(wrong), SLUGS).hospitalAdmin, false);
+    for (const role of Object.keys(SLUGS.grants)) {
+      assert.equal(forRole(role).hospitalAdmin, false, role);
+    }
+  });
+
+  it("fails closed while loading, when my-access failed, and for a superuser", () => {
+    assert.equal(ihrAccess(input(undefined), SLUGS).hospitalAdmin, false);
+    assert.equal(ihrAccess(input(null), SLUGS).hospitalAdmin, false);
+    assert.equal(
+      ihrAccess({ ...input(ADMIN), facilityPerms: undefined }, SLUGS)
+        .hospitalAdmin,
+      false,
+    );
+    assert.equal(ihrAccess(input(ADMIN, true), SLUGS).hospitalAdmin, false);
+    // a superuser's mode stays "care" and our items stay off
+    assert.equal(ihrAccess(input(ADMIN, true), SLUGS).mode, "care");
+  });
+
+  it("is the same answer after a failed refetch (cached data wins)", () => {
+    const a = ihrAccess(
+      input(myAccessFrom({ data: ADMIN, isError: true })),
+      SLUGS,
+    );
+    assert.equal(a.hospitalAdmin, true);
   });
 });
 

@@ -52,7 +52,11 @@ export function useIhrAccess(): IhrAccess {
       return ihrAccess(
         {
           facilityPerms: [],
-          myAccess: { restricted: false, bills_here: false },
+          myAccess: {
+            restricted: false,
+            bills_here: false,
+            hospital_admin: false,
+          },
           isSuperuser,
         },
         IHR_SLUG_SETS,

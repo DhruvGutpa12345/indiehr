@@ -1,7 +1,7 @@
 // IndieHR P1-T11c1: our menu rules (src/Utils/ihr/menu.ts, pure) applied to CARE's sidebar link
 // lists, with the names and icons of our own items.
 import type { TFunction } from "i18next";
-import { FolderOpen, MapPin, TrendingUp } from "lucide-react";
+import { FolderOpen, MapPin, ScrollText, TrendingUp } from "lucide-react";
 
 import type { NavigationLink } from "@/components/ui/sidebar/nav-main";
 
@@ -18,6 +18,7 @@ function ourLink(t: TFunction, item: OurItem): NavigationLink {
     records: { name: t("ihr_menu_records_access"), icon: <FolderOpen /> },
     totals: { name: t("ihr_menu_hospital_totals"), icon: <TrendingUp /> },
     places: { name: t("ihr_menu_my_places"), icon: <MapPin /> },
+    audit: { name: t("ihr_menu_audit_trail"), icon: <ScrollText /> },
   };
   return { ...byKey[item.key], url: item.url };
 }

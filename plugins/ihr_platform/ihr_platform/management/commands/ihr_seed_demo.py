@@ -6,7 +6,8 @@
 Creates the hospital if it is missing, loads CARE's synthetic demo data into it once, sets its
 profile, adds a pharmacist and a billing user, adds one user for each of our eight roles placed as
 design-b.md §4 says (P1-T11b1), puts one account's visit in a bed as an inpatient stay (P1-T11c2),
-and sets every test user's password to $TEST_PASSWORD (CARE's fixture passwords are public).
+makes CARE's ``care-admin`` a hospital-wide admin placed at the demo facility (P1-T24a, Q-K117 A:
+the Keycloak login admin.priya on alpha), and sets every test user's password to $TEST_PASSWORD (CARE's fixture passwords are public).
 Prints one JSON line.
 Run through ``scripts/care-dev.sh seed``.
 """
@@ -23,9 +24,11 @@ from ihr_tenant_settings.models import HospitalProfile
 
 from ihr_platform.models import Domain, Hospital
 from ihr_platform.seeding import (
+    HOSPITAL_ADMIN,
     add_inpatient_stay,
     complete_demo_contacts,
     load_demo_data,
+    make_hospital_admin,
 )
 
 # Synthetic hospitals: names, places and phone numbers are made up.
@@ -153,6 +156,7 @@ class Command(BaseCommand):
                 complete_demo_contacts()
             created = _add_extra_users()
             created += _add_role_users()
+            admin_added = _hospital_admin()
             reset = _set_passwords(password)
 
         self.stdout.write(
@@ -163,6 +167,8 @@ class Command(BaseCommand):
                     "demo_data_loaded": loaded,
                     "inpatient_stay_added": stay is not None,
                     "users_created": created,
+                    "hospital_admin": HOSPITAL_ADMIN,
+                    "hospital_admin_added": admin_added,
                     "passwords_reset": reset,
                 }
             )
@@ -253,6 +259,27 @@ def _department(facility, name):
     return department
 
 
+def _demo_facility(template):
+    """The facility the demo's staff work in (CARE's "FACILITY WITH PATIENTS")."""
+    from care.emr.models.organization import FacilityOrganizationUser
+
+    return (
+        FacilityOrganizationUser.objects.filter(user=template)
+        .select_related("organization__facility")
+        .first()
+        .organization.facility
+    )
+
+
+@transaction.atomic
+def _hospital_admin():
+    from care.users.models import User
+
+    template = User.objects.get(username="care-staff")
+    user = User.objects.get(username=HOSPITAL_ADMIN)
+    return make_hospital_admin(user, _demo_facility(template))
+
+
 @transaction.atomic
 def _add_role_users():
     from care.emr.models.organization import FacilityOrganizationUser
@@ -260,13 +287,7 @@ def _add_role_users():
     from care.users.models import User
 
     template = User.objects.get(username="care-staff")
-    # The facility the demo's staff work in (CARE's "FACILITY WITH PATIENTS")
-    facility = (
-        FacilityOrganizationUser.objects.filter(user=template)
-        .select_related("organization__facility")
-        .first()
-        .organization.facility
-    )
+    facility = _demo_facility(template)
     created = []
     for username, role_name, first, last, phone, department in ROLE_USERS:
         role = RoleModel.objects.get(name=role_name, is_system=True)

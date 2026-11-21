@@ -57,6 +57,7 @@ function forRole(role: string, myAccess?: MyAccess | null): IhrAccess {
           ? {
               restricted: SLUGS.restricted.includes(role),
               bills_here: SLUGS.bedForBilling.includes(role),
+              hospital_admin: false,
             }
           : myAccess,
       isSuperuser: false,
@@ -74,7 +75,7 @@ const FAILED = forRole("Receptionist", null);
 const CARE_ROLE = ihrAccess(
   {
     facilityPerms: ["can_view_clinical_data", "can_list_patients"],
-    myAccess: { restricted: false, bills_here: false },
+    myAccess: { restricted: false, bills_here: false, hospital_admin: false },
     isSuperuser: false,
   },
   SLUGS,
@@ -137,7 +138,7 @@ describe("ihrPatientTabs", () => {
     const rich = ihrAccess(
       {
         facilityPerms: Object.values(SLUGS.grants).flat(),
-        myAccess: { restricted: true, bills_here: true },
+        myAccess: { restricted: true, bills_here: true, hospital_admin: false },
         isSuperuser: false,
       },
       SLUGS,
@@ -453,6 +454,7 @@ describe("account page", () => {
     const elsewhere = forRole("Cashier", {
       restricted: true,
       bills_here: false,
+      hospital_admin: false,
     });
     assert.deepEqual(visible(elsewhere), [
       "invoices",

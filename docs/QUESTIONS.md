@@ -1103,6 +1103,73 @@ Restore A (tl1 to tl2) is served and not loaded; the server is lost again. The r
 
 *Recommendation A.* Reverse: drop `ancestors_pass` in `supersede._refuse_pending`.
 
+### Q-K110 — Where do the admin pages live? (P1-T24 design; auto-accepted by Claude, 2026-11-21, awaiting owner confirmation)
+
+- **A ⭐ (taken).** Under the facility: `/facility/:id/ihr/audit` (T24a), `/ihr/packs` (T24c), menu items in the facility sidebar, last, in care mode only (the pattern of records and totals). The page title says "whole hospital".
+- B. Top-level `/ihr/audit`, `/ihr/packs`, from the user menu. C. Both.
+
+*Limit:* an admin with no facility cannot reach them from a menu (none seeded; revisit with the hospital-root gate, Q-K76 B). *Reverse:* move the keys in `IhrRoutes.tsx` and the paths in `menu.ts`.
+
+### Q-K111 — How does the web app know who is an admin? (P1-T24 design, attack decision; auto-accepted by Claude, 2026-11-21, awaiting owner confirmation)
+
+- **A ⭐ (taken, narrowed).** One new my-access field, `hospital_admin` (the audit trail's own gate `IsHospitalAdmin`; false for a superuser). The design's second flag `manage_staff` is dropped (zoom-out F2): the T24b staff card relies on the access GET instead. Cost: one `EXISTS`, pinned by `test_my_access` (10 to 11 statements without `?facility=`, 12 to 13 with).
+- B. Probe the admin APIs and hide on 403: every page load would write an audit entry and a refusal.
+
+*Reverse:* remove the field, `hospitalAdmin` in `access.ts` and the `audit` menu key.
+
+### Q-K112 — A list of open invitations? (P1-T24 design; auto-accepted by Claude, 2026-11-21, awaiting owner confirmation)
+
+- **A ⭐ (taken).** Only per person, on the user page (T24b). B. `GET /api/ihr/staff/invitations/` and an "Open invitations" tab, only if CARE's lists hide inactive users (checked in T24b).
+
+### Q-K113 — Confirming "Reset sign-in" (P1-T24 attack decision; auto-accepted by Claude, 2026-11-21, awaiting owner confirmation)
+
+- A. Type the username, with the "check who is asking" text.
+- **B ⭐ (taken, changed from the design's A).** A plain confirm dialog with the warning text (zoom-out F8). Built in T24b.
+
+*Reverse:* add the typed confirmation to the dialog.
+
+### Q-K114 — The audit list's default range (P1-T24a; auto-accepted by Claude, 2026-11-21, awaiting owner confirmation)
+
+- **A ⭐ (taken).** Today in IST, From and To both. Fewer patient names are shown, and each name shown is recorded as viewed. B. The last 7 days.
+
+### Q-K115 — Export default format (P1-T24c; auto-accepted by Claude, 2026-11-21, awaiting owner confirmation)
+
+- **A ⭐ (taken).** CSV first, JSON with proof as the second choice. B. JSON only. The export and verifier links move to T24c (zoom-out F4).
+
+### Q-K116 — The audit API's date format (P1-T24a; auto-accepted by Claude, 2026-11-21, awaiting owner confirmation)
+
+- **A ⭐ (taken).** Keep YYYY-MM-DD in the API; the page shows and keeps DD-MM-YYYY and converts (`Utils/ihr/audit.ts`, `toApiDay`). B. Change the API to DD-MM-YYYY like owner totals.
+
+### Q-K117 — A seeded hospital-wide admin login (P1-T24a; auto-accepted by Claude, 2026-11-21, awaiting owner confirmation)
+
+- **A ⭐ (taken).** `admin.priya` on alpha (`care-admin`, an authenticator pre-set), made hospital-wide by `seeding.make_hospital_admin`. B. Give `admin.bhavesh` a top-level role on beta (unneeded, see Q-K118).
+
+### Q-K118 — A facility-only admin login for T24b (P1-T24a backend builder; proposed; auto-accepted by Claude, 2026-11-21, awaiting owner confirmation)
+
+In the dev seed `admin.bhavesh` (beta, `care-fac-admin`) already holds "Facility Admin" on a top-level organisation, so he is a hospital-wide admin and sees the audit trail. The design's reason for Q-K117 ("bhavesh must be refused on admins") does not hold on the demo.
+
+- **A ⭐ (proposed).** T24b adds a facility-only admin login (Facility Admin at the facility root only) to test the A1 refusal. `roles-menus.spec.ts` lists bhavesh with the audit trail until then.
+- B. Remove the top-level role from bhavesh's fixture (changes CARE's demo data).
+
+### Q-K119 — How is the audit page's patient and person filter set? (P1-T24a web builder; auto-accepted by Claude, 2026-11-21, awaiting owner confirmation)
+
+The design listed a patient search box and a typed "Who" box; the attack decision dropped "Who" (the actor is `user:<pk>:<username>`).
+
+- **A ⭐ (taken).** Both are links: an entry's actor, and a patient's name in a row or in the sheet, filter on that exact actor or patient id (kept in the address as `actor=` and `patient=`, with a chip and "Show all"; the page asks the API for `actor_exact`, an exact match, while the API's `actor` stays a prefix match). No search box in T24a: CARE's patient search lists names the admin did not ask for, and each name shown is recorded as viewed. B. Add CARE's patient search to the filter row (a later task).
+
+*Reverse:* add the box in `IhrAuditTrail.tsx`; the address and the API already carry the filter.
+
+### Q-K120 — Should an admin of a state organisation pass the hospital-admin gate? (P1-T24a review A1; auto-accepted by Claude, 2026-11-21, awaiting owner confirmation)
+
+Review A1 found that `hospital_wide_admin` (the gate of the audit trail, the pack decisions and, since T24a, the `hospital_admin` flag and the Audit trail menu item) accepts an admin role on any active top-level organisation, government states included. Q-K76 A already names this limit. The reviewer suggested adding `org_type="role"`. That would not help: provisioning (`provisioning/steps.py`, `first_admin`) makes every hospital's first admin an **Administrator of its state organisation**, a top-level `govt` one. Pack tests also use `team` and untyped top-level organisations. Leaving out `govt`, or keeping only `role`, would lock every real hospital's first admin out of the audit trail and the pack decisions.
+
+- **A ⭐ (taken).** Keep the gate. Pin the case with tests: the provisioned first admin is hospital-wide on my-access, `/audit/status/` and the pack API (`test_my_access`, `ihr_refdata test_api`). Both tests fail if the gate leaves out `govt` or keeps only `role`. The real fix is Q-K76 B: record one hospital root, move the first admin onto it, then accept only that root. Settle it together with Q-K118 before T24b's refusal (A1) relies on the gate.
+- B. Leave out `govt` now and move the first admin onto a new top-level `role` organisation in provisioning, with a data step for existing hospitals. This is half of Q-K76 B, so it is better done once as Q-K76 B.
+- C. `org_type="role"` only (the review's suggestion). This locks out provisioned first admins and the pack tests' `team` admins.
+
+*Limit, unchanged:* anyone given an admin role on any state organisation passes. Only someone who may create users can do that, and our code does it only for the first admin. *Reverse:* none needed. Q-K76 B replaces this.
+
+
 **Still open:** Q-B4 (final MVP module list: assumed as in PLAN.md Phase 2) and Q-B6/B7 (pricing, timeline). Q-F2 is moot while AI is deferred.
 
 ---

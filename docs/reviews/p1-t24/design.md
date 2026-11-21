@@ -269,3 +269,81 @@ change: `scripts/care-dev.sh seed` and `scripts/care-dev.sh keycloak seed`.
   4. Open "History"; your decision is listed with your username.
 - **Polish** (alpha, `cashier.kavya`): open a visit with no booking; no empty "Booking" card.
   Phone width (375 px): `owner.vikram`'s Hospital totals "By day" select is not clipped.
+
+## T24a as decided
+
+Written by the T24a backend builder, 21-11-2026, from the code. Wins over §1–§6 where they differ.
+
+**How the web app's API calls authenticate on a hospital address: the HttpOnly cookie.**
+- Backend: the only classes are `StaffSessionAuthentication` and `ServiceTokenAuthentication`
+  (plugins/ihr_platform/ihr_platform/settings/tenancy.py:143-144; refused otherwise by check
+  `ihr_identity.E001`, plugins/ihr_platform/ihr_identity/checks.py:6-9). Staff are read from the
+  session cookie only (plugins/ihr_platform/ihr_identity/authentication.py:136), set HttpOnly,
+  SameSite=Lax (plugins/ihr_platform/ihr_identity/views.py:224-228, 79-83). The token class is
+  DRF's `TokenAuthentication` (keyword `Token`, machine accounts only, authentication.py:242-249):
+  a `Bearer …` header is ignored, never a sign-in.
+- Web app: `makeHeaders` adds `Authorization` only if `localStorage.care_access_token` exists
+  (apps/frontend/src/Utils/request/utils.ts:69-78; key at src/common/constants.tsx:7). That key
+  is a legacy key (src/Utils/ihr/staffSession.ts:26-30) removed by `forgetLegacyTokens()` on every
+  app start (src/Providers/AuthUserProvider.tsx:63), so no header is sent. `callApi` uses `fetch`
+  with the default `credentials: "same-origin"` (src/Utils/request/query.ts:32-49), which sends the
+  cookie, and adds `X-IHR-CSRF`/`X-IHR-Idle` for our own API (query.ts:30, staffSession.ts:98-102).
+- So for T24c: export and verifier downloads can be plain same-origin links (`<a href download>`).
+  A GET needs no CSRF header (authentication.py:67-68); the cookie goes with the navigation.
+
+**my-access** (`GET /api/ihr/my-access/[?facility=<uuid>]`,
+plugins/ihr_platform/ihr_access/endpoints.py:154-205):
+`{"restricted": bool, "bills_here": bool, "hospital_admin": bool}`. `hospital_admin` is
+`IsHospitalAdmin().has_permission(request, view)` (endpoints.py:201-203): staff, not a service
+account, an admin role (one holding `can_create_user`) on an active, undeleted top-level
+organisation. False for a superuser without a query (as `restricted`). `manage_staff` is not
+added (decision above). Our eight roles and CARE's facility-only Facility Admin answer false.
+
+**Query count** (SQL statements of one GET through the whole middleware path under
+`force_authenticate`, not counting django-tenants' `SET search_path` before each): before T24a
+12 with `?facility=` and 10 without; after T24a 13 and 11 (one `EXISTS`). Pinned in
+`ihr_access.tests.test_my_access.MyAccess.test_query_count_is_pinned`.
+
+**A2 rule** (`NotCrossSite`, plugins/ihr_platform/ihr_identity/staff_access.py:98-113): every
+`/api/ihr/audit/` route has `permission_classes = (NotCrossSite, IsHospitalAdmin)`
+(`AUDIT_GATE`, plugins/ihr_platform/ihr_audit/views.py:210). A request whose `Sec-Fetch-Site`
+is present and is neither `same-origin` nor `none` answers 403 "Cross-site request refused."
+before the admin check (same answer for a non-admin). An absent header is let through. The
+refused request is still recorded (status 403, no patients). Tests:
+`ihr_audit.tests.test_viewer.CrossSiteTests` (5 routes × cross-site, same-site, same-origin,
+none, absent; the gate on every URL pattern).
+
+*Residual risk (review A2):* `Sec-Fetch-Site: none` and a missing header are let through on purpose,
+because a typed address or a bookmark sends `none`. A browser also sends `none` when a link is
+opened from outside the browser (an email, a chat, a desktop app), so a link to `entries/<id>/` or
+`export/` opened by a signed-in admin still records her as having viewed those patients, though
+the data goes only to her. T24c should make the export a fetch plus a blob download made by the
+page itself and refuse `none` on the export route.
+
+**Patient search box dropped (review W6):** §2.1's CARE patient search is not in T24a: a patient's
+name in a row or in the sheet is a link that sets `patient=` (Q-K119 A).
+
+**Actor links are exact (review A3/W4):** the page sends the address's `actor=` to the API as
+`actor_exact` (`actor = %s`, up to 200 characters), so `user:5:priya` does not also show
+`user:5:priya2` and a masked `patient:***1234` does not show other patients. The API's `actor`
+parameter stays a prefix match (used by §1 above and by `ihr_audit` tests).
+
+**Seeded hospital-wide admin (G4, Q-K117 A):** `admin.priya` (alpha, authenticator pre-set) signs
+in as CARE's `care-admin` (ihr_keycloak_demo_users.py:38). `ihr_seed_demo` step `_hospital_admin`
+(ihr_seed_demo.py:275-280) calls `seeding.make_hospital_admin` (seeding.py:175): keeps CARE's
+fixture role on the top-level "Administrator" organisation (or adds one on a top-level `role`
+organisation), and places her as "Facility Admin" at the demo facility's root, so the facility
+is in her list and the /facility/:id/ admin pages are reachable from the menu (Q-K110 A's limit
+does not bite on the demo). Refresh: `scripts/care-dev.sh seed`, then `scripts/care-dev.sh
+keycloak seed`.
+
+**Found while checking (for T24b):** in the dev seed, CARE's fixture `care-fac-admin` (beta's
+`admin.bhavesh`) already holds "Facility Admin" on a top-level `role` organisation, so it *is* a
+hospital-wide admin (`hospital_wide_admin` true on alpha and beta). §1.4 G4 and Q-K117's reason
+("keeps bhavesh as the facility admin who must be refused on admins") do not hold on the demo;
+T24b's A1 spec needs a facility-only admin login (Q-K118 proposed).
+
+**Review A1 (Q-K120 A):** an admin of a top-level government (state) organisation also passes
+the gate. This is on purpose: provisioning makes each hospital's first admin an Administrator of
+its state, so `org_type="role"` would lock real first admins out. The narrowing is Q-K76 B (a
+recorded hospital root), to be settled with Q-K118 before T24b relies on the gate.

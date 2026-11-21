@@ -14,6 +14,7 @@ import type { AppRoutes } from "@/Routers/AppRouter";
 
 import { REQUIRED_KEYS, routeGate, watcherScope } from "@/Utils/ihr/routeKeys";
 
+import { IhrAuditTrail } from "./IhrAuditTrail";
 import {
   IhrBedBoardGate,
   IhrEncounterGate,
@@ -108,6 +109,9 @@ function wrap(key: string, route: AnyRoute): AnyRoute {
 }
 
 const OUR_ROUTES: Record<string, AnyRoute> = {
+  "/facility/:facilityId/ihr/audit": ({ facilityId }) => (
+    <IhrAuditTrail facilityId={facilityId} />
+  ),
   "/facility/:facilityId/ihr/places": ({ facilityId }) => (
     <IhrMyPlaces facilityId={facilityId} />
   ),

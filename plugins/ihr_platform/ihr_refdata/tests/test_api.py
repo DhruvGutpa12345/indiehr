@@ -193,6 +193,16 @@ class GateTests(ApiCase):
             response.json()["detail"], "Only a hospital-wide admin can do this."
         )
 
+    def test_the_provisioned_first_admin_decides_pack_updates(self):
+        """Review A1 (Q-K120 A): provisioning makes a hospital's first admin an admin of its
+        state, a top-level government organisation; that admin must keep the pack decisions
+        (a gate that left out ``govt`` would lock every real hospital's first admin out)."""
+        state_admin = hospital_admin(f"pk-state-{_tag()}", org_type="govt")
+        client = self.client_for(state_admin)
+        for path in ("updates/", "history/"):
+            with self.subTest(path=path):
+                self.assertEqual(client.get(URL + path).status_code, 200)
+
     def test_reads_write_no_audit_entry(self):
         mark = audit_mark()
         self.api.get(f"{URL}updates/")

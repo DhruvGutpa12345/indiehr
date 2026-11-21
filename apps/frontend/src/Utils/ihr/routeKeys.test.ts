@@ -58,6 +58,7 @@ function access(role: string, myAccess?: MyAccess | null): IhrAccess {
           ? {
               restricted: SLUGS.restricted.includes(role),
               bills_here: SLUGS.bedForBilling.includes(role),
+              hospital_admin: false,
             }
           : myAccess,
       isSuperuser: false,

@@ -62,7 +62,11 @@ def organisation_admin(user):
 
 def hospital_wide_admin(user):
     """An admin role on one of the hospital's top-level organisations, active and not deleted
-    (not a team's or a district's inside it): who may read the audit trail (P1-T6b)."""
+    (not a team's or a district's inside it): who may read the audit trail (P1-T6b) and decide
+    pack updates. A government state organisation counts on purpose (Q-K120 A, review A1):
+    provisioning (``provisioning.steps.first_admin``) makes each hospital's first admin an
+    Administrator there, so excluding ``govt`` would lock every real hospital's first admin out.
+    Narrowing it is Q-K76 B (a recorded hospital root), with that admin moved onto the root."""
     return (
         _admin_memberships(user)
         .filter(
@@ -89,6 +93,24 @@ class IsHospitalAdmin(BasePermission):
             and not user.is_service_account
             and hospital_wide_admin(user)
         )
+
+
+class NotCrossSite(BasePermission):
+    """DRF gate for GET routes whose answer is itself an act (P1-T24 attack A2): reading the
+    audit trail records the reader as having viewed every patient it names. The session cookie
+    is SameSite=Lax and a GET needs no CSRF header (``authentication.check_csrf``), so another
+    site could send a signed-in admin's browser to an export. Refused: a request whose
+    ``Sec-Fetch-Site`` is present and is neither ``same-origin`` (our own page's link or fetch)
+    nor ``none`` (an address typed, bookmarked or opened by the user). A client that sends no
+    such header (an older browser, a script) is let through: the admin gate still applies.
+    Put it first, so a cross-site request learns nothing about who is an admin."""
+
+    message = "Cross-site request refused."
+    ALLOWED = frozenset({"same-origin", "none"})
+
+    def has_permission(self, request, view):
+        site = request.headers.get("Sec-Fetch-Site")
+        return site is None or site in self.ALLOWED
 
 
 class StaffAccessView(APIView):
