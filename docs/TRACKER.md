@@ -268,7 +268,10 @@ Detailed task definitions: [PLAN.md](PLAN.md) §6. Open questions: [QUESTIONS.md
         - ⬜ P1-T22c2b Lost tails (`accept-loss`), absent-hospital closing, packages sealed in the dumps bucket and their expiry, `announce-timeline`, streaming export, the infra/aws events user, runbook and ADR-010 text. Before building it, answer the c2 attack findings S1, S3, S4, S5 and S6 (`docs/reviews/p1-t22c/attack-c2.md`) and keep Q-K87's rule that an exported hospital is never "lost" (split by Claude, 2026-11-21, awaiting owner confirmation)
       - Scope from the Phase 1 review: Nightly per-hospital dumps, a single-hospital restore command and runbook, a monthly drill (R1-08)
     - 🟡 P1-T23 (built, reviewed, fixed 2026-11-17; Q-K92…Q-K98 confirmed 2026-11-21; the 8 GB load test runs on the first paid staging server, before any pilot) Postgres operating rules (`statement_timeout`, `max_locks_per_transaction` 256) and a load test of the full stack on an 8 GB target; decide the back-channel pool (R1-09, R1-10)
-    - ⬜ P1-T24 Web screens: audit viewer, invitation resend/cancel, reset sign-in, access status (R1-14)
+    - 🔵 P1-T24 Web screens: audit viewer, invitation resend/cancel, reset sign-in, access status (R1-14) — split by Claude, 2026-11-21, awaiting owner confirmation (design `docs/reviews/p1-t24/design.md`, decision in `attack.md`):
+      - ⬜ P1-T24a The hospital-admin flag in my-access and the audit trail page (list, status, entry sheet; `Sec-Fetch-Site` guard on the audit routes; seeded `admin.priya`)
+      - ⬜ P1-T24b The staff "Sign-in" card on the user page (resend, cancel, reset sign-in), with the reset limited to hospital-wide admins and hospital-wide admins protected (attack A1, an existing gap)
+      - ⬜ P1-T24c The pack updates screen, the audit export and verifier downloads, two small fixes
     - ⬜ Hospital-root admin gate (Q-K76 B, owner 2026-11-21): record one hospital-root organisation per hospital at provisioning (a hospital-profile field) and let `IsHospitalAdmin` accept only admins there; the seed and provisioning move their first admin onto it
     - ⬜ (you) Mark P4-T1, P4-T2, P4-T3 (minimum), P4-T4 and P4-T6 as gates before the first pilot; name a CERT-In point of contact; add a second alert recipient or channel (R1-13, R1-15)
 
