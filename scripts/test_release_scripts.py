@@ -15,8 +15,10 @@ The live proof is the drill in the local staging proof (deploy/staging/README.md
 Run: python3 -m unittest scripts/test_release_scripts.py
 """
 
+import json
 import os
 import re
+import shlex
 import stat
 import subprocess
 import sys
@@ -643,6 +645,397 @@ class RollbackScript(unittest.TestCase):
             out = subprocess.run(["bash", "-c", script], capture_output=True, text=True)
             self.assertEqual(out.returncode, 0, out.stderr)
             check_modes(self, d / "root")
+
+
+class DisasterScript(unittest.TestCase):
+    """P1-T22c2a (flow b): restore --target writes a stub plan just before the restore, serves
+    first; audit-supersede export reads a repository copy; the documents use the events key only."""
+
+    def test_the_stub_is_written_just_before_the_pgbackrest_restore(self):
+        live = func("restore_live")
+        order = [
+            "already holds a database",
+            ".ihr-restore-incomplete && find",
+            'supersede_stub "$target"',
+            'pg_container ihr-restore "$vol:/var/lib/postgresql" pgbackrest',
+            "wait_promoted ihr-restore-recovery",
+            "supersede_parent ihr-restore-recovery",
+            "rm -f /var/lib/postgresql/.ihr-restore-incomplete",
+        ]
+        at = [live.index(x) for x in order]
+        self.assertEqual(at, sorted(at), order)
+        stub = func("supersede_stub")
+        # state at the stub step (readiness C2-5), the stub with no database, events key only
+        self.assertLess(stub.index('> "$dir/state"'), stub.index("ihr_audit_supersede stub"))
+        self.assertIn("compose run --rm --no-deps -T", stub)
+        self.assertIn("supersede_keys --events-only", stub)
+        self.assertIn('rm -rf "$dir"; die "the stub plan could not be written', stub)
+        self.assertIn("sup_repo_pick", stub)
+
+    def test_the_parent_timeline_is_read_from_the_history_file(self):
+        parent = func("supersede_parent")
+        self.assertIn('pg_wal/$tl.history"', parent)
+        # Postgres ends the file with an empty line (live proof): the last line with fields
+        awk = parent.split("| awk '", 1)[1].split("'", 1)[0]
+        history = "1\t0/C054268\tbefore 2026-11-21 08:49:49.587589+00\n\n"
+        out = subprocess.run(["awk", awk], input=history, capture_output=True, text=True, check=True)
+        self.assertEqual(out.stdout, "1\n")
+        self.assertNotIn("tail -n 1", parent)
+        self.assertIn("printf '%08X'", parent)
+        self.assertIn('[[ "$parent" != "$old" ]]', parent)
+        exp = func("supersede_export_copy")
+        self.assertIn('[[ "$parent" == "$old" ]] || die', exp)
+        self.assertIn("audit-supersede close $id", exp)
+
+    def test_the_restores_own_stop_reaches_the_export_doc(self):
+        """Review T3: the history file's stop ("before <first commit not applied>") and the last
+        applied commit go to state and to export-doc, which checks the stub's T lies between
+        them; a stop not read is refused before the copy is made."""
+        parent = func("supersede_parent")
+        awk = parent.split("awk -F '\\t' '", 1)[1].split("'", 1)[0]
+        history = "1\t0/C054268\tbefore 2026-11-21 08:49:49.587589+00\n\n"
+        out = subprocess.run(["awk", "-F", "\t", awk], input=history, capture_output=True, text=True, check=True)
+        self.assertEqual(out.stdout, "before 2026-11-21 08:49:49.587589+00\n")
+        rx = parent.split('[[ "$stop" =~ ', 1)[1].split(" ]]", 1)[0]
+        for text, ok in (("before 2026-11-21 08:49:49.587589+00", True), ("before 2026-11-21 08:49:49+05:30", True),
+                         ("before 2026-11-21 08:49:49'; DROP", False), ("at restore point \"x\"", False)):
+            r = subprocess.run(["bash", "-c", f'stop="$1"; [[ "$stop" =~ {rx} ]] && echo "${{BASH_REMATCH[1]}}"', "_", text],
+                               capture_output=True, text=True, check=False)
+            self.assertEqual(r.returncode == 0, ok, text)
+        self.assertIn("pg_last_xact_replay_timestamp()", parent)
+        self.assertIn("recovery_stop=%s", parent)
+        exp = func("supersede_export_copy")
+        self.assertLess(exp.index('rstop="$(sup_get "$id" recovery_stop)"'), exp.index("repo_copy"))
+        self.assertIn('--recovery-stop "$rstop" --recovery-replayed "$rrep"', exp)
+
+    def test_disaster_documents_never_fall_back_to_the_writer_key(self):
+        """Audit S5: without the events key the stub, the export doc and a disaster's result
+        are refused; the writer key (Celery's) is never exported for them."""
+        keys = func("supersede_keys")
+        self.assertLess(keys.index("((events_only)); then\n    die"), keys.index("IHR_AUDIT_ANCHOR_WRITE_(KEY|SECRET)"))
+        for name in ("supersede_stub", "supersede_export_copy"):
+            body = func(name)
+            self.assertIn("supersede_keys --events-only", body)
+            self.assertNotIn("supersede_keys\n", body)
+        self.assertIn("then supersede_keys --events-only; else supersede_keys; fi", func("supersede_close"))
+        # review Q4: a disaster load too (Python's _load already fails closed without the key)
+        load = func("supersede_load")
+        self.assertIn("then supersede_keys --events-only; else supersede_keys; fi", load)
+        self.assertNotIn("( supersede_keys\n", load)
+        # and a --image for a disaster load must write level-2 objects (Q-K101)
+        self.assertLess(load.index('sup_image_ok "$img"'), load.index('(( $(sup_level "$img") >= 2 ))'))
+        self.assertLess(load.index('(( $(sup_level "$img") >= 2 ))'), load.index('echo "load_image=$img"'))
+
+    def _bash(self, script, tmp):
+        """Run ``script`` with staging.sh's sup_get, sup_abandon_failed and supersede_close
+        defined, SUPERSEDE_DIR=tmp; docker and compose only say they were called."""
+        defs = "\n".join(
+            f"{name}() {{{func(name)}}}" for name in ("sup_get", "sup_abandon_failed", "supersede_close")
+        )
+        prelude = (
+            f"set -u\nSUPERSEDE_DIR={shlex.quote(tmp)}\nSUP_TAG=t\n"
+            'die() { echo "DIE: $*" >&2; exit 1; }\n'
+            "docker() { echo CALLED-docker; }\ncompose() { echo CALLED-compose; }\n"
+            "env_get() { :; }\nimage_id() { echo img; }\nrepo_of() { echo repo; }\n"
+            "supersede_keys() { sup_envs=(); }\n"
+        )
+        return subprocess.run(["bash", "-c", prelude + defs + "\n" + script], capture_output=True, text=True,
+                              check=False)
+
+    def test_a_failed_attempt_is_marked_abandoned_and_close_refuses_it(self):
+        """Review E3: restore_live failing after its stub marks the attempt abandoned (never once
+        the restore finished); close refuses a disaster stub that never promoted (no new
+        timeline): its result would make the attempt that did restore read as superseded."""
+        live = func("restore_live")
+        trap = live.split("\n  trap '", 1)[1].split("\n", 1)[0]
+        self.assertIn('sup_abandon_failed "$rc"', trap)
+        self.assertLess(live.index("rm -f /var/lib/postgresql/.ihr-restore-incomplete"), live.index("SUP_RESTORED=1"))
+        rid = "0b4c2f9e-1d2a-4c3b-8a7d-0123456789ab"
+        with tempfile.TemporaryDirectory() as tmp:
+            os.makedirs(f"{tmp}/{rid}")
+            with open(f"{tmp}/{rid}/state", "w") as f:
+                f.write(f"id={rid}\nflow=disaster\nold_timeline=00000001\n")
+            open(f"{tmp}/{rid}/stubbed", "w").close()
+            # the restore finished: a later failure (the --no-supersede result) abandons nothing
+            r = self._bash(f"SUP_DISASTER={rid} SUP_RESTORED=1; sup_abandon_failed 1", tmp)
+            self.assertFalse(os.path.exists(f"{tmp}/{rid}/abandoned"), r.stderr)
+            r = self._bash(f"SUP_DISASTER={rid} SUP_RESTORED=; sup_abandon_failed 0", tmp)
+            self.assertFalse(os.path.exists(f"{tmp}/{rid}/abandoned"), r.stderr)
+            r = self._bash(f"SUP_DISASTER={rid} SUP_RESTORED=; sup_abandon_failed 1", tmp)
+            self.assertTrue(os.path.exists(f"{tmp}/{rid}/abandoned"), r.stderr)
+            r = self._bash(f"supersede_close {rid} why tester", tmp)
+            self.assertNotEqual(r.returncode, 0)
+            self.assertIn("never promoted", r.stderr)
+            self.assertNotIn("CALLED-", r.stdout)
+            self.assertFalse(os.path.exists(f"{tmp}/{rid}/loaded"))
+            with open(f"{tmp}/{rid}/state", "a") as f:
+                f.write("new_timeline=00000002\nparent=00000001\n")
+            r = self._bash(f"supersede_close {rid} why tester", tmp)
+            self.assertEqual(r.returncode, 0, r.stderr)
+            self.assertIn("CALLED-compose", r.stdout)
+
+    def test_the_refusals_name_their_escape(self):
+        """Goldfish C2-5: a missing image, an old build or a missing events key is refused before
+        anything is replaced, each with its way out."""
+        pre = func("sup_disaster_precheck")
+        self.assertIn("is not on this server: bring it first", pre)
+        self.assertIn("older than P1-T22c2a", pre)
+        self.assertIn("events key only", pre)
+        self.assertEqual(pre.count('--no-supersede --reason \\"<the incident>\\"'), 2)
+        cmd = func("restore_cmd")
+        self.assertLess(cmd.index("sup_disaster_precheck"), cmd.index('restore_live "${args[@]}"'))
+        self.assertIn("--no-supersede needs --reason", cmd)
+        # --no-supersede: the result with db alone, before up (readiness C2-1)
+        self.assertLess(cmd.index("compose up -d --wait db"), cmd.index("supersede_close"))
+        self.assertIn("--no-supersede || die", cmd)
+        self.assertIn("  restore) restore_cmd \"${@:2}\" ;;", STAGING_SH)
+
+    def test_a_build_without_the_constant_is_level_1(self):
+        """Q-K101: a build of P1-T22c1 has no LEVEL (level 1); no tool at all is 0; a rollback to
+        a build below the bucket's level is refused before the confirmation."""
+        level = func("sup_level")
+        self.assertIn('getattr(s, \\"LEVEL\\", 1)'.replace("\\", ""), level)
+        self.assertIn("|| echo 0", level)
+        guard = func("rel_level_guard")
+        self.assertIn("audit-supersede level", guard)
+        self.assertIn("Q-K101", guard)
+        body = func("rollback")
+        self.assertLess(body.index('rel_check_images "$names" "$plan"'), body.index("rel_level_guard"))
+        self.assertLess(body.index("rel_level_guard"), body.index("read -r answer <&8"))
+
+    def test_the_copy_reads_the_old_timeline_and_always_goes(self):
+        exp = func("supersede_export_copy")
+        self.assertIn('repo_copy "$SUP_COPY" "--set=$set" --type=default "--target-timeline=$((16#$old))"', exp)
+        self.assertIn("PG_CONTAINER_EXTRA=(--oom-score-adj 900)", exp)
+        trap = exp.split("\n  trap ", 1)[1].split("\n", 1)[0]
+        for part in ("docker rm -f", "docker volume rm -f", "start_existing dumper"):
+            self.assertIn(part, trap)
+        self.assertLess(exp.index("\n  trap "), exp.index("repo_copy"))
+        self.assertLess(exp.index("compose stop dumper"), exp.index("repo_copy"))
+        # the watch's password never on a command line; the one-off logs nowhere (compose)
+        self.assertIn("-e DATABASE_URL audit-supersede", exp)
+        self.assertNotIn('-e "DATABASE_URL=', exp)
+        self.assertLess(exp.index("export-copy"), exp.index("ihr_audit_supersede export-doc"))
+        self.assertIn("sup_set_size", exp)
+        self.assertNotIn("pg_database_size", exp)  # never the live database's size
+        self.assertIn('${PG_CONTAINER_EXTRA[@]+"${PG_CONTAINER_EXTRA[@]}"}', func("pg_container"))
+
+    def test_status_and_up_name_the_right_build_and_step(self):
+        """Live proof: status ran the export's build after a load with a fixed --image."""
+        cmd = func("audit_supersede_cmd")
+        self.assertLess(cmd.index('image="$(sup_get "$id" load_image)"'), cmd.index('docker tag "$image"'))
+        self.assertIn("audit-supersede export $pend", STAGING_SH)
+
+    def test_the_local_tar_goes_after_a_verified_load_unless_it_holds_more(self):
+        load = func("supersede_load")
+        self.assertLess(load.index("ihr_audit_supersede load"), load.index('rm -f "$dir/export.tar"'))
+        self.assertLess(load.index('keep="$(sup_local_only "$id")"'), load.index('rm -f "$dir/export.tar"'))
+        local = func("sup_local_only")
+        self.assertIn('h.get("unsealed")', local)
+        self.assertIn('h["outcome"] == "unreadable"', local)
+
+    def _python_of(self, name):
+        body = func(name)
+        return body.split("python3 -c '", 1)[1].split("'", 1)[0]
+
+    def test_the_repositorys_newest_timeline_and_set(self):
+        info = [{
+            "name": "main",
+            "db": [{"id": 1}, {"id": 2}],
+            "archive": [
+                {"database": {"id": 1}, "max": "000000010000000000000009"},
+                {"database": {"id": 2}, "max": "00000002000000000000000C"},
+            ],
+            "backup": [
+                {"label": "20261120-010000F", "database": {"id": 2}, "archive": {"stop": "000000010000000000000003"},
+                 "timestamp": {"stop": 1}},
+                {"label": "20261121-010000F", "database": {"id": 2}, "archive": {"stop": "000000020000000000000005"},
+                 "timestamp": {"stop": 2}},
+                {"label": "20261121-020000F_20261121-030000D", "database": {"id": 2},
+                 "archive": {"stop": "000000020000000000000008"}, "timestamp": {"stop": 3}},
+            ],
+        }]
+        out = subprocess.run(["python3", "-c", self._python_of("sup_repo_pick")], input=json.dumps(info),
+                             capture_output=True, text=True, check=True).stdout.split()
+        self.assertEqual(out, ["00000002000000000000000C", "20261121-020000F_20261121-030000D"])
+        info[0]["backup"] = info[0]["backup"][:1]
+        r = subprocess.run(["python3", "-c", self._python_of("sup_repo_pick")], input=json.dumps(info),
+                           capture_output=True, text=True, check=False)
+        self.assertNotEqual(r.returncode, 0)
+        # review E4: right after a restore no set is on the newest timeline yet; the operator is
+        # told why and what to do (an older timeline's set is right only for a T after the fork)
+        self.assertIn("backup-now full", r.stderr)
+        self.assertIn("nothing was restored", r.stderr)
+
+
+class DisasterReviewScript(unittest.TestCase):
+    """P1-T22c2a review fixes in staging.sh and deploy.sh: E2, E5, E6, Q2, Q6, T6, T4."""
+
+    def _run(self, names, script, prelude=""):
+        """Run ``script`` with these staging.sh functions defined and docker, compose and die faked."""
+        defs = "\n".join(f"{name}() {{{func(name)}}}" for name in names)
+        pre = (
+            "set -u\n"
+            'die() { echo "DIE: $*" >&2; exit 1; }\n'
+            + prelude
+        )
+        return subprocess.run(["bash", "-c", pre + defs + "\n" + script], capture_output=True, text=True, check=False)
+
+    def test_close_and_load_check_the_volume_before_starting_the_database(self):
+        """Review E2: an empty pgdata would get a fresh cluster on timeline 1 (blocking the real
+        restore), a half-restored one would be promoted outside restore_live."""
+        body = func("audit_supersede_cmd")
+        self.assertNotIn("compose up -d --wait db redis", body)
+        self.assertEqual(body.count("    sup_db_up\n"), 2)
+        self.assertLess(body.index("    sup_db_up\n"), body.index("supersede_close"))
+        up = func("sup_db_up")
+        self.assertLess(up.index('"$PG_STATE"'), up.index("compose up -d --wait db redis"))
+        prelude = (
+            "PG_STATE=x\nenv_get() { echo img; }\n"
+            'docker() { echo "$FAKE_STATE"; }\n'
+            'compose() { if [[ "$1" == ps ]]; then return 0; fi; echo "CALLED-compose $*"; }\n'
+        )
+        for state, ok in (("db", True), ("empty", False), ("restoring", False)):
+            r = self._run(["sup_db_up"], f"FAKE_STATE={state}; sup_db_up", prelude)
+            self.assertEqual(r.returncode == 0, ok, (state, r.stderr))
+            self.assertEqual("CALLED-compose up -d --wait db redis" in r.stdout, ok, state)
+
+    def test_the_level_guard_runs_in_release_and_before_a_plain_start(self):
+        """Review E5: not only in rollback; and it asks with any level-2 build on this server."""
+        rel = func("release")
+        self.assertIn('rel_level_guard "$(image_id "$new_ref")"', rel)
+        self.assertLess(rel.index("rel_level_guard"), rel.index("ihr_fleet_run hold"))
+        self.assertIn("level-guard) rel_level_guard", STAGING_SH)
+        self.assertLess(DEPLOY_SH.index("scripts/staging.sh level-guard"), DEPLOY_SH.index("scripts/staging.sh release-note >/dev/null && scripts/staging.sh up"))
+        guard = func("rel_level_guard")
+        self.assertIn('tool="$(rel_level_tool)"', guard)
+        self.assertNotIn("running_backend_id", guard)  # it no longer skips for an older running build
+        tool = func("rel_level_tool")
+        self.assertIn("running_backend_id", tool)
+        self.assertIn("docker image ls", tool)
+        self.assertIn(">= 2", tool)
+
+    def test_the_level_tool_falls_back_to_another_level_two_image(self):
+        prelude = (
+            "running_backend_id() { echo old-running; }\n"
+            'sup_level() { case "$1" in old-running) echo 1;; new-tagged) echo 2;; *) echo 1;; esac; }\n'
+            "repo_of() { echo repo; }\nenv_get() { echo x; }\n"
+            "docker() { printf 'old-running\\nnew-tagged\\n'; }\n"
+        )
+        r = self._run(["rel_level_tool"], "rel_level_tool", prelude)
+        self.assertEqual(r.stdout.strip(), "new-tagged", r.stderr)
+        r = self._run(["rel_level_tool"], "rel_level_tool", prelude.replace("new-tagged) echo 2", "new-tagged) echo 1"))
+        self.assertEqual(r.stdout.strip(), "")  # none: nothing could have written level-2 objects here
+
+    def _export_copy_run(self, doc_in_bucket, tmp):
+        rid = "0b4c2f9e-1d2a-4c3b-8a7d-0123456789ab"
+        os.makedirs(f"{tmp}/{rid}")
+        with open(f"{tmp}/{rid}/state", "w") as f:
+            f.write(f"id={rid}\nflow=disaster\nold_timeline=00000001\nparent=00000001\nbackup_set=S\n"
+                    "recovery_stop=2026-11-21T10:00:00+00:00\nrecovery_replayed=x\nimage=img\n")
+        open(f"{tmp}/{rid}/stubbed", "w").close()
+        prelude = (
+            f"SUPERSEDE_DIR={shlex.quote(tmp)}\nSUP_TAG=t\nSUP_COPY=c\n"
+            "docker() { echo CALLED-docker \"$@\"; }\nenv_get() { echo x; }\nrepo_of() { echo repo; }\n"
+            "sup_level() { echo 2; }\n"
+            'compose() { if [[ "$*" == *" status "* ]]; then echo \'{"exported": %s}\'; return 0; fi; echo CALLED-compose "$@"; }\n'
+            "db_password() { echo pw; }\nrepo_copy() { echo CALLED-repo_copy; }\n"
+        ) % ("\"k\"" if doc_in_bucket else "null")
+        r = self._run(["sup_get", "sup_has_export_doc", "supersede_export_copy"], f"supersede_export_copy {rid} tester", prelude)
+        return rid, r
+
+    def test_an_export_that_stopped_after_its_doc_is_not_copied_again(self):
+        """Review E6: the doc is in the bucket (write-once), the marker is not: no second copy
+        (it would be refused, and would replace the tar the doc was made from); load next."""
+        with tempfile.TemporaryDirectory() as tmp:
+            rid, r = self._export_copy_run(True, tmp)
+            self.assertEqual(r.returncode, 0, r.stderr)
+            self.assertNotIn("CALLED-repo_copy", r.stdout)
+            self.assertTrue(os.path.exists(f"{tmp}/{rid}/exported"))
+            self.assertIn(f"audit-supersede load {rid}", r.stdout)
+        with tempfile.TemporaryDirectory() as tmp:
+            rid, r = self._export_copy_run(False, tmp)
+            self.assertIn("cannot read backup set", r.stderr)  # no doc: it goes on to the copy
+            self.assertFalse(os.path.exists(f"{tmp}/{rid}/exported"))
+        exp = func("supersede_export_copy")
+        self.assertLess(exp.index("sup_has_export_doc"), exp.index("repo_copy"))
+
+    def _restore_run(self, args, wanted):
+        prelude = (
+            f"SUP_DISASTER=; supersede_wanted() {{ return {0 if wanted else 1}; }}\n"
+            "env_get() { echo x; }\ncheck_target() { :; }\nrel_operator() { echo me; }\n"
+            "sup_disaster_precheck() { :; }\nrestore_live() { echo CALLED-restore_live; }\n"
+            "supersede_close() { echo CALLED-close; }\ncompose() { :; }\n"
+        )
+        return self._run(["restore_cmd"], f"restore_cmd {args}", prelude)
+
+    def test_restore_target_without_a_fingerprint_writer_key_is_refused(self):
+        """Review Q6: nothing would be written and nothing said; the timeline change and every cut
+        would alert as unexplained. --no-supersede (with its reason) still goes, with a warning."""
+        r = self._restore_run("--target '2026-11-21 10:00:00+05:30' --operator me", wanted=False)
+        self.assertNotEqual(r.returncode, 0)
+        self.assertIn("anchor-write.env", r.stderr)
+        self.assertNotIn("CALLED-restore_live", r.stdout)
+        r = self._restore_run("--target '2026-11-21 10:00:00+05:30' --no-supersede --reason r", wanted=False)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertIn("CALLED-restore_live", r.stdout)
+        self.assertIn("no fingerprint writer key", r.stderr)
+        # a restore with no target is not a disaster restore: unchanged
+        r = self._restore_run("", wanted=False)
+        self.assertIn("CALLED-restore_live", r.stdout)
+
+    def test_a_restore_is_abandoned_by_hand_for_a_retry(self):
+        """Review Q2: the retry path of restore --target is a command, not a hand-made marker."""
+        rid = "0b4c2f9e-1d2a-4c3b-8a7d-0123456789ab"
+        with tempfile.TemporaryDirectory() as tmp:
+            os.makedirs(f"{tmp}/{rid}")
+            with open(f"{tmp}/{rid}/state", "w") as f:
+                f.write(f"id={rid}\nflow=disaster\n")
+            pre = f"SUPERSEDE_DIR={shlex.quote(tmp)}\n"
+            r = self._run(["supersede_abandon"], f"supersede_abandon {rid} 'another T'", pre)
+            self.assertEqual(r.returncode, 0, r.stderr)
+            self.assertTrue(os.path.exists(f"{tmp}/{rid}/abandoned"))
+            self.assertIn("docker volume rm", r.stdout)
+            r = self._run(["supersede_abandon"], f"supersede_abandon {rid} again", pre)
+            self.assertNotEqual(r.returncode, 0)  # already abandoned
+            open(f"{tmp}/{rid}/loaded", "w").close()
+            os.remove(f"{tmp}/{rid}/abandoned")
+            r = self._run(["supersede_abandon"], f"supersede_abandon {rid} x", pre)
+            self.assertNotEqual(r.returncode, 0)  # loaded or closed: nothing to abandon
+        cmd = func("audit_supersede_cmd")
+        self.assertIn("abandon <id> --reason", cmd)
+        readme = (ROOT / "deploy" / "staging" / "README.md").read_text()
+        retry = readme.split("**A real restore**", 1)[1].split("Practise with `restore-drill`", 1)[0]
+        for word in ("--operator", "Disaster restores", "audit-supersede abandon", "docker volume rm", "events key"):
+            self.assertIn(word, retry)
+
+    def test_a_closed_restores_tar_is_listed_until_it_is_deleted(self):
+        """Review T6: close keeps export.tar (the only copy of the old tail): up and status say
+        so; its expiry is P1-T22c2b's."""
+        self.assertIn("> \"$SUPERSEDE_DIR/$id/closed\"", func("supersede_close"))
+        with tempfile.TemporaryDirectory() as tmp:
+            for rid, files in (("a", ("closed", "export.tar")), ("b", ("closed",)), ("c", ("export.tar",))):
+                os.makedirs(f"{tmp}/{rid}")
+                for f in files:
+                    open(f"{tmp}/{rid}/{f}", "w").close()
+            r = self._run(["sup_kept_tars"], "sup_kept_tars", f"SUPERSEDE_DIR={shlex.quote(tmp)}\n")
+            self.assertEqual(r.stdout.split(), ["a"], r.stderr)
+        self.assertIn("sup_kept_tars", func("up"))
+        self.assertIn("export.tar", func("audit_supersede_cmd"))
+        tracker = (ROOT / "docs" / "TRACKER.md").read_text()
+        self.assertIn("closed restore's export.tar", tracker)
+
+    def test_the_floor_margin_is_a_documented_limit(self):
+        """Review T4: the idle-in-transaction limit bounds idle gaps, not a transaction's total
+        time; Q-K99 and the code say so (no transaction_timeout: Q-K96)."""
+        events_py = (ROOT / "plugins/ihr_platform/ihr_audit/events.py").read_text()
+        margin = events_py.split("FLOOR_MARGIN = ", 1)[0].rsplit("# How far before T", 1)[1]
+        self.assertIn("only the idle gaps", margin)
+        self.assertIn("transaction_timeout", margin)
+        q = (ROOT / "docs" / "QUESTIONS.md").read_text()
+        q99 = q.split("### Q-K99", 1)[1].split("### Q-K100", 1)[0]
+        self.assertIn("transaction_timeout", q99)
+        self.assertIn("known limit", q99.lower())
 
 
 def make_stack_archive(path, compose_text, extra=None):

@@ -332,7 +332,8 @@ class AuditWatch(unittest.TestCase):
             self.assertIn(want, names)
         for want in ("AuditHospitalsUnchecked", "AuditHospitalsRestoring", "AuditCheckpointUnseeded",
                      "AuditDatabaseRestoredUnannounced", "AuditRestorePlanAbandoned",
-                     "AuditWholeRestoreUnanchored", "AuditWholeRestoreUncorroborated"):
+                     "AuditWholeRestoreUnanchored", "AuditWholeRestoreUncorroborated",
+                     "AuditWholeRestorePending", "AuditWholeRestorePendingOverdue"):
             self.assertIn(want, names)
         audit = [r for f, r in rules() if f == "audit.yml"]
         # every pass has a staleness rule and an absent() rule (A9), on the time it last ENDED
@@ -460,8 +461,9 @@ class AuditWatchOperations(unittest.TestCase):
         for want in ("AuditChainBroken", "AuditFingerprintMismatch", "P1-T22c", "never a silence"):
             self.assertIn(want, said)
         tracker = (ROOT / "docs" / "TRACKER.md").read_text()
+        # what stays cut is still an open task (since 2026-11-21: P1-T22c2b, the lost tails)
         line = next(ln for ln in tracker.splitlines() if "P1-T22c" in ln and "⬜" in ln)
-        self.assertIn("rollback --restore", line)
+        self.assertIn("P1-T22c2", line)
 
 
 class TraefikMetricsAndStatus(unittest.TestCase):

@@ -395,7 +395,7 @@ else
   # logging it also removes release images beyond the last 3 and untagged ones (the disk the
   # journal, a 14-day buffer, and the log store share).
   log "Starting the stack, then the smoke checks"
-  remote "cd $REMOTE_ROOT && scripts/staging.sh release-note >/dev/null && scripts/staging.sh up \
+  remote "cd $REMOTE_ROOT && scripts/staging.sh level-guard && scripts/staging.sh release-note >/dev/null && scripts/staging.sh up \
     && scripts/staging.sh smoke && scripts/staging.sh release-record"
 fi
 

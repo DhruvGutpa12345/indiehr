@@ -1030,6 +1030,79 @@ A sign-out holds a backend thread while Keycloak posts the logout back into the 
 - **A ⭐ (taken).** 20 active staff per hospital, one request per 15 s each; levels 25, 50, 100 hospitals; pass: no OOM kill and no swap-in; p95 < 1 s and p99 < 3 s; errors < 0.5 % (none from timeouts on the request mix); every back-channel token delivered within 2 s; Celery queue drained within 60 s of each burst; the dump finishes in its window; db memory below its limit with 15 % margin. The cell cap becomes the lower of 100 and the passing level. **The 8 GB run is blocked on the owner** (no server); `docs/reviews/p1-t23/build.md` holds the plan.
 - B. The owner's own numbers per hospital size.
 
+### Q-K99 — How far below T may a disaster restore's fork point go? (P1-T22c2a, audit S2; auto-accepted by Claude, 2026-11-21, awaiting owner confirmation)
+
+After a disaster restore to T the load computes the fork point F (the restored head). The database owner could rewrite restored seals to push F lower and have older trail excused.
+
+- **A ⭐ (taken).** The first superseded seal must hold an entry (its `at` is in the seal hash) newer than T − 15 min: the 10-minute clock allowance plus the worker profile's 5-minute idle-in-transaction limit (`db_limits`). Every reader checks it again from the archived segment. A single-hospital restore event after T may name a lower F. A seal sealed after T whose entries are all older (the sealer stopped for 15 min before T) is refused (fails closed; `close` it).
+- B. T − 40 min (the owner profile's 30-minute idle limit): fewer refusals, a 40-minute rewritable window.
+- C. No floor (F floats down to L): up to about an hour before T rewritable.
+
+*Recommendation A:* it shrinks the rewritable window to 15 minutes, and the only false refusal needs the sealer down before T. Reverse: change `events.FLOOR_MARGIN`.
+
+*Known limit (review T4):* the idle-in-transaction limit bounds only the idle gaps of a transaction, not its total time (the worker profile's statement limit is 300 s, the owner profile has none, and no `transaction_timeout` is set: Q-K96). A transaction held open longer than the margin that commits just after T makes the first seal after T hold only older entries: a false refusal that fails closed (availability only: `close` it, the cuts stay). Setting `transaction_timeout` at or below the margin in the profiles that write audited rows would remove it; that reopens Q-K96, so it waits for the 8 GB test.
+
+### Q-K100 — What happens to a whole-database restore that can never be loaded? (P1-T22c2a, design-c2 Q-K104; auto-accepted by Claude, 2026-11-21, awaiting owner confirmation)
+
+A pending load blocks every later whole-database restore and every single-hospital restore.
+
+- **A ⭐ (taken).** `staging.sh audit-supersede close <id> --reason` writes its result with every hospital `refused` and the reason (`closed`); the timeline change is explained, the cuts stay critical. Refused while any event of that restore is in the bucket (load it instead). `restore --target --no-supersede --reason` uses the same result for a restore that exports nothing.
+- B. Nothing: the restore stays pending for good.
+
+*Recommendation A:* B blocks restores for good. Reverse: drop `supersede.close`.
+
+### Q-K101 — Builds older than P1-T22c2a (P1-T22c2a, design-c2 Q-K101; auto-accepted by Claude, 2026-11-21, awaiting owner confirmation)
+
+Older builds read a disaster restore's export doc as a bad object, and its events excuse nothing there.
+
+- **A ⭐ (taken).** `ihr_audit.supersede.LEVEL` = 2 (a build without it is 1). A rollback to a build below the bucket's level is refused before the confirmation (fix forward). `restore --target` needs level 2, or `--no-supersede --reason`.
+- B. Allow it; the older build alerts on the objects.
+
+*Recommendation A,* as Q-K86. Reverse: drop `rel_level_guard`.
+
+### Q-K102 — A restore without a time target (P1-T22c2a; auto-accepted by Claude, 2026-11-21, awaiting owner confirmation)
+
+`staging.sh restore` to the newest moment or to a release's restore point has no time T to write in a stub.
+
+- **A ⭐ (taken).** c2a writes restore events only for `restore --target <time>`. The others warn that the timeline change and the cuts will alert (record an incident). P1-T22c2b decides them with the lost tails.
+- B. Use the restored moment (the copy's last transaction) as T.
+
+*Recommendation A:* B needs the lost-tail rules first. Reverse: give `restore_cmd` a T for them.
+
+### Q-K103 — Where does a disaster restore's copy run? (P1-T22c2a, design-c2 Q-K103; auto-accepted by Claude, 2026-11-21, awaiting owner confirmation)
+
+- **A ⭐ (taken).** On the server, beside the serving stack: memory 768 MB, `--oom-score-adj 900` (killed first), the nightly dumper stopped meanwhile, the copy removed on every exit.
+- B. On the owner's machine (personal data on a laptop).
+
+*Recommendation A.* Reverse: run `audit-supersede export` elsewhere with the repository's keys.
+
+### Q-K104 — How is a disaster stub's T bound to the real restore? (P1-T22c2a review T3; auto-accepted by Claude, 2026-11-21, awaiting owner confirmation)
+
+The stub's T was never checked against the target pgBackRest really used, so a hand-run stub with an earlier T could widen what the floor excuses.
+
+- **A ⭐ (taken).** Use the restore's own record. The new timeline's history file says recovery stopped "before" the first commit after its target, which was not applied. Postgres also keeps the last commit it applied. `supersede_parent` writes both to state. `export-doc` refuses unless last applied ≤ T < stop, and the export doc carries both. Every reader requires them. The rule holds exactly when the restored database is the state at T, in a quiet database too.
+- B. The review's rule: the stop within 1 s of T. The stop is never T itself, so this refuses a correct restore whenever no commit followed T within a second (at night, or in a small hospital).
+
+*Recommendation A.* Reverse: change `events.recovery_problem`. The c2b ceiling (S6) completes it.
+
+### Q-K105 — How is a restore closed without its load kept visible? (P1-T22c2a review T2; auto-accepted by Claude, 2026-11-21, awaiting owner confirmation)
+
+Q-K100 lets `close` and `restore --target --no-supersede` explain the timeline change without loading any tail. The cuts stay, but data written after the last fingerprint and before the restore leaves no claim, so its loss shows nowhere (audit S4's hole, reached through a path c2a adds).
+
+- **A ⭐ (taken).** A gauge `ihr_audit_whole_restores_closed{how}` and the warning **AuditWholeRestoreClosed** stay on until the restore id is acknowledged in `ihr_audit/acknowledged_closed.txt` (restore id, date, what was reviewed), and `ihr_audit_verify` lists each unacknowledged closed result as a problem. A closed restore's `export.tar` stays on the server (the only copy of the old tail); `up` and `status` say so, and its expiry rule is P1-T22c2b's, with Q-K90.
+- B. Refuse `--no-supersede` when T is older than the repository's archive end: no silent path, but no way out for a repository that is gone.
+
+*Recommendation A:* B blocks the recovery it is for. Reverse: drop the gauge, the alert and the verify line.
+
+### Q-K106 — A second disaster while a restore is not loaded (P1-T22c2a review E1/E4; auto-accepted by Claude, 2026-11-21, awaiting owner confirmation)
+
+Restore A (tl1 to tl2) is served and not loaded; the server is lost again. The repository's newest timeline is tl2, A's old timeline is tl1. A lost server can neither load A (its folder and database are gone) nor close it (`close` needs a database on another timeline).
+
+- **A ⭐ (taken).** A pending plan from an **older** timeline than the repository's newest does not block the next stub or its export; it keeps alerting as pending until its own result. A restore from the repository straight after another one, before the next backup, has no backup set on the newest timeline: it is refused with the way out (`backup-now full`, or `--target-name`); an older timeline's set is not used, because it is right only for a T after the fork and the fork time is not known at that step.
+- B. Keep refusing, and let `close` take `--timeline <the repository's newest>` with no database.
+
+*Recommendation A.* Reverse: drop `ancestors_pass` in `supersede._refuse_pending`.
+
 **Still open:** Q-B4 (final MVP module list: assumed as in PLAN.md Phase 2) and Q-B6/B7 (pricing, timeline). Q-F2 is moot while AI is deferred.
 
 ---

@@ -34,9 +34,21 @@ ihr_platform 0012, P1-T22b; Q-K86: else refused). Packages hold personal data (a
 on the host they live in ``deploy/staging/supersede/<id>/`` (mode 600) beside the copy of the
 whole database the rollback keeps; their encrypted copy in the dumps bucket is P1-T22c2.
 
+**Disaster restores (P1-T22c2a, flow b; docs/reviews/p1-t22c/design-c2.md, "c2a as
+decided").** ``staging.sh restore --target T`` writes a **stub** plan (``write_stub``: no
+database, the events key only) just before the restore; the hospitals are served first; then
+``export_disaster`` reads every hospital's tail from a copy restored from the backup repository
+(the audit watch's role; T, the old timeline and the backup set come from the stub, never from
+the copy), ``write_export`` writes the **export doc** (the events key only), and ``load`` takes
+a disaster plan's hospitals from it: F = the restored head (the highest seal the restored
+chain shares with the package), bound from below by entry times (``events.fork_floor_problem``,
+audit S2). ``close`` writes the result of a restore that cannot be loaded (every hospital not
+loaded ``refused``; the cuts stay). No export runs while another restore's load is pending.
+
 Lines (journal, log store):
-    ihr-supersede: hospital=<slug> outcome=<exported|absent|unchanged|loaded|refused> [step=<s>]
-    ihr-supersede: restore=<id8> outcome=<planned|loaded|incomplete>
+    ihr-supersede: hospital=<slug> outcome=<exported|absent|unchanged|loaded|refused|unreadable>
+                   [step=<s>]
+    ihr-supersede: restore=<id8> outcome=<planned|stub|exported|loaded|incomplete|closed>
 """
 
 import gzip
@@ -47,9 +59,9 @@ import os
 import tarfile
 import uuid
 from dataclasses import dataclass, field
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 
-from django.db import connection, transaction
+from django.db import DatabaseError, connection, transaction
 from psycopg import sql
 
 from ihr_audit import anchor, archive, events, oneline, seal
@@ -60,6 +72,14 @@ PARKED = (
 )
 BATCH = 500
 PLAN_MEMBER = "plan.json"
+EXPORT_MEMBER = "export.json"  # a disaster restore's export doc draft (P1-T22c2a)
+# The objects this build writes and reads (P1-T22c2a, Q-K101): 1 = P1-T22c1 (plans, results,
+# events of a planned rollback), 2 = disaster stubs, export docs, closed or "unreadable"
+# results. A build without the constant is level 1 (level_of); the shell reads it from an image
+LEVEL = 2
+# An export later than this after its stub warns: the backup set and the old timeline's WAL
+# must still be in the repository (retention 28 days; goldfish C2-8)
+EXPORT_WARN_AFTER = timedelta(days=14)
 # pg_advisory_lock key of the load (one at a time, any database of this cluster): a constant
 # (int8 of sha256("ihr_audit_supersede.load")[:8])
 LOAD_LOCK = int.from_bytes(
@@ -84,6 +104,52 @@ def run_line(restore_id, outcome):
 
 def _emit(line):
     os.write(2, f"{oneline.one_line(line)}\n".encode())
+
+
+def level_of(module):
+    """The level of a build's supersede module: a build without ``LEVEL`` is P1-T22c1's (1)."""
+    return getattr(module, "LEVEL", 1)
+
+
+def bucket_level(found):
+    """The highest level of the whole-database restore objects in the bucket (0: none): a
+    rollback to a build below it is refused (Q-K101; it would read them as bad objects)."""
+    level = 1 if (found.plans or found.results or found.exports) else 0
+    if (
+        found.exports
+        or any(p.flow != events.FLOWS[0] for p in found.plans.values())
+        or any(
+            r.closed or any(h["outcome"] == "unreadable" for h in r.hospitals.values())
+            for r in found.results.values()
+        )
+    ):
+        level = 2
+    return level
+
+
+def _refuse_pending(found, timeline, what, ancestors_pass=False):
+    """Another whole-database restore moved the database and has no result: nothing new may
+    start (P1-T22c1 verification; it would leave one of them unanchored or pending for good).
+    Plans sharing ``timeline`` as their old one are siblings (only one moved the database).
+    ``ancestors_pass`` (a disaster restore, P1-T22c2a review E1): a pending plan from an older
+    timeline than the repository's newest does not block: the repository is already past it, a
+    lost server can neither load nor close it (close needs a database on another timeline), and
+    it keeps alerting as pending until its own result."""
+    waiting = found.unfinished(timeline)
+    if ancestors_pass:
+        waiting = [
+            r
+            for r in waiting
+            if int(found.plans[r].old_timeline, 16) > int(timeline, 16)
+        ]
+    if waiting:
+        steps = "; ".join(f"{r[:8]}: {found.next_step(r)}" for r in waiting)
+        msg = (
+            f"{what} refused: whole-database restore {', '.join(r[:8] for r in waiting)} "
+            f"restored the database and has no result yet: finish it first ({steps}) or "
+            "close it (scripts/staging.sh audit-supersede close <id> --reason ...)"
+        )
+        raise Refused(msg)
 
 
 # --- what is exported, in the same text for the live chain and the archive -------------------
@@ -402,6 +468,7 @@ def export(out, restore_id, target_name, target_time, image, operator, store=Non
     if timeline is None:
         msg = "the database's timeline could not be read"
         raise Refused(msg)
+    _refuse_pending(found, timeline, "the export")
     fp_key, claims = anchor.claims_at(store, target_time)
     hospitals, packages = {}, {}
     outer = not connection.in_atomic_block
@@ -467,7 +534,7 @@ def read_tar(stream):
     with tarfile.open(fileobj=stream, mode="r|") as tar:
         for member in tar:
             name = member.name
-            ok = name == PLAN_MEMBER or (
+            ok = name in (PLAN_MEMBER, EXPORT_MEMBER) or (
                 name.endswith(".jsonl.gz")
                 and anchor.UUID_RE.match(name[: -len(".jsonl.gz")])
             )
@@ -637,15 +704,56 @@ def restored_fork_problem(cursor, schema, lower, tail):
     return ""
 
 
+def disaster_fork(cursor, schema, lower, tail):
+    """Flow (b): the fork point F = the highest seal at or after L that the restored chain
+    shares with the package (the restored head at T, normally). Seal L must be shared, else the
+    restored database is not an ancestor of the exported chain. (seq, hash hex)."""
+    top = tail[-1]["seq"] if tail else lower[0]
+    restored = {
+        s["seq"]: s["hash"] for s in live_seals(cursor, schema, max(lower[0], 1), top)
+    }
+    if lower[0] and restored.get(lower[0]) != lower[1]:
+        msg = (
+            f"the restored chain's seal {lower[0]} is not the export's lower bound: the "
+            "restored database is not an ancestor of the exported chain"
+        )
+        raise Refused(msg)
+    fork = tuple(lower)
+    for s in tail:
+        if restored.get(s["seq"]) != s["hash"]:
+            break
+        fork = (s["seq"], s["hash"])
+    return fork
+
+
+def _at(text):
+    return datetime.fromisoformat(text)
+
+
+def latest_entry_at(entries, seal_doc):
+    """The newest ``at`` of a package's entries inside one seal's window, or None."""
+    low, high = int(seal_doc["lower"]), int(seal_doc["upper"])
+    times = [_at(e["at"]) for e in entries if low <= int(e["txid"]) < high]
+    return max(times) if times else None
+
+
+def _fork_floor(plan, fork, latest, restores):
+    """The load's own check of the fork floor (every reader checks it again)."""
+    return events.fork_floor_problem(plan.target_time, fork, latest, restores)
+
+
 class _Hospital:
     def __init__(self, hospital_uuid, slug):
         self.uuid, self.slug = hospital_uuid, slug
 
 
-def load_one(  # noqa: PLR0912 (one check per step)
+def load_one(  # noqa: PLR0912, PLR0915 (one check per step)
     hospital_uuid, entry, schema, body, plan, found, operator, store
 ):
-    """One hospital of the plan (steps 1-7). Returns an Outcome."""
+    """One hospital of the plan (steps 1-7). Returns an Outcome. A disaster plan's (flow b):
+    F is computed (``disaster_fork``) and bound by the floor; only seals F+1..head are
+    superseded."""
+    disaster = plan.flow == "disaster"
     slug = entry["slug"]
     if sha256(body or b"") != entry["package_sha256"]:
         msg = "its package is missing or not the one the plan names"
@@ -661,18 +769,7 @@ def load_one(  # noqa: PLR0912 (one check per step)
         cursor.execute("SET LOCAL lock_timeout = '10s'")
         for g, part in sorted(pkg.generations.items()):
             _carry_generation(cursor, hospital_uuid, g, part)
-        # Step 3, F = L (S3): the restored chain ended exactly at the plan's lower bound, the
-        # release's fingerprint of the sealed head. Never a lower fork point. Read at L, not
-        # at the head: a load run again after `up` finds seals the restored database added
-        # since (its own restore entry sealed, new traffic; review T2/E2). Those start a new
-        # branch after L; a seal after L that is the package's own was in the database at T
-        # (a stale L): refused
-        fork_problem = restored_fork_problem(cursor, schema, lower, tail)
-        if fork_problem:
-            raise Refused(fork_problem)
-        if not rows:
-            return Outcome(slug, "unchanged", fork=lower[0])
-        if (
+        if rows and (
             rows[0].seq != lower[0] + 1
             or bytes(rows[0].prev_hash).hex() != lower[1]
             or (rows[-1].seq, bytes(rows[-1].hash).hex(), events.segment_digest(rows))
@@ -680,6 +777,37 @@ def load_one(  # noqa: PLR0912 (one check per step)
         ):
             msg = "its package's tail is not the one the plan names"
             raise Refused(msg)
+        if disaster:
+            # Flow (b): F is the restored head at T, computed, never chosen; seals the
+            # restored database added since (served first) start a new branch after it
+            fork = disaster_fork(cursor, schema, lower, tail)
+        else:
+            # Step 3, F = L (S3): the restored chain ended exactly at the plan's lower bound,
+            # the release's fingerprint of the sealed head. Never a lower fork point. Read at
+            # L, not at the head: a load run again after `up` finds seals the restored
+            # database added since (its own restore entry sealed, new traffic; review T2/E2).
+            # Those start a new branch after L; a seal after L that is the package's own was
+            # in the database at T (a stale L): refused
+            fork_problem = restored_fork_problem(cursor, schema, lower, tail)
+            if fork_problem:
+                raise Refused(fork_problem)
+            fork = lower
+        sup_tail = [s for s in tail if s["seq"] > fork[0]]
+        rows = [r for r in rows if r.seq > fork[0]]
+        if not rows:
+            return Outcome(slug, "unchanged", fork=fork[0])
+        if disaster:
+            problem = _fork_floor(
+                plan,
+                fork,
+                latest_entry_at(pkg.entries, sup_tail[0]),
+                found.restores.get(hospital_uuid, []),
+            )
+            if problem:
+                raise Refused(problem)
+        low = int(sup_tail[0]["lower"])
+        sup_entries = [e for e in pkg.entries if int(e["txid"]) >= low]
+        digest = events.segment_digest(rows)
         generation = archive.generation_of(cursor, hospital_uuid, plan.restore_id)
         if generation is None:
             unsure = found.generation_unsure(hospital_uuid)
@@ -703,27 +831,27 @@ def load_one(  # noqa: PLR0912 (one check per step)
                     generation,
                     plan.restore_id,
                     slug,
-                    lower[0],
-                    lower[1],
+                    fork[0],
+                    fork[1],
                     rows[0].seq,
                     rows[-1].seq,
                     entry["head"]["hash"],
-                    entry["digest"],
+                    digest,
                     PARKED,
                     f"{plan.target_name} {plan.target_time.isoformat()}"[:200],
                     operator[:64],
                 ],
             )
-            _insert_json(cursor, _INSERT_SEALS, hospital_uuid, generation, tail)
+            _insert_json(cursor, _INSERT_SEALS, hospital_uuid, generation, sup_tail)
             _insert_json(
-                cursor, _INSERT_ENTRIES, hospital_uuid, generation, pkg.entries
+                cursor, _INSERT_ENTRIES, hospital_uuid, generation, sup_entries
             )
-        _probe(hospital_uuid, slug, generation, lower, rows, operator)
+        _probe(hospital_uuid, slug, generation, fork, rows, operator)
     # Step 6: the event, once (a generation already in the bucket is never written again)
     key = ""
     for event in found.restores.get(hospital_uuid, []):
         if event.generation == generation:
-            if event.superseded["digest"] != entry["digest"]:
+            if event.superseded["digest"] != digest:
                 msg = f"restore event {generation} in the bucket is of another tail"
                 raise Refused(msg)
             key = event.key
@@ -732,7 +860,7 @@ def load_one(  # noqa: PLR0912 (one check per step)
             events.restore_document(
                 _Hospital(hospital_uuid, slug),
                 generation,
-                lower,
+                fork,
                 rows,
                 operator,
                 restore_id=plan.restore_id,
@@ -762,17 +890,21 @@ def load_one(  # noqa: PLR0912 (one check per step)
                         {
                             "restore_id": plan.restore_id,
                             "generation": generation,
-                            "restored_to": lower[0],
+                            "restored_to": fork[0],
                             "superseded": [rows[0].seq, rows[-1].seq],
                             "target": plan.target_name,
                             "target_time": plan.target_time.isoformat(),
                             "event": key,
-                            "reason": "whole-database restore (staging.sh rollback --restore)",
+                            "reason": (
+                                "disaster restore (staging.sh restore --target)"
+                                if disaster
+                                else "whole-database restore (staging.sh rollback --restore)"
+                            ),
                         }
                     ),
                 ],
             )
-    return Outcome(slug, "loaded", generation, key, lower[0])
+    return Outcome(slug, "loaded", generation, key, fork[0])
 
 
 def _restored_hospitals(cursor):
@@ -786,7 +918,6 @@ def load(members, restore_id, operator, store=None, reader=None):
     (after every hospital was tried) when any was refused: then no result is written, and
     ``load`` runs again after the cause is fixed."""
     reader = reader or anchor.S3Store("READ")
-    store = store or events.writer_store()
     # One load at a time (review E6): two at once would both read the bucket before either
     # wrote, and write two events of one generation. The bucket is read after the lock
     with connection.cursor() as cursor:
@@ -826,14 +957,41 @@ def _load(members, restore_id, operator, store, reader):  # noqa: PLR0912, PLR09
         )
         raise Refused(msg)
     done = found.results.get(str(restore_id))
+    disaster = plan.flow == "disaster"
+    entries = plan.hospitals
+    if disaster:
+        # Its hospitals are the export doc's; its documents go with the events key only
+        # (audit S5: never the writer's key, which Celery holds)
+        if plan.no_supersede:
+            msg = f"restore {restore_id} was made with --no-supersede: nothing to load (close it)"
+            raise Refused(msg)
+        exp = found.exports.get(str(restore_id))
+        if exp is None:
+            msg = (
+                f"restore {restore_id} is not exported yet: scripts/staging.sh audit-supersede "
+                "export <id> first"
+            )
+            raise Refused(msg)
+        entries = exp.hospitals
+        store = store or events.events_store()
+    else:
+        store = store or events.writer_store()
     outcomes, refused = {}, []
     for hospital_uuid, entry in sorted(
-        plan.hospitals.items(), key=lambda item: item[1]["slug"]
+        entries.items(), key=lambda item: item[1]["slug"]
     ):
         slug = entry["slug"]
         there = hospitals.get(hospital_uuid)
         try:
-            if entry["outcome"] == "absent":
+            if (
+                entry["outcome"] == "unreadable"
+            ):  # flow (c): named in the result, cuts stay
+                outcomes[hospital_uuid] = Outcome(slug, "unreadable")
+            elif (
+                disaster and there is None
+            ):  # made after T: not in the restored database
+                outcomes[hospital_uuid] = Outcome(slug, "absent")
+            elif entry["outcome"] == "absent":
                 if there is not None:
                     msg = "it is in the restored database, but no fingerprint at T named it"
                     raise Refused(msg)
@@ -871,9 +1029,7 @@ def _load(members, restore_id, operator, store, reader):  # noqa: PLR0912, PLR09
         operator,
     )
     if done is None:
-        events.write_restore_doc(
-            events.result_key(restore_id), doc, store=store, reader=reader
-        )
+        _write_result(restore_id, doc, store, reader)
     # The whole check of every event of this restore, as this build's watch will do it
     after = events.read(reader)
     bad = [
@@ -890,6 +1046,12 @@ def _load(members, restore_id, operator, store, reader):  # noqa: PLR0912, PLR09
     return outcomes
 
 
+def _write_result(restore_id, doc, store, reader):
+    events.write_restore_doc(
+        events.result_key(restore_id), doc, store=store, reader=reader
+    )
+
+
 def status(restore_id, reader=None):
     """What the bucket says of a whole-database restore: {"plan", "result", "hospitals"}."""
     found = events.read(reader or anchor.S3Store("READ"))
@@ -903,11 +1065,16 @@ def status(restore_id, reader=None):
         "why_not": found.unanchored.get(rid, ""),
         "target": plan and f"{plan.target_name} {plan.target_time.isoformat()}",
         "timelines": plan and [plan.old_timeline, result and result.new_timeline],
+        "flow": plan and plan.flow,
+        "exported": found.exports[rid].key if rid in found.exports else None,
+        "closed": result.closed if result else {},
+        "pending": rid in found.pending_loads(),
         "hospitals": {},
     }
-    for hospital_uuid, entry in sorted(
-        (plan.hospitals if plan else {}).items(), key=lambda i: i[1]["slug"]
-    ):
+    entries = plan.hospitals if plan else {}
+    if rid in found.exports:
+        entries = found.exports[rid].hospitals
+    for hospital_uuid, entry in sorted(entries.items(), key=lambda i: i[1]["slug"]):
         got = (result.hospitals if result else {}).get(hospital_uuid, {})
         event = next(
             (e for e in found.restores.get(hospital_uuid, []) if e.restore_id == rid),
@@ -927,3 +1094,346 @@ def status(restore_id, reader=None):
 
 def new_id():
     return str(uuid.uuid4())
+
+
+# --- disaster restores, flow (b) (P1-T22c2a) -----------------------------------------------------
+
+
+def _reason(text, what="--reason"):
+    if not events.REASON_RE.match(text or ""):
+        msg = f"{what}: 1-200 characters on one line"
+        raise Refused(msg)
+    return text
+
+
+def write_stub(
+    restore_id,
+    target_time,
+    old_timeline,
+    image,
+    operator,
+    backup_set,
+    archive_max,
+    no_supersede="",
+    store=None,
+    reader=None,
+):
+    """The stub plan, written just before ``restore_live`` replaces anything: restore id, T, the
+    repository's old timeline and backup set, no hospitals. Touches no database (a disaster
+    server has none yet); the events key only."""
+    store = store or events.events_store()
+    reader = reader or anchor.S3Store("READ")
+    if not events.WAL_RE.match(archive_max or "") or archive_max[:8] != old_timeline:
+        msg = (
+            f"the old timeline ({old_timeline}) must be the one of the repository archive's "
+            f"newest WAL ({str(archive_max)[:24]})"
+        )
+        raise Refused(msg)
+    if not events.BACKUP_SET_RE.match(backup_set or ""):
+        msg = "the backup set is not a pgBackRest label"
+        raise Refused(msg)
+    if no_supersede:
+        _reason(no_supersede, "--no-supersede --reason")
+    found = events.read(reader, segments=events.NO_SEGMENTS, timeline=None)
+    if not found.read_ok:
+        msg = "the fingerprint bucket's restore objects could not be read"
+        raise Refused(msg)
+    _refuse_pending(found, old_timeline, "the disaster restore", ancestors_pass=True)
+    extra = {"source": {"backup_set": backup_set, "archive_max": archive_max}}
+    if no_supersede:
+        extra["no_supersede"] = {"reason": no_supersede}
+    when = target_time.astimezone(UTC)
+    doc = events.plan_document(
+        restore_id,
+        f"time-{when:%Y%m%dT%H%M%SZ}",
+        when,
+        old_timeline,
+        image,
+        {},
+        operator,
+        flow="disaster",
+        extra=extra,
+    )
+    key = events.write_restore_doc(
+        events.plan_key(restore_id), doc, store=store, reader=reader
+    )
+    _emit(run_line(restore_id, "stub"))
+    return key
+
+
+def _disaster_plan(found, restore_id):
+    rid = str(restore_id)
+    plan = found.plans.get(rid)
+    if plan is None or plan.flow != "disaster":
+        msg = f"no disaster stub of restore {rid} in the bucket"
+        raise Refused(msg)
+    if plan.no_supersede:
+        msg = f"restore {rid} was made with --no-supersede: nothing to export"
+        raise Refused(msg)
+    if rid in found.results:
+        msg = f"restore {rid} already has its result"
+        raise Refused(msg)
+    _refuse_pending(found, plan.old_timeline, "the export", ancestors_pass=True)
+    return plan
+
+
+def _last_commit(text):
+    try:
+        when = datetime.fromisoformat(str(text).strip())
+    except ValueError:
+        return ""
+    return when.astimezone(UTC).isoformat() if when.tzinfo else ""
+
+
+def export_disaster(
+    out, restore_id, image, operator, source_end="", accept_unreadable="", store=None
+):
+    """Every hospital's package from the repository copy (this database: the audit watch's
+    read-only role) and the export doc's draft, as one tar on ``out``. T, the old timeline and
+    the backup set are the stub's. Each hospital in its own savepoint: one that cannot be read
+    refuses the export (named), unless ``accept_unreadable`` (a reason) writes it
+    ``unreadable``."""
+    store = store or anchor.S3Store("READ")
+    found = events.read(
+        store, timeline=None
+    )  # the copy's timeline is its own, never used
+    if not found.read_ok:
+        msg = "the fingerprint bucket's events could not be read"
+        raise Refused(msg)
+    rid = str(restore_id)
+    if rid in found.exports:
+        msg = (
+            f"restore {rid} is already exported (its export doc is write-once): run "
+            "scripts/staging.sh audit-supersede load <id>"
+        )
+        raise Refused(msg)
+    plan = _disaster_plan(found, rid)
+    if accept_unreadable:
+        _reason(accept_unreadable, "--accept-unreadable --reason")
+    if datetime.now(UTC) - plan.stored > EXPORT_WARN_AFTER:
+        _emit(
+            f"WARNING: restore {rid[:8]}'s stub is older than {EXPORT_WARN_AFTER.days} days: "
+            "its backup set and WAL leave the repository after 28 days"
+        )
+    target = plan.target_time
+    fp_key, fp_stored, claims = anchor.claims_at_full(store, target - anchor.CLOCK_SKEW)
+    hospitals, packages, failed = {}, {}, {}
+    outer = not connection.in_atomic_block
+    with transaction.atomic(), connection.cursor() as cursor:
+        if outer:  # one snapshot of every hospital
+            cursor.execute("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ")
+        for hospital_uuid, (slug, schema) in _hospitals(cursor).items():
+            claim = claims.get(hospital_uuid)
+            lower = events.lower_of(
+                claim,
+                fp_stored if claim else None,
+                found.restores.get(hospital_uuid, []),
+                plan.stored,
+            )
+            fp = fp_key if claim and tuple(claim[:2]) == lower else ""
+            before = _events_before(found, hospital_uuid, target)
+            try:
+                with (
+                    transaction.atomic()
+                ):  # a savepoint: one hospital never blocks the rest
+                    in_db = archive.generations_in_db(cursor, hospital_uuid)
+                    if in_db < before:
+                        msg = (
+                            f"the bucket has {before} restore events of it before T and the "
+                            f"copy only {in_db} restore records: they must agree"
+                        )
+                        raise Refused(msg)
+                    body, entry = export_one(
+                        cursor,
+                        hospital_uuid,
+                        slug,
+                        schema,
+                        (lower[0], lower[1], fp),
+                        list(range(before + 1, in_db + 1)),
+                        rid,
+                    )
+            except (Refused, DatabaseError) as exc:
+                failed[hospital_uuid] = (slug, lower, f"{type(exc).__name__}: {exc}")
+                _emit(log_line(slug, "unreadable", "export"))
+                continue
+            hospitals[hospital_uuid], packages[hospital_uuid] = entry, body
+            _emit(log_line(slug, entry["outcome"], "export"))
+    if failed and not accept_unreadable:
+        msg = "; ".join(f"{slug}: {why}"[:300] for slug, _l, why in failed.values())
+        raise Refused(msg + " (run again, or --accept-unreadable --reason)")
+    for hospital_uuid, (slug, lower, _why) in failed.items():
+        hospitals[hospital_uuid] = {
+            "slug": slug,
+            "outcome": "unreadable",
+            "reason": accept_unreadable,
+            "lower": {"seq": lower[0], "hash": lower[1], "fingerprint": ""},
+            "head": {"seq": lower[0], "hash": lower[1]},
+            "digest": "",
+            "entries": 0,
+            "unsealed": 0,
+            "generations": [],
+            "package_sha256": "",
+        }
+    draft = events.export_document(
+        rid,
+        plan.old_timeline,
+        image,
+        hospitals,
+        operator,
+        {
+            "last_commit": _last_commit(source_end),
+            "backup_set": plan.source["backup_set"],
+        },
+    )
+    with tarfile.open(fileobj=out, mode="w|") as tar:
+        for hospital_uuid, body in sorted(packages.items()):
+            _add(tar, f"{hospital_uuid}.jsonl.gz", body)
+        _add(tar, EXPORT_MEMBER, json.dumps(draft, sort_keys=True, indent=1).encode())
+    return draft
+
+
+def write_export(members, restore_id, store=None, reader=None, recovery=None):
+    """The export doc's draft checked (every package's sha256, each L read again from the
+    bucket, the stub's old timeline) and written once, with the events key only.
+    ``recovery``: {stop, replayed} as supersede_parent read them from the restore (review T3):
+    the stub's T must lie inside them (events.recovery_problem); written into the doc, which
+    every reader requires."""
+    store = store or events.events_store()
+    reader = reader or anchor.S3Store("READ")
+    rid = str(restore_id)
+    try:
+        draft = json.loads(members[EXPORT_MEMBER])
+    except (KeyError, ValueError):
+        msg = "the export has no export doc"
+        raise Refused(msg) from None
+    if draft.get("restore_id") != rid:
+        msg = "the export is of another restore"
+        raise Refused(msg)
+    found = events.read(reader, segments=events.NO_SEGMENTS, timeline=None)
+    have = found.exports.get(rid)
+    plan = _disaster_plan(found, rid) if have is None else found.plans[rid]
+    text = events.recovery_problem(recovery, plan.target_time)
+    if text:
+        msg = f"the restore does not match its stub's T: {text}"
+        raise Refused(msg)
+    draft["recovery"] = {
+        "stop": recovery["stop"],
+        "replayed": recovery.get("replayed") or "",
+    }
+    doc = events.parse_restore_doc(
+        events.export_key(rid),
+        events._body(draft),  # noqa: SLF001 (the events' own canonical form)
+        datetime.fromisoformat(draft["written_at"]),
+    )
+    if doc.old_timeline != plan.old_timeline:
+        msg = "the export's old timeline is not its stub's"
+        raise Refused(msg)
+    _key, fp_stored, claims = anchor.claims_at_full(
+        reader, plan.target_time - anchor.CLOCK_SKEW
+    )
+    for hospital_uuid, entry in doc.hospitals.items():
+        if entry["outcome"] == "exported":
+            body = members.get(f"{hospital_uuid}.jsonl.gz")
+            if body is None or entry["package_sha256"] != sha256(body):
+                msg = f"{entry['slug']}: its package is missing or not the one the export made"
+                raise Refused(msg)
+        claim = claims.get(hospital_uuid)
+        want = events.lower_of(
+            claim,
+            fp_stored if claim else None,
+            found.restores.get(hospital_uuid, []),
+            plan.stored,
+        )
+        if want != (entry["lower"]["seq"], entry["lower"]["hash"]):
+            msg = f"{entry['slug']}: its lower bound is not the one the bucket gives at T - skew"
+            raise Refused(msg)
+    key = events.export_key(rid)
+    if (
+        have is not None
+    ):  # a resumed run: the same draft (its own time aside), or refused
+        stored = json.loads(reader.get(key))
+        if {k: v for k, v in stored.items() if k != "written_at"} != {
+            k: v for k, v in draft.items() if k != "written_at"
+        }:
+            msg = f"restore {rid} is already exported, with another export doc"
+            raise Refused(msg)
+        _emit(run_line(rid, "exported"))
+        return key
+    draft["written_at"] = datetime.now(UTC).isoformat()
+    key = events.write_restore_doc(key, draft, store=store, reader=reader)
+    _emit(run_line(rid, "exported"))
+    return key
+
+
+def close(restore_id, reason, operator, how="close", store=None, reader=None):
+    """The result of a whole-database restore that cannot be loaded (Q-K100), or of
+    ``restore --no-supersede`` (``how="no-supersede"``): every hospital not loaded is
+    ``refused``; the timeline change is explained, the cuts stay. Refused before the restore
+    happened and once any event of it is in the bucket (load it instead)."""
+    reader = reader or anchor.S3Store("READ")
+    rid = str(restore_id)
+    if how not in events.CLOSED_HOW:
+        msg = f"how: one of {', '.join(events.CLOSED_HOW)}"
+        raise Refused(msg)
+    _reason(reason)
+    found = events.read(reader)
+    if not found.read_ok:
+        msg = "the fingerprint bucket's events could not be read"
+        raise Refused(msg)
+    plan = found.plans.get(rid)
+    if plan is None:
+        msg = f"no plan of restore {rid} in the bucket"
+        raise Refused(msg)
+    store = store or (
+        events.events_store() if plan.flow == "disaster" else events.writer_store()
+    )
+    if rid in found.results:
+        msg = f"restore {rid} already has its result"
+        raise Refused(msg)
+    if found.timeline is None or found.timeline == plan.old_timeline:
+        msg = (
+            f"the database is still on the plan's timeline {plan.old_timeline}: it was not "
+            "restored, nothing to close"
+        )
+        raise Refused(msg)
+    later = found.later_attempts(plan)
+    if later:
+        msg = (
+            f"a later attempt from the same timeline {plan.old_timeline} has no result "
+            f"(restore {', '.join(r[:8] for r in later)}): it, not this one, may be the restore "
+            "that moved the database. Load or close it first; its result then supersedes this "
+            "one (review E3)"
+        )
+        raise Refused(msg)
+    if (how == "no-supersede") != bool(plan.no_supersede):
+        msg = "--no-supersede closes only a restore whose stub says so, and only it"
+        raise Refused(msg)
+    if any(e.restore_id == rid for evs in found.restores.values() for e in evs):
+        msg = (
+            f"events of restore {rid} are in the bucket: finish it with scripts/staging.sh "
+            "audit-supersede load <id>"
+        )
+        raise Refused(msg)
+    if how == "no-supersede":
+        claims = anchor.claims_at(reader, plan.target_time)[1]
+        named = {u: c[2] for u, c in claims.items()}
+    elif rid in found.exports:
+        named = {u: e["slug"] for u, e in found.exports[rid].hospitals.items()}
+    elif plan.flow == "disaster":
+        # A stub has no hospitals before its export: those of the fingerprint at T, as
+        # --no-supersede names them (review E8)
+        claims = anchor.claims_at(reader, plan.target_time)[1]
+        named = {u: c[2] for u, c in claims.items()}
+    else:
+        named = {u: e["slug"] for u, e in plan.hospitals.items()}
+    doc = events.result_document(
+        rid,
+        plan.old_timeline,
+        found.timeline,
+        {u: Outcome(slug, "refused").entry() for u, slug in named.items()},
+        operator,
+        closed={"reason": reason, "how": how},
+    )
+    _write_result(rid, doc, store, reader)
+    _emit(run_line(rid, "closed"))
+    return events.result_key(rid)

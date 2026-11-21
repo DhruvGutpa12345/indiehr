@@ -298,3 +298,84 @@ About 2 task-equivalents (Opus builder, high; full review shape: audit). Two sit
 - **P1-T22c2b: closing and keeping.** §4 absent, §5 accept-loss and AuditLostTail, §6 bucket
   packages, expiry and F8, §7 announce, §9 infra/aws, README runbook (disaster, move, upgrade),
   §10 ADR-010 text, the remaining rows and live steps. About 0.9 equivalents.
+
+## c2a as decided (builder, 2026-11-21; the attack's "Decision" binds; this wins over §1-§13)
+
+**Changed** (under `plugins/ihr_platform/ihr_audit/` unless a path is given). `events.py`: `RESTORE_KEY_RE` takes `plan|export|result`; `export_key`. A plan gains `flow`
+  (`planned-rollback` default, `disaster`), `source` {`backup_set`, `archive_max`} and
+  `no_supersede` {`reason`} (stub only; a stub has no hospitals). New **export doc**
+  `<id>/export.json` (`ExportDoc`, format `ihr-restore-export/1`, parsed in `parse_restore_doc`):
+  `restore_id`, `plan` (its key), `written_at`, `operator`, `old_timeline`, `image`, `source_end`
+  {`last_commit` ISO or "", `backup_set`}, `hospitals` {uuid: `_plan_hospital`, outcome
+  `exported` | `unreadable` (+`reason`; head = lower, no package)}. `_read_restore_docs` keeps it
+  in `Events.exports` and drops it (store problem) without a `disaster` plan before it or with
+  another old timeline. Results: outcome `unreadable`; optional `closed` {`reason`, `how`:
+  `close` | `no-supersede`}; "an event key iff `loaded`" kept. `Events.unfinished(tl)` (=
+  `pending_loads()` at the database's). `events_store()`: the events key or `NotConfiguredError`,
+  never the writer key. `lower_of`, `disaster_lower`, `FLOOR_MARGIN`,
+  `floor_cutoff`, `fork_floor_problem`, `check_floor`. `check_whole` branches on `plan.flow`;
+  `read()` parses every event before checking any; `check_restore` keeps the verified segment;
+  `Segment.latest_at`. Builders `plan_document(flow=, extra=)`, `export_document`,
+  `result_document(closed=)`.
+- `anchor.py`: `claims_at_full`. `archive.py`: `segment().latest_at(seq)`. `supersede.py`:
+  `LEVEL`, `level_of`, `bucket_level`, `_refuse_pending`, `write_stub`, `export_disaster`,
+  `write_export`, `close`, `disaster_fork`, `latest_entry_at`; `load` of a disaster plan reads
+  its export doc. Command `ihr_audit_supersede`: `stub`, `export-copy`,
+  `export-doc`, `close`, `level`. `watch.py`: the pending gauges; a change matching a young
+  pending plan is pending, not unexplained.
+- `scripts/staging.sh`: `restore_cmd` (`restore --target T --operator X [--no-supersede --reason
+  R]`), `sup_disaster_precheck`, `supersede_stub` and `supersede_parent` inside `restore_live`;
+  `repo_copy` (the drill's body, shared); `audit-supersede export|close <id>`
+  (`supersede_export_copy`, `supersede_close`); the load deletes the local tar (`sup_local_only`);
+  `sup_level`, `rel_level_guard` in `rollback`; `supersede_keys --events-only`.
+- Rules AuditWholeRestorePending (warning), AuditWholeRestorePendingOverdue (critical, 48 h by
+  `plan.stored`), promtool cases; README "Disaster restores"; tests; 5 mutation rows; Q-K99-103.
+
+**Fork point in flow (b), bound by entry times (audit S2).** The load computes F = the highest
+seq at or after L where the restored seal equals the package's (seal L must equal, else refused).
+Floor: the first superseded seal F+1 must hold an entry whose `at` (in the seal hash) is after
+`floor_cutoff(T)` = T − (`CLOCK_SKEW` + the worker profile's idle-in-transaction limit) = T − 15
+min (Q-K99), unless a single-hospital restore event (no `cause`) stored at or after T − skew names
+`restored_to` = (F, hash). The load refuses below it; every reader re-checks it from the archived
+segment, so a lowered F excuses nothing. Fails closed when the sealer stopped ≥ 15 min before T.
+`check_whole` for a disaster event: plan stored before it; export doc stored at or before it,
+naming the hospital `exported`; L re-derived (`disaster_lower`: the claim of the newest
+fingerprint stored at or before T − skew, lowered to `restored_to` of any restore event of the
+hospital stored after that fingerprint) = the doc's L; L ≤ F < head; `to_seq`/`head_hash` = the
+doc's head; then the floor. Flow (a) keeps F = L.
+
+**Pending from plans alone (C2-1).** Pending = plans with no result, not superseded, whose old
+timeline is not the database's. `ihr_audit_whole_restores_pending` and
+`..._pending_oldest_seconds` (from `plan.stored`) need no history: a watch on a new volume reports
+them on its first pass. With history, a change from a pending plan's old timeline, the plan stored
+before the watch saw the new one, is pending (< 48 h), not unexplained. Refused while another
+restore is unfinished: the stub (against the repository's newest timeline), every export (flow a
+against the database's; flow b against its stub's old timeline: plans sharing it are siblings,
+only one moved the database, C2-3's orphan stubs), and a second export of one id.
+
+**`--no-supersede` (readiness C2-1, no lost ranges).** The stub carries the reason; after the
+restore, with `db` alone, `close --no-supersede` writes the result: every hospital of the
+fingerprint at T `refused`, `closed.how = no-supersede`. Claims after T stay cuts. `close <id>
+--reason` (Q-K100) does the same for a restore that cannot load; refused once an event exists.
+
+**Stub placement, parent (C2-3, C2-4, C2-5).** In `restore_live` after its own refusals, just
+before the pgBackRest restore: `pgbackrest info` (old timeline = `archive[].max`[:8], S = newest set
+on it), `state` (`flow=disaster`), then the stub (owner one-off `migrate --no-deps`, no database,
+events key only). Before anything is replaced it refuses, naming the way out: no image here, a
+build below level 2, no events key (`--no-supersede --reason` then writes nothing and warns).
+After recovery: the new timeline and its parent (last line of `pg_wal/<new>.history`, hex) go to
+`state`; a parent ≠ the stub's old timeline makes the export refuse (`close` it). `restored.json`
+is dropped (zoom-out S-3): F is bound by the floor in every reader.
+
+**Export (b).** `repo_copy ihr-supersede-copy --set=S --type=default --target-timeline=<old>`,
+`--oom-score-adj 900`, dumper stopped, disk = set size + 3 GB from `pgbackrest info`; removed on
+every exit (trap). The watch role's one-off (`export-copy`, logging none, `DATABASE_URL` passed by
+env) exports each hospital in a savepoint; a failure refuses unless `--accept-unreadable --reason`.
+T, the old timeline and S come from the stub; no E3 stale check; `source_end.last_commit` from the
+copy's log (record only); a warning 14 days after the stub. Then `export-doc` (owner, events key)
+checks each package's sha256 and L again. After a verified load the local tar is deleted unless it
+holds unsealed entries or an unreadable hospital (Q-K90).
+
+**LEVEL (C2-7, S-8).** `LEVEL = 2` (stubs, export docs, closed or `unreadable` results); the
+shell reads `getattr(module, "LEVEL", 1)`, no module 0. **Deferred to c2b:** lost ranges,
+`accept-loss`, absent closing, bucket packages, `announce-timeline`, streaming, `--slug`, Q-K102.

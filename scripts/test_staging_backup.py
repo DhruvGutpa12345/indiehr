@@ -114,9 +114,12 @@ class Secrets(unittest.TestCase):
         drill = function("restore_drill")
         self.assertIn("--as-of", drill)  # fingerprints only up to the copy's own moment
         self.assertIn("trap ", drill)  # leftovers always removed
-        self.assertIn("archive_mode=off", drill)
+        # its copy is repo_copy's (P1-T22c2a: shared with a disaster restore's export)
+        self.assertIn('repo_copy "$DRILL"', drill)
+        copy = function("repo_copy")
+        self.assertIn("archive_mode=off", copy)
         # recovery needs at least the original's max_connections
-        self.assertIn("max_connections=100", drill)
+        self.assertIn("max_connections=100", copy)
         self.assertIn("max_connections=100", BASE["services"]["db"]["command"])
         self.assertIn('--env-file "$SECRETS/backup.env"', function("pg_container"))
         self.assertIn("ihr_audit_verify --all", drill)

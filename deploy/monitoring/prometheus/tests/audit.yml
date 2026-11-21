@@ -649,3 +649,51 @@ tests:
           - exp_labels: {severity: warning, service: audit-watch, job: audit-watch}
             exp_annotations:
               summary: "1 whole-database restore(s) whose timeline change the audit watch never saw (its history starts after it): confirm the restore id against releases.log"
+
+  - name: a restore closed without its load alerts until acknowledged (P1-T22c2a review T2)
+    interval: 1m
+    input_series:
+      - series: 'ihr_audit_whole_restores_closed{job="audit-watch",how="close"}'
+        values: '0x2 1x4 0x3'
+      - series: 'ihr_audit_whole_restores_closed{job="audit-watch",how="no-supersede"}'
+        values: '0x9'
+    alert_rule_test:
+      - eval_time: 1m
+        alertname: AuditWholeRestoreClosed
+        exp_alerts: []
+      - eval_time: 4m
+        alertname: AuditWholeRestoreClosed
+        exp_alerts:
+          - exp_labels: {severity: warning, service: audit-watch, job: audit-watch, how: close}
+            exp_annotations:
+              summary: "1 whole-database restore(s) were closed (staging.sh audit-supersede close, or restore --no-supersede) without loading their audit tails: data after the last fingerprint may be lost with no trace; ihr_audit_verify names them; review, then list the restore id in ihr_audit/acknowledged_closed.txt"
+      - eval_time: 8m
+        alertname: AuditWholeRestoreClosed
+        exp_alerts: []
+
+  - name: a disaster restore waiting for its load, then overdue (P1-T22c2a)
+    interval: 1m
+    input_series:
+      - series: 'ihr_audit_whole_restores_pending{job="audit-watch"}'
+        values: '0x4 1x5'
+      - series: 'ihr_audit_whole_restore_pending_oldest_seconds{job="audit-watch"}'
+        values: '0x4 3600x2 172801x3'
+    alert_rule_test:
+      - eval_time: 2m
+        alertname: AuditWholeRestorePending
+        exp_alerts: []
+      - eval_time: 7m
+        alertname: AuditWholeRestorePending
+        exp_alerts:
+          - exp_labels: {severity: warning, service: audit-watch, job: audit-watch}
+            exp_annotations:
+              summary: "1 whole-database restore(s) restored the database and have not loaded their audit tails: scripts/staging.sh audit-supersede export <id>, then load <id> (or close <id> --reason)"
+      - eval_time: 6m
+        alertname: AuditWholeRestorePendingOverdue
+        exp_alerts: []
+      - eval_time: 8m
+        alertname: AuditWholeRestorePendingOverdue
+        exp_alerts:
+          - exp_labels: {severity: critical, service: audit-watch, job: audit-watch}
+            exp_annotations:
+              summary: "A whole-database restore has waited 172801 s for its audit load (48 h at most): load or close it; its backup set leaves the repository after 28 days"

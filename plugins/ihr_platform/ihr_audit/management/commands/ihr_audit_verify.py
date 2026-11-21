@@ -136,9 +136,11 @@ class Command(BaseCommand):
                     )
         pending = [
             f"whole-database restore {rid}: the database was restored but its audit load "
-            f"has not finished (scripts/staging.sh audit-supersede load {rid})"
+            f"has not finished ({self.events.next_step(rid)})"
             for rid in self.events.pending_loads()
         ]
+        # Closed without a load (P1-T22c2a review T2): listed until acknowledged
+        pending += self.events.closed_problems(events.acknowledged_closed())
         return fps, (
             written
             + fps.problems

@@ -266,7 +266,20 @@ def segment(hospital_uuid, generation):
         with connection.cursor() as cursor:
             return verify_entries(cursor, hospital_uuid, generation, rows)
 
-    return events.Segment(seals=rows, verify_entries=check)
+    def latest_at(seq):
+        """The newest ``at`` of that archived seal's entries (P1-T22c2a fork floor), or None."""
+        row = next((r for r in rows if r.seq == seq), None)
+        if row is None:
+            return None
+        with connection.cursor() as cursor:
+            cursor.execute(
+                "SELECT max(at) FROM public.ihr_restore_superseded_entry WHERE hospital = %s "
+                "AND generation = %s AND txid >= %s::xid8 AND txid < %s::xid8",
+                [str(hospital_uuid), generation, row.lower, row.upper],
+            )
+            return cursor.fetchone()[0]
+
+    return events.Segment(seals=rows, verify_entries=check, latest_at=latest_at)
 
 
 def install():

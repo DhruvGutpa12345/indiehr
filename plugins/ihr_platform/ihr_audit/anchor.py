@@ -602,6 +602,13 @@ def claims_at(store, when, days=3):
     to ``days`` - 1 days before it. An object with more than one version, hidden, unreadable or
     whose stated time is far from the storage's is passed over (never used as proof). A
     whole-database restore's lower bound per hospital comes from here (P1-T22c, S3)."""
+    key, _stored, claims = claims_at_full(store, when, days)
+    return key, claims
+
+
+def claims_at_full(store, when, days=3):
+    """As claims_at, with the storage's time of that fingerprint: (key, stored, claims), or
+    (None, None, {}) (a disaster restore's lower bound reads the events stored after it)."""
     when = when.astimezone(UTC)
     for back in range(days):
         day = (when - timedelta(days=back)).date()
@@ -623,7 +630,7 @@ def claims_at(store, when, days=3):
             except Exception:
                 found = None
             if found is not None and abs(found.written_at - stored) <= CLOCK_SKEW:
-                return key, found.hospitals
+                return key, stored, found.hospitals
             listed.pop(key, None)
             rest = [
                 (k, v[0][0], v[0][1])
@@ -631,7 +638,7 @@ def claims_at(store, when, days=3):
                 if len(v) == 1 and v[0][0] is not None and v[0][1] <= when
             ]
             best = max(rest, key=lambda r: (r[2], r[0])) if rest else None
-    return None, {}
+    return None, None, {}
 
 
 def find_covering(hospital_uuid, low, high, start, store=None, max_reads=1000):

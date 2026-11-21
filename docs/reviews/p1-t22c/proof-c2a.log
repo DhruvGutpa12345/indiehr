@@ -1,0 +1,224 @@
+# P1-T22c2a live proof: a disaster restore --target T on a local staging proof (synthetic hospitals alpha and beta), 2026-11-21T14:11:57+05:30
+previous indiehr-backend:staging = sha256:e34de095bdf8417cd059341f41c950fbf67f00959d1b469841b0b71a37896ccb
+
+### 2026-11-21T14:12:13+05:30 build: backend image of this working tree
+rc=0 (1 s)
+sha256:42743df4112539ecfe18905271a9b508f8f65bd33dfd5cfca7ade603644dc909
+
+### 2026-11-21T14:12:25+05:30 setup: init --local, s3-init (with the events key), mail-init --test, backup-init --local
+rc=127 (0 s)
+rc=0 (11 s)
+
+### 2026-11-21T14:12:45+05:30 up
+rc=0 (180 s)
+used_mb=6040 avail_mb=841
+
+### 2026-11-21T14:15:59+05:30 hospitals alpha and beta, Keycloak sync, smoke
+smoke rc=0 (160 s): 37 ok, 28 other
+
+### 2026-11-21T14:18:46+05:30 backup-now full (timeline 1)
+rc=0 (16 s)
+
+### 2026-11-21T14:19:10+05:30 before T: a profile edit per hospital, sealed and fingerprinted (celery: ihr_audit_verify --all --seal --anchor)
+alpha: 2 seals, 851 entries sealed, 0 not yet, head 718f0989bcdbdccb
+beta: 1 seals, 850 entries sealed, 0 not yet, head e9be492d58d78c28
+audit trail OK
+
+### 2026-11-21T14:19:19+05:30 watch pass on the old timeline (its role, the reader key, a state volume)
+rc=0
+
+### 2026-11-21T14:19:47+05:30 T = 2026-11-21 14:19:47+05:30
+
+### 2026-11-21T14:19:47+05:30 after T: a profile edit per hospital, sealed and fingerprinted; WAL switched and pushed to the repository
+alpha: 3 seals, 852 entries sealed, 0 not yet, head 9ceaae6d16a8b9cb
+beta: 2 seals, 851 entries sealed, 0 not yet, head 29d72b4babf09fb6
+audit trail OK
+alpha: 4 seals, 853 entries sealed, 0 not yet, head e6d911f934ae9d83
+beta: 3 seals, 852 entries sealed, 0 not yet, head f03d860a074761a4
+audit trail OK
+00000001000000000000000D
+        wal archive min/max (18): 000000010000000000000001/00000001000000000000000C
+--- WAL files waiting in the spool: 1
+wal archive max 00000001000000000000000D, spool 0
+
+### 2026-11-21T14:20:22+05:30 backup service stopped (only it pushes the spool); then one more edit per hospital, sealed and fingerprinted: claims after the copy's end
+alpha: 5 seals, 854 entries sealed, 0 not yet, head dccbf5bad9c9160e
+beta: 4 seals, 853 entries sealed, 0 not yet, head f53c1380ecab1cfd
+audit trail OK
+00000001000000000000000E
+
+### 2026-11-21T14:20:41+05:30 watch pass (old timeline)
+ihr_audit_timeline_unexplained 0
+ihr_audit_whole_restores_pending 0
+
+### 2026-11-21T14:20:48+05:30 disaster: down, the database volume and the WAL spool removed
+indiehr-staging_pgdata
+indiehr-staging_walspool
+
+### 2026-11-21T14:21:05+05:30 negative: restore --target without the events key (secrets/anchor-events.env moved aside)
+restore --target writes its audit documents with the owner's events key only (Q-K91, audit S5): put it in secrets/anchor-events.env (from your password manager) or export IHR_AUDIT_ANCHOR_EVENTS_KEY/_SECRET in this shell; or --no-supersede --reason "<the incident>" (then nothing is written and the timeline change alerts)
+rc=1
+pgdata volumes: 0
+ls: cannot access 'deploy/staging/supersede': No such file or directory
+
+### 2026-11-21T14:21:11+05:30 restore --target '2026-11-21 14:19:47+05:30' --operator proof
+rc=0 (23 s); host used MB peak 4560
+Target: 2026-11-21 14:19:47+05:30 = 2026-11-21 08:49:47 UTC
+== Restore to 2026-11-21 14:19:47+05:30 into indiehr-staging_pgdata
+== The backup repository's newest timeline and backup set (pgbackrest info)
+== The stub plan of restore 2852e03e-c7c2-4ff1-93b2-daea0ace5214 (the fingerprint bucket, write-once; the events key)
+ihr-supersede: restore=2852e03e outcome=stub
+stub written: anchors/ihr-restores/app.ihr-proof.in/2852e03e-c7c2-4ff1-93b2-daea0ace5214/plan.json
+WARNING: the restore's new timeline 00000002 branched from unknown, not from the stub's 00000001: its audit tails cannot be exported; the cuts stay. Close it: scripts/staging.sh audit-supersede close 2852e03e-c7c2-4ff1-93b2-daea0ace5214 --reason "<why>"
+Restored. Next: scripts/staging.sh up (it pushes the new timeline), then scripts/staging.sh backup-now full
+Restore id: 2852e03e-c7c2-4ff1-93b2-daea0ace5214. Next: scripts/staging.sh up, smoke, backup-now full; then
+id=2852e03e-c7c2-4ff1-93b2-daea0ace5214
+flow=disaster
+image=sha256:42743df4112539ecfe18905271a9b508f8f65bd33dfd5cfca7ade603644dc909
+target=2026-11-21T08:49:47+00:00
+old_timeline=00000001
+archive_max=00000001000000000000000D
+backup_set=20261121-141846F
+no_supersede=0
+new_timeline=00000002
+parent=unknown
+
+### 2026-11-21T14:22:11+05:30 finding 1 (fixed): the history file ends with an empty line, parent read as unknown; restore 1 (2852e03e-c7c2-4ff1-93b2-daea0ace5214) left as an orphan stub (sibling, same old timeline); its folder marked abandoned; the restored volume and the new spool removed; restore again
+rc=1 (1 s); host used MB peak 4047
+rc=0 (23 s); host used MB peak 4134
+== Restore to 2026-11-21 14:19:47+05:30 into indiehr-staging_pgdata
+== The backup repository's newest timeline and backup set (pgbackrest info)
+== The stub plan of restore 2caf6f31-d59a-4ae1-9fdb-55b9ddd09a26 (the fingerprint bucket, write-once; the events key)
+ihr-supersede: restore=2caf6f31 outcome=stub
+Restore id: 2caf6f31-d59a-4ae1-9fdb-55b9ddd09a26. Next: scripts/staging.sh up, smoke, backup-now full; then
+old_timeline=00000001
+backup_set=20261121-141846F
+new_timeline=00000002
+parent=00000001
+
+### 2026-11-21T14:22:52+05:30 serve first: up, smoke, backup-now full
+up rc=0 (98 s)
+WARNING: whole-database restore 2caf6f31-d59a-4ae1-9fdb-55b9ddd09a26 has no result yet: run scripts/staging.sh audit-supersede load 2caf6f31-d59a-4ae1-9fdb-55b9ddd09a26 --operator <you> (before this start, if you can)
+smoke rc=0: 37 ok
+backup rc=0
+used_mb=6080 avail_mb=800
+
+### 2026-11-21T14:25:08+05:30 between serve and load: watch pass (history: 00000001 then 00000002) and ihr_audit_verify --all (owner, reader key)
+watch rc=1
+ihr_audit_chain_broken_hospitals 2
+ihr_audit_fingerprint_mismatch_hospitals 2
+ihr_audit_hospitals_checked 2
+ihr_audit_hospitals_closed 0
+ihr_audit_hospitals_held 0
+ihr_audit_hospitals_not_comparable 0
+ihr_audit_hospitals_restoring 0
+ihr_audit_hospitals_unchecked{pass="incremental"} 0
+ihr_audit_timeline_unexplained 0
+ihr_audit_whole_restore_pending_oldest_seconds 222.2
+ihr_audit_whole_restores 0
+ihr_audit_whole_restores_pending 2
+ihr_audit_whole_restores_unanchored 0
+ihr_audit_whole_restores_uncorroborated 0
+verify rc=1
+4 outside fingerprints read
+whole-database restore 2852e03e-c7c2-4ff1-93b2-daea0ace5214: the database was restored but its audit load has not finished (scripts/staging.sh audit-supersede load 2852e03e-c7c2-4ff1-93b2-daea0ace5214)
+whole-database restore 2caf6f31-d59a-4ae1-9fdb-55b9ddd09a26: the database was restored but its audit load has not finished (scripts/staging.sh audit-supersede load 2caf6f31-d59a-4ae1-9fdb-55b9ddd09a26)
+alpha: 3 seals, 854 entries sealed, 0 not yet, head dd90697fdd414af6
+  seal 3 differs from its fingerprint of 2026-11-21T08:49:55+00:00 (the trail was rewritten)
+  seal 4, fingerprinted at 2026-11-21T08:50:03+00:00, is missing (the trail was cut)
+  seal 5, fingerprinted at 2026-11-21T08:50:40+00:00, is missing (the trail was cut)
+beta: 2 seals, 852 entries sealed, 0 not yet, head e5430ad9e969c679
+  seal 2 differs from its fingerprint of 2026-11-21T08:49:55+00:00 (the trail was rewritten)
+  seal 3, fingerprinted at 2026-11-21T08:50:03+00:00, is missing (the trail was cut)
+  seal 4, fingerprinted at 2026-11-21T08:50:40+00:00, is missing (the trail was cut)
+
+
+### 2026-11-21T14:25:21+05:30 audit-supersede export 2caf6f31-d59a-4ae1-9fdb-55b9ddd09a26 (repository copy, watch role, export doc)
+rc=0 (11 s)
+== A copy of the database from the repository: backup 20261121-141846F, timeline 00000001 to its end (container ihr-supersede-copy, OOM-first)
+== The copy's last transaction: 2026-11-21 08:50:03.839761+00:00
+== Exporting every hospital's audit tail from the copy (restore 2caf6f31-d59a-4ae1-9fdb-55b9ddd09a26; the audit watch's read-only role)
+ihr-supersede: hospital=alpha outcome=exported step=export
+ihr-supersede: hospital=beta outcome=exported step=export
+exported 2caf6f31-d59a-4ae1-9fdb-55b9ddd09a26 from the copy: 2 exported; old timeline 00000001
+== The export doc (the fingerprint bucket, write-once; the events key)
+ihr-supersede: restore=2caf6f31 outcome=exported
+export doc written: anchors/ihr-restores/app.ihr-proof.in/2caf6f31-d59a-4ae1-9fdb-55b9ddd09a26/export.json
+Exported. Next: scripts/staging.sh audit-supersede load 2caf6f31-d59a-4ae1-9fdb-55b9ddd09a26 --operator proof
+total 166
+drwx------ 2 ubuntu ubuntu      6 Nov 21 14:25 .
+drwx------ 4 ubuntu ubuntu      4 Nov 21 14:22 ..
+-rw------- 1 ubuntu ubuntu 153600 Nov 21 14:25 export.tar
+-rw------- 1 ubuntu ubuntu     26 Nov 21 14:25 exported
+-rw------- 1 ubuntu ubuntu    320 Nov 21 14:22 state
+-rw------- 1 ubuntu ubuntu     26 Nov 21 14:22 stubbed
+
+### 2026-11-21T14:25:54+05:30 negative: the same restore exported again
+restore 2caf6f31-d59a-4ae1-9fdb-55b9ddd09a26 is already exported: run scripts/staging.sh audit-supersede load 2caf6f31-d59a-4ae1-9fdb-55b9ddd09a26
+
+### 2026-11-21T14:25:54+05:30 negative: another whole-database export (flow a, the live database) while 2caf6f31-d59a-4ae1-9fdb-55b9ddd09a26's load is pending
+
+
+### 2026-11-21T14:25:56+05:30 negative: the export from the copy (Python) again: refused by the bucket's export doc
+
+### 2026-11-21T14:25:56+05:30 negative: a disaster document without the events key (secrets/anchor-events.env aside): shell, then the one-off given only the writer key
+the result could not be written (above)
+
+
+restore 2caf6f31-d59a-4ae1-9fdb-55b9ddd09a26: plan anchors/ihr-restores/app.ihr-proof.in/2caf6f31-d59a-4ae1-9fdb-55b9ddd09a26/plan.json, result none (not anchored: )
+  alpha: exported -> pending; seals 0..4
+  beta: exported -> pending; seals 0..3
+flow a export refused: refused: the export refused: whole-database restore 2852e03e, 2caf6f31 restored the database and has no result yet: load it (scripts/staging.sh audit-supersede load <id>) or close it (audit-supersede close <id> --reason ...) first
+shell close without the events key: rc=1: a disaster restore's audit documents are written with the owner's events key only (Q-K91, audit S5)
+one-off close with only the writer key: rc=1: CommandError: the fingerprint bucket's keys: IHR_AUDIT_ANCHOR_BUCKET and _EVENTS_KEY/_SECRET are not set
+one-off export-doc with only the writer key: rc=1: CommandError: the fingerprint bucket's keys: IHR_AUDIT_ANCHOR_BUCKET and _EVENTS_KEY/_SECRET are not set
+
+### 2026-11-21T14:26:29+05:30 audit-supersede load 2caf6f31-d59a-4ae1-9fdb-55b9ddd09a26
+rc=1 (2 s); host used MB peak 6124
+== Loading the audit tails back (restore 2caf6f31-d59a-4ae1-9fdb-55b9ddd09a26)
+ihr-supersede: hospital=alpha outcome=loaded step=load
+ihr-supersede: hospital=beta outcome=loaded step=load
+ihr-supersede: restore=2caf6f31 outcome=incomplete
+CommandError: refused: the written events do not verify: alpha: whole-database restore 2caf6f31: its export's lower bound (seal 0) is not the one the bucket gives at T - skew (seal 2); beta: whole-database restore 2caf6f31: its export's lower bound (seal 0) is not the one the bucket gives at T - skew (seal 1)
+
+the load did not finish (above): fix the cause and run it again (each step is checked before it is done)
+export.tar exported state stubbed
+### 2026-11-21T14:27:29+05:30 finding 2 (fixed): with no fingerprint at T - skew the reader took this load's own event as L; L is genesis without a claim, and only events stored before the stub lower it. Image B2 built; the load resumed with --image B2 (it is checked step by step)
+build rc=0 (1 s) sha256:1410abd1d8ab8de6c62d683aaa736406c275327e27591dda83bcf078fe796d35
+load rc=0 (3 s)
+== Loading the audit tails back (restore 2caf6f31-d59a-4ae1-9fdb-55b9ddd09a26)
+ihr-supersede: hospital=alpha outcome=loaded step=load
+ihr-supersede: hospital=beta outcome=loaded step=load
+ihr-supersede: restore=2caf6f31 outcome=loaded
+alpha: loaded (generation 1, fork at seal 2)
+beta: loaded (generation 1, fork at seal 1)
+The local export (/home/ubuntu/AI Projects/IndieHR/deploy/staging/supersede/2caf6f31-d59a-4ae1-9fdb-55b9ddd09a26/export.tar) was deleted: everything in it is in the restore archive.
+exported loaded local-deleted state stubbed
+### 2026-11-21T14:27:39+05:30 after the load: ihr_audit_verify --all (owner, reader key; build B2) and a watch pass
+verify rc=1
+4 outside fingerprints read
+4 fingerprint claims accounted for by restore events
+  4 of them by whole-database restore 2caf6f31-d59a-4ae1-9fdb-55b9ddd09a26
+alpha: 4 seals, 855 entries sealed, 0 not yet, head f7c617756895fbba
+  seal 5, fingerprinted at 2026-11-21T08:50:40+00:00, is missing (the trail was cut)
+beta: 3 seals, 853 entries sealed, 0 not yet, head 80c0ea566e4d2803
+  seal 4, fingerprinted at 2026-11-21T08:50:40+00:00, is missing (the trail was cut)
+
+watch rc=1
+ihr_audit_chain_broken_hospitals 2
+ihr_audit_fingerprint_mismatch_hospitals 2
+ihr_audit_timeline_unexplained 0
+ihr_audit_whole_restore_pending_oldest_seconds 0
+ihr_audit_whole_restores 1
+ihr_audit_whole_restores_pending 0
+ihr_audit_whole_restores_unanchored 0
+ihr_audit_whole_restores_uncorroborated 0
+
+### 2026-11-21T14:27:57+05:30 audit-supersede status
+restore 2caf6f31-d59a-4ae1-9fdb-55b9ddd09a26: plan anchors/ihr-restores/app.ihr-proof.in/2caf6f31-d59a-4ae1-9fdb-55b9ddd09a26/plan.json, result anchors/ihr-restores/app.ihr-proof.in/2caf6f31-d59a-4ae1-9fdb-55b9ddd09a26/result.json
+  alpha: exported -> loaded; seals 0..4; generation 1; PROBLEM: whole-database restore 2caf6f31: its export's lower bound (seal 0) is not the one the bucket gives at T - skew (seal 2)
+  beta: exported -> loaded; seals 0..3; generation 1; PROBLEM: whole-database restore 2caf6f31: its export's lower bound (seal 0) is not the one the bucket gives at T - skew (seal 1)
+
+### 2026-11-21T14:27:59+05:30 teardown: down -v, proof volumes, folders, image tags; dev stack up
+volumes/containers left: none above
+(status ran the stub's build A, recorded in state, not the load's B2: its PROBLEM lines are build A's finding-2 bug; fixed after the proof: status uses load_image when set)

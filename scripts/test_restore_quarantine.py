@@ -237,7 +237,10 @@ class Wiring(unittest.TestCase):
         for live in ("app.env", "_edge", "anchor-", "s3-gateway", "keycloak.env", "restore_keys"):
             self.assertNotIn(live, body)
         # the copy says it is the copy: --drill refuses any other database
-        self.assertIn("-c cluster_name=ihr-restore-drill", self.func("restore_drill"))
+        # (repo_copy names the copy's cluster after its container: P1-T22c2a)
+        self.assertIn('repo_copy "$DRILL"', self.func("restore_drill"))
+        self.assertIn('-c "cluster_name=$name"', self.func("repo_copy"))
+        self.assertIn('DRILL="ihr-restore-drill"', self.text)
 
     def test_the_keycloak_step_alone_runs_unlogged(self):
         self.assertIn('restore_admin --resume "$op" --stop-after keycloak', self.func("restore_loop"))

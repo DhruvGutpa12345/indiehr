@@ -1,0 +1,7 @@
+# Whole-database restores that were closed without loading their audit tails (supersede.close:
+# `audit-supersede close`, or `restore --target --no-supersede`) and whose consequence was reviewed
+# (P1-T22c2a review T2, Q-K105). Such a restore explains the timeline change, but the data written
+# after the last fingerprint and before the restore can be lost with no trace. The audit watch's
+# AuditWholeRestoreClosed alert (and ihr_audit_verify) stays until its restore id is listed here:
+#   <restore id> <YYYY-MM-DD> <what was reviewed: the incident, what was lost or why nothing was>
+# The restore id as `audit-supersede status` prints it, never a pattern.

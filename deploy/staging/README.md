@@ -289,11 +289,21 @@ database holds no backup key and still has no way out to the internet.
    `.env` and `secrets/` (kept on the deploying machine). If they are gone too: `init`, then
    `backup-init <endpoint> <bucket> <region> --existing-passphrase` (the bucket key, then the
    passphrase from the password manager).
-2. On the server, with the stack down: `scripts/staging.sh restore` (or `--target "…+05:30"` to
-   undo a mistake made at a known moment). It first pushes any of the lost database's WAL still
+2. On the server, with the stack down: `scripts/staging.sh restore` (to the newest moment), or
+   `restore --target "…+05:30" --operator <you>` to undo a mistake or lose a server at a known
+   moment. **`--target` is a disaster restore with audit events: read "Disaster restores" below
+   first** (it needs the owner's events key and the fingerprint writer's key, and writes a stub
+   plan before it replaces anything; without a fingerprint writer key it is refused unless
+   `--no-supersede --reason "<the incident>"`). It first pushes any of the lost database's WAL still
    in the spool; if that fails (the repository out of reach) it stops before recovering anything:
    fix the access and run it again. An interrupted restore leaves a marker in the volume: `up`
-   refuses it, and `restore` simply starts again.
+   refuses it, and `restore` starts it again from scratch.
+   **A retry of `restore --target` (another T, or a failed attempt)** leaves the first attempt's
+   stub in the bucket (write-once; it alerts as pending until the next attempt's result). A
+   failed attempt is marked `abandoned` by itself; a restore that did finish but is to be redone:
+   `scripts/staging.sh audit-supersede abandon <id> --reason "<why>"`, then `down`, remove the
+   volume `docker volume rm <project>_pgdata` (never `down -v`: it also deletes the log store, the
+   signing keys and the WAL spool) and run `restore --target` again.
 3. `scripts/staging.sh up`, then `scripts/staging.sh backup-now full` (the first backup of the
    new timeline), then `scripts/staging.sh smoke`.
 Practise with `restore-drill` monthly; it never touches the live database.
@@ -1149,6 +1159,9 @@ measure` is bounded (the last 7 days, 200,000 entries a hospital); `--full` runs
 | AuditRestorePlanAbandoned | a whole-database restore's plan has had no result for a day and the database is still on its timeline (a rollback stopped before its restore and was not run again; `ihr_audit_restore_plans_abandoned`) | warning |
 | AuditWholeRestoreUnanchored | a whole-database restore's result the timeline chain does not anchor: its events excuse nothing (`ihr_audit_whole_restores_unanchored`) | warning |
 | AuditWholeRestoreUncorroborated | a whole-database restore's result whose timeline change the watch's own history never saw (`ihr_audit_whole_restores_uncorroborated`): confirm its restore id against `releases.log` | warning |
+| AuditWholeRestorePending | a disaster restore (`restore --target`) served before its audit load: its stub plan has no result (`ihr_audit_whole_restores_pending`, from the plans alone; P1-T22c2a). Every hospital sealed after T reads as cut until `audit-supersede export <id>` and `load <id>` | warning |
+| AuditWholeRestoreClosed | a whole-database restore was closed without loading its audit tails (`audit-supersede close`, or `restore --target --no-supersede`) and not acknowledged (`ihr_audit_whole_restores_closed{how}`; P1-T22c2a, Q-K105): data written after the last fingerprint can be lost with no trace. Review it, then list its restore id in `ihr_audit/acknowledged_closed.txt` | warning |
+| AuditWholeRestorePendingOverdue | that load has waited more than 48 h (`ihr_audit_whole_restore_pending_oldest_seconds`, from the stub's stored time): load it, or `audit-supersede close <id> --reason` (the cuts stay) | critical |
 
 **Runbooks.**
 
@@ -1159,8 +1172,10 @@ measure` is bounded (the last 7 days, 200,000 entries a hospital); `--full` runs
   never reset by hand. After a genuine restore the restore's event clears it (P1-T22); a restore
   without one stays a cut. **`staging.sh rollback --restore`** writes one per hospital it rolls
   back (P1-T22c, "Whole-database restores" below); **`staging.sh restore --target`** (a disaster
-  restore) does not yet (P1-T22c2): every hospital sealed since its target reads as cut. Run it
-  only for a real incident, record it as one, and never silence the alerts.
+  restore) writes them after its export and load (P1-T22c2a, "Disaster restores" below): until
+  then every hospital sealed since its target reads as cut, and claims sealed after the
+  repository's last WAL stay cut (P1-T22c2b). Run it only for a real incident, record it as one,
+  and never silence the alerts.
 - **AuditHospitalsUnchecked / a `check=unchecked` line.** The watch cannot read that hospital's
   trail: `scripts/staging.sh logs audit-watch` names the error. A lock held past 10 s (a
   migration, or someone holding the trail's tables), a statement over 5 minutes (a very long
@@ -1220,6 +1235,55 @@ must. Order for an offboarding (TENANCY §7.7): seal, let the hourly fingerprint
 seal, write the event with that seal, then drop the schema and delete the hospital's row in one
 transaction. Each new event is mailed once (AuditEventRecorded); a hospital held for a restore
 counts in AuditHospitalsRestoring until the hold ends.
+
+**Disaster restores (P1-T22c2a; design `docs/reviews/p1-t22c/design-c2.md`, "c2a as decided").**
+The old database is gone; the hospitals are served first, the audit tails loaded afterwards:
+1. `scripts/staging.sh restore --target 'YYYY-MM-DD HH:MM:SS+05:30' --operator <you>`. Needs the
+   backend image on this server, a build of P1-T22c2a or later and the owner's **events key**
+   (`secrets/anchor-events.env`, or `IHR_AUDIT_ANCHOR_EVENTS_KEY/_SECRET` in your shell); each is
+   refused before anything is replaced, naming the way out. Just before the restore it writes a
+   **stub plan** (restore id, T, the repository's newest timeline and backup set, no hospitals)
+   and `deploy/staging/supersede/<id>/state`; after recovery it records the new timeline and its
+   parent (the history file), and the restore's own stop (the first commit after T, not applied)
+   and the last commit it applied: the export doc refuses unless T lies between them (Q-K104). A
+   parent that is not the stub's timeline cannot be exported: `audit-supersede close <id> --reason`.
+   An attempt that fails after its stub is marked `abandoned` by itself (`up` stops naming it);
+   run `restore --target` again. Its stub is never closed (refused: it never promoted); the next
+   attempt's result supersedes it. A closed attempt never supersedes a later one (review E3/Q1).
+2. `up`, `smoke`, `backup-now full`. Until step 4 every hospital sealed after T reads as cut
+   (AuditChainBroken, critical) and **AuditWholeRestorePending** (warning) names the restore; after
+   48 h **AuditWholeRestorePendingOverdue** (critical). Both come from the plans alone, so a new
+   server's audit watch reports them on its first pass.
+3. `scripts/staging.sh audit-supersede export <id> --operator <you>`: a copy of the database from
+   the repository (backup set and old timeline to its end; container `ihr-supersede-copy`, 768 MB,
+   killed first under memory pressure, the dumper stopped meanwhile; disk = the set's size + 3 GB),
+   read by the audit watch's role; then the **export doc** (events key). The copy goes on every
+   exit. A hospital that cannot be read refuses the export unless
+   `--accept-unreadable --reason "<why>"` (it stays cut). The export warns 14 days after the stub
+   (the backup set leaves the repository after 28 days). A second export, or any other whole-
+   database export or restore while this one is not loaded, is refused.
+4. `scripts/staging.sh audit-supersede load <id> --operator <you>`: per hospital the fork point is
+   the restored head at T, never chosen; it is refused if the first superseded seal holds no entry
+   newer than T − 15 min (Q-K99: a rewritten restored seal). A hospital made after T is `absent`
+   (it keeps alerting until P1-T22c2b closes it). Then the result; the local `export.tar` is
+   deleted unless it holds unsealed entries or an unreadable hospital (then kept, mode 600).
+A restore that cannot be loaded: `audit-supersede close <id> --reason` (Q-K100; the cuts stay).
+`restore --target ... --no-supersede --reason "<incident>"` writes the stub and that result at once.
+A closed restore (either way) explains the timeline change but can lose, with no trace, what was
+written after the last fingerprint: **AuditWholeRestoreClosed** (warning, gauge
+`ihr_audit_whole_restores_closed{how}`) and `ihr_audit_verify` name it until its restore id is
+listed in `plugins/ihr_platform/ihr_audit/acknowledged_closed.txt` with the date and what was
+reviewed (Q-K105). Its local `export.tar` is kept (it is the only copy of the old tail; `up` and
+`audit-supersede status` say so); its expiry rule is P1-T22c2b's, with Q-K90. `close` and `load`
+refuse to start the database over an empty or half-restored volume: restore first.
+**A second disaster, a restore not yet loaded.** A pending restore from an older timeline than the
+repository's newest does not block the next `restore --target` (a lost server can neither load nor
+close it), and its export is not blocked either; it keeps alerting as pending until its own result.
+`restore --target` right after a restore, before the next backup, is refused (no backup set on the
+repository's newest timeline yet): `backup-now full` first, or restore with `--target-name`. A
+`export` that stopped after the export doc was written finds it and says to load. The 14-day warning
+(step 3) is on the export.
+Claims sealed after the repository's last archived WAL stay cut until P1-T22c2b.
 
 **Whole-database restores (P1-T22c1; design `docs/reviews/p1-t22c/design.md`).** A
 `rollback --restore` puts every hospital and the platform back to the window's restore point T;

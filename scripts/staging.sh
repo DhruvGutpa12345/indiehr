@@ -17,6 +17,12 @@
 #   scripts/staging.sh rollback [--restore [--accept-absent]] [--operator NAME]
 #   scripts/staging.sh audit-supersede load <id> [--operator NAME] [--image REF] | status <id> [--json] | pending
 #                                                a whole-database restore's audit tails (P1-T22c)
+#   scripts/staging.sh audit-supersede export <id> [--operator NAME] [--accept-unreadable --reason R]
+#                                                | close <id> --reason R [--operator NAME]
+#                                                a disaster restore's (restore --target): the tails
+#                                                from a repository copy; close one that cannot load
+#   scripts/staging.sh restore --target T --operator NAME [--no-supersede --reason R]
+#                                                a lost server's database to T (stub plan first)
 #   scripts/staging.sh s3-events-key             the events key for this folder's own stand-in (P1-T22c)
 #                                                back to the release before (--restore: to the
 #                                                restore point of the one left; loses later writes)
@@ -882,7 +888,15 @@ up() {  # up [--new-database]: the flag only where an empty database is really m
   # for (the audit watch reports the cut until it has run)
   local pend
   for pend in $(sup_pending); do
-    echo "WARNING: whole-database restore $pend has no result yet: run scripts/staging.sh audit-supersede load $pend --operator <you> (before this start, if you can)" >&2
+    if [[ "$(sup_get "$pend" flow)" == disaster && ! -f "$SUPERSEDE_DIR/$pend/exported" ]]; then
+      echo "WARNING: disaster restore $pend has no result yet: after this start, scripts/staging.sh audit-supersede export $pend --operator <you>, then load $pend (or close $pend --reason)" >&2
+    else
+      echo "WARNING: whole-database restore $pend has no result yet: run scripts/staging.sh audit-supersede load $pend --operator <you> (before this start, if you can)" >&2
+    fi
+  done
+  local kept
+  for kept in $(sup_kept_tars); do
+    echo "NOTE: closed restore $kept keeps $SUPERSEDE_DIR/$kept/export.tar (audit entries, mode 600): the only copy of the old tail; keep it as long as the archive (Q-K90) and delete it only by hand once reviewed (its expiry rule is P1-T22c2b's)" >&2
   done
   # The database's two roles (P1-T19b), re-asserted as postgres at every start: passwords from
   # the secrets, no stored settings in any database, no memberships, large objects closed (a
@@ -1230,7 +1244,7 @@ pg_container() {  # pg_container <name> <volume:path,...> <command...>: our imag
   for v in "${m[@]}"; do args+=(-v "$v"); done
   docker create --name "$name" --user 70:70 --network "${project}_internal" --memory 768m \
     --env-file "$SECRETS/backup.env" --cap-drop ALL --security-opt no-new-privileges:true \
-    "${args[@]}" -v "$GEN/pgbackrest/pgbackrest.conf:/etc/pgbackrest/pgbackrest.conf:ro" \
+    ${PG_CONTAINER_EXTRA[@]+"${PG_CONTAINER_EXTRA[@]}"} "${args[@]}" -v "$GEN/pgbackrest/pgbackrest.conf:/etc/pgbackrest/pgbackrest.conf:ro" \
     --tmpfs /tmp:uid=70,gid=70,mode=0700 "$(env_get IHR_POSTGRES_IMAGE)" "$@" >/dev/null
   docker network connect "${project}_edge" "$name"
 }
@@ -1245,6 +1259,31 @@ wait_promoted() {  # wait_promoted <container>: until recovery has ended (or fai
   done
   docker logs --tail 30 "$1"
   die "recovery did not finish"
+}
+
+repo_copy() {  # repo_copy <name> <pgbackrest restore options...>: a copy of the database from the
+  # backups in its own volume <name>, running as container <name> until recovery has ended; sets
+  # COPY_AS_OF (its last replayed transaction). The caller's trap removes <name>, <name>-restore
+  # and the volume. Used by restore-drill and by a disaster restore's export (P1-T22c2a)
+  local name="$1" i
+  shift
+  docker rm -f "$name" "$name-restore" >/dev/null 2>&1 || true
+  docker volume rm -f "$name" >/dev/null 2>&1 || true
+  docker volume create "$name" >/dev/null
+  pg_container "$name-restore" "$name:/var/lib/postgresql" pgbackrest --stanza=main "$@" restore
+  if docker start -a "$name-restore"; then i=0; else i=$?; fi
+  ((i == 0)) || die "restore failed"
+  # The copy never archives into the repository (archive_mode=off); it fetches WAL to recover.
+  # Recovery needs at least the original's max_connections (100, compose.yaml) and
+  # max_locks_per_transaction (256, deploy/postgres/server-settings.txt; P1-T23).
+  # cluster_name: how ihr_hospital_restore --drill knows the database is the drill's copy (P1-T22b)
+  pg_container "$name" "$name:/var/lib/postgresql" postgres -c archive_mode=off \
+    -c shared_buffers=128MB -c max_connections=100 "${PG_SERVER_SETTINGS[@]}" -c "cluster_name=$name" "${PG_LOG_PRIVACY[@]}"
+  docker start "$name" >/dev/null
+  wait_promoted "$name"
+  # The copy's own moment: its last replayed transaction (what the fingerprints are checked at)
+  COPY_AS_OF="$(docker logs "$name" 2>&1 | sed -n 's/.*last completed transaction was at log time \([0-9-]* [0-9:.]*[+-][0-9]*\).*/\1/p' | tail -1)"
+  if [[ "$COPY_AS_OF" =~ [+-][0-9]{2}$ ]]; then COPY_AS_OF="$COPY_AS_OF:00"; fi
 }
 
 restore_drill() {  # a copy of the database from the backups, checked, then removed
@@ -1271,25 +1310,10 @@ restore_drill() {  # a copy of the database from the backups, checked, then remo
   # (the trap runs after this function's locals are gone: keep's value is written into it)
   # shellcheck disable=SC2064
   trap "docker rm -f '$DRILL-restore' >/dev/null 2>&1; [[ $keep == 1 ]] || { docker rm -f '$DRILL' >/dev/null 2>&1; docker volume rm -f '$DRILL' >/dev/null 2>&1; }" EXIT
-  docker rm -f "$DRILL" "$DRILL-restore" >/dev/null 2>&1 || true
-  docker volume rm -f "$DRILL" >/dev/null 2>&1 || true
-  docker volume create "$DRILL" >/dev/null
   echo "== Restore $([[ -n "$target" ]] && echo "to $target" || echo "to the newest moment in the backups")"
-  pg_container "$DRILL-restore" "$DRILL:/var/lib/postgresql" pgbackrest --stanza=main \
-    ${target:+--type=time "--target=$target" --target-action=promote} restore
-  if docker start -a "$DRILL-restore"; then i=0; else i=$?; fi
-  ((i == 0)) || die "restore failed"
-  # The copy never archives into the repository (archive_mode=off); it fetches WAL to recover.
-  # Recovery needs at least the original's max_connections (100, compose.yaml) and
-  # max_locks_per_transaction (256, deploy/postgres/server-settings.txt; P1-T23).
-  # cluster_name: how ihr_hospital_restore --drill knows the database is this copy (P1-T22b)
-  pg_container "$DRILL" "$DRILL:/var/lib/postgresql" postgres -c archive_mode=off \
-    -c shared_buffers=128MB -c max_connections=100 "${PG_SERVER_SETTINGS[@]}" -c cluster_name=ihr-restore-drill "${PG_LOG_PRIVACY[@]}"
-  docker start "$DRILL" >/dev/null
-  wait_promoted "$DRILL"
-  # The copy's own moment: its last replayed transaction (what the fingerprints are checked at)
-  as_of="$(docker logs "$DRILL" 2>&1 | sed -n 's/.*last completed transaction was at log time \([0-9-]* [0-9:.]*[+-][0-9]*\).*/\1/p' | tail -1)"
-  [[ "$as_of" =~ [+-][0-9]{2}$ ]] && as_of="$as_of:00"
+  # (repo_copy: the copy's cluster_name is its container's name, ihr-restore-drill)
+  repo_copy "$DRILL" ${target:+--type=time "--target=$target" --target-action=promote}
+  as_of="$COPY_AS_OF"
   echo "== The restored copy (its last transaction: ${as_of:-not found in its log})"
   docker exec "$DRILL" psql -U postgres -Atc "SELECT 'databases: ' || string_agg(datname || ' ' || pg_size_pretty(pg_database_size(datname)), ', ' ORDER BY datname) FROM pg_database WHERE NOT datistemplate"
   docker exec "$DRILL" psql -U postgres -d ihr -Atc "SELECT 'hospital schemas: ' || count(*) FROM pg_namespace WHERE nspname ~ '^h_[a-z0-9]{10}\$'"
@@ -1364,7 +1388,10 @@ restore_live() {  # restore [--target T | --target-name NAME [--set LABEL]]: a l
     "$(env_get IHR_POSTGRES_IMAGE)" -c 'touch /var/lib/postgresql/.ihr-restore-incomplete && find /var/lib/postgresql/18 -mindepth 1 -delete 2>/dev/null; mkdir -p /var/lib/postgresql/18/docker && chmod 700 /var/lib/postgresql/18/docker'
   echo "== Restore to ${target:-${name:-the newest moment in the backups}}${set:+ from backup $set} into $vol"
   # (inside staging.sh rollback, its own trap still says where the rollback stopped)
-  trap 'rc=$?; docker rm -f ihr-restore ihr-restore-spool ihr-restore-recovery >/dev/null 2>&1; [[ -z "${REL_RB_STAGE:-}" ]] || rel_rollback_exit "$rc"' EXIT
+  trap 'rc=$?; docker rm -f ihr-restore ihr-restore-info ihr-restore-spool ihr-restore-recovery >/dev/null 2>&1; sup_abandon_failed "$rc"; [[ -z "${REL_RB_STAGE:-}" ]] || rel_rollback_exit "$rc"' EXIT
+  # A disaster restore (restore --target, P1-T22c2a): its stub plan, just before the restore
+  # replaces anything (the restore's own refusals above came first: fewer orphan stubs)
+  [[ -z "${SUP_DISASTER:-}" ]] || supersede_stub "$target"
   pg_container ihr-restore "$vol:/var/lib/postgresql" pgbackrest --stanza=main "${how[@]}" restore
   if docker start -a ihr-restore; then i=0; else i=$?; fi
   ((i == 0)) || die "restore failed"
@@ -1380,10 +1407,12 @@ restore_live() {  # restore [--target T | --target-name NAME [--set LABEL]]: a l
     -c max_connections=100 "${PG_SERVER_SETTINGS[@]}" "${PG_LOG_PRIVACY[@]}"
   docker start ihr-restore-recovery >/dev/null
   wait_promoted ihr-restore-recovery
+  [[ -z "${SUP_DISASTER:-}" ]] || supersede_parent ihr-restore-recovery
   docker exec ihr-restore-recovery psql -U postgres -Atc "CHECKPOINT" >/dev/null
   docker stop -t 60 ihr-restore-recovery >/dev/null
   docker run --rm --user 70:70 --network none -v "$vol:/var/lib/postgresql" --entrypoint sh \
     "$(env_get IHR_POSTGRES_IMAGE)" -c 'rm -f /var/lib/postgresql/.ihr-restore-incomplete'
+  SUP_RESTORED=1  # a later failure (restore_cmd's --no-supersede result) abandons nothing
   # Its containers go now too: inside a rollback the trap above is replaced on return, and a later
   # restore on this host would find their names taken (P1-T22c live proof: a second rollback)
   docker rm -f ihr-restore ihr-restore-spool ihr-restore-recovery >/dev/null 2>&1 || true
@@ -1789,6 +1818,36 @@ rel_check_images() {  # rel_check_images <names> <plan file>: every target image
   done < <(rel_images)
   ((${#missing[@]} == 0)) || die "images of the target are no longer here: ${missing[*]} (nothing was changed)"
 }
+rel_level_tool() {  # an image on hand that can ask the bucket's level (a build of level 2 or
+  # later; review E5): the running build, else any other image of this repository (the release
+  # tags). Prints its id, or nothing
+  local id c
+  id="$(running_backend_id 2>/dev/null || true)"
+  if [[ -n "$id" ]] && (( $(sup_level "$id") >= 2 )); then echo "$id"; return 0; fi
+  while read -r c; do
+    [[ -n "$c" ]] || continue
+    if (( $(sup_level "$c") >= 2 )); then echo "$c"; return 0; fi
+  done < <(docker image ls "$(repo_of "$(env_get IHR_BACKEND_IMAGE)")" --format '{{.ID}}' 2>/dev/null | sort -u)
+  return 0
+}
+rel_level_guard() {  # rel_level_guard <target backend image>: a build that cannot read the
+  # whole-database restore objects already in the bucket is refused (Q-K101: it would read a
+  # disaster stub's export doc as a bad object for good; fix forward). Asked with any level-2
+  # build on this server (review E5: the running build may be older) and the reader key. Run by
+  # rollback, by release (the new build is the target) and by deploy.sh's plain start
+  # (staging.sh level-guard); nothing to ask without fingerprints, or with no level-2 build here
+  # (none could have written level-2 objects here)
+  local want have tool
+  supersede_wanted || return 0
+  [[ -n "$1" ]] || return 0
+  have="$(sup_level "$1")"
+  ((have < 2)) || return 0
+  tool="$(rel_level_tool)"
+  [[ -n "$tool" ]] || return 0
+  want="$(IHR_BACKEND_IMAGE="$tool" compose --profile admin run --rm --no-deps -T audit-supersede level 2>/dev/null | sed -n 's/.*bucket=\([0-9]\).*/\1/p')"
+  [[ "$want" =~ ^[0-9]$ ]] || die "could not read the restore objects' level in the fingerprint bucket (audit-supersede level): nothing changed"
+  ((have >= want)) || die "the fingerprint bucket holds level-$want restore objects (a disaster restore's, P1-T22c2a) that the target build (level $have) cannot read: refused, fix forward (Q-K101); nothing changed"
+}
 rel_point_images() {  # rel_point_images <names> <plan file>: this stack's tags at the target's images
   # (all checked first: never half re-pointed)
   local names=" $1 " name ref id
@@ -1948,6 +2007,8 @@ release() {  # release [--now [--minutes N] [--note T]] [--operator NAME] | --fi
     [[ "$(attempt_get tag)" != "$tag" ]] || die "release $tag already runs and is not finished: after the fix, scripts/staging.sh release --finish"
     die "release $tag already runs: nothing to release (scripts/deploy.sh sends a new build first)"
   fi
+  # A build that cannot read the bucket's restore objects is refused before anything is held (Q-K101)
+  rel_level_guard "$(image_id "$new_ref")"
   if [[ -z "$cid" ]]; then
     # Without a backend nothing is held: then no other service of the app may run either (D8)
     apps="$(running_app_services "${REL_WORKERS[@]}" frontend)" \
@@ -2132,13 +2193,16 @@ SUP_RE='^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$'
 supersede_wanted() {  # fingerprints are written here (else there is nothing to account for)
   grep -q '^IHR_AUDIT_ANCHOR_WRITE_KEY=.' "$SECRETS/anchor-write.env" 2>/dev/null
 }
-supersede_keys() {  # sets sup_envs: the reader key and the events key for one owner one-off.
+supersede_keys() {  # supersede_keys [--events-only]: sets sup_envs: the reader key and the
+  # events key for one owner one-off.
   # The events key (Q-K91) is the owner's: secrets/anchor-events.env in a local proof; on a
   # server IHR_AUDIT_ANCHOR_EVENTS_KEY/_SECRET exported in the owner's shell (never in an app
   # container's env; with IHR_S3=local the gateway's identity file holds its secret: README).
   # Without one, the fingerprint writer's key adds the events (a site set up before P1-T22c: no
-  # boundary from Celery, which holds that key; said, never silent)
-  local f k v
+  # boundary from Celery, which holds that key; said, never silent). A disaster restore's
+  # documents (--events-only, P1-T22c2a, audit S5): never the writer's key; refused without it
+  local f k v events_only=0
+  [[ "${1:-}" != --events-only ]] || events_only=1
   sup_envs=()
   for f in "$SECRETS/anchor-read.env" "$SECRETS/anchor-events.env"; do
     [[ -f "$f" ]] || continue
@@ -2146,6 +2210,9 @@ supersede_keys() {  # sets sup_envs: the reader key and the events key for one o
       if [[ "$k" =~ ^IHR_AUDIT_ANCHOR_[A-Z_]+$ ]]; then export "$k=$v"; fi
     done < "$f"
   done
+  if [[ -z "${IHR_AUDIT_ANCHOR_EVENTS_KEY:-}" ]] && ((events_only)); then
+    die "a disaster restore's audit documents are written with the owner's events key only (Q-K91, audit S5): put it in secrets/anchor-events.env (from your password manager) or export IHR_AUDIT_ANCHOR_EVENTS_KEY/_SECRET in this shell"
+  fi
   if [[ -z "${IHR_AUDIT_ANCHOR_EVENTS_KEY:-}" ]]; then
     echo "WARNING: no events key here (secrets/anchor-events.env, or IHR_AUDIT_ANCHOR_EVENTS_KEY/_SECRET in this shell): the restore's events go with the fingerprint writer's key, which Celery holds too (Q-K91: not a security boundary until s3-events-key or the provider's events key is set up)" >&2
     while IFS='=' read -r k v; do
@@ -2161,7 +2228,38 @@ supersede_keys() {  # sets sup_envs: the reader key and the events key for one o
 sup_image_ok() {  # sup_image_ok <image>: it has the tool (a build of P1-T22c or later)
   docker run --rm --network none --entrypoint python "$1" -c 'import ihr_audit.supersede' >/dev/null 2>&1
 }
+sup_level() {  # sup_level <image>: the restore objects that build reads and writes (Q-K101): 0 no
+  # tool, 1 P1-T22c1 (a build without the constant), 2 P1-T22c2a (disaster stubs, export docs)
+  docker run --rm --network none --entrypoint python "$1" \
+    -c 'import ihr_audit.supersede as s; print(getattr(s, "LEVEL", 1))' 2>/dev/null || echo 0
+}
+sup_events_key_here() {  # the owner's events key is in reach (file, or this shell)
+  [[ -n "${IHR_AUDIT_ANCHOR_EVENTS_KEY:-}" ]] || grep -q '^IHR_AUDIT_ANCHOR_EVENTS_KEY=.' "$SECRETS/anchor-events.env" 2>/dev/null
+}
 sup_get() { sed -n "s/^$2=//p" "$SUPERSEDE_DIR/$1/state" 2>/dev/null | tail -1; }
+sup_db_up() {  # the database (and redis) for close and load: never a fresh empty cluster where
+  # a lost one was, never a half-restored one started outside restore_live (review E2). Reads
+  # the volume first, as up and restore do (PG_STATE)
+  local vol="${IHR_PROJECT:-indiehr-staging}_pgdata" state
+  [[ -z "$(compose ps -q db 2>/dev/null || true)" ]] || return 0
+  state="$(docker run --rm --user 70:70 --network none -v "$vol:/var/lib/postgresql" --entrypoint sh \
+    "$(env_get IHR_POSTGRES_IMAGE)" -c "$PG_STATE")" || die "could not read $vol"
+  case "$state" in
+    db) ;;
+    empty) die "$vol holds no database: close and load need the restored database (a disaster restore: scripts/staging.sh restore --target first). Nothing was started" ;;
+    *) die "$vol holds a half-restored database (its restore did not finish): scripts/staging.sh restore again first. Nothing was started" ;;
+  esac
+  compose up -d --wait db redis
+}
+sup_kept_tars() {  # the closed restores whose export.tar (audit entries, personal data) is still here
+  # (review T6: a close never deletes it, it is the only copy of the old tail; its expiry is
+  # P1-T22c2b's, with Q-K90)
+  local d
+  for d in "$SUPERSEDE_DIR"/*/; do
+    [[ -f "$d/closed" && -f "$d/export.tar" ]] || continue
+    basename "$d"
+  done
+}
 sup_pending() {  # the restores exported here whose load has not written its result
   local d
   for d in "$SUPERSEDE_DIR"/*/; do
@@ -2222,44 +2320,346 @@ supersede_load() {  # supersede_load <id> <operator> [image]: the restored datab
   if [[ -n "${3:-}" ]]; then
     img="$(image_id "$3")" || die "no image $3"
     sup_image_ok "$img" || die "$3 has no ihr_audit_supersede"
+    # A disaster restore's load writes level-2 objects (Q-K101; review Q4)
+    [[ "$(sup_get "$id" flow)" != disaster ]] || (( $(sup_level "$img") >= 2 )) || die "$3 has no disaster load (older than P1-T22c2a; Q-K101)"
     (umask 077; echo "load_image=$img" >> "$dir/state")
   fi
   docker image inspect "$img" >/dev/null 2>&1 || die "the image the export ran from ($img) is no longer here: load needs the same tool"
   repo="$(repo_of "$(env_get IHR_BACKEND_IMAGE)"):$SUP_TAG"
   docker tag "$img" "$repo"
   echo "== Loading the audit tails back (restore $id)"
-  ( supersede_keys
+  # A disaster restore's events and result: the events key only, never the writer's (audit S5)
+  ( if [[ "$(sup_get "$id" flow)" == disaster ]]; then supersede_keys --events-only; else supersede_keys; fi
     IHR_BACKEND_IMAGE="$repo" compose run --rm --no-deps -T ${sup_envs[@]+"${sup_envs[@]}"} migrate \
       python manage.py ihr_audit_supersede load "$id" --operator "$op" < "$dir/export.tar" ) || return 1
   (umask 077; date -Iseconds > "$dir/loaded")
+  # The load verified every event it wrote (its last step): the local tar (personal data) goes,
+  # unless it holds what no archive does: unsealed entries, or a hospital not exported (Q-K90)
+  local keep
+  keep="$(sup_local_only "$id")"
+  if [[ -z "$keep" ]]; then
+    rm -f "$dir/export.tar"; (umask 077; date -Iseconds > "$dir/local-deleted")
+    echo "The local export ($dir/export.tar) was deleted: everything in it is in the restore archive."
+  else
+    echo "Kept: $dir/export.tar (mode 600) holds what no archive does (unsealed entries or an unreadable hospital: $keep); keep it as long as the archive (Q-K90)"
+  fi
+}
+# ---- A disaster restore (P1-T22c2a, flow b; docs/reviews/p1-t22c/design-c2.md "c2a as decided") --
+# restore --target T writes a stub plan just before the restore, the hospitals are served first,
+# then audit-supersede export (a copy from the repository, read by the audit watch's role; the
+# export doc with the events key) and audit-supersede load. $DIR/supersede/<id>/state says
+# flow=disaster; stubbed, exported, loaded and local-deleted are its steps.
+SUP_COPY=ihr-supersede-copy
+SUP_DISASTER="" SUP_OP="" SUP_NOSUP=0 SUP_REASON="" SUP_DUMPER_STOPPED=0 SUP_RESTORED=""
+sup_repo_info() {  # pgbackrest info as JSON, from a one-off (the stack is stopped for a restore)
+  docker rm -f ihr-restore-info >/dev/null 2>&1 || true
+  pg_container ihr-restore-info "" pgbackrest --stanza=main --output=json info
+  docker start -a ihr-restore-info
+  docker rm -f ihr-restore-info >/dev/null 2>&1 || true
+}
+sup_repo_pick() {  # stdin: pgbackrest info JSON; prints "<archive max> <newest set on its timeline>"
+  python3 -c '
+import json, sys
+stanza = json.load(sys.stdin)[0]
+db = max(d["id"] for d in stanza["db"])
+wal = [a["max"] for a in stanza.get("archive", []) if a["database"]["id"] == db and a.get("max")]
+if not wal:
+    sys.exit("the repository holds no archived WAL")
+top = max(wal)
+sets = [b for b in stanza.get("backup", []) if b["database"]["id"] == db
+        and (b.get("archive") or {}).get("stop", "").startswith(top[:8])]
+if not sets:
+    sys.exit("no backup set on the newest timeline of the repository " + top[:8] + " yet (a restore moved the database onto it and no backup has run since). The set of an older timeline cannot be used for every T: first run scripts/staging.sh backup-now full on a server on that timeline, or restore with --target-name (a release restore point) instead; nothing was restored")
+print(top, max(sets, key=lambda b: b["timestamp"]["stop"])["label"])'
+}
+sup_set_size() {  # sup_set_size <label>: stdin pgbackrest info JSON; the set's database size in bytes
+  python3 -c '
+import json, sys
+for b in json.load(sys.stdin)[0].get("backup", []):
+    if b["label"] == sys.argv[1]:
+        print(b["info"]["size"]); break
+else:
+    sys.exit("backup set " + sys.argv[1] + " is not in the repository (expired? 28 days)")' "$1"
+}
+sup_disaster_precheck() {  # restore --target's needs, checked before anything is replaced (C2-5)
+  local img want="$1"
+  img="$(image_id "$(env_get IHR_BACKEND_IMAGE)" || true)"
+  [[ -n "$img" ]] || die "the backend image $(env_get IHR_BACKEND_IMAGE) is not on this server: bring it first (scripts/deploy.sh, or docker load the release's image); nothing was restored"
+  if (( $(sup_level "$img") < 2 )); then
+    ((want == 0)) || die "this build has no disaster restore events (older than P1-T22c2a): deploy a newer build first, or restore with --no-supersede --reason \"<the incident>\" (every hospital sealed after T and the timeline change then alert; record an incident)"
+    echo "WARNING: this build writes no disaster restore documents (older than P1-T22c2a): the timeline change and every cut after T alert (record an incident)" >&2
+    SUP_DISASTER=""; return 0
+  fi
+  if ! sup_events_key_here; then
+    ((want == 0)) || die "restore --target writes its audit documents with the owner's events key only (Q-K91, audit S5): put it in secrets/anchor-events.env (from your password manager) or export IHR_AUDIT_ANCHOR_EVENTS_KEY/_SECRET in this shell; or --no-supersede --reason \"<the incident>\" (then nothing is written and the timeline change alerts)"
+    echo "WARNING: no events key here: no stub or result is written; the timeline change alerts as unexplained (critical): record an incident" >&2
+    SUP_DISASTER=""
+  fi
+}
+supersede_stub() {  # supersede_stub <T>: the stub plan of restore $SUP_DISASTER (inside restore_live)
+  local id="$SUP_DISASTER" dir="$SUPERSEDE_DIR/$SUP_DISASTER" img repo info max set when
+  img="$(image_id "$(env_get IHR_BACKEND_IMAGE)")"
+  repo="$(repo_of "$(env_get IHR_BACKEND_IMAGE)"):$SUP_TAG"
+  echo "== The backup repository's newest timeline and backup set (pgbackrest info)"
+  info="$(sup_repo_info)" || die "could not read the backup repository (pgbackrest info): nothing was restored"
+  read -r max set < <(printf '%s' "$info" | sup_repo_pick) || die "the backup repository has no WAL or backup set to restore from: nothing was restored"
+  [[ "$max" =~ ^[0-9A-F]{24}$ && "$set" =~ ^[0-9]{8}-[0-9]{6}F ]] || die "could not read the repository's newest WAL and backup set"
+  when="$(date -u -d "$1" '+%Y-%m-%dT%H:%M:%S+00:00')"
+  (umask 077; mkdir -p "$dir")
+  chmod 700 "$SUPERSEDE_DIR" "$dir"
+  docker tag "$img" "$repo"
+  (umask 077; printf 'id=%s\nflow=disaster\nimage=%s\ntarget=%s\nold_timeline=%s\narchive_max=%s\nbackup_set=%s\noperator=%s\nno_supersede=%s\n' \
+    "$id" "$img" "$when" "${max:0:8}" "$max" "$set" "$SUP_OP" "$SUP_NOSUP" > "$dir/state")
+  echo "== The stub plan of restore $id (the fingerprint bucket, write-once; the events key)"
+  ( supersede_keys --events-only
+    IHR_BACKEND_IMAGE="$repo" compose run --rm --no-deps -T ${sup_envs[@]+"${sup_envs[@]}"} migrate \
+      python manage.py ihr_audit_supersede stub "$id" --target-time "$when" --old-timeline "${max:0:8}" \
+      --archive-max "$max" --backup-set "$set" --image "$img" --operator "$SUP_OP" \
+      ${SUP_REASON:+--no-supersede "$SUP_REASON"} ) \
+    || { rm -rf "$dir"; die "the stub plan could not be written (above): nothing was restored"; }
+  (umask 077; date -Iseconds > "$dir/stubbed")
+}
+sup_abandon_failed() {  # sup_abandon_failed <rc>: restore_live's exit trap (review E3). An attempt
+  # that failed after its stub and before the restore finished is marked abandoned: up stops
+  # naming it and close refuses it (its stub stays in the bucket, write-once; the attempt that
+  # follows it, from the same old timeline, supersedes it with its result)
+  [[ "$1" != 0 && -n "${SUP_DISASTER:-}" && -z "${SUP_RESTORED:-}" && -f "$SUPERSEDE_DIR/$SUP_DISASTER/stubbed" ]] || return 0
+  (umask 077; date -Iseconds > "$SUPERSEDE_DIR/$SUP_DISASTER/abandoned") 2>/dev/null || true
+  echo "Restore $SUP_DISASTER failed after its stub: marked abandoned ($SUPERSEDE_DIR/$SUP_DISASTER/abandoned). Run restore --target again; that attempt's result (load or close) supersedes this stub" >&2
+}
+supersede_parent() {  # supersede_parent <container>: the new timeline and its parent (the last
+  # line of its history file, decimal), written to state; a parent that is not the stub's old
+  # timeline cannot be loaded (its export refuses: close it)
+  local dir="$SUPERSEDE_DIR/$SUP_DISASTER" tl parent old hist stop times="" rstop="" rrep=""
+  local fmt='YYYY-MM-DD"T"HH24:MI:SS.US"+00:00"'
+  tl="$(docker exec "$1" psql -U postgres -Atc "SELECT substr(pg_walfile_name(pg_current_wal_lsn()), 1, 8)")"
+  hist="$(docker exec "$1" cat "/var/lib/postgresql/18/docker/pg_wal/$tl.history")"
+  # (the file ends with an empty line: the last line with fields; live proof P1-T22c2a)
+  parent="$(printf '%s\n' "$hist" | awk 'NF {p = $1} END {print p}')"
+  [[ "$parent" =~ ^[0-9]+$ ]] && parent="$(printf '%08X' "$parent")" || parent=unknown
+  old="$(sup_get "$SUP_DISASTER" old_timeline)"
+  # The restore's own stop (review T3): the last line's reason, "before <the first commit after
+  # the target, not applied>", and the last commit it applied (static once promoted). export-doc
+  # refuses unless the stub's T lies between them (the restored database is the state at T)
+  stop="$(printf '%s\n' "$hist" | awk -F '\t' 'NF >= 3 {r = $3} END {print r}')"
+  if [[ "$stop" =~ ^before\ ([0-9]{4}-[0-9]{2}-[0-9]{2}\ [0-9]{2}:[0-9]{2}:[0-9]{2}(\.[0-9]{1,6})?[+-][0-9]{2}(:[0-9]{2})?)$ ]]; then
+    times="$(docker exec "$1" psql -U postgres -At -F ' ' -c "SELECT to_char('${BASH_REMATCH[1]}'::timestamptz AT TIME ZONE 'UTC', '$fmt'), coalesce(to_char(pg_last_xact_replay_timestamp() AT TIME ZONE 'UTC', '$fmt'), '')")" || times=""
+  fi
+  read -r rstop rrep <<<"$times" || true
+  (umask 077; printf 'new_timeline=%s\nparent=%s\nrecovery_stop=%s\nrecovery_replayed=%s\n' "$tl" "$parent" "${rstop:-unknown}" "$rrep" >> "$dir/state")
+  [[ -n "$rstop" ]] || echo "WARNING: the restore's stop could not be read from $tl.history: its export doc would be refused (review T3). Close it: scripts/staging.sh audit-supersede close $SUP_DISASTER --reason \"<why>\"" >&2
+  if [[ "$parent" != "$old" ]]; then
+    echo "WARNING: the restore's new timeline $tl branched from $parent, not from the stub's $old: its audit tails cannot be exported; the cuts stay. Close it: scripts/staging.sh audit-supersede close $SUP_DISASTER --reason \"<why>\"" >&2
+  fi
+}
+restore_cmd() {  # restore [--target T --operator NAME [--no-supersede --reason R]] | [--target-name ...]
+  local args=() target="" op="" nosup=0 reason=""
+  while (($#)); do
+    case "$1" in
+      --operator) op="${2:?--operator NAME}"; shift ;;
+      --no-supersede) nosup=1 ;;
+      --reason) reason="${2:?--reason \"<the incident>\"}"; shift ;;
+      --target) target="${2:?--target 'YYYY-MM-DD HH:MM:SS+05:30'}"; args+=("$1" "$2"); shift ;;
+      --replace-database) die "--replace-database is rollback --restore's own" ;;
+      *) args+=("$1") ;;
+    esac
+    shift
+  done
+  ((nosup == 0)) || [[ -n "$reason" ]] || die "--no-supersede needs --reason \"<the incident>\""
+  SUP_DISASTER=""
+  if supersede_wanted; then
+    if [[ -z "$target" ]]; then
+      echo "WARNING: a restore without --target <time> writes no restore events (P1-T22c2a): the timeline change and every hospital sealed after the restored moment alert (record an incident)" >&2
+    else
+      [[ -n "$(env_get IHR_BACKUP)" ]] || die "no backup settings here (backup-init, with --existing-passphrase on a new server)"
+      check_target "$target" >/dev/null
+      SUP_DISASTER="$(python3 -c 'import uuid; print(uuid.uuid4())')"
+      SUP_OP="$(rel_operator "$op")"
+      SUP_NOSUP="$nosup"
+      SUP_REASON="$reason"
+      sup_disaster_precheck "$((1 - nosup))"
+    fi
+  elif [[ -n "$target" ]]; then
+    # No fingerprint writer key here (a server rebuilt with init and backup-init): the restore
+    # would write nothing, and the timeline change and every cut would alert as unexplained
+    # with no word said (review Q6)
+    ((nosup)) || die "restore --target writes restore events only where fingerprints are written (secrets/anchor-write.env here: none): put it back from the password manager (the fingerprint writer's key), or restore with --no-supersede --reason \"<the incident>\" (then nothing is written and the timeline change alerts: record an incident). Nothing was restored"
+    echo "WARNING: no fingerprint writer key here: no stub or result is written; the timeline change alerts as unexplained (critical): record an incident" >&2
+  fi
+  restore_live "${args[@]}"
+  [[ -n "$SUP_DISASTER" ]] || return 0
+  if ((nosup)); then
+    echo "== The result of restore $SUP_DISASTER (--no-supersede: every hospital refused, the cuts stay)"
+    compose up -d --wait db
+    supersede_close "$SUP_DISASTER" "$reason" "$SUP_OP" --no-supersede || die "the result could not be written (above): run scripts/staging.sh audit-supersede close $SUP_DISASTER --reason \"$reason\" after up"
+    compose stop db >/dev/null
+    return 0
+  fi
+  echo "Restore id: $SUP_DISASTER. Next: scripts/staging.sh up, smoke, backup-now full; then"
+  echo "  scripts/staging.sh audit-supersede export $SUP_DISASTER --operator $SUP_OP, then audit-supersede load $SUP_DISASTER"
+  echo "  (until the load, every hospital sealed after T reads as cut: AuditChainBroken; AuditWholeRestorePending)"
+}
+sup_has_export_doc() {  # sup_has_export_doc <id> <image>: the export doc is in the bucket already
+  # (the reader key only; `status` names it). Exit 0 if it is
+  IHR_BACKEND_IMAGE="$2" compose --profile admin run --rm --no-deps -T audit-supersede status "$1" --json 2>/dev/null \
+    | python3 -c 'import json, sys; sys.exit(0 if json.load(sys.stdin).get("exported") else 1)'
+}
+supersede_export_copy() {  # supersede_export_copy <id> <operator> [<accept-unreadable reason>]:
+  # the disaster restore's export from a copy of the repository (its old timeline to its end),
+  # read by the audit watch's role; then the export doc (the events key). The copy goes on every exit
+  local id="$1" op="$2" accept="${3:-}" dir="$SUPERSEDE_DIR/$1" img repo old set parent size need free pw rstop rrep
+  local project="${IHR_PROJECT:-indiehr-staging}"
+  [[ "$(sup_get "$id" flow)" == disaster && -f "$dir/stubbed" ]] || die "no disaster restore $id here ($dir): restore --target writes it"
+  [[ ! -f "$dir/loaded" ]] || die "restore $id is loaded already"
+  [[ ! -f "$dir/exported" ]] || die "restore $id is already exported: run scripts/staging.sh audit-supersede load $id"
+  [[ "$(sup_get "$id" no_supersede)" != 1 ]] || die "restore $id was made with --no-supersede: nothing to export"
+  old="$(sup_get "$id" old_timeline)"; parent="$(sup_get "$id" parent)"; set="$(sup_get "$id" backup_set)"
+  [[ "$parent" == "$old" ]] || die "restore $id's new timeline branched from ${parent:-an unknown timeline}, not from its stub's $old: its tails cannot be told apart. Close it: scripts/staging.sh audit-supersede close $id --reason \"<why>\""
+  # The restore's own stop and last applied commit (review T3): export-doc checks T against them
+  rstop="$(sup_get "$id" recovery_stop)"; rrep="$(sup_get "$id" recovery_replayed)"
+  [[ -n "$rstop" && "$rstop" != unknown ]] || die "restore $id's stop time was not read from its history file (review T3): its export doc would be refused. Close it: scripts/staging.sh audit-supersede close $id --reason \"<why>\""
+  img="$(sup_get "$id" image)"
+  docker image inspect "$img" >/dev/null 2>&1 || die "the image the stub was written with ($img) is no longer here"
+  (( $(sup_level "$img") >= 2 )) || die "$img has no disaster export (older than P1-T22c2a)"
+  repo="$(repo_of "$(env_get IHR_BACKEND_IMAGE)"):$SUP_TAG"
+  docker tag "$img" "$repo"
+  # A run that stopped between the export doc (write-once) and the marker: nothing to copy again
+  # (a second copy would only be refused, and would replace the tar the doc was made from; review E6)
+  if sup_has_export_doc "$id" "$repo"; then
+    (umask 077; date -Iseconds > "$dir/exported")
+    echo "Restore $id's export doc is in the bucket already (an earlier run stopped before it marked the export done): nothing to copy. Next: scripts/staging.sh audit-supersede load $id --operator $op"
+    return 0
+  fi
+  pw="$(db_password watch)"
+  [[ -n "$pw" ]] || db_need_split_secrets
+  # Disk: the set's database size from the repository (never the live database) + 3 GB (WAL replay, work)
+  size="$(compose exec -T backup pgbackrest --stanza=main --output=json info | sup_set_size "$set")" || die "cannot read backup set $set in the repository"
+  need=$(( size / 1048576 + 3072 ))
+  free="$(df -Pm "$(docker info --format '{{.DockerRootDir}}')" | awk 'NR==2 {print $4}')"
+  if [[ ! "$free" =~ ^[0-9]+$ ]] || ((free < need)); then
+    die "not enough disk for the copy: ${free:-?} MB free, about $need MB needed (backup set $set plus 3 GB)"
+  fi
+  # Whatever happens, the copy (personal data) goes, and a stopped dumper starts again (Q-K103)
+  SUP_DUMPER_STOPPED=0
+  trap 'docker rm -f '"$SUP_COPY"' '"$SUP_COPY"'-restore >/dev/null 2>&1; docker volume rm -f '"$SUP_COPY"' >/dev/null 2>&1; [[ "$SUP_DUMPER_STOPPED" == 0 ]] || start_existing dumper >/dev/null 2>&1 || true' EXIT
+  if [[ -n "$(compose ps -q dumper 2>/dev/null || true)" ]]; then compose stop dumper >/dev/null; SUP_DUMPER_STOPPED=1; fi
+  echo "== A copy of the database from the repository: backup $set, timeline $old to its end (container $SUP_COPY, OOM-first)"
+  PG_CONTAINER_EXTRA=(--oom-score-adj 900)
+  repo_copy "$SUP_COPY" "--set=$set" --type=default "--target-timeline=$((16#$old))"
+  PG_CONTAINER_EXTRA=()
+  echo "== The copy's last transaction: ${COPY_AS_OF:-not found in its log}"
+  case "$(PG_TARGET="$SUP_COPY" db_roles_state || echo unreadable)" in
+    split) PG_TARGET="$SUP_COPY" db_roles_apply ;;
+    *) die "the copy's database roles are not the split ones (P1-T19b)" ;;
+  esac
+  echo "== Exporting every hospital's audit tail from the copy (restore $id; the audit watch's read-only role)"
+  (umask 077; DATABASE_URL="postgres://ihr_audit_watch:$pw@$SUP_COPY:5432/ihr" IHR_BACKEND_IMAGE="$repo" \
+    compose --profile admin run --rm --no-deps -T -e DATABASE_URL audit-supersede \
+    export-copy "$id" --image "$img" --operator "$op" --source-end "${COPY_AS_OF:-}" \
+    ${accept:+--accept-unreadable "$accept"} > "$dir/export.tar.part") \
+    || { rm -f "$dir/export.tar.part"; die "the export from the copy failed (above): the hospitals are served as they are; run it again"; }
+  mv "$dir/export.tar.part" "$dir/export.tar"
+  echo "== The export doc (the fingerprint bucket, write-once; the events key)"
+  ( supersede_keys --events-only
+    IHR_BACKEND_IMAGE="$repo" compose run --rm --no-deps -T ${sup_envs[@]+"${sup_envs[@]}"} migrate \
+      python manage.py ihr_audit_supersede export-doc "$id" --operator "$op" \
+      --recovery-stop "$rstop" --recovery-replayed "$rrep" < "$dir/export.tar" ) \
+    || die "the export doc could not be written (above); run the export again (the tar is kept, mode 600)"
+  (umask 077; date -Iseconds > "$dir/exported")
+  echo "Exported. Next: scripts/staging.sh audit-supersede load $id --operator $op"
+}
+supersede_close() {  # supersede_close <id> <reason> <operator> [--no-supersede]: the result of a
+  # whole-database restore that cannot be loaded (Q-K100): every hospital not loaded refused
+  local id="$1" reason="$2" op="$3" repo img
+  # A disaster stub that never promoted (no new timeline: its restore failed) is not closed: its
+  # result would make the attempt that did restore read as superseded (review E3)
+  if [[ "$(sup_get "$id" flow)" == disaster && -z "$(sup_get "$id" new_timeline)" ]]; then
+    die "restore $id never promoted (no new timeline in $SUPERSEDE_DIR/$id/state: it failed before the restore finished): nothing to close. It is abandoned; the attempt that followed it supersedes it once that one is loaded or closed"
+  fi
+  img="$(sup_get "$id" image)"
+  [[ -n "$img" ]] && docker image inspect "$img" >/dev/null 2>&1 || img="$(image_id "$(env_get IHR_BACKEND_IMAGE)")"
+  repo="$(repo_of "$(env_get IHR_BACKEND_IMAGE)"):$SUP_TAG"
+  docker tag "$img" "$repo"
+  ( if [[ "$(sup_get "$id" flow)" == disaster ]]; then supersede_keys --events-only; else supersede_keys; fi
+    IHR_BACKEND_IMAGE="$repo" compose run --rm --no-deps -T ${sup_envs[@]+"${sup_envs[@]}"} migrate \
+      python manage.py ihr_audit_supersede close "$id" --reason "$reason" --operator "$op" ${4:+"$4"} ) || return 1
+  [[ ! -d "$SUPERSEDE_DIR/$id" ]] || (umask 077; date -Iseconds > "$SUPERSEDE_DIR/$id/loaded"; date -Iseconds > "$SUPERSEDE_DIR/$id/closed")
+}
+supersede_abandon() {  # supersede_abandon <id> <reason>: an attempt of restore --target that will
+  # be run again (review Q2): `up` stops naming it. Its stub stays in the bucket (write-once) and
+  # alerts as pending until the next attempt's result (load or close) supersedes it
+  local id="$1" reason="$2" dir="$SUPERSEDE_DIR/$1"
+  [[ -f "$dir/state" ]] || die "no restore $id here ($dir)"
+  [[ ! -f "$dir/loaded" ]] || die "restore $id is loaded (or closed) already: nothing to abandon"
+  [[ ! -f "$dir/abandoned" ]] || die "restore $id is abandoned already"
+  (umask 077; { date -Iseconds; echo "$reason"; } > "$dir/abandoned")
+  echo "Restore $id marked abandoned ($dir/abandoned). Retry: scripts/staging.sh down, docker volume rm ${IHR_PROJECT:-indiehr-staging}_pgdata (never down -v), then restore --target again; that attempt's result supersedes this stub"
+}
+sup_local_only() {  # sup_local_only <id>: why the local tar must stay (it holds what no archive does), or ""
+  local member=plan.json
+  [[ "$(sup_get "$1" flow)" != disaster ]] || member=export.json
+  tar -xOf "$SUPERSEDE_DIR/$1/export.tar" "$member" 2>/dev/null | python3 -c '
+import json, sys
+doc = json.load(sys.stdin)
+keep = sorted(h["slug"] for h in doc["hospitals"].values() if h.get("unsealed") or h["outcome"] == "unreadable")
+print(" ".join(keep))' || echo "unreadable-export"
 }
 audit_supersede_cmd() {  # audit-supersede load <id> [--operator NAME] [--image REF] | status <id> [--json] | pending
-  local action="${1:-}" id="${2:-}" op="" json=() repo image=""
+  # | export <id> [--operator NAME] [--accept-unreadable --reason R] | close <id> --reason R [--operator NAME]
+  local action="${1:-}" id="${2:-}" op="" json=() repo image="" reason="" accept=0
+  local usage="usage: scripts/staging.sh audit-supersede load <id> [--operator NAME] | status <id> [--json] | pending | export <id> [--operator NAME] [--accept-unreadable --reason R] | close <id> --reason R [--operator NAME] | abandon <id> --reason R"
   shift 2 2>/dev/null || shift $#
   while (($#)); do
     case "$1" in
       --operator) op="${2:?--operator NAME}"; shift ;;
       --image) image="${2:?--image REF}"; shift ;;
       --json) json=(--json) ;;
-      *) die "usage: scripts/staging.sh audit-supersede load <id> [--operator NAME] | status <id> [--json] | pending" ;;
+      --reason) reason="${2:?--reason TEXT}"; shift ;;
+      --accept-unreadable) accept=1 ;;
+      *) die "$usage" ;;
     esac
     shift
   done
   case "$action" in
     pending) sup_pending; return 0 ;;
-    load|status) [[ "$id" =~ $SUP_RE ]] || die "a restore id (uuid) please" ;;
-    *) die "usage: scripts/staging.sh audit-supersede load <id> [--operator NAME] | status <id> [--json] | pending" ;;
+    load|status|export|close|abandon) [[ "$id" =~ $SUP_RE ]] || die "a restore id (uuid) please" ;;
+    *) die "$usage" ;;
   esac
+  if [[ "$action" == export ]]; then
+    ((accept == 0)) || [[ -n "$reason" ]] || die "--accept-unreadable needs --reason \"<why>\""
+    rel_lock
+    supersede_export_copy "$id" "$(rel_operator "$op")" "$( ((accept)) && echo "$reason" )"
+    return 0
+  fi
+  if [[ "$action" == abandon ]]; then
+    [[ -n "$reason" ]] || die "abandon needs --reason \"<why it is run again>\""
+    supersede_abandon "$id" "$reason"
+    return 0
+  fi
+  if [[ "$action" == close ]]; then
+    [[ -n "$reason" ]] || die "close needs --reason \"<why it cannot be loaded>\""
+    rel_lock
+    sup_db_up
+    supersede_close "$id" "$reason" "$(rel_operator "$op")" || die "the result could not be written (above)"
+    return 0
+  fi
   if [[ "$action" == load ]]; then
     rel_lock
-    [[ -n "$(compose ps -q db 2>/dev/null || true)" ]] || compose up -d --wait db redis
+    sup_db_up
     supersede_load "$id" "$(rel_operator "$op")" "$image" || die "the load did not finish (above): fix the cause and run it again (each step is checked before it is done)"
     return 0
   fi
   repo="$(repo_of "$(env_get IHR_BACKEND_IMAGE)")"
-  if [[ -f "$SUPERSEDE_DIR/$id/state" ]] && docker image inspect "$(sup_get "$id" image)" >/dev/null 2>&1; then
-    docker tag "$(sup_get "$id" image)" "$repo:$SUP_TAG"; repo="$repo:$SUP_TAG"
+  # the build that loaded it when one was named (load --image: a fixed tool), else the export's
+  # (P1-T22c2a live proof: status ran the export's build and showed its bug)
+  image="$(sup_get "$id" load_image)"
+  [[ -n "$image" ]] || image="$(sup_get "$id" image)"
+  if [[ -f "$SUPERSEDE_DIR/$id/state" ]] && docker image inspect "$image" >/dev/null 2>&1; then
+    docker tag "$image" "$repo:$SUP_TAG"; repo="$repo:$SUP_TAG"
   else repo="$(env_get IHR_BACKEND_IMAGE)"; fi
+  if [[ -f "$SUPERSEDE_DIR/$id/closed" && -f "$SUPERSEDE_DIR/$id/export.tar" ]]; then
+    echo "NOTE: this restore was closed and keeps $SUPERSEDE_DIR/$id/export.tar (audit entries, mode 600): the only copy of the old tail (expiry: P1-T22c2b, with Q-K90)" >&2
+  fi
   IHR_BACKEND_IMAGE="$repo" compose --profile admin run --rm --no-deps -T audit-supersede status "$id" ${json[@]+"${json[@]}"}
 }
 s3_events_key() {  # s3-events-key: the events key (P1-T22c, Q-K91) for a stand-in set up before
@@ -2413,6 +2813,7 @@ rollback() {  # rollback [--restore] [--operator NAME]: back to the release befo
   names="backend frontend postgres keycloak acmedns grafana"
   ((restore == 0)) || [[ -n "$(env_get IHR_BACKUP)" ]] || die "no backups set up here"
   rel_check_images "$names" "$plan"
+  rel_level_guard "$(sed -n 's/^target_backend=//p' "$plan")"
   if [[ ! -f "$REL_DIR/stack-$target.tgz" ]] && ! git -C "$ROOT" rev-parse --git-dir >/dev/null 2>&1; then
     echo "WARNING: no stack files kept for $target: the current ones stay" >&2
   fi
@@ -4920,6 +5321,8 @@ case "${1:-}" in
   releases) rlog state "$REL_LOG" "$REL_ATTEMPT" ;;
   # Internal steps of scripts/deploy.sh (a plain start of a release without migrations)
   release-note) rel_lock; release_note ;;
+  # The level check of the build deploy.sh loaded, before a plain start (review E5; a release does it itself)
+  level-guard) rel_level_guard "$(image_id "$(env_get IHR_BACKEND_IMAGE)")" ;;
   release-record) rel_lock; release_record ;;
   db-split-secrets) db_split_secrets "${@:2}" ;;
   watch-reader)  # --check: the audit watch's reader key where monitoring is on ($OUT; deploy.sh, C4)
@@ -4949,7 +5352,7 @@ case "${1:-}" in
   backup-status) backup_status ;;
   backup-now) compose exec -T backup pgbackrest --stanza=main --type="${2:-diff}" backup ;;
   restore-drill) restore_drill "${@:2}" ;;
-  restore) restore_live "${@:2}" ;;
+  restore) restore_cmd "${@:2}" ;;
   mail-init) mail_init "${@:2}" ;;
   mail-check) mail_check "${@:2}" ;;
   s3-check) s3_check ;;

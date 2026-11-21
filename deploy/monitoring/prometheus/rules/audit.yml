@@ -260,6 +260,37 @@ groups:
         annotations:
           summary: "{{ $value | printf \"%.0f\" }} whole-database restore(s) whose timeline change the audit watch never saw (its history starts after it): confirm the restore id against releases.log"
 
+      # A disaster restore serves first and loads its audit tails later (P1-T22c2a, flow b): its
+      # stub plan has no result yet. From the plans alone (no watch history needed: a new
+      # server's watch reports it on its first pass); every hospital sealed after T reads as cut
+      # (AuditChainBroken) until the load
+      - alert: AuditWholeRestorePending
+        expr: ihr_audit_whole_restores_pending > 0
+        labels:
+          severity: warning
+          service: audit-watch
+        annotations:
+          summary: "{{ $value | printf \"%.0f\" }} whole-database restore(s) restored the database and have not loaded their audit tails: scripts/staging.sh audit-supersede export <id>, then load <id> (or close <id> --reason)"
+
+      # A restore closed without its load (review T2, Q-K105): the timeline change is explained
+      # and the cuts stay, but data after the last fingerprint can be lost with no trace. Stays
+      # until the restore id is listed in ihr_audit/acknowledged_closed.txt
+      - alert: AuditWholeRestoreClosed
+        expr: ihr_audit_whole_restores_closed > 0
+        labels:
+          severity: warning
+          service: audit-watch
+        annotations:
+          summary: "{{ $value | printf \"%.0f\" }} whole-database restore(s) were closed (staging.sh audit-supersede close, or restore --no-supersede) without loading their audit tails: data after the last fingerprint may be lost with no trace; ihr_audit_verify names them; review, then list the restore id in ihr_audit/acknowledged_closed.txt"
+
+      - alert: AuditWholeRestorePendingOverdue
+        expr: ihr_audit_whole_restore_pending_oldest_seconds > 172800
+        labels:
+          severity: critical
+          service: audit-watch
+        annotations:
+          summary: "A whole-database restore has waited {{ $value | printf \"%.0f\" }} s for its audit load (48 h at most): load or close it; its backup set leaves the repository after 28 days"
+
   - name: audit-sealing
     rules:
       # Finished entries waiting with no new seal (A6): a seal resets it, a long transaction

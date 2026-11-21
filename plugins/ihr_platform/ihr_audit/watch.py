@@ -196,6 +196,9 @@ def restore_line(restore_id, hospitals):
 
 
 TIMELINES_KEPT = 20
+# How long a disaster restore's timeline change may wait for its load before it counts as
+# unexplained (P1-T22c2a; AuditWholeRestorePendingOverdue fires at the same age)
+PENDING_GRACE = timedelta(hours=48)
 
 
 def event_line(slug, kind):
@@ -644,6 +647,15 @@ class Watch:
         with self.state.lock:
             history = [dict(h) for h in self.state.data.get("timelines", [])]
             seen = set(self.state.data.get("results_seen", []))
+        # Pending loads from the plans alone (P1-T22c2a, goldfish C2-1): no history needed, so
+        # a watch on a new server (a disaster) reports them on its first pass; age from the
+        # plan's stored time
+        now = _now()
+        pending = [found_events.plans[rid] for rid in found_events.pending_loads()]
+        oldest = max(((now - p.stored).total_seconds() for p in pending), default=0)
+        g("ihr_audit_whole_restores_pending", len(pending))
+        g("ihr_audit_whole_restore_pending_oldest_seconds", round(max(oldest, 0), 1))
+        young = [p for p in pending if now - p.stored < PENDING_GRACE]
         # Every change the history keeps, not only the latest (review T7): an unannounced
         # restore followed by an explained one stays unexplained
         unexplained = 0
@@ -658,6 +670,19 @@ class Watch:
                     and not events.corroborated(plan, result, history)
                 ):
                     explained = True
+            # A disaster restore serves before its load (flow b): a change from a pending
+            # plan's old timeline, stored before the watch saw the new one, is pending (its own
+            # gauge, a warning), not unexplained, for PENDING_GRACE; then it is (critical).
+            # Only the newest stub of that old timeline, stored after the watch last saw the
+            # old timeline (the restore is after the loss) and no later than the first sight
+            # of the new one: an orphan stub of an attempt that failed on a server that came
+            # back never explains an unrelated change (review E7)
+            stubs = [p for p in young if p.old_timeline == before["timeline"]]
+            newest = max(stubs, key=lambda p: p.stored, default=None)
+            seen_last = datetime.fromisoformat(before["last"])
+            seen_first = datetime.fromisoformat(after["first"])
+            if newest is not None and seen_last < newest.stored <= seen_first:
+                explained = True
             unexplained += not explained
         g("ihr_audit_timeline_unexplained", unexplained)
         g(
@@ -665,6 +690,17 @@ class Watch:
             len(found_events.uncorroborated & set(found_events.results)),
         )
         g("ihr_audit_whole_restores", len(found_events.results))
+        # Results closed without their audit load, not yet acknowledged (review T2, Q-K105):
+        # the timeline change is explained and the cuts stay, but data after the last
+        # fingerprint can be lost with no trace; one gauge per way of closing (0 when none, so
+        # the alert clears once every one is acknowledged)
+        closed = found_events.closed_results(events.acknowledged_closed())
+        for how in events.CLOSED_HOW:
+            g(
+                "ihr_audit_whole_restores_closed",
+                sum(1 for r in closed.values() if r.closed.get("how") == how),
+                how=how,
+            )
         g(
             "ihr_audit_whole_restores_unanchored",
             len(found_events.unanchored),

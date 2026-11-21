@@ -71,6 +71,19 @@ the plans and results: they excuse on the segment rule alone. This build also re
   each older result's new timeline is the next plan's old one;
 - with the watch's own timeline history (``history``), the change from the plan's old timeline
   to the result's new one was seen between the plan's and the result's stored times (S2).
+
+**Disaster restores (P1-T22c2a; docs/reviews/p1-t22c/design-c2.md, "c2a as decided").**
+``staging.sh restore --target T`` writes a **stub plan** (``flow: "disaster"``, no hospitals)
+before the restore, serves first, then exports each hospital's tail from a copy restored from
+the backup repository and writes the **export doc** beside it:
+
+    anchors/ihr-restores/<platform suffix>/<restore id>/export.json   (EXPORT_FORMAT)
+
+A disaster event's hospital entry comes from the export doc. Its fork point F is the restored
+head, so it is bound from below by entry times (audit S2): the first superseded seal must hold an
+entry after ``floor_cutoff(T)``, unless a single-hospital restore event stored after T - skew
+names F (``fork_floor_problem``). Stubs, export docs and a disaster's events and result are
+written with the events key only (``events_store``, audit S5).
 """
 
 import hashlib
@@ -79,13 +92,43 @@ import re
 import uuid
 from collections import Counter
 from dataclasses import dataclass, field
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
+from pathlib import Path
+
+from ihr_platform import db_limits
 
 from ihr_audit import anchor, oneline, seal
 
 FORMAT = "ihr-audit-event/1"
 PLAN_FORMAT = "ihr-restore-plan/1"
 RESULT_FORMAT = "ihr-restore-result/1"
+EXPORT_FORMAT = "ihr-restore-export/1"  # P1-T22c2a
+FLOWS = ("planned-rollback", "disaster")
+CLOSED_HOW = ("close", "no-supersede")
+ACKNOWLEDGED_CLOSED = Path(__file__).with_name("acknowledged_closed.txt")
+
+
+def acknowledged_closed(path=ACKNOWLEDGED_CLOSED):
+    """Reviewed closed results that no longer alert (P1-T22c2a review T2, Q-K105):
+    {restore id: reason}. A line is ``<restore id> <YYYY-MM-DD> <reason>``."""
+    found = {}
+    for raw in Path(path).read_text().splitlines():
+        line = raw.strip()
+        if not line or line.startswith("#"):
+            continue
+        rid, day, *reason = line.split()
+        datetime.strptime(day, "%Y-%m-%d")  # noqa: DTZ007 (a review date, no time)
+        try:
+            uuid.UUID(rid)
+        except ValueError:
+            reason = []
+        if not reason:
+            msg = f"acknowledged_closed.txt: {line!r} needs a restore id, a date and a reason"
+            raise ValueError(msg)
+        found[rid] = " ".join(reason)
+    return found
+
+
 KINDS = ("restore", "offboarding")
 CAUSES = ("whole-database",)
 TIMELINE_RE = re.compile(
@@ -94,11 +137,16 @@ TIMELINE_RE = re.compile(
 IMAGE_RE = re.compile(r"^sha256:[0-9a-f]{64}$")
 POINT_RE = re.compile(r"^[A-Za-z0-9_.:-]{1,80}$")
 PLAN_OUTCOMES = ("exported", "absent")
-RESULT_OUTCOMES = ("loaded", "unchanged", "absent", "refused")
+EXPORT_OUTCOMES = ("exported", "unreadable")
+RESULT_OUTCOMES = ("loaded", "unchanged", "absent", "refused", "unreadable")
 RESTORE_KEY_RE = re.compile(
     r"^(?P<rid>[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})/"
-    r"(?P<what>plan|result)\.json$"
+    r"(?P<what>plan|export|result)\.json$"
 )
+BACKUP_SET_RE = re.compile(r"^[0-9]{8}-[0-9]{6}F(_[0-9]{8}-[0-9]{6}[DI])?$")
+WAL_RE = re.compile(r"^(?!0{8})[0-9A-F]{24}$")
+LAST_COMMIT_MAX = 40  # an ISO 8601 time with its offset
+REASON_RE = re.compile(r"^[^\x00-\x1f\x7f]{1,200}$")  # one line, no control character
 OPERATOR_RE = re.compile(
     r"^[A-Za-z0-9_.@-]{1,64}$"
 )  # as ihr_fleet_run records operators
@@ -138,6 +186,10 @@ def result_key(restore_id):
     return f"{restores_prefix()}{restore_id}/result.json"
 
 
+def export_key(restore_id):
+    return f"{restores_prefix()}{restore_id}/export.json"
+
+
 def writer_store():
     """The store events, plans and results are added with: the events key (Q-K91), else,
     until the site has one, the fingerprint writer's key scoped to the same prefixes (no
@@ -146,6 +198,13 @@ def writer_store():
         return anchor.S3Store("EVENTS")
     except anchor.NotConfiguredError:
         return anchor.S3Store("WRITE", scope_as="EVENTS")
+
+
+def events_store():
+    """The events key alone (Q-K91), for a disaster restore's documents: a stub, an export
+    doc, its events and result. Never the fingerprint writer's key, which Celery holds (audit
+    S5): without the events key it raises NotConfiguredError (fails closed)."""
+    return anchor.S3Store("EVENTS")  # no fallback to the writer's key (audit S5)
 
 
 TIMELINE_SQL = "SELECT substr(pg_walfile_name(pg_current_wal_lsn()), 1, 8)"
@@ -222,6 +281,9 @@ class Segment:
 
     seals: list
     verify_entries: object = None  # callable() -> [problem]; None: entries not kept
+    # callable(seq) -> the newest ``at`` of that archived seal's entries (None: none kept);
+    # the disaster fork floor reads it (P1-T22c2a). None: cannot be read
+    latest_at: object = None
 
 
 class _Segments:
@@ -237,6 +299,9 @@ class _Segments:
 
 
 SEGMENTS = _Segments()
+NO_SEGMENTS = (
+    _Segments()
+)  # reads none: for a step that has no database (a stub, an export doc)
 
 
 @dataclass
@@ -257,6 +322,7 @@ class Event:
     restore_id: str = ""  # the whole-database restore's id
     problems: list = field(default_factory=list)  # why it excuses nothing
     segment_hashes: dict = field(default_factory=dict)  # seq -> hash hex, once verified
+    segment: object = field(default=None, repr=False, compare=False)  # once verified
 
 
 def _seq_hash(doc, name):
@@ -375,6 +441,8 @@ class Events:
     unsure: dict = field(default_factory=dict)  # uuid -> why
     # Restore ids whose S2 change the watch's history could not judge (review T5)
     uncorroborated: set = field(default_factory=set)
+    # Disaster restores' export docs (P1-T22c2a): restore id -> ExportDoc
+    exports: dict = field(default_factory=dict)
 
     def generation(self, hospital_uuid):
         """The hospital's current restore generation (0: never restored): the highest one in
@@ -417,12 +485,19 @@ class Events:
         """Whole-database restores planned, with no result, whose old timeline is not the
         database's any more: the restore happened and its load has not finished. A
         single-hospital restore waits for them (its generation would be taken twice)."""
+        return self.unfinished(self.timeline)
+
+    def unfinished(self, timeline):
+        """The plans with no result, not superseded, whose old timeline is not ``timeline``:
+        from the plans alone, no watch history needed (P1-T22c2a, goldfish C2-1). ``timeline``:
+        the database's (flow a, the watch) or the repository's newest (a disaster stub)."""
+        if timeline is None:
+            return []
         return sorted(
             rid
             for rid, plan in self.plans.items()
             if rid not in self.results
-            and self.timeline is not None
-            and plan.old_timeline != self.timeline
+            and plan.old_timeline != timeline
             and not self.superseded_plan(plan)
         )
 
@@ -430,12 +505,60 @@ class Events:
         """A plan that never led to a restore (review E1): another plan from the same old
         timeline has a result. A plan's old timeline is the database's at its export, and only
         one restore can move the database off a timeline (the next one gets a new number), so
-        that other run, not this one, moved it on."""
+        that other run, not this one, moved it on. A closed result (nothing loaded) supersedes
+        only the plans stored before it, never a later attempt (P1-T22c2a review E3/Q1: a
+        closed failed attempt, or one whose new timeline never reached the repository, would
+        silence the retry that really moved the database)."""
         return any(
             other.restore_id != plan.restore_id
             and other.restore_id in self.results
             and other.old_timeline == plan.old_timeline
+            and (
+                not self.results[other.restore_id].closed or other.stored > plan.stored
+            )
             for other in self.plans.values()
+        )
+
+    def closed_results(self, acknowledged=()):
+        """Results of whole-database restores whose audit tails were never loaded (``close``,
+        ``restore --no-supersede``), not acknowledged: {restore id: Result}. The timeline change
+        is explained, the cuts stay, but data after the last fingerprint can be lost with no
+        trace (P1-T22c2a review T2, Q-K105): they alert until a reviewer acknowledges them."""
+        return {
+            rid: result
+            for rid, result in sorted(self.results.items())
+            if result.closed and rid not in acknowledged
+        }
+
+    def closed_problems(self, acknowledged=()):
+        """``closed_results`` as lines for ihr_audit_verify."""
+        return [
+            f"whole-database restore {rid}: closed without loading its audit tails "
+            f"({r.closed.get('how')}: {r.closed.get('reason')}); data after the last "
+            "fingerprint may be lost with no trace. Review it, then list it in "
+            "ihr_audit/acknowledged_closed.txt"
+            for rid, r in self.closed_results(acknowledged).items()
+        ]
+
+    def next_step(self, restore_id):
+        """What finishes a pending whole-database restore, in words that depend on its flow: a
+        disaster restore is exported before it is loaded (review Q5)."""
+        rid = str(restore_id)
+        plan = self.plans.get(rid)
+        if plan is not None and plan.flow == FLOWS[1] and rid not in self.exports:
+            return f"scripts/staging.sh audit-supersede export {rid}, then load {rid}"
+        return f"scripts/staging.sh audit-supersede load {rid}"
+
+    def later_attempts(self, plan):
+        """Plans from the same old timeline, stored after ``plan``, with no result: one of them,
+        not ``plan``, may be the restore that moved the database (review E3)."""
+        return sorted(
+            other.restore_id
+            for other in self.plans.values()
+            if other.restore_id != plan.restore_id
+            and other.old_timeline == plan.old_timeline
+            and other.stored > plan.stored
+            and other.restore_id not in self.results
         )
 
 
@@ -478,6 +601,7 @@ def check_restore(event, segments=None):
     event.problems += problems
     if not event.problems:
         event.segment_hashes = {row.seq: bytes(row.hash).hex() for row in rows}
+        event.segment = segment
     return event
 
 
@@ -496,6 +620,55 @@ class Plan:
     old_timeline: str
     image: str
     hospitals: dict  # uuid -> {slug, outcome, lower, head, digest, entries, ...}
+    flow: str = "planned-rollback"
+    source: dict = field(default_factory=dict)  # disaster: backup_set, archive_max
+    no_supersede: str = ""  # disaster: the reason, when nothing is exported
+
+
+@dataclass
+class ExportDoc:
+    """A disaster restore's per-hospital half of its plan, written after the copy's export."""
+
+    key: str
+    restore_id: str
+    stored: datetime
+    written_at: datetime
+    operator: str
+    plan: str
+    old_timeline: str
+    image: str
+    source_end: dict
+    hospitals: dict  # uuid -> {slug, outcome, lower, head, digest, ..., reason}
+    recovery: dict = field(
+        default_factory=dict
+    )  # {stop, replayed}: the restore's own (T3)
+
+
+def recovery_problem(recovery, target_time):
+    """Review T3: why the restore's own record does not put the stub's T inside it, or "".
+    ``stop``: the new timeline's history file's "before" time (the first commit after the
+    target, not applied); ``replayed``: the last commit the recovery applied ("" if none).
+    T must satisfy replayed <= T < stop: the restored database is then the state at T, whatever
+    target pgBackRest was given (a quiet database may stop minutes after T: still the state at
+    T). The c2b ceiling (S6) completes it."""
+    if not isinstance(recovery, dict) or not recovery.get("stop"):
+        return "no recovery stop time (the restore's history file) is recorded"
+    try:
+        stop = _time(recovery, "stop")
+        replayed = _time(recovery, "replayed") if recovery.get("replayed") else None
+    except (ValueError, TypeError):
+        return "the recovery's stop or last applied commit is not a time"
+    if stop <= target_time:
+        return (
+            f"the recovery stopped before a commit at {stop.isoformat()}, not after T "
+            f"({target_time.isoformat()}): its target was earlier than the stub's"
+        )
+    if replayed is not None and replayed > target_time:
+        return (
+            f"the recovery applied a commit at {replayed.isoformat()}, after T "
+            f"({target_time.isoformat()}): its target was later than the stub's"
+        )
+    return ""
 
 
 @dataclass
@@ -509,6 +682,7 @@ class Result:
     old_timeline: str
     new_timeline: str
     hospitals: dict  # uuid -> {slug, outcome, generation, event, fork}
+    closed: dict = field(default_factory=dict)  # {reason, how}: closed, nothing loaded
 
 
 def _int(value, low=0):
@@ -534,7 +708,7 @@ def _point(part):
     return {"seq": _int(part.get("seq")), "hash": _hash(part.get("hash"))}
 
 
-def _plan_hospital(entry):
+def _plan_hospital(entry, outcomes=PLAN_OUTCOMES):
     if not isinstance(entry, dict):
         msg = "a hospital entry that is not an object"
         raise ValueError(msg)
@@ -563,12 +737,21 @@ def _plan_hospital(entry):
     }
     if (
         not (isinstance(out["slug"], str) and anchor.SLUG_RE.match(out["slug"]))
-        or out["outcome"] not in PLAN_OUTCOMES
+        or out["outcome"] not in outcomes
         or head["seq"] < lower["seq"]
         or (head["seq"] > lower["seq"]) != bool(out["digest"])
     ):
         msg = "slug, outcome, head or digest is not ours"
         raise ValueError(msg)
+    if out["outcome"] == "unreadable":  # an export doc's: why, and nothing exported
+        out["reason"] = entry.get("reason")
+        if (
+            not (isinstance(out["reason"], str) and REASON_RE.match(out["reason"]))
+            or (head["seq"], head["hash"]) != (lower["seq"], lower["hash"])
+            or out["package_sha256"]
+        ):
+            msg = "an unreadable hospital names a package, or no reason"
+            raise ValueError(msg)
     return out
 
 
@@ -624,7 +807,7 @@ def parse_restore_doc(key, body, stored):
         if key.startswith(restores_prefix())
         else None
     )
-    fmt = {"plan": PLAN_FORMAT, "result": RESULT_FORMAT}.get(
+    fmt = {"plan": PLAN_FORMAT, "result": RESULT_FORMAT, "export": EXPORT_FORMAT}.get(
         named["what"] if named else ""
     )
     if not named or doc.get("format") != fmt or doc.get("platform") != anchor.prefix():
@@ -659,21 +842,21 @@ def parse_restore_doc(key, body, stored):
         ):
             msg = "target or image is not ours"
             raise ValueError(msg)
-        return Plan(
-            key,
-            rid,
-            stored,
-            written,
-            operator,
-            target["name"],
-            _time(target, "time"),
-            old,
-            doc["image"],
-            {u: _plan_hospital(e) for u, e in doc["hospitals"].items()},
-        )
+        return _plan(doc, key, rid, stored, written, operator, target, old)
+    if named["what"] == "export":
+        return _export(doc, key, rid, stored, written, operator, old)
     new, plan = doc.get("new_timeline"), doc.get("plan")
     if not (isinstance(new, str) and TIMELINE_RE.match(new)) or plan != plan_key(rid):
         msg = "new_timeline or plan is not ours"
+        raise ValueError(msg)
+    closed = doc.get("closed", {})
+    if closed and not (
+        isinstance(closed, dict)
+        and closed.get("how") in CLOSED_HOW
+        and isinstance(closed.get("reason"), str)
+        and REASON_RE.match(closed["reason"])
+    ):
+        msg = "closed is not ours"
         raise ValueError(msg)
     return Result(
         key,
@@ -685,6 +868,92 @@ def parse_restore_doc(key, body, stored):
         old,
         new,
         {u: _result_hospital(e) for u, e in doc["hospitals"].items()},
+        dict(closed),
+    )
+
+
+def _plan(doc, key, rid, stored, written, operator, target, old):
+    flow = doc.get("flow", FLOWS[0])
+    if flow not in FLOWS:
+        msg = "flow is not ours"
+        raise ValueError(msg)
+    source, reason = {}, ""
+    if flow == "disaster":  # a stub: no hospitals, the repository it was restored from
+        part = doc.get("source")
+        if (
+            doc["hospitals"]
+            or not isinstance(part, dict)
+            or not BACKUP_SET_RE.match(str(part.get("backup_set", "")))
+            or not WAL_RE.match(str(part.get("archive_max", "")))
+            or part["archive_max"][:8] != old
+        ):
+            msg = "a disaster stub's hospitals or source is not ours"
+            raise ValueError(msg)
+        source = {"backup_set": part["backup_set"], "archive_max": part["archive_max"]}
+        if "no_supersede" in doc:
+            reason = (
+                (doc["no_supersede"] or {}).get("reason")
+                if isinstance(doc["no_supersede"], dict)
+                else None
+            )
+            if not (isinstance(reason, str) and REASON_RE.match(reason)):
+                msg = "no_supersede is not ours"
+                raise ValueError(msg)
+    return Plan(
+        key,
+        rid,
+        stored,
+        written,
+        operator,
+        target["name"],
+        _time(target, "time"),
+        old,
+        doc["image"],
+        {u: _plan_hospital(e) for u, e in doc["hospitals"].items()},
+        flow,
+        source,
+        reason,
+    )
+
+
+def _export(doc, key, rid, stored, written, operator, old):
+    end = doc.get("source_end")
+    if (
+        doc.get("plan") != plan_key(rid)
+        or not (isinstance(doc.get("image"), str) and IMAGE_RE.match(doc["image"]))
+        or not isinstance(end, dict)
+        or not BACKUP_SET_RE.match(str(end.get("backup_set", "")))
+        or not isinstance(end.get("last_commit", ""), str)
+        or len(end.get("last_commit", "")) > LAST_COMMIT_MAX
+    ):
+        msg = "plan, image or source_end is not ours"
+        raise ValueError(msg)
+    if end.get("last_commit"):
+        _time(end, "last_commit")
+    recovery = doc.get("recovery", {})
+    if recovery and (
+        not isinstance(recovery, dict)
+        or set(recovery) - {"stop", "replayed"}
+        or not all(
+            isinstance(recovery.get(k, ""), str)
+            and len(recovery.get(k, "")) <= LAST_COMMIT_MAX
+            for k in ("stop", "replayed")
+        )
+    ):
+        msg = "recovery is not ours"
+        raise ValueError(msg)
+    return ExportDoc(
+        key,
+        rid,
+        stored,
+        written,
+        operator,
+        doc["plan"],
+        old,
+        doc["image"],
+        {"last_commit": end.get("last_commit", ""), "backup_set": end["backup_set"]},
+        {u: _plan_hospital(e, EXPORT_OUTCOMES) for u, e in doc["hospitals"].items()},
+        {k: recovery.get(k, "") for k in ("stop", "replayed")} if recovery else {},
     )
 
 
@@ -697,6 +966,7 @@ def _read_restore_docs(store, found):
             )
             found.plans.pop(key.rsplit("/", 2)[-2], None)
             found.results.pop(key.rsplit("/", 2)[-2], None)
+            found.exports.pop(key.rsplit("/", 2)[-2], None)
             continue
         seen.add(key)
         if version is None:
@@ -713,9 +983,37 @@ def _read_restore_docs(store, found):
                 f"({type(exc).__name__}: {shown(exc, 200)})"
             )
             continue
-        (found.plans if isinstance(doc, Plan) else found.results)[doc.restore_id] = doc
-    # A result whose plan is missing, or that names its plan's old timeline as its new one, is
-    # a bad object too (S2): it anchors nothing
+        where = (
+            found.plans
+            if isinstance(doc, Plan)
+            else found.exports
+            if isinstance(doc, ExportDoc)
+            else found.results
+        )
+        where[doc.restore_id] = doc
+    _check_exports(found)
+    _check_results(found)
+
+
+def _check_exports(found):
+    """An export doc continues a disaster stub, stored after it, from the same old timeline."""
+    for rid, exp in list(found.exports.items()):
+        plan = found.plans.get(rid)
+        why = ""
+        if plan is None or plan.flow != "disaster":
+            why = "no disaster plan before it"
+        elif exp.stored < plan.stored:
+            why = "stored before its plan"
+        elif exp.old_timeline != plan.old_timeline:
+            why = "its old timeline is not its plan's"
+        if why:
+            found.problems.append(f"restore object {shown(exp.key)}: export doc, {why}")
+            found.exports.pop(rid)
+
+
+def _check_results(found):
+    """A result whose plan is missing, or that names its plan's old timeline as its new one, is
+    a bad object too (S2): it anchors nothing."""
     for rid, result in list(found.results.items()):
         plan = found.plans.get(rid)
         why = ""
@@ -816,11 +1114,180 @@ def _lower_claim(plan, hospital_uuid, store, cache):
     return seq, digest
 
 
+# --- disaster restores: the lower bound and the fork floor (P1-T22c2a) ------------------------
+
+# How far before T the newest entry of the first superseded seal may lie: the writer's clock
+# skew plus the worker profile's idle-in-transaction limit (db_limits; Q-K99). That limit bounds
+# only the idle gaps of a transaction, not its total time (the worker's statement limit is 300 s
+# and the owner profile has none; no transaction_timeout is set, Q-K96): a transaction that
+# stays open longer than this and commits just after T makes the first seal after T hold only
+# older entries, a false refusal that fails closed (the load is refused: close it; review T4,
+# known limit, Q-K99). An entry committed after T was inserted (``at`` = clock_timestamp()) at
+# most that long before its commit in every other case
+FLOOR_MARGIN = anchor.CLOCK_SKEW + timedelta(
+    milliseconds=db_limits.PROFILES["worker"].idle_in_transaction
+)
+
+
+def floor_cutoff(target_time):
+    return target_time - FLOOR_MARGIN
+
+
+def verified_before(other, event):
+    """Review T1: does ``other`` count for a reader's lower bound or fork floor of the disaster
+    event ``event``? Only a verified event (no problems: its superseded segment checked) of an
+    earlier generation, stored no later than it. A forged event (no segment) moves nothing."""
+    return (
+        not other.problems
+        and other.generation < event.generation
+        and other.stored <= event.stored
+    )
+
+
+def fork_floor_problem(target_time, fork, latest_at, restores, event=None):
+    """Audit S2: why a disaster restore's fork point F is below its floor, or "". The first
+    superseded seal (F + 1) was sealed after T, so it must hold an entry newer than
+    ``floor_cutoff(T)`` (``latest_at``: its newest entry's ``at``, which the seal hash covers).
+    Else the restored chain was cut below its head at T (a rewritten restored seal): refused,
+    unless a single-hospital restore event (no ``cause``) stored at or after T - skew names F
+    as its ``restored_to`` (a restore from an older dump after T; S3). ``event``: the disaster
+    event (every reader): only an event ``verified_before`` it counts (review T1). The load's
+    own check (None) reads no segments: a restore after T has its segment only in the
+    package; the readers' stricter check then refuses a forged one."""
+    cutoff = floor_cutoff(target_time)
+    if latest_at is not None and latest_at > cutoff:
+        return ""
+    for other in restores:
+        if event is not None and not verified_before(other, event):
+            continue
+        if (
+            not other.cause
+            and other.stored >= target_time - anchor.CLOCK_SKEW
+            and tuple(other.restored_to or ()) == tuple(fork)
+        ):
+            return ""
+    newest = "none" if latest_at is None else latest_at.isoformat()
+    return (
+        f"its fork point (seal {fork[0]}) is below the floor: the first superseded seal holds "
+        f"no entry after {cutoff.isoformat()} (T - {FLOOR_MARGIN}; its newest: {newest}), so "
+        "it was in the database at T (audit S2)"
+    )
+
+
+def lower_of(claim, claim_stored, restores, before, generation=None):
+    """A disaster restore's lower bound L (design.md §3): the claim (seq, hash) of the newest
+    fingerprint stored at or before T - skew, lowered to the ``restored_to`` of any restore
+    event of the hospital stored after that fingerprint and before ``before`` (the stub's
+    stored time: an event after it, this restore's own or a later one on the new timeline, is
+    nothing the repository copy holds). No claim: (0, genesis) (live proof: an event never
+    raises L above genesis). ``generation`` (every reader: the disaster event's): only a
+    verified event (no problems) of an earlier generation lowers L (review T1). The exporters
+    (None) read no segments, so they go by time only: a forged event they took makes the
+    export's L differ from the readers', and the disaster event excuses nothing."""
+    if not claim:
+        return (0, seal.GENESIS.hex())
+    best = tuple(claim[:2])
+    for event in restores:
+        if event.stored <= claim_stored or event.stored >= before:
+            continue
+        if generation is not None and (
+            event.problems or event.generation >= generation
+        ):
+            continue
+        here = tuple(event.restored_to or ())
+        if here and here[0] < best[0]:
+            best = here
+    return best
+
+
+def disaster_lower(plan, hospital_uuid, store, cache, restores, generation):
+    """L of one hospital for a disaster plan, re-read from the bucket; None if unreadable.
+    ``generation``: the disaster event's (only verified earlier events count; review T1)."""
+    ckey = ("disaster", plan.key)
+    if ckey not in cache:
+        try:
+            _key, stored, claims = anchor.claims_at_full(
+                store, plan.target_time - anchor.CLOCK_SKEW
+            )
+            cache[ckey] = (stored, claims)
+        except Exception:
+            cache[ckey] = None
+    if cache[ckey] is None:
+        return None
+    stored, claims = cache[ckey]
+    claim = claims.get(hospital_uuid)
+    return lower_of(claim, stored if claim else None, restores, plan.stored, generation)
+
+
+def _check_disaster(event, found, store, cache, why):
+    """check_whole's half for a disaster plan: the hospital entry is the export doc's."""
+    plan, exp = found.plans[event.restore_id], found.exports.get(event.restore_id)
+    sup = event.superseded
+    if exp is None or exp.stored > event.stored:
+        why.append("no export doc stored before it")
+        return
+    text = recovery_problem(exp.recovery, plan.target_time)
+    if text:  # every reader requires it (review T3)
+        why.append(f"its export doc: {text}")
+    mine = exp.hospitals.get(event.hospital)
+    if mine is None or mine["outcome"] != "exported":
+        why.append("its export doc did not export this hospital")
+        return
+    lower = (mine["lower"]["seq"], mine["lower"]["hash"])
+    if not lower[0] <= event.restored_to[0] < mine["head"]["seq"]:
+        why.append(
+            f"its fork point (seal {event.restored_to[0]}) is not between its export's lower "
+            f"bound (seal {lower[0]}) and head (seal {mine['head']['seq']})"
+        )
+    if (mine["head"]["seq"], mine["head"]["hash"]) != (sup["to_seq"], sup["head_hash"]):
+        why.append("its superseded tail does not end at its export's head")
+    claim = disaster_lower(
+        plan,
+        event.hospital,
+        store,
+        cache,
+        found.restores.get(event.hospital, []),
+        event.generation,
+    )
+    if claim is None:
+        why.append("the fingerprints at its restore point are unreadable")
+    elif claim != lower:
+        why.append(
+            f"its export's lower bound (seal {lower[0]}) is not the one the bucket gives at "
+            f"T - skew (seal {claim[0]})"
+        )
+
+
+def check_floor(event, found):
+    """After check_restore: a disaster event's fork floor, from the verified archived segment
+    (every reader; the load checks it too). Adds a problem."""
+    plan = found.plans.get(event.restore_id)
+    if event.problems or plan is None or plan.flow != "disaster":
+        return event
+    segment, first = event.segment, event.superseded["from_seq"]
+    try:
+        latest = segment.latest_at(first) if segment and segment.latest_at else None
+    except Exception:  # unreadable: no floor, so it excuses nothing
+        latest = None
+    text = fork_floor_problem(
+        plan.target_time,
+        event.restored_to,
+        latest,
+        found.restores.get(event.hospital, []),
+        event,
+    )
+    if text:
+        event.problems.append(f"whole-database restore {event.restore_id[:8]}: {text}")
+        event.segment_hashes = {}
+    return event
+
+
 def check_whole(event, found, store, history=None, cache=None):  # noqa: PLR0912
     """The whole-database checks of one restore event (see the module text). Adds problems:
     an event with any excuses nothing."""
     rid, why = event.restore_id, []
     plan, result = found.plans.get(rid), found.results.get(rid)
+    cache = {} if cache is None else cache
     # Storage times are whole seconds (S3 LastModified): "before" and "after" below allow the
     # same second, never an earlier one
     if plan is None or plan.stored > event.stored:
@@ -837,7 +1304,9 @@ def check_whole(event, found, store, history=None, cache=None):  # noqa: PLR0912
             why.append("its result does not name it")
         if result.stored < event.stored:
             why.append("its result was stored before it")
-    if plan is not None:
+    if plan is not None and plan.flow == "disaster":
+        _check_disaster(event, found, store, cache, why)
+    elif plan is not None:
         mine = plan.hospitals.get(event.hospital)
         sup = event.superseded
         if mine is None or mine["outcome"] != "exported":
@@ -855,9 +1324,7 @@ def check_whole(event, found, store, history=None, cache=None):  # noqa: PLR0912
                 sup["digest"],
             ):
                 why.append("its superseded tail is not the one its plan exported")
-            claim = _lower_claim(
-                plan, event.hospital, store, {} if cache is None else cache
-            )
+            claim = _lower_claim(plan, event.hospital, store, cache)
             if claim is None:
                 why.append("the fingerprints at its restore point are unreadable")
             elif claim != lower:
@@ -927,8 +1394,12 @@ def read(store=None, segments=None, timeline=..., history=None):  # noqa: PLR091
             found.offboarded.setdefault(event.hospital, event)
         else:
             restores.setdefault(event.hospital, []).append(event)
-    for hospital_uuid, events in restores.items():
+    # Every event is read before any is checked: a disaster event's lower bound and floor read
+    # the hospital's other events (P1-T22c2a)
+    for events in restores.values():
         events.sort(key=lambda e: (e.generation, e.stored))
+    found.restores = restores
+    for events in restores.values():
         expected = 1
         for event in events:
             if event.generation != expected:
@@ -944,7 +1415,8 @@ def read(store=None, segments=None, timeline=..., history=None):  # noqa: PLR091
             if event.cause:
                 check_whole(event, found, store, history, lowers)
             check_restore(event, segments)
-        found.restores[hospital_uuid] = events
+            if event.cause:
+                check_floor(event, found)
     return found
 
 
@@ -1077,16 +1549,20 @@ def plan_document(
     hospitals,
     operator,
     now=None,
+    flow=FLOWS[0],
+    extra=None,
 ):
     """A whole-database restore's plan (supersede.py export): written before the destructive
-    step. ``hospitals``: {uuid: entry} as _plan_hospital reads it."""
+    step. ``hospitals``: {uuid: entry} as _plan_hospital reads it. A disaster restore's stub:
+    ``flow="disaster"``, no hospitals, ``extra`` = {"source": ..., ["no_supersede": ...]}."""
     now = now or datetime.now(UTC)
     doc = {
+        **(extra or {}),
         "format": PLAN_FORMAT,
         "platform": anchor.prefix(),
         "restore_id": str(restore_id),
         "kind": "whole-database",
-        "flow": "planned-rollback",
+        "flow": flow,
         "written_at": now.isoformat(),
         "operator": operator,
         "target": {"name": target_name, "time": target_time.isoformat()},
@@ -1100,12 +1576,37 @@ def plan_document(
     return doc
 
 
-def result_document(
-    restore_id, old_timeline, new_timeline, hospitals, operator, now=None
+def export_document(
+    restore_id, old_timeline, image, hospitals, operator, source_end, now=None
 ):
-    """A whole-database restore's result (supersede.py load): after every hospital."""
+    """A disaster restore's export doc (supersede.py export_disaster): ``hospitals`` as
+    _plan_hospital reads them (outcome exported or unreadable)."""
     now = now or datetime.now(UTC)
     doc = {
+        "format": EXPORT_FORMAT,
+        "platform": anchor.prefix(),
+        "restore_id": str(restore_id),
+        "plan": plan_key(restore_id),
+        "written_at": now.isoformat(),
+        "operator": operator,
+        "old_timeline": old_timeline,
+        "image": image,
+        "source": "repository",
+        "source_end": source_end,
+        "hospitals": hospitals,
+    }
+    parse_restore_doc(export_key(restore_id), _body(doc), now)
+    return doc
+
+
+def result_document(
+    restore_id, old_timeline, new_timeline, hospitals, operator, now=None, closed=None
+):
+    """A whole-database restore's result (supersede.py load): after every hospital.
+    ``closed``: {reason, how} when it was closed with nothing loaded (supersede.close)."""
+    now = now or datetime.now(UTC)
+    doc = {
+        **({"closed": closed} if closed else {}),
         "format": RESULT_FORMAT,
         "platform": anchor.prefix(),
         "restore_id": str(restore_id),
