@@ -162,6 +162,10 @@ then a Sonnet fixer for the rest.
   2. "Builders: write the failing test first (Superpowers `test-driven-development`). Before
      reporting done, show the command and its output (`verification-before-completion`)."
   3. "Report how many graphify calls you made."
+
+  The EGM agent types (`egm:*`) have only Read, Grep and Glob, so they cannot run graphify. Leave
+  steps 1 and 3 out of their briefs. When a goldfish needs the call graph, run the
+  `graphify explain` calls yourself and paste the output into its brief (2026-11-21).
 - **Superpowers skills used here:** `test-driven-development`, `verification-before-completion`,
   `systematic-debugging`, and `receiving-code-review` for fixers. **Not used here:**
   - `using-git-worktrees`, `finishing-a-development-branch`: we commit straight to main.
