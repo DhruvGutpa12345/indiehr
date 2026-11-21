@@ -132,7 +132,7 @@ class Command(BaseCommand):
 
         from ihr_platform.keycloak import totp
         from ihr_platform.keycloak.hospital import ensure_member, hospital_ids
-        from ihr_platform.keycloak.users import create_user
+        from ihr_platform.keycloak.users import create_user_with_new_password
         from ihr_platform.management.commands.ihr_keycloak_sync import keycloak_admin
 
         hospital = Hospital.objects.filter(slug=slug, status="active").first()
@@ -144,7 +144,6 @@ class Command(BaseCommand):
             raise CommandError(msg)
         form = op.input
         username = f"admin.{slug}"[:30]
-        password = f"Ihr-{secrets.token_urlsafe(12)}-7"
         otp_secret = totp.new_secret()
         admin = keycloak_admin()
         with schema_context(hospital.schema_name):
@@ -154,12 +153,12 @@ class Command(BaseCommand):
             ):
                 admin.call("DELETE", f"users/{link.keycloak_sub}", ok=(204, 404))
                 link.delete()
-        sub = create_user(
+        sub, password = create_user_with_new_password(
             admin,
             username,
             form["admin_first_name"],
             form["admin_last_name"],
-            password,
+            lambda: f"Ihr-{secrets.token_urlsafe(12)}-7",
             otp_secret,
             replace=False,
         )

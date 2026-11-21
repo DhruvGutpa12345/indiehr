@@ -17,7 +17,7 @@ from django_tenants.utils import schema_context
 from ihr_platform.keycloak import totp
 from ihr_platform.keycloak.hospital import ensure_member, hospital_ids
 from ihr_platform.keycloak.kc_http import KeycloakError
-from ihr_platform.keycloak.users import create_user
+from ihr_platform.keycloak.users import create_user_with_new_password
 from ihr_platform.management.commands.ihr_keycloak_sync import keycloak_admin
 from ihr_platform.models import Hospital
 
@@ -80,8 +80,10 @@ def _demo_operator():
     from ihr_platform.models import OperatorAccount
 
     ops = keycloak_admin(settings.IHR_OPS_REALM)
-    password, otp_secret = new_password(), totp.new_secret()
-    sub = create_user(ops, "op.owner", "Owner", "Operator", password, otp_secret)
+    otp_secret = totp.new_secret()
+    sub, password = create_user_with_new_password(
+        ops, "op.owner", "Owner", "Operator", new_password, otp_secret
+    )
     role = ops.get(f"roles/{q(OPERATOR_ROLE)}")
     ops.post(f"users/{sub}/role-mappings/realm", [role])
     OperatorAccount.objects.filter(name="Owner Operator (demo)").delete()
@@ -119,10 +121,9 @@ class Command(BaseCommand):
                 for slug, h in hospitals.items()
             }
             for username, first, last, member_of, has_otp in DEMO_STAFF:
-                password = new_password()
                 otp_secret = totp.new_secret() if has_otp else None
-                user_id = create_user(
-                    admin, username, first, last, password, otp_secret
+                user_id, password = create_user_with_new_password(
+                    admin, username, first, last, new_password, otp_secret
                 )
                 for slug, care_user in member_of.items():
                     ensure_member(admin, ids[slug], user_id)

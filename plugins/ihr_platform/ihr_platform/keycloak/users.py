@@ -9,6 +9,39 @@ import json
 from . import totp
 from .kc_http import KeycloakError, q
 
+BLOCK_LIST_REFUSAL = "invalidPasswordBlacklistedMessage"
+
+
+def create_user_with_new_password(
+    admin,
+    username,
+    first,
+    last,
+    make_password,
+    otp_secret=None,
+    *,
+    replace=True,
+    tries=3,
+):
+    """``create_user`` with a password from ``make_password()``; returns (sub, password).
+
+    Only for passwords we generate at random. Keycloak checks its block list with a Bloom filter
+    that wrongly refuses about 1 in 10,000 passwords (``falsePositiveProbability=1.0E-4`` in its
+    start-up log), so on that refusal a new password is drawn, at most ``tries`` times. Any other
+    refusal is raised at once."""
+    for attempt in range(tries):
+        password = make_password()
+        try:
+            sub = create_user(
+                admin, username, first, last, password, otp_secret, replace=replace
+            )
+        except KeycloakError as exc:
+            if BLOCK_LIST_REFUSAL not in str(exc) or attempt == tries - 1:
+                raise
+            continue
+        return sub, password
+    raise AssertionError("unreachable")
+
 
 def create_user(
     admin, username, first, last, password, otp_secret=None, *, replace=True
