@@ -69,13 +69,13 @@ Further reading:
 - **TokenEconomizer (plugin, set up 2026-11-17).** Its hooks learn from every session in this repo.
   - Its settings live outside the repo, in `~/.tokeneconomizer/repos/indiehr-*/config.json`:
     - `microskills=on`: repo facts injected at session start once 3 sessions confirm them;
-    - `toolprune=propose`: unused tools are only proposed, never removed by themselves, so a rarely used tool, such as the browser for click-throughs, cannot vanish mid-run;
+    - `toolprune=auto` (owner's call, 2026-11-21): tools never used in this repo, mostly the account's connectors such as WordPress, Canva, Gmail and Drive, are left out from the next session, via deny rules in the git-excluded `.claude/settings.local.json`. `toolprune_protect` keeps everything a run needs, however rarely used: core tools, Agent/Workflow/Skill, web, the browsers, `mcp__ccd_*`, terminal, scheduled tasks, artifacts and notifications. Undo with `te --host claude toolprune restore [NAME]`;
     - `loopguard=nudge`.
   - Terminal commands are free; slash commands cost a turn. Run `~/.tokeneconomizer/bin/te --host claude status|microskills|toolprune|doctor` from the repo.
   - Its model calls (the loop guard's judge, the fact proposer) go through `~/.local/bin/claude`, a wrapper for the desktop app's bundled CLI. That CLI must be signed in once by the owner (`claude` in a terminal, then `/login`). Until then those calls pause and the rest still works.
   - Repomap is off on purpose: it adds about 2k tokens to every request, and local graphify covers "where is X".
 - **Tool upkeep:** the weekly scheduled task `indiehr-tool-upkeep` (Monday, 10:00 IST) and every `/run-until` close (§7) run the same checks:
-  - TokenEconomizer: `te status`, `te microskills`, and `te toolprune`. Apply a proposal only for tools this project never needs.
+  - TokenEconomizer: `te status`, `te microskills`, and `te toolprune`. Check what auto-pruning left out; restore anything a task needed (`toolprune restore NAME`) and add it to `toolprune_protect`.
   - Local graphify: run `graphify hook status`, check the graph's age against the last commit, and read the end of `~/.cache/graphify-rebuild.log`. Once a week run `graphify update . --force` and `graphify cluster-only . --no-viz --no-label`, and record the node count.
   - EGM: an update check.
   - Adoption: `scripts/tool-adoption.py --since <last check>`: graphify against grep, EGM lenses, Superpowers skills. Below a 25 % graph share, fix the briefs.
