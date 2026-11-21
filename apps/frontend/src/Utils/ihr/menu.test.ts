@@ -499,9 +499,10 @@ describe("our items and the overview shortcut", () => {
       );
     assert.deepEqual(
       ihrOurItems(admin({}), BASE).map((i) => i.key),
-      ["audit"],
+      ["audit", "packs"],
     );
     assert.equal(ihrOurItems(admin({}), BASE)[0].url, `${BASE}/ihr/audit`);
+    assert.equal(ihrOurItems(admin({}), BASE)[1].url, `${BASE}/ihr/packs`);
     // not for a non-admin, a restricted answer, a superuser, or while pending
     assert.deepEqual(ihrOurItems(admin({ hospital_admin: false }), BASE), []);
     assert.deepEqual(ihrOurItems(admin({ restricted: true }), BASE), []);
@@ -510,7 +511,9 @@ describe("our items and the overview shortcut", () => {
     // none of the eight roles, the Radiologist included
     for (const role of Object.keys(SLUGS.grants)) {
       assert.ok(
-        !ihrOurItems(roleAccess(role), BASE).some((i) => i.key === "audit"),
+        !ihrOurItems(roleAccess(role), BASE).some(
+          (i) => i.key === "audit" || i.key === "packs",
+        ),
         role,
       );
     }
@@ -521,9 +524,13 @@ describe("our items and the overview shortcut", () => {
       BASE,
       makeOurs,
     );
-    assert.deepEqual(links.at(-1), {
+    assert.deepEqual(links.at(-2), {
       name: "ours_audit",
       url: `${BASE}/ihr/audit`,
+    });
+    assert.deepEqual(links.at(-1), {
+      name: "ours_packs",
+      url: `${BASE}/ihr/packs`,
     });
   });
 

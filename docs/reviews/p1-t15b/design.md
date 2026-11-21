@@ -38,12 +38,13 @@ clinical), TENANCY §5-§7. New decisions are Q-K60 onward (§5), auto-accepted,
   identifier key is a URI.
 - **List query:** `state=pending|kept` (default both), `pack=`, `kind=`, `facility=<uuid>` (b3),
   `limit` (default 50, max 200), `offset`. Unknown values are a 400. Sorted by pack, then item.
-- **List body:** `{count, results: [{id, pack, kind, item, label, facility, state, reason, applied_version, pending_version, changed_at}]}`. `facility` is the facility's external id as
-  a bare string, or null for a hospital-wide item (no name; `api.py:122-124`). `label` is the row's display
+- **List body:** `{count, results: [{id, pack, kind, item, label, facility, facility_name, state, reason, applied_version, pending_version, changed_at}]}`. `facility` is the facility's external id as
+  a bare string (the value `?facility=` takes), or null for a hospital-wide item; `facility_name` is that facility's
+  name, or null (P1-T24c G6; `api.py:_summary`, from the join `_shown` already makes, so no extra query). `label` is the row's display
   name: value set name, identifier `display`, form title, definition title.
 - **Detail body:** the list fields plus `pending_sha256`, `effect` (`create`, `update`,
   `restore`, `retire`; forms return `new-version` or `status-only` instead of `update`, see
-  `forms.py:368-375`), `blocked` (`""`, `conflict`, `data-check`, `missing-link`; accept
+  `forms.py:effect`; there is no `new-form-version`), `blocked` (`""`, `conflict`, `data-check`, `missing-link`; accept
   is refused while set), `conflicts` (counts only, §3.3) and `fields`:
   - one entry per field the pack sets: `{field, hospital, pack, previous}`. `previous` is what
     the pack last applied, rebuilt from the applied version's file (released files stay in the
@@ -116,8 +117,12 @@ clinical), TENANCY §5-§7. New decisions are Q-K60 onward (§5), auto-accepted,
 | bad body, bad reason | 400 | `{field: message}` |
 | not a hospital-wide admin | 403 | fixed text |
 | no such item, not pending/kept, deleted facility | 404 | fixed text |
-| stale version/sha, newer release not applied yet, blocked | 409 | `{detail, stale|blocked: true}` |
-| lock busy (pack apply, release, dump, restore) | 409 | `{detail, busy: true}`, `Retry-After: 60` |
+| stale version/sha, newer release not applied yet, blocked | 409 | `{detail, code, stale|blocked: true}` |
+| lock busy (pack apply, release, dump, restore) | 409 | `{detail, code: "busy", busy: true}`, `Retry-After: 60` |
+
+Every refusal other than a field-keyed 400 carries `code`, the machine-readable answer
+(P1-T24c): `not-found`, `not-live`, `stale`, `blocked`, `busy`, `rate`, `in-flight`,
+`unavailable`; a 400 from the engine is `{reason, code: "refused"}`. Table: docs/reviews/p1-t24/design.md "T24c as decided".
 
 - The busy text never names the other job.
 - **Limits:** at most 30 decisions per user per minute, answered 429 beyond that. The counter is

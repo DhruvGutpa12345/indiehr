@@ -413,3 +413,19 @@ export function ihrAccountOfVisitQuery(encounterId: string): {
 } {
   return { encounter: encounterId, limit: 1 };
 }
+
+/**
+ * The visit page's Booking card (P1-T24c): only when the booking has a booked time or a slot
+ * time to show; an empty booking object shows no card.
+ */
+export function ihrShowBookingCard(
+  booking:
+    | {
+        booked_on?: string | null;
+        token_slot?: { start_datetime?: string | null } | null;
+      }
+    | null
+    | undefined,
+): boolean {
+  return Boolean(booking?.booked_on || booking?.token_slot?.start_datetime);
+}

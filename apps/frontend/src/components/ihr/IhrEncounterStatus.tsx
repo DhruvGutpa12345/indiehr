@@ -16,7 +16,11 @@ import { Button } from "@/components/ui/button";
 import Loading from "@/components/Common/Loading";
 import Page from "@/components/Common/Page";
 
-import { ihrAccountOfVisitQuery, ihrStatusBlocks } from "@/Utils/ihr/frontDesk";
+import {
+  ihrAccountOfVisitQuery,
+  ihrShowBookingCard,
+  ihrStatusBlocks,
+} from "@/Utils/ihr/frontDesk";
 import { indiaDateTime } from "@/Utils/ihr/indiaDateFormats";
 import { useIhrAccess } from "@/Utils/ihr/useIhrAccess";
 import query from "@/Utils/request/query";
@@ -136,7 +140,8 @@ export function IhrEncounterStatus({
           </dl>
         </div>
 
-        {booking && (
+        {/* P1-T24c: the card only when it has something to show (booked_on or a slot time) */}
+        {booking && ihrShowBookingCard(booking) && (
           <div className="rounded-md bg-white p-5 shadow-sm">
             <h2 className="mb-3 text-lg font-semibold">
               {t("ihr_visit_booking")}

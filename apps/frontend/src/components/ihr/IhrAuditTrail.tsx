@@ -9,7 +9,9 @@
 // - Every call here is itself recorded, so nothing polls or refetches on focus, and values are
 //   asked for only when an entry is opened.
 // - No typed "Who" filter: an entry's actor (and a patient's name) is a link that filters on it.
-// - Export and verifier links are P1-T24c.
+// - Downloads (P1-T24c): CSV, JSON and the verifier script are plain same-origin links (the
+//   sign-in cookie goes with the click; the audit routes refuse a cross-site one). They carry the
+//   days and the patient filter held in the address, at most 31 days.
 import { useInfiniteQuery, useQuery } from "@tanstack/react-query";
 import { useQueryParams } from "raviger";
 import { useMemo, useState } from "react";
@@ -44,11 +46,14 @@ import {
   type AuditEntry,
   type AuditFilters,
   type AuditStatus,
+  VERIFIER_URL,
   actorParts,
   auditFilterKey,
   auditUrlParams,
   buildAuditQuery,
   checkAuditRange,
+  checkExportRange,
+  exportUrl,
   patientsShown,
   readAuditUrl,
   resultOf,
@@ -274,6 +279,8 @@ function AuditBody() {
         </div>
       )}
 
+      <Downloads filters={url} range={range !== null} />
+
       {entries.isLoading && range && <ListSkeleton />}
       {errorLine && (
         <div className="space-y-2" role="alert" data-ihr="audit-error">
@@ -404,6 +411,64 @@ function StatusStrip() {
         </li>
       ))}
     </ul>
+  );
+}
+
+// --- downloads --------------------------------------------------------------------------
+
+function Downloads({
+  filters,
+  range,
+}: {
+  filters: AuditFilters;
+  range: boolean;
+}) {
+  const { t } = useTranslation();
+  // the days of the address, not the boxes: the link is what the list below shows
+  const problem = range
+    ? checkExportRange(filters.from, filters.to)
+    : "ihr_audit_export_need_range";
+  const csv = exportUrl(filters, "csv");
+  const json = exportUrl(filters, "json");
+  return (
+    <section className="space-y-2" data-ihr="audit-downloads">
+      <h2 className="text-sm font-semibold text-gray-900">
+        {t("ihr_audit_export_title")}
+      </h2>
+      <p className="max-w-3xl text-sm text-gray-600">
+        {t("ihr_audit_export_note")}
+      </p>
+      {problem ? (
+        <p className="text-sm text-red-700" data-ihr="audit-export-problem">
+          {t(problem)}
+        </p>
+      ) : (
+        <div className="flex flex-wrap gap-2">
+          {csv && (
+            <Button asChild variant="outline">
+              <a href={csv} download data-ihr="audit-export-csv">
+                {t("ihr_audit_export_csv")}
+              </a>
+            </Button>
+          )}
+          {json && (
+            <Button asChild variant="outline">
+              <a href={json} download data-ihr="audit-export-json">
+                {t("ihr_audit_export_json")}
+              </a>
+            </Button>
+          )}
+        </div>
+      )}
+      <a
+        href={VERIFIER_URL}
+        download
+        className="inline-block text-sm text-primary-700 underline-offset-2 hover:underline"
+        data-ihr="audit-verifier"
+      >
+        {t("ihr_audit_export_verifier")}
+      </a>
+    </section>
   );
 }
 
@@ -682,7 +747,7 @@ function SelectBox({
       </label>
       <select
         id={id}
-        className="h-9 max-w-full rounded-md border border-gray-300 bg-white px-2 text-base shadow-xs md:text-sm"
+        className="h-9 max-w-full rounded-md border border-gray-300 bg-white pl-2 pr-8 text-base shadow-xs md:text-sm"
         value={value}
         onChange={(e) => onChange(e.target.value)}
         data-ihr={dataIhr}

@@ -184,7 +184,7 @@ function TotalsBody({ facilityId }: { facilityId: string }) {
           }}
           dataIhr="totals-to"
         />
-        <div>
+        <div className="max-w-full">
           <label
             htmlFor="ihr-totals-by"
             className="block text-sm font-medium text-gray-700"
@@ -193,7 +193,7 @@ function TotalsBody({ facilityId }: { facilityId: string }) {
           </label>
           <select
             id="ihr-totals-by"
-            className="h-9 rounded-md border border-gray-300 bg-white px-2 text-base shadow-xs md:text-sm"
+            className="h-9 max-w-full rounded-md border border-gray-300 bg-white pl-2 pr-8 text-base shadow-xs md:text-sm"
             value={by}
             onChange={(e) => setBy(parseBy(e.target.value))}
             data-ihr="totals-by"

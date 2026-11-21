@@ -18,10 +18,14 @@ view is ``non_atomic_requests``, so CARE's ATOMIC_REQUESTS cannot commit after t
 released (a pack apply starting in between would read and overwrite uncommitted state). At
 most one decision is in flight per hospital and 30 per user per minute (schema-prefixed cache
 keys); beyond that 429. A busy hospital (a pack apply, a release, a dump, a restore) is 409
-with ``Retry-After: 60`` and never names the other job.
+with ``Retry-After: 60`` and never names the other job. Every refusal other than a field-keyed
+400 and the non-JSON 400 (``{"detail": "Send a JSON object."}``, no ``code``) carries ``code``
+(not-found, not-live, stale, blocked, busy, rate, in-flight, unavailable, refused) for the web
+page's fixed phrases (P1-T24c).
 
-Per-facility items (P1-T15b3): each shows its facility's external id (null for a hospital-wide
-item) and the list takes ``facility=<external id>``. A soft-deleted facility's items are hidden
+Per-facility items (P1-T15b3): each shows its facility's external id and name (``facility``,
+``facility_name``; null for a hospital-wide item; the name from the join the list already makes,
+P1-T24c) and the list takes ``facility=<external id>``. A soft-deleted facility's items are hidden
 (listed, shown and decided as if absent) until it is restored.
 """
 
@@ -121,6 +125,10 @@ def _summary(record, row, item):
         "label": handler.label(row, item),
         "facility": (
             str(record.facility.external_id) if record.facility_id is not None else None
+        ),
+        # P1-T24c G6: the name comes from the join the list already makes (_shown)
+        "facility_name": (
+            record.facility.name if record.facility_id is not None else None
         ),
         "state": record.state,
         "reason": record.reason,
@@ -224,8 +232,11 @@ def held(record):
     return out
 
 
-def _refused(status, detail_text, **flags):
-    response = Response({"detail": detail_text, **flags}, status=status)
+def _refused(status, detail_text, code, **flags):
+    """A refusal: the English ``detail`` for operators and logs, and ``code``, the machine-
+    readable answer the web page maps to its own phrase (P1-T24c; docs/reviews/p1-t24/
+    design.md "T24c as decided"). The older flags (busy, blocked, stale) stay."""
+    response = Response({"detail": detail_text, "code": code, **flags}, status=status)
     if flags.get("busy") or status == 429:  # noqa: PLR2004
         response["Retry-After"] = RETRY_AFTER
     return response
@@ -246,7 +257,7 @@ class UpdatesView(APIView):
             try:
                 releases = _releases()
             except engine.PackError:
-                return _refused(503, UNAVAILABLE)
+                return _refused(503, UNAVAILABLE, "unavailable")
             rows = _shown().filter(state__in=states)
             if pack := params.get("pack"):
                 if pack not in releases:
@@ -303,64 +314,73 @@ class UpdateView(APIView):
     def get(self, request, pk):
         record = self._record(pk)
         if record is None:
-            return _refused(404, NOT_FOUND)
+            return _refused(404, NOT_FOUND, "not-found")
         try:
             releases = _releases()
         except engine.PackError:
-            return _refused(503, UNAVAILABLE)
+            return _refused(503, UNAVAILABLE, "unavailable")
         return Response(detail(record, releases))
 
     def post(self, request, pk):  # noqa: PLR0911, PLR0912 (the answers of §2.5, in order)
         user = request.user
         if not _under_rate(user):
-            return _refused(429, TOO_MANY)
+            return _refused(429, TOO_MANY, "rate")
         body, errors = _body(request.data)
         if errors:
             return Response(errors, status=400)
         accept = body["action"] == "accept"
         hospital = connection.tenant
         if hospital.status != Hospital.Status.ACTIVE:
-            return _refused(409, NOT_LIVE)
+            return _refused(409, NOT_LIVE, "not-live")
         record = self._record(pk, waiting=False)
         if record is None:
-            return _refused(404, NOT_FOUND)
+            return _refused(404, NOT_FOUND, "not-found")
         try:
             releases = engine.prepare("api", record=False, cached=True)
             everything = _releases()
         except engine.PackError:
-            return _refused(503, UNAVAILABLE)
+            return _refused(503, UNAVAILABLE, "unavailable")
         expect = (body["version"], body["sha256"], body["row_sha256"])
         # Checks before the lock (item 6): the lock is never taken for a request that fails
         if engine.replayed(record, accept=accept, version=expect[0], sha256=expect[1]):
             return Response({**detail(record, everything), "unchanged": True})
         if record.state not in (WAITING if accept else (PackItem.State.PENDING,)):
-            return _refused(404, NOT_FOUND)
+            return _refused(404, NOT_FOUND, "not-found")
         release = releases.get(record.pack)
         if release is None or record.pending_version != release.version:
             return _refused(
-                409, "A newer pack release is not applied here yet.", stale=True
+                409,
+                "A newer pack release is not applied here yet.",
+                "stale",
+                stale=True,
             )
         if (record.pending_version, record.pending_sha256) != expect[:2]:
-            return _refused(409, "This update changed since it was shown.", stale=True)
+            return _refused(
+                409, "This update changed since it was shown.", "stale", stale=True
+            )
         if accept and blocked(record):
             return _refused(
                 409,
                 f"It cannot be accepted until its {record.reason} is fixed.",
+                "blocked",
                 blocked=True,
             )
         if not engine.recorded(release):
-            return _refused(409, "This update is not released here yet.", stale=True)
+            return _refused(
+                409, "This update is not released here yet.", "stale", stale=True
+            )
         handler = kinds.get(record.kind)
         row = _row(handler, record)
         if engine.row_sha256(handler, row) != expect[2]:
             return _refused(
                 409,
                 "The hospital's own version changed since it was shown.",
+                "stale",
                 stale=True,
             )
         token = uuid.uuid4().hex
         if not cache.add(_in_flight_key(), token, IN_FLIGHT_SECONDS):
-            return _refused(429, IN_FLIGHT)
+            return _refused(429, IN_FLIGHT, "in-flight")
         try:
             with (
                 audit.extend(
@@ -385,17 +405,17 @@ class UpdateView(APIView):
                     facility=record.facility,
                 )
         except runner.ProvisioningError:
-            return _refused(409, BUSY, busy=True)
+            return _refused(409, BUSY, "busy", busy=True)
         except engine.NothingWaitingError:
-            return _refused(404, NOT_FOUND)
+            return _refused(404, NOT_FOUND, "not-found")
         except engine.BlockedError as exc:
-            return _refused(409, str(exc), blocked=True)
+            return _refused(409, str(exc), "blocked", blocked=True)
         except engine.StaleError as exc:
-            return _refused(409, str(exc), stale=True)
+            return _refused(409, str(exc), "stale", stale=True)
         except engine.RefusedError as exc:
-            return Response({"reason": str(exc)}, status=400)
+            return Response({"reason": str(exc), "code": "refused"}, status=400)
         except engine.PackError:
-            return _refused(503, UNAVAILABLE)
+            return _refused(503, UNAVAILABLE, "unavailable")
         finally:
             if cache.get(_in_flight_key()) == token:
                 cache.delete(_in_flight_key())

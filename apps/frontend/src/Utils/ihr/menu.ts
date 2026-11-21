@@ -6,7 +6,7 @@
 //   mode keeps (Overview, Users) as CARE has them; every other facility item and every location
 //   item hidden, none of ours (design §13.8: fails closed, no flash of CARE's full menu).
 // - care: CARE's links, unchanged, plus our items the user holds (Records access, Hospital totals,
-//   and for a hospital-wide admin the Audit trail).
+//   and for a hospital-wide admin the Audit trail and the Reference list updates).
 // - restricted: CARE's links with `visibility` set by URL suffix (tables below), parents with no
 //   visible child hidden, a parent's url pointing at its first visible child, plus our items.
 // A URL suffix not in the tables is left as CARE has it (fails toward CARE: a dead end at worst,
@@ -21,7 +21,7 @@ export interface LinkLike {
   children?: LinkLike[];
 }
 
-export type OurItemKey = "records" | "totals" | "places" | "audit";
+export type OurItemKey = "records" | "totals" | "places" | "audit" | "packs";
 
 export interface OurItem {
   key: OurItemKey;
@@ -33,6 +33,7 @@ export const OUR_ITEM_PATHS: Record<OurItemKey, string> = {
   totals: "/ihr/totals",
   places: "/ihr/places",
   audit: "/ihr/audit",
+  packs: "/ihr/packs",
 };
 
 /** Our menu items for this user, in menu order (always after CARE's own links). */
@@ -43,7 +44,8 @@ export function ihrOurItems(access: IhrAccess, baseUrl: string): OurItem[] {
   if (access.totals) keys.push("totals");
   // the audit trail: the backend's `hospital_admin` (care mode only; restricted roles hold no
   // admin role and a superuser never has the flag), shown last (P1-T24a, Q-K110 A, Q-K111 A)
-  if (access.hospitalAdmin) keys.push("audit");
+  // and the reference-list updates, after it (P1-T24c): the same gate, so never a restricted role
+  if (access.hospitalAdmin) keys.push("audit", "packs");
   if (access.mode === "restricted" && placeSlug(access) !== undefined) {
     keys.push("places");
   }

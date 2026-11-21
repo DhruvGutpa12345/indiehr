@@ -8,13 +8,15 @@ profile, adds a pharmacist and a billing user, adds one user for each of our eig
 design-b.md §4 says (P1-T11b1), puts one account's visit in a bed as an inpatient stay (P1-T11c2),
 makes CARE's ``care-admin`` a hospital-wide admin placed at the demo facility (P1-T24a, Q-K117 A:
 the Keycloak login admin.priya on alpha), adds a facility-only admin (P1-T24b, Q-K118 A: the
-login admin.anil on alpha), and sets every test user's password to $TEST_PASSWORD (CARE's fixture passwords are public).
+login admin.anil on alpha), leaves one reference-pack item waiting for a decision (P1-T24c, G5:
+the pack updates screen), and sets every test user's password to $TEST_PASSWORD (CARE's fixture passwords are public).
 Prints one JSON line.
 Run through ``scripts/care-dev.sh seed``.
 """
 
 import json
 import os
+import sys
 
 from django.conf import settings
 from django.core.management import call_command
@@ -24,6 +26,7 @@ from django_tenants.utils import schema_context
 from ihr_tenant_settings.models import HospitalProfile
 
 from ihr_platform.models import Domain, Hospital
+from ihr_platform.provisioning import runner
 from ihr_platform.seeding import (
     FACILITY_ADMIN,
     HOSPITAL_ADMIN,
@@ -32,6 +35,7 @@ from ihr_platform.seeding import (
     load_demo_data,
     make_facility_admin,
     make_hospital_admin,
+    make_waiting_pack_item,
 )
 
 # Synthetic hospitals: names, places and phone numbers are made up.
@@ -168,6 +172,7 @@ class Command(BaseCommand):
             created += _add_role_users()
             admin_added = _hospital_admin()
             facility_admin_added = _facility_admin()
+            pack_item_waiting = False if passwords_only else _waiting_pack_item()
             reset = _set_passwords(password)
 
         self.stdout.write(
@@ -182,10 +187,27 @@ class Command(BaseCommand):
                     "hospital_admin_added": admin_added,
                     "facility_admin": FACILITY_ADMIN,
                     "facility_admin_added": facility_admin_added,
+                    "pack_item_waiting_added": pack_item_waiting,
                     "passwords_reset": reset,
                 }
             )
         )
+
+
+def _waiting_pack_item(stderr=None):
+    """True: one was added; False: one already waits; "failed": it could not be made.
+
+    A failure here (the hospital is busy with a pack run, or the item is missing) must not abort
+    the seed before the passwords and TEST_USERS.md are refreshed (P1-T24c review P3).
+    """
+    try:
+        return make_waiting_pack_item()
+    except (RuntimeError, runner.ProvisioningError) as error:
+        out = stderr if stderr is not None else sys.stderr
+        out.write(
+            f"The waiting pack item was not added ({error}). Run the seed again.\n"
+        )
+        return "failed"
 
 
 @transaction.atomic

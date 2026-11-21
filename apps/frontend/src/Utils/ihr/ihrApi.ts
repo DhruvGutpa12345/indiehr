@@ -5,6 +5,12 @@ import type {
   AuditList,
   AuditStatus,
 } from "@/Utils/ihr/audit";
+import type {
+  PackDecisionBody,
+  PackDetail,
+  PackHistoryList,
+  PackList,
+} from "@/Utils/ihr/packs";
 import type { Grant, GrantList, GrantRequest } from "@/Utils/ihr/records";
 import type { StaffAccess, StaffActionResult } from "@/Utils/ihr/staffAccess";
 import type { Totals } from "@/Utils/ihr/totals";
@@ -94,5 +100,33 @@ export const ihrStaffApi = {
     method: HttpMethod.POST,
     TRes: Type<StaffActionResult>(),
     TBody: Type<Record<string, never>>(),
+  },
+} as const;
+
+/**
+ * The reference-list updates (P1-T24c; hospital-wide admins only). `decide` is accept or keep
+ * with a reason; its answers are read by `answerOf` (Utils/ihr/packs.ts) as fixed phrases.
+ */
+export const ihrPacksApi = {
+  list: {
+    path: "/api/ihr/packs/updates/",
+    method: HttpMethod.GET,
+    TRes: Type<PackList>(),
+  },
+  detail: {
+    path: "/api/ihr/packs/updates/{id}/",
+    method: HttpMethod.GET,
+    TRes: Type<PackDetail>(),
+  },
+  decide: {
+    path: "/api/ihr/packs/updates/{id}/",
+    method: HttpMethod.POST,
+    TRes: Type<PackDetail>(),
+    TBody: Type<PackDecisionBody>(),
+  },
+  history: {
+    path: "/api/ihr/packs/history/",
+    method: HttpMethod.GET,
+    TRes: Type<PackHistoryList>(),
   },
 } as const;

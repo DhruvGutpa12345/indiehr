@@ -33,6 +33,7 @@ import {
   ihrHidesClinicalFormFields,
   ihrHidesPatientTags,
   ihrPatientTabs,
+  ihrShowBookingCard,
   ihrShowsEncounterActions,
   ihrShowsEncounterTags,
   ihrShowsViewAccounts,
@@ -640,6 +641,25 @@ describe("the appointment print page stays refused (proposed Q-K55)", () => {
     assert.equal(
       SLUGS.grants["Receptionist"].includes("can_read_charge_item"),
       false,
+    );
+  });
+});
+
+describe("the Booking card (P1-T24c)", () => {
+  it("shows only when a booked time or a slot time is there", () => {
+    assert.equal(ihrShowBookingCard(null), false);
+    assert.equal(ihrShowBookingCard(undefined), false);
+    assert.equal(ihrShowBookingCard({}), false);
+    assert.equal(ihrShowBookingCard({ token_slot: {} }), false);
+    assert.equal(
+      ihrShowBookingCard({ booked_on: "2026-11-20T04:00:00Z" }),
+      true,
+    );
+    assert.equal(
+      ihrShowBookingCard({
+        token_slot: { start_datetime: "2026-11-20T04:00:00Z" },
+      }),
+      true,
     );
   });
 });

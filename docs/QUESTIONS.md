@@ -1199,6 +1199,24 @@ Before the review a failed reset never counted toward the daily limit, so a `pro
 
 *Limit:* a person whose admin role is removed within the day cannot be reset from another hospital until the day passes. *Reverse:* drop the `protected-recent` query in `staff_access.StaffAccessView.post`.
 
+### Q-K124 — How does the pack API name a facility, and how does a refusal name its kind? (P1-T24c backend builder, G6; auto-accepted by Claude, 2026-11-21, awaiting owner confirmation)
+
+The pack updates screen shows "Facility (name or Whole hospital)" and must map every refusal of a decision to a fixed phrase (readiness M3). The list gave only the facility's external id, and refusals gave an English `detail`, with `stale`/`blocked`/`busy` flags on some.
+
+- **A ⭐ (taken).** `facility` stays the external id (the value `?facility=` takes, and what tests and the design name); a new `facility_name` carries the name (null for a hospital-wide item), from the join the list already makes, so no extra query. Every refusal other than a field-keyed 400 carries `code` (`not-found`, `not-live`, `stale`, `blocked`, `busy`, `rate`, `in-flight`, `unavailable`; the engine's 400 is `{reason, code: "refused"}`). The older flags stay. The word is `code`, not `kind`, because a pack item's own `kind` (valueset, questionnaire) is in the same body.
+- B. Make `facility` an object `{id, name}` (what the P1-T15b design first said): one field, but it changes a shape the tests and the filter already use.
+
+*Limit:* an old client reading only `detail` is unaffected. *Reverse:* drop `facility_name` in `api._summary` and the `code` argument of `api._refused`.
+
+### Q-K125 — Which pack item does the dev seed leave waiting, and how? (P1-T24c backend builder, G5; auto-accepted by Claude, 2026-11-21, awaiting owner confirmation)
+
+The dev stack has one pack release, so nothing waits for a decision and the screen is empty in a click-through. The engine skips an apply of a release it already applied, and treats an edit the pack has no newer content for as the hospital's own.
+
+- **A ⭐ (taken).** `seeding.make_waiting_pack_item()` (in `ihr_seed_demo`, not with `--passwords-only`): when nothing is pending, it renames one system value set (`system-additional-instruction`, a name only) to a demo name, drops that item's pack record, and runs the packs with `recheck`, so the engine holds it as pending, reason "unknown origin" (nothing earlier to show in the "earlier" column). Accepting restores the pack's name; keeping leaves the demo name; a later seed after a decision makes a new one. It touches no test-only kind and no pack file.
+- B. Ship a second pack release with a changed item. Gives an "edited" item with an earlier version, but a pack version file is immutable and ships to every hospital.
+
+*Limit:* the demo shows "unknown origin", not "edited". *Reverse:* delete the call in `ihr_seed_demo` and `seeding.make_waiting_pack_item`.
+
 **Still open:** Q-B4 (final MVP module list: assumed as in PLAN.md Phase 2) and Q-B6/B7 (pricing, timeline). Q-F2 is moot while AI is deferred.
 
 ---

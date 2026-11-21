@@ -3,7 +3,8 @@
 //
 //   the menu has "Audit trail" -> the page asks for the list and the status, and shows today
 //   (IST) in DD-MM-YYYY -> the status strip is there -> opening an entry asks for that one
-//   entry (its values come only now) -> an entry's actor is a link that filters on that exact
+//   entry (its values come only now) -> the CSV, JSON and verifier downloads are same-origin
+//   links that carry today's day (and a range over 31 days has none) -> an entry's actor is a link that filters on that exact
 //   actor -> a mistaken date shows its message and sends NO request -> a kind filter is sent.
 //
 // - Dead-end listener (lib/deadEnds.ts): no /api/ answer 400, 403, 404 or 5xx.
@@ -92,6 +93,31 @@ test("the audit trail (admin.priya, alpha)", async ({ newContext }) => {
     await expect(
       page.locator('[data-ihr="audit-status-fingerprints"]'),
     ).toContainText("Outside fingerprints:");
+  });
+
+  await test.step("the downloads are links for today's day; the CSV is a file (P1-T24c)", async () => {
+    const csv = page.locator('[data-ihr="audit-export-csv"]');
+    const json = page.locator('[data-ihr="audit-export-json"]');
+    await expect(csv).toBeVisible();
+    const [day, month, year] = (
+      await page.locator('[data-ihr="audit-from"]').inputValue()
+    ).split("-");
+    const days = `from=${year}-${month}-${day}&to=${year}-${month}-${day}`;
+    await expect(csv).toHaveAttribute(
+      "href",
+      new RegExp(`^/api/ihr/audit/export/\\?${days}&file=csv$`),
+    );
+    await expect(json).toHaveAttribute("href", new RegExp(`&file=json$`));
+    await expect(page.locator('[data-ihr="audit-verifier"]')).toHaveAttribute(
+      "href",
+      "/api/ihr/audit/verifier.py",
+    );
+    const download = page.waitForEvent("download");
+    await csv.click();
+    expect((await download).suggestedFilename()).toMatch(
+      /^audit-[\w-]+-\d{4}-\d\d-\d\d-to-\d{4}-\d\d-\d\d\.csv$/,
+    );
+    dead.expectNone("downloading the CSV");
   });
 
   await test.step("the list shows entries by this sign-in's own user; times are IST", async () => {
@@ -201,6 +227,19 @@ test("the audit trail (admin.priya, alpha)", async ({ newContext }) => {
     expect((await filtered).status()).toBe(200);
     await expect(fromBox).toHaveValue("01-11-2026");
     dead.expectNone("a kind chosen after a typed date");
+  });
+
+  await test.step("a range over 31 days has no download link, only its message (P1-T24c)", async () => {
+    const fromBox = page.locator('[data-ihr="audit-from"]');
+    await fromBox.fill("");
+    await fromBox.pressSequentially("01012026");
+    await page.locator('[data-ihr="audit-show"]').click();
+    await expect(
+      page.locator('[data-ihr="audit-export-problem"]'),
+    ).toContainText("at most 31 days");
+    await expect(page.locator('[data-ihr="audit-export-csv"]')).toHaveCount(0);
+    await expect(page.locator('[data-ihr="audit-export-json"]')).toHaveCount(0);
+    dead.expectNone("a range over 31 days");
   });
 
   await test.step("a mistaken date shows its message and sends no request", async () => {

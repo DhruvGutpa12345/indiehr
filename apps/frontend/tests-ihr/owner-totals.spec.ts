@@ -122,6 +122,32 @@ test("the Owner's hospital totals (owner.vikram, alpha)", async ({
     dead.expectNone("while the totals load");
   });
 
+  await test.step("at 360 px wide the page does not scroll sideways and the By-day select keeps room for its arrow", async () => {
+    const before = page.viewportSize();
+    await page.setViewportSize({ width: 360, height: 800 });
+    const by = page.locator('[data-ihr="totals-by"]');
+    await expect(by).toBeVisible();
+    const sizes = await by.evaluate((el) => ({
+      scrollWidth: el.scrollWidth,
+      clientWidth: el.clientWidth,
+      // @tailwindcss/forms draws the arrow in the right padding: it must not be squeezed
+      paddingRight: parseFloat(getComputedStyle(el).paddingRight),
+    }));
+    expect(sizes.scrollWidth, "select text is not cut off").toBeLessThanOrEqual(
+      sizes.clientWidth,
+    );
+    expect(sizes.paddingRight, "room for the arrow").toBeGreaterThanOrEqual(32);
+    const page_ = await page.evaluate(() => ({
+      scrollWidth: document.documentElement.scrollWidth,
+      clientWidth: document.documentElement.clientWidth,
+    }));
+    expect(page_.scrollWidth, "no sideways scroll").toBeLessThanOrEqual(
+      page_.clientWidth,
+    );
+    if (before) await page.setViewportSize(before);
+    dead.expectNone("at 360 px");
+  });
+
   await test.step("a 400-day range shows its message and sends no request", async () => {
     asked.length = 0;
     await page.locator('[data-ihr="totals-from"]').fill("01-01-2025");

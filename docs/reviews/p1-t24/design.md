@@ -437,3 +437,70 @@ watches `protected`, `not-allowed`, `admin-target` and `reset-refused` (review K
 (review W2):** a Doctor or Nurse on a colleague's page asks the access GET and gets 403, which hides
 the card; this is the binding Decision (F2 dropped a separate `manage_staff` flag). The card renders
 nothing while loading, so nothing flashes before it hides.
+
+## T24c as decided
+
+Written by the T24c backend builder, 21-11-2026, from the code; wins over §1–§6 and the attack
+where they differ (file:line in build-c.md). Q-K124, Q-K125.
+
+**G6, the pack summary names the facility** (plugins/ihr_platform/ihr_refdata/api.py `_summary`).
+- `facility` stays the facility's external id (the value `?facility=` takes); new `facility_name`
+  is its name, null for a hospital-wide item. Not `{id, name}` (§1.4 G6 and the old P1-T15b design
+  said so; the code and its tests use the bare id; Q-K124 A). Both fields are in the list and the
+  detail (the detail starts from `_summary`).
+- Queries: none added. `_shown()` already does `select_related("facility")`, and `_summary` reads
+  `record.facility.name` from that join. The list GET is 24 SQL statements for two facilities'
+  items and 22 for one (middleware included), pinned in `test_facility.ApiTests` (`..._name_the_facility_...`).
+  Gate unchanged (`IsHospitalAdmin`).
+- Drift doc rows 1–2 (`docs/egm/2026-11-17-drift-p1-t15b.md`): row 1 fixed by this field and the
+  P1-T15b design's list body; row 2 (forms' `new-version`, `status-only`) was already in that design
+  (2026-11-17); both are now marked fixed in the drift doc.
+
+**POST status-to-message table**, `POST /api/ihr/packs/updates/<id>/` (`UpdateView.post`).
+Every answer, in the order checked. The page maps `status` + `code` (or field keys) to its own
+fixed phrases and never shows `detail` or `reason` (as the staff card does).
+`code` is new (Q-K124 A), not `kind`: the 200 body already has the item's `kind`.
+
+| # | Status | Body | Meaning | Page does |
+|---|---|---|---|---|
+| 1 | 200 | the item, `unchanged: false` | decided | close sheet, reload list |
+| 2 | 200 | the item, `unchanged: true` | the same decision was already recorded | same as 1, say "already decided" |
+| 3 | 400 | `{<field>: text}` (`action`, `version`, `sha256`, `row_sha256`, `reason`), or `{detail}` for non-JSON | bad body | the reason box's phrase if `reason`, else generic (only `reason` is user-made) |
+| 4 | 400 | `{reason, code: "refused"}` | the engine refused | generic "could not be saved" |
+| 5a | 401, or 403 with `detail` "Authentication credentials were not provided." | DRF `{detail}` | signed out or session expired (our session classes send no `WWW-Authenticate`, so DRF answers 403, never 401; review P1) | "You are signed out. Sign in again." (no Retry on a load error) |
+| 5b | 403 (any other `detail`) | DRF `{detail}` | not a hospital-wide admin | "not for your role" |
+| 6 | 404 | `{detail, code: "not-found"}` | no such waiting item (decided meanwhile, facility deleted) | "no longer waiting", reload list |
+| 7 | 409 | `{..., code: "not-live"}` | hospital not active | "not live; try later" |
+| 8 | 409 | `{..., code: "stale", stale: true}` | newer release, or the item or the hospital's row changed since shown | "changed since you opened it", reload the detail |
+| 9 | 409 | `{..., code: "blocked", blocked: true}` | accept refused while a conflict, data check or missing link holds it | "cannot be accepted yet" (keep is still allowed) |
+| 10 | 409 | `{..., code: "busy", busy: true}` + `Retry-After: 60` | another job holds the hospital | "try again in a minute" |
+| 11 | 429 | `{..., code: "rate"}` + `Retry-After: 60` | 30 decisions per user per minute | "too many; try in a minute" |
+| 12 | 429 | `{..., code: "in-flight"}` + `Retry-After: 60` | another decision is being saved here | same phrase as 11 |
+| 13 | 503 | `{..., code: "unavailable"}` | pack files unreadable | "cannot read the packs; tell your operator" |
+| 14 | 503 | `{detail: "upgrading", code: "ihr_upgrading"}` | the release gate (`release_gate.py`) holds the hospital for a release, a restore or another build; answered before the view runs (review P2) | "The hospital is being updated. Try again in a few minutes." |
+
+`...` is `detail`. Row 5a is told from 5b by that exact DRF text only; the non-JSON 400 (row 3, `Send a JSON object.`) has no `code`. "Keep ours" only on `state: "pending"` items (`keep` on a kept one is 404). Tests:
+`ihr_refdata.tests.test_api.AnswerKindTests` (rows 4, 6–13) plus the earlier pins; the page's table: `packs.test.ts` (one test per row, rows 5a, 5a2 and 14 added by the review).
+
+**Review decisions (21-11-2026, build-c.md "Review"):** the `scripts/check-ihr-frontend.py` step of §3 is dropped for T24c. That script checks only upstream navigation anchors and route keys; our own items (`records`, `totals`, `places`, `audit`) are not in it, and `/ihr/packs` has no upstream item to anchor to, so there is no code gap: the menu and route gate are covered by `menu.test.ts` and `roles-menus.spec.ts`.
+
+**G5, the seed leaves one pack item waiting** (`ihr_platform.seeding.make_waiting_pack_item`, called
+by `ihr_seed_demo` unless `--passwords-only`; Q-K125 A).
+- It edits one CARE system value set row's name (`system-additional-instruction`, "Demo edit (seed)"),
+  deletes that item's `PackItem` record, then runs `engine.apply_packs(recheck=True)` under the
+  hospital's lock as the owner; the engine holds it `pending`, reason `unknown-origin`.
+- Synthetic (a name only; no pack file, no test-only kind, no clinical content). Idempotent: when any item is already pending it does nothing (returns False);
+  after the admin accepts or keeps it, the next seed makes a new one. Rerun: `scripts/care-dev.sh seed`
+  (JSON line gains `pack_item_waiting_added`). Test: `ihr_refdata.tests.test_seed_pack` (one pending
+  after one run and after two; a new one after a decision; the item is a shipped slug).
+
+**Audit downloads** (web only; no backend change). The page links, same-origin, with the filters it
+holds; the cookie goes with the navigation and a GET needs no CSRF header (T24a):
+- Export: `/api/ihr/audit/export/?from=YYYY-MM-DD&to=YYYY-MM-DD[&patient=<external id>]&file=csv|json`
+  (`ExportView`, views.py:306). Only `from`, `to` and `patient` carry over from the page's filters;
+  `kind`, `op` and `actor` do not filter an export (it is a day range, at most 31 days). The page
+  must refuse a range over 31 days before showing the link (the API answers 400 otherwise).
+- Verifier: `/api/ihr/audit/verifier.py` (`VerifierView`, `verify_export.py`, shown beside the JSON link).
+- Both are `attachment` responses behind `NotCrossSite` and `IsHospitalAdmin`; a click on the page
+  sends `same-origin`. **Left open (T24a review A2):** the export still serves `none` (a link opened
+  from outside the browser); refusing it there is a small tightening, with `CrossSiteTests` changed.

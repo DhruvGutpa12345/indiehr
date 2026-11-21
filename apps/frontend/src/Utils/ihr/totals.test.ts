@@ -281,3 +281,24 @@ describe("words for codes", () => {
     assert.equal(humanize(""), "-");
   });
 });
+
+describe("the 'By day' select keeps room for its chevron (P1-T24c review W1)", () => {
+  // @tailwindcss/forms gives every select padding-right 2.5rem and draws the chevron there; a
+  // `px-2` utility overrides it to 0.5rem and the chevron sits over the text.
+  for (const file of ["IhrOwnerTotals.tsx", "IhrAuditTrail.tsx"]) {
+    it(`${file}: no select class list uses px-2 (it needs pl-2 pr-8)`, () => {
+      const source = readFileSync(
+        join(process.cwd(), "src", "components", "ihr", file),
+        "utf-8",
+      );
+      const selects = [...source.matchAll(/<select[\s\S]*?>/g)].map(
+        (m) => m[0],
+      );
+      assert.ok(selects.length > 0, "a select");
+      for (const tag of selects) {
+        assert.doesNotMatch(tag, /\bpx-\d/, tag);
+        assert.match(tag, /\bpr-8\b/, tag);
+      }
+    });
+  }
+});

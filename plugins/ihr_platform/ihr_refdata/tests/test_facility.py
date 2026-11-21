@@ -621,6 +621,11 @@ class DecideTests(FacilityCase):
         self.assertIn(f"in facility {one} is now kept", out)
 
 
+# SQL statements of the list GET through the whole middleware path (as T24a counted my-access),
+# the same with and without facility_name: two facilities in the list, one facility filtered
+QUERIES_TWO, QUERIES_ONE = 24, 22
+
+
 class ApiTests(FacilityCase):
     def test_the_list_shows_and_filters_by_facility(self):
         self.add_spec(1, specimen("s1"))
@@ -660,6 +665,37 @@ class ApiTests(FacilityCase):
         self.assertEqual(answer.status_code, 200, answer.content[:300])
         self.assertEqual(spec_row(self.f1, "s1").title, "v2")
         self.assertEqual(spec_row(self.f2, "s1").title, f"Edited {self.f2.pk}")
+
+    def test_the_list_and_detail_name_the_facility_with_no_extra_query(self):
+        """P1-T24c G6: ``facility`` stays the external id (the filter value) and
+        ``facility_name`` is the facility's name, from the join the list already makes."""
+        self.add_spec(1, specimen("s1"))
+        self.apply()
+        for place in (self.f1, self.f2):
+            row = spec_row(place, "s1")
+            row.title = f"Edited {place.pk}"
+            row.save()
+        self.add_spec(2, specimen("s1", title="v2"))
+        self.apply()
+        client = APIClient(HTTP_HOST="testserver")
+        client.force_authenticate(hospital_admin(f"fn-{self.key}"))
+        with CaptureQueriesContext(connection) as both:
+            found = client.get(URL, {"pack": SPEC}).json()["results"]
+        self.assertEqual(
+            {r["facility"]: r["facility_name"] for r in found},
+            {str(f.external_id): f.name for f in (self.f1, self.f2)},
+        )
+        with CaptureQueriesContext(connection) as one:
+            only = client.get(
+                URL, {"pack": SPEC, "facility": str(self.f1.external_id)}
+            ).json()["results"]
+        self.assertEqual([r["facility_name"] for r in only], [self.f1.name])
+        # the name costs no query (the join is _shown's): pinned, so a lookup per row shows
+        self.assertEqual((len(both), len(one)), (QUERIES_TWO, QUERIES_ONE))
+        record = self.record(SPEC, "s1", self.f2)
+        shown = client.get(f"{URL}{record.pk}/").json()
+        self.assertEqual(shown["facility_name"], self.f2.name)
+        self.assertEqual(shown["facility"], str(self.f2.external_id))
 
 
 class NewFacilityTests(FacilityCase):

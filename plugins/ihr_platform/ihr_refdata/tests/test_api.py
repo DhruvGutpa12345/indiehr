@@ -231,11 +231,12 @@ class ListTests(ApiCase):
         self.assertEqual(
             set(found["ihr-a"]),
             {
-                "id", "pack", "kind", "item", "label", "facility", "state", "reason",
-                "applied_version", "pending_version", "changed_at",
+                "id", "pack", "kind", "item", "label", "facility", "facility_name",
+                "state", "reason", "applied_version", "pending_version", "changed_at",
             },
         )  # fmt: skip
         self.assertIsNone(found["ihr-a"]["facility"])
+        self.assertIsNone(found["ihr-a"]["facility_name"])  # P1-T24c G6
         self.assertEqual(
             (found["ihr-a"]["applied_version"], found["ihr-a"]["pending_version"]),
             (1, 2),
@@ -340,7 +341,9 @@ class ListTests(ApiCase):
                 self.api.get(f"{URL}updates/{self.record('ihr-a').pk}/"),
             ):
                 self.assertEqual(answer.status_code, 503)
-                self.assertEqual(answer.json(), {"detail": api.UNAVAILABLE})
+                self.assertEqual(
+                    answer.json(), {"detail": api.UNAVAILABLE, "code": "unavailable"}
+                )
                 self.assertNotIn("alerted", answer.json()["detail"])
 
 
@@ -620,7 +623,7 @@ class DecisionTests(ApiCase):
         }
         answer = self.api.post(f"{URL}updates/{record.pk}/", body, format="json")
         self.assertEqual(answer.status_code, 404, answer.content)
-        self.assertEqual(answer.json(), {"detail": api.NOT_FOUND})
+        self.assertEqual(answer.json(), {"detail": api.NOT_FOUND, "code": "not-found"})
         # a removal the start-up apply retired, never decided: not a replay either
         with as_owner():
             self.packs.add(
@@ -706,7 +709,9 @@ class DecisionTests(ApiCase):
         answer = self.decide("ihr-a")
         self.assertEqual(answer.status_code, 409)
         self.assertEqual(answer["Retry-After"], "60")
-        self.assertEqual(answer.json(), {"detail": api.BUSY, "busy": True})
+        self.assertEqual(
+            answer.json(), {"detail": api.BUSY, "busy": True, "code": "busy"}
+        )
         self.assertEqual(PackApply.objects.count(), before)
         self.assertEqual(row_entries(mark), [])
         self.assertEqual(self.record("ihr-a").state, "pending")
@@ -765,6 +770,109 @@ class DecisionTests(ApiCase):
         answer = self.decide("ihr-a")
         self.assertEqual(answer.status_code, 409)
         self.assertEqual(self.record("ihr-a").state, "pending")
+
+
+class AnswerKindTests(ApiCase):
+    """P1-T24c: every refusal of a POST names its kind (``code``), so the web page maps it to
+    a fixed phrase and never shows the English ``detail``. The table is in
+    docs/reviews/p1-t24/design.md "T24c as decided"; who may do what is unchanged."""
+
+    def body(self, slug="ihr-a", **changes):
+        shown = self.detail(slug)
+        return shown["id"], {
+            "action": "accept",
+            "version": shown["pending_version"],
+            "sha256": shown["pending_sha256"],
+            "row_sha256": shown["row_sha256"],
+            "reason": REASON,
+            **changes,
+        }
+
+    def post(self, pk, body):
+        return self.api.post(f"{URL}updates/{pk}/", body, format="json")
+
+    def test_no_such_item_is_not_found(self):
+        _, body = self.body()
+        answer = self.post(999999999, body)
+        self.assertEqual(answer.status_code, 404)
+        self.assertEqual(answer.json(), {"detail": api.NOT_FOUND, "code": "not-found"})
+
+    def test_a_hospital_that_is_not_live_is_not_live(self):
+        pk, body = self.body()
+        with as_owner(), schema_context("public"):
+            Hospital.objects.filter(schema_name=TEST_SCHEMA).update(
+                status=Hospital.Status.SUSPENDED
+            )
+        answer = self.post(pk, body)
+        self.assertEqual(answer.status_code, 409)
+        self.assertEqual(answer.json(), {"detail": api.NOT_LIVE, "code": "not-live"})
+
+    def test_a_stale_answer_keeps_its_flag_and_names_its_kind(self):
+        pk, body = self.body(sha256="0" * 64)
+        answer = self.post(pk, body)
+        self.assertEqual(answer.status_code, 409)
+        self.assertTrue(answer.json()["stale"])
+        self.assertEqual(answer.json()["code"], "stale")
+
+    def test_a_blocked_answer_keeps_its_flag_and_names_its_kind(self):
+        PackItem.objects.filter(pk=self.record("ihr-u").pk).update(reason="conflict")
+        pk, body = self.body("ihr-u")
+        answer = self.post(pk, body)
+        self.assertEqual(answer.status_code, 409)
+        self.assertTrue(answer.json()["blocked"])
+        self.assertEqual(answer.json()["code"], "blocked")
+
+    def test_the_two_429s_differ(self):
+        pk, body = self.body()
+        self.assertTrue(cache.add(api._in_flight_key(), "another", 60))
+        answer = self.post(pk, body)
+        self.assertEqual(answer.status_code, 429)
+        self.assertEqual(answer["Retry-After"], "60")
+        self.assertEqual(answer.json()["code"], "in-flight")
+        cache.delete(api._in_flight_key())
+        clock = SimpleNamespace(time=lambda: 1_800_000_000.0)
+        with mock.patch.object(api, "time", clock):
+            for _ in range(api.PER_USER_PER_MINUTE):
+                self.post(pk, {})
+            answer = self.post(pk, {})
+        self.assertEqual(answer.status_code, 429)
+        self.assertEqual(answer.json(), {"detail": api.TOO_MANY, "code": "rate"})
+
+    def test_unreadable_packs_on_a_post_are_unavailable(self):
+        pk, body = self.body()
+        with mock.patch.object(
+            engine, "prepare", side_effect=engine.PackError("bad file")
+        ):
+            answer = self.post(pk, body)
+        self.assertEqual(answer.status_code, 503)
+        self.assertEqual(
+            answer.json(), {"detail": api.UNAVAILABLE, "code": "unavailable"}
+        )
+
+    def test_a_refusal_by_the_engine_is_refused(self):
+        pk, body = self.body()
+        with mock.patch.object(
+            engine, "decide", side_effect=engine.RefusedError("not today")
+        ):
+            answer = self.post(pk, body)
+        self.assertEqual(answer.status_code, 400)
+        self.assertEqual(answer.json(), {"reason": "not today", "code": "refused"})
+
+    def test_a_body_error_names_only_its_fields(self):
+        """400 for a bad body is keyed by field (action, version, sha256, row_sha256,
+        reason); the page maps those keys, so they carry no ``code`` (see
+        test_bad_bodies_and_reasons)."""
+        pk, body = self.body(reason="")
+        answer = self.post(pk, body)
+        self.assertEqual(answer.status_code, 400)
+        self.assertEqual(list(answer.json()), ["reason"])
+
+    def test_a_decision_still_works_and_its_200_has_no_kind(self):
+        pk, body = self.body()
+        answer = self.post(pk, body)
+        self.assertEqual(answer.status_code, 200)
+        self.assertNotIn("code", answer.json())
+        self.assertEqual(answer.json()["unchanged"], False)
 
 
 class CommitInsideTheLock(SimpleTestCase):

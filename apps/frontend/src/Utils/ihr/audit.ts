@@ -386,3 +386,44 @@ export function statusStrip(status: AuditStatus): StatusStrip {
     fingerprints: fingerprintState(status.fingerprints),
   };
 }
+
+// --- downloads (P1-T24c) ------------------------------------------------------------------------
+
+/** export.MAX_DAYS in plugins/ihr_platform/ihr_audit/export.py: days per export, both ends counted */
+export const EXPORT_MAX_DAYS = 31;
+/** The stdlib-only script an outside auditor runs on a JSON export (views.py VerifierView) */
+export const VERIFIER_URL = "/api/ihr/audit/verifier.py";
+
+/**
+ * Whether the days in the address may be exported: a real range of at most EXPORT_MAX_DAYS days.
+ * A translation key for the reason when not (null when it may).
+ */
+export function checkExportRange(from: string, to: string): string | null {
+  const a = parseDay(from);
+  const b = parseDay(to);
+  if (!a || !b) return "ihr_audit_export_need_range";
+  const start = Date.UTC(a.year, a.month - 1, a.day);
+  const end = Date.UTC(b.year, b.month - 1, b.day);
+  if (end < start) return "ihr_audit_export_need_range";
+  const days = Math.round((end - start) / 86_400_000) + 1;
+  return days > EXPORT_MAX_DAYS ? "ihr_audit_export_too_long" : null;
+}
+
+/**
+ * The link of one download (same origin: the sign-in cookie goes with the click, and the audit
+ * routes refuse a cross-site one). Only the days and the patient filter an export, so the kind,
+ * type and person filters of the page are left out. Null while the range cannot be exported.
+ */
+export function exportUrl(
+  filters: AuditFilters,
+  file: "csv" | "json",
+): string | null {
+  if (checkExportRange(filters.from, filters.to) !== null) return null;
+  const from = toApiDay(filters.from);
+  const to = toApiDay(filters.to);
+  if (!from || !to) return null;
+  const params = new URLSearchParams({ from, to });
+  if (filters.patient) params.set("patient", filters.patient);
+  params.set("file", file);
+  return `/api/ihr/audit/export/?${params.toString()}`;
+}

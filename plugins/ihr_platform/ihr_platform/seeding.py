@@ -253,3 +253,65 @@ def make_facility_admin(facility):
         defaults={"role": RoleModel.objects.get(name="Facility Admin", is_system=True)},
     )
     return created or placed
+
+
+# The demo's waiting pack item (P1-T24c, G5): the dev stack has one pack release, so nothing
+# waits for a decision and the pack updates screen would be empty in a click-through. One of
+# CARE's system value sets (a name only; no clinical content) is renamed and the engine re-reads
+# the pack, so that item is held as pending ("unknown origin"). Accepting it puts the pack's
+# name back; keeping it leaves the demo name. Synthetic data only; dev seed only.
+WAITING_PACK = "care-valuesets"
+WAITING_PACK_ITEM = "system-additional-instruction"
+WAITING_PACK_NAME = "Demo edit (seed): accept to restore the pack's name"
+
+
+def make_waiting_pack_item(
+    *, pack=WAITING_PACK, item=WAITING_PACK_ITEM, operator="demo-seed"
+):
+    """Leave exactly one pack item waiting for the hospital admin's decision.
+
+    Does nothing (False) while any item is pending. Otherwise it renames ``item``'s row and
+    drops its pack record, then has the engine re-read the packs with ``recheck`` (a plain
+    apply of the release already applied is skipped), so the engine holds that item as
+    pending. The rename and the dropped record are the whole change; the pack's content is
+    untouched. After the admin decides it (accept or keep) a later run makes a new one.
+    Raises RuntimeError outside development (DEBUG off), if the row is missing or if the item
+    did not wait. Run inside a
+    hospital's schema; returns True when it made one.
+    """
+    from care.emr.models.valueset import ValueSet
+    from django.conf import settings
+    from django.db import connection, transaction
+    from ihr_refdata import engine
+    from ihr_refdata.models import PackItem
+
+    from ihr_platform.models import Hospital
+    from ihr_platform.provisioning import runner
+    from ihr_platform.testing import as_owner
+
+    if not settings.DEBUG:
+        msg = "The demo's waiting pack item is for local development only."
+        raise RuntimeError(msg)
+    if PackItem.objects.filter(state=PackItem.State.PENDING).exists():
+        return False
+    row = ValueSet._base_manager.filter(slug=item, deleted=False).first()  # noqa: SLF001
+    if row is None:
+        msg = f"No live value set {item!r}: apply the packs first."
+        raise RuntimeError(msg)
+    hospital = Hospital.objects.get(schema_name=connection.schema_name)
+    live = hospital.status == Hospital.Status.ACTIVE
+    with (
+        runner.exclusive(hospital.slug) if live else nullcontext(),
+        as_owner(),
+        transaction.atomic(),
+    ):
+        row.name = WAITING_PACK_NAME
+        row.save()
+        PackItem.objects.filter(pack=pack, item=item).delete()
+        engine.apply_packs(hospital, operator=operator, recheck=True)
+    if not PackItem.objects.filter(
+        pack=pack, item=item, state=PackItem.State.PENDING
+    ).exists():
+        msg = f"{pack}:{item} did not wait for a decision."
+        raise RuntimeError(msg)
+    return True

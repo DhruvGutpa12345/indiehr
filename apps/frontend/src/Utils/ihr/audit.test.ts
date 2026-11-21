@@ -6,11 +6,15 @@ import { describe, it } from "node:test";
 import {
   type AuditEntry,
   type AuditStatus,
+  EXPORT_MAX_DAYS,
+  VERIFIER_URL,
   actorParts,
   auditFilterKey,
   auditUrlParams,
   buildAuditQuery,
   checkAuditRange,
+  checkExportRange,
+  exportUrl,
   fingerprintState,
   patientsShown,
   readAuditUrl,
@@ -480,5 +484,88 @@ describe("withDraftDates: a filter changed while dates are typed", () => {
     });
     assert.equal(next, null);
     assert.ok(errors.from);
+  });
+});
+
+describe("the export and verifier downloads (P1-T24c)", () => {
+  const PID = "11111111-2222-4333-8444-555555555555";
+  const filters = (over = {}) => ({
+    ...readAuditUrl({}, NOON),
+    from: "01-11-2026",
+    to: "21-11-2026",
+    ...over,
+  });
+
+  it("allows at most 31 days, both days counted (the API's rule)", () => {
+    assert.equal(EXPORT_MAX_DAYS, 31);
+    assert.equal(checkExportRange("01-11-2026", "01-11-2026"), null);
+    assert.equal(checkExportRange("01-10-2026", "31-10-2026"), null);
+    assert.equal(checkExportRange("01-11-2026", "01-12-2026"), null); // 31 days
+    assert.equal(
+      checkExportRange("01-11-2026", "02-12-2026"),
+      "ihr_audit_export_too_long",
+    ); // 32 days
+    // across a year end and a leap day
+    assert.equal(checkExportRange("15-12-2027", "14-01-2028"), null);
+    assert.equal(
+      checkExportRange("15-12-2027", "15-01-2028"),
+      "ihr_audit_export_too_long",
+    );
+    // 2028 is a leap year: 1 Feb to 2 Mar is 31 days, to 3 Mar is 32
+    assert.equal(checkExportRange("01-02-2028", "02-03-2028"), null);
+    assert.equal(
+      checkExportRange("01-02-2028", "03-03-2028"),
+      "ihr_audit_export_too_long",
+    );
+  });
+
+  it("refuses a range that is not a range", () => {
+    assert.equal(
+      checkExportRange("", "01-11-2026"),
+      "ihr_audit_export_need_range",
+    );
+    assert.equal(
+      checkExportRange("21-11-2026", "01-11-2026"),
+      "ihr_audit_export_need_range",
+    );
+    assert.equal(
+      checkExportRange("32-13-2026", "01-11-2026"),
+      "ihr_audit_export_need_range",
+    );
+  });
+
+  it("is a same-origin path with the days as YYYY-MM-DD and the file kind", () => {
+    assert.equal(
+      exportUrl(filters(), "csv"),
+      "/api/ihr/audit/export/?from=2026-11-01&to=2026-11-21&file=csv",
+    );
+    assert.equal(
+      exportUrl(filters(), "json"),
+      "/api/ihr/audit/export/?from=2026-11-01&to=2026-11-21&file=json",
+    );
+  });
+
+  it("carries the patient filter only; kind, type and person do not filter an export", () => {
+    const url = exportUrl(
+      filters({ patient: PID, kind: "write", op: "UPDATE", actor: "user:1:x" }),
+      "csv",
+    );
+    assert.equal(
+      url,
+      `/api/ihr/audit/export/?from=2026-11-01&to=2026-11-21&patient=${PID}&file=csv`,
+    );
+    assert.ok(!url.includes("kind="));
+    assert.ok(!url.includes("op="));
+    assert.ok(!url.includes("actor"));
+  });
+
+  it("has no link while the range is wrong", () => {
+    assert.equal(exportUrl(filters({ to: "01-01-2026" }), "csv"), null);
+    assert.equal(exportUrl(filters({ from: "01-01-2026" }), "csv"), null); // over 31 days
+    assert.equal(exportUrl(filters({ from: "x" }), "json"), null);
+  });
+
+  it("links the verifier script", () => {
+    assert.equal(VERIFIER_URL, "/api/ihr/audit/verifier.py");
   });
 });

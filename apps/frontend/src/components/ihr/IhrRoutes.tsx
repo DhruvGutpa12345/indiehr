@@ -24,6 +24,7 @@ import {
 import { IhrGrantWatcher } from "./IhrGrantWatcher";
 import { IhrMyPlaces } from "./IhrMyPlaces";
 import { IhrOwnerTotals } from "./IhrOwnerTotals";
+import { IhrPackUpdates } from "./IhrPackUpdates";
 import { IhrRecordsAccess } from "./IhrRecordsAccess";
 
 type Params = Record<string, string>;
@@ -111,6 +112,9 @@ function wrap(key: string, route: AnyRoute): AnyRoute {
 const OUR_ROUTES: Record<string, AnyRoute> = {
   "/facility/:facilityId/ihr/audit": ({ facilityId }) => (
     <IhrAuditTrail facilityId={facilityId} />
+  ),
+  "/facility/:facilityId/ihr/packs": ({ facilityId }) => (
+    <IhrPackUpdates facilityId={facilityId} />
   ),
   "/facility/:facilityId/ihr/places": ({ facilityId }) => (
     <IhrMyPlaces facilityId={facilityId} />
