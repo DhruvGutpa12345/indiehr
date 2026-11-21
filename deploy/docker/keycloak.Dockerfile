@@ -5,7 +5,7 @@
 # levels) stay in compose.yaml. With --optimized a runtime value that differs from a build-time
 # one below makes Keycloak refuse to start, so they live only here. Build:
 #   docker buildx build -f deploy/docker/keycloak.Dockerfile -t <tag> deploy/docker
-ARG KEYCLOAK_IMAGE=quay.io/keycloak/keycloak:26.8.2@sha256:723b1d6e254c0fc96d5cffec860c7e0744d6a3277822b865bb538cf891575e41
+ARG KEYCLOAK_IMAGE=quay.io/keycloak/keycloak:26.8.2@sha256:7e66a96e4739239070aeaf72e4c5decf0f7f682cfc725b9f7ea2b336eaba38b3
 
 FROM ${KEYCLOAK_IMAGE} AS build
 # Postgres only; health and metrics on the management port 9000 (never published or routed:
