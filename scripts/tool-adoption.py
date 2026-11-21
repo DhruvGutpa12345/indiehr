@@ -75,6 +75,7 @@ def count(transcripts: pathlib.Path, since: str) -> dict:
                         skills[skill] += 1
                         if skill.startswith("superpowers:"):
                             tools["superpowers-skill"] += 1
+    roles = workflow_roles(transcripts, since)
     graph = tools["graphify:main"] + tools["graphify:agent"]
     grep = tools["grep:main"] + tools["grep:agent"]
     return {
@@ -82,7 +83,55 @@ def count(transcripts: pathlib.Path, since: str) -> dict:
         "graph_share": graph / (graph + grep) if graph + grep else 0.0,
         "agents": {" ".join(k): v for k, v in sorted(agents.items())},
         "skills": dict(skills),
+        "roles": roles,
     }
+
+
+ROLE_ALIASES = {"builder": "build", "fixer": "fix", "verifier": "verify", "reviewer": "review",
+                "challenger": "challenge"}
+
+
+def role_of(label: str) -> str:
+    """'review:T' -> 'review', 'fixer-2' -> 'fix', 'challenge:E' -> 'challenge'."""
+    base = re.sub(r"[-_ ]?\d+$", "", (label or "?").split(":")[0].strip().lower())
+    return ROLE_ALIASES.get(base, base)
+
+
+def workflow_roles(transcripts: pathlib.Path, since: str) -> dict:
+    """Workflow agents since `since`, as {'<role> <model>': {'agents': n, 'output_tokens': t}}.
+
+    A workflow's journal names each agent's label; the agent's own transcript (beside it)
+    names the model and the time it started."""
+    out: dict = {}
+    for journal in transcripts.rglob("journal.jsonl"):
+        with journal.open(encoding="utf-8", errors="replace") as fh:
+            started = [json.loads(line) for line in fh if '"started"' in line]
+        for record in started:
+            if record.get("type") != "started":
+                continue
+            agent = journal.parent / f"agent-{record.get('agentId')}.jsonl"
+            if not agent.is_file():
+                continue
+            model, first, tokens = None, None, 0
+            with agent.open(encoding="utf-8", errors="replace") as fh:
+                for line in fh:
+                    if '"assistant"' not in line:
+                        continue
+                    try:
+                        entry = json.loads(line)
+                    except ValueError:
+                        continue
+                    message = entry.get("message") or {}
+                    model = model or message.get("model")
+                    first = first or entry.get("timestamp")
+                    tokens += (message.get("usage") or {}).get("output_tokens", 0)
+            if not model or (first or "") < since:
+                continue
+            key = f"{role_of(record.get('label', ''))} {model.replace('claude-', '')}"
+            slot = out.setdefault(key, {"agents": 0, "output_tokens": 0})
+            slot["agents"] += 1
+            slot["output_tokens"] += tokens
+    return dict(sorted(out.items()))
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -109,6 +158,10 @@ def main(argv: list[str] | None = None) -> int:
         print(f"  EGM agents: {t.get('egm-agent', 0)}   Superpowers skills: {t.get('superpowers-skill', 0)}")
         for key, value in result["agents"].items():
             print(f"  agent {key}: {value}")
+        if result["roles"]:
+            print("  workflow agents by role and model (agents, output tokens):")
+            for key, value in result["roles"].items():
+                print(f"    {key}: {value['agents']}, {value['output_tokens']:,}")
     if args.min_graph_share is not None and result["graph_share"] < args.min_graph_share:
         print(f"tool-adoption: graph share {result['graph_share']:.0%} is below "
               f"{args.min_graph_share:.0%}", file=sys.stderr)

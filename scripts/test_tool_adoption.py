@@ -49,6 +49,26 @@ class Counts(unittest.TestCase):
         self.assertAlmostEqual(r["graph_share"], 2 / 5)
         self.assertEqual(r["agents"], {"egm:egm-design opus high": 1})
 
+    def test_workflow_roles_by_model(self):
+        wf = self.dir / "subagents" / "workflows" / "wf_x"
+        wf.mkdir(parents=True)
+        (wf / "journal.jsonl").write_text(
+            json.dumps({"type": "started", "agentId": "a1", "label": "challenge:T"}) + "\n"
+            + json.dumps({"type": "started", "agentId": "a2", "label": "fixer"}) + "\n"
+            + json.dumps({"type": "started", "agentId": "a3", "label": "review:E"}) + "\n")
+
+        def agent(model, ts, out):
+            return json.dumps({"type": "assistant", "timestamp": ts, "message": {
+                "model": model, "usage": {"output_tokens": out}}}) + "\n"
+        (wf / "agent-a1.jsonl").write_text(agent("claude-sonnet-5-5", "2026-11-22T03:00", 100))
+        (wf / "agent-a2.jsonl").write_text(agent("claude-opus-5-5", "2026-11-22T03:01", 250))
+        (wf / "agent-a3.jsonl").write_text(agent("claude-opus-5-5", "2026-11-19T03:00", 999))  # too old
+        roles = tool_adoption.count(self.dir, "2026-11-21T00:00")["roles"]
+        self.assertEqual(roles, {
+            "challenge sonnet-5-5": {"agents": 1, "output_tokens": 100},
+            "fix opus-5-5": {"agents": 1, "output_tokens": 250},
+        })
+
     def test_min_share_fails_below(self):
         self.assertEqual(tool_adoption.main(
             ["--since", "2026-11-21T00:00", "--dir", str(self.dir), "--min-graph-share", "0.5"]), 1)

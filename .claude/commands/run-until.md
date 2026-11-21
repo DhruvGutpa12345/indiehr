@@ -108,7 +108,9 @@ For every task, in this order:
      hook sees them.
 7. **Independent review.** Use a fresh Opus subagent that didn't write the code, with lenses
    suited to the task (security, correctness, operations, tenancy). Have another agent challenge
-   each finding. Fix every confirmed finding, with a regression test, and re-prove.
+   each finding: one batched challenger per lens. Fix every confirmed finding, with a regression
+   test, and re-prove. The models for the challenge and the fix follow the routing in §4
+   (owner, 2026-11-21).
 8. **CI.** Push and watch the runs (gh run watch / gh run view). Fix failures; for a failure whose
    cause is not obvious, follow the Superpowers `systematic-debugging` skill: reproduce it, find
    the cause, then fix it with a test. If CI cannot run
@@ -132,6 +134,17 @@ the constraints from CLAUDE.md that apply, and the exact output you want back.
 | Boilerplate, config, scripts, docs updates, simple tests, Hindi drafting with the glossary | Sonnet | medium |
 | Feature code, test design, staging proofs, ops scripts | Sonnet or Opus | high |
 | Architecture, security, tenancy, isolation, crypto, ABDM, billing maths, audit, retention, CERT-In or DPDP rules, all independent reviews, phase-end reviews | Opus | high (xhigh for crypto, tenancy, billing maths) |
+| **Challengers** (one batched challenger per lens, trying to refute that lens's findings) | Sonnet | high |
+| **Opus re-check** of every *high*-severity finding the Sonnet challenger confirmed or refuted on a security, tenancy, access, audit or crypto task (one batched agent per review) | Opus | high |
+| **Fixers** for medium and low findings (a precise finding with a known fix and a regression test) | Sonnet | high |
+| **Fixers** for high-severity findings, or any fix that changes a security boundary (keys, roles, tenancy, access gates, audit chain, crypto) | Opus | high |
+| Design folding, run-file and TRACKER records, docs-style steps inside a security task | Sonnet (or Opus) | medium |
+
+**Routing change (owner, 2026-11-21).** In the runs from 15 to 17-11, 113 of 191 Opus agents were
+single-finding challengers that rarely refuted anything, and fixers took 23 % of Opus output. The
+Opus verifier still checks every fix, and Opus still builds and reviews risky work. When a run has
+both high and lower findings, split the fix into two agents: an Opus fixer for the high ones,
+then a Sonnet fixer for the rest.
 
 - Run independent research and reviews in parallel. Run only **one heavy Docker stack at a
   time**: the machine has 6.7 GB of RAM. Stop the dev stack before a staging proof, restore it
@@ -231,8 +244,11 @@ task up to it is blocked on me. Then:
      auto-taken, click-throughs created);
    - **tool adoption:** the output of `scripts/tool-adoption.py --since <run start, UTC>` (graphify
      calls against grep, EGM lenses used, Superpowers skills cited). If the graph share is below
-     25 %, name the briefs that skipped the graphify step and fix them for the next run. Then run
-     the CLAUDE.md "Tool upkeep" checks and record them;
+     25 %, name the briefs that skipped the graphify step and fix them for the next run. Check its
+     "workflow agents by role and model" lines against the routing in §4. Challengers must be
+     Sonnet; fixers are Opus only where findings were high-severity or touched a security
+     boundary. Explain each exception. Then run the CLAUDE.md "Tool upkeep" checks and record
+     them;
    - **"Next run"**, chosen with §8.
 2. Put the same "Next run" recommendation in TRACKER.md, under the "Next task" line.
 3. Commit and push.
