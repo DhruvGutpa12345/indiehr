@@ -6,6 +6,7 @@ import type {
   AuditStatus,
 } from "@/Utils/ihr/audit";
 import type { Grant, GrantList, GrantRequest } from "@/Utils/ihr/records";
+import type { StaffAccess, StaffActionResult } from "@/Utils/ihr/staffAccess";
 import type { Totals } from "@/Utils/ihr/totals";
 import { HttpMethod, Type } from "@/Utils/request/types";
 
@@ -74,5 +75,24 @@ export const ihrAuditApi = {
     path: "/api/ihr/audit/status/",
     method: HttpMethod.GET,
     TRes: Type<AuditStatus>(),
+  },
+} as const;
+
+/**
+ * The staff "Sign-in" card (P1-T24b). `get` says what may be offered for one person (`offers`);
+ * `act` is reset-sign-in, resend-invitation or cancel-invitation and is queued for the
+ * provisioner (202). The backend refuses any action it did not offer.
+ */
+export const ihrStaffApi = {
+  get: {
+    path: "/api/ihr/staff/{username}/access/",
+    method: HttpMethod.GET,
+    TRes: Type<StaffAccess>(),
+  },
+  act: {
+    path: "/api/ihr/staff/{username}/{action}/",
+    method: HttpMethod.POST,
+    TRes: Type<StaffActionResult>(),
+    TBody: Type<Record<string, never>>(),
   },
 } as const;

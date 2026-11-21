@@ -123,6 +123,10 @@ def _model(cls):
 # object without that attribute (the role matrix's) gets the converter's general value.
 ROUTE_CONVERTER_VALUES = {
     ("api/ihr/packs/updates/<int:pk>/", "pk"): "pack_item_id",
+    # The staff screen's action (P1-T24b, attack A1): the role matrix sends "reset-sign-in" so
+    # its write crawl proves a facility-only admin is refused; the isolation world has no such
+    # attribute and leaves the route unfilled, as before.
+    ("api/ihr/staff/<str:username>/<slug:action>/", "action"): "staff_action",
 }
 
 

@@ -96,6 +96,7 @@ PATCH /api/v1/template/{slug}/  body:cash,lab,moved,mrd,mrdg,owner,rad,rec,store
 PATCH /api/v1/users/{username}/  body:cash,lab,moved,mrd,mrdg,owner,rad,rec,store,tpa
 POST /api/ihr/packs/updates/<int:pk>/  auth:cash,lab,moved,mrd,mrdg,owner,rad,rec,store,tpa
 POST /api/ihr/records-access/  auth:cash,lab,moved,owner,rad,rec,store,tpa
+POST /api/ihr/staff/<str:username>/<slug:action>/  auth:admin,cash,lab,moved,mrd,mrdg,owner,rad,rec,store,tpa body:doctor
 POST /api/v1/auth/login/  auth:cash,lab,moved,mrd,mrdg,owner,rad,rec,store,tpa
 POST /api/v1/auth/logout/  auth:cash,lab,moved,mrd,mrdg,owner,rad,rec,store,tpa
 POST /api/v1/auth/token/refresh/  auth:cash,lab,moved,mrd,mrdg,owner,rad,rec,store,tpa

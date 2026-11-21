@@ -181,6 +181,7 @@ EOT
 | care-staff | Staff | Front desk / registration |
 | care-fac-admin | Facility Admin | Facility settings, billing accounts, tariffs, users |
 | care-admin | Administrator | Hospital-wide admin: audit trail, reference list updates (Keycloak login admin.priya on alpha, P1-T24a) |
+| care-facility-admin | Facility Admin | Facility-only admin: adds staff, resends and cancels invitations; reset sign-in refused (Keycloak login admin.anil on alpha, P1-T24b) |
 | care-volunteer | Volunteer | Read-mostly |
 | care-receptionist | Receptionist | Front desk: patient demographics only (P1-T11b) |
 | care-cashier | Cashier | Billing counter: accounts, charges, invoices, payments |

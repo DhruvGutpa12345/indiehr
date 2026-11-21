@@ -179,3 +179,14 @@ translations follow in the next batch (and are corrected in earlier ones).
 | trigger (database) | ट्रिगर | ❓ |
 | fingerprint (outside) | फ़िंगरप्रिंट | ❓ hourly proof kept in a locked outside bucket |
 | request (a look at data) | अनुरोध | |
+
+## Staff sign-in card (P1-T24b)
+
+| English | Hindi | Note |
+|---|---|---|
+| sign-in (the noun, a person's way in) | साइन-इन | the verb stays "साइन इन करें" |
+| reset sign-in | साइन-इन रीसेट करें | removes password and authenticator, signs out everywhere |
+| invitation | निमंत्रण | ❓ the e-mail that lets a new colleague set up their account. Alternative: आमंत्रण |
+| authenticator (app that makes codes) | ऑथेंटिकेटर | ❓ |
+| send again | दोबारा भेजें | |
+| cancel invitation / keep invitation | निमंत्रण रद्द करें / निमंत्रण रखें | |

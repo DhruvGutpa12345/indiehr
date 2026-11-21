@@ -105,6 +105,9 @@ def deliver_once():
     except HospitalNotReady:
         _defer(inv)
     except InvitationError as exc:
+        logger.info(
+            "invitation %s failed: %s (%s)", inv.pk, problem_code(str(exc)), exc
+        )
         _failed(inv, str(exc), final=True)
     except Exception as exc:  # recorded; tried again after a delay, up to MAX_ATTEMPTS
         logger.exception("invitation %s not delivered", inv.pk)
@@ -344,11 +347,76 @@ def _send_join(inv, hospital):
     inv.save(update_fields=["join_token_hash", "expires_at"])
 
 
+# --- what the admin's screen is told (P1-T24b, attack A4) ---------------------------------
+
+# A reset refused by the provisioner's own checks (attack A1). The record says no more than
+# this: never which hospital. The asking hospital's own check has already ruled out "admin
+# here", so the refusal tells it one thing: this person is a hospital-wide admin at some other
+# hospital (review A6; accepted, Q-K121).
+PROTECTED_PREFIX = "protected:"
+PROTECTED = f"{PROTECTED_PREFIX} a hospital-wide admin is not reset from a hospital's staff screen"
+UNCHECKED = (
+    "unchecked: a hospital could not be read now (held or restoring); ask again later"
+)
+NOT_ALLOWED = "not allowed: whoever asked is no longer a hospital-wide admin here"
+
+# The text an invitation or request records -> the fixed code the staff screen gets. The text
+# can hold Keycloak paths and answers (an unexpected error's message): it stays in the record
+# and the log. First match wins; anything else is "failed". Every message written in this module
+# has its own code (ihr_identity.tests.test_staff_offers).
+PROBLEM_CODES = (
+    ("the hospital is not live", "hospital-not-live"),
+    ("waiting:", "waiting-for-setup"),
+    ("the address has another hospital's account", "other-account-not-set-up"),
+    ("the invited user no longer exists", "user-gone"),
+    ("the account made for this invitation is gone", "account-gone"),
+    ("the address's account disappeared", "account-gone"),
+    ("the invited user is already active", "already-active"),
+    ("they are already active staff", "already-active"),
+    ("this person is already staff", "already-active"),
+    ("the account is already set up", "already-set-up"),
+    ("they have set up their account", "already-set-up"),
+    ("the user is linked to another account", "linked-elsewhere"),
+    ("the person's account changed", "linked-elsewhere"),
+    ("this person has no invitation", "no-invitation"),
+    ("the invitation is ", "no-invitation"),
+    ("not active staff here", "not-active"),
+    ("the unused account could not be replaced", "not-replaced"),
+    (PROTECTED_PREFIX, "protected"),
+    ("unchecked:", "try-later"),
+    ("not allowed:", "not-allowed"),
+)
+
+
+def log_outcome(hospital, request, action, outcome):
+    """One fixed line per staff action refused or carried out (review K5), for the log alerts
+    (deploy/logs/alerts/staff.yml): ``ihr-staff: hospital=<slug> request=<id|none> action=<a>
+    outcome=<code>``. Words of ours only: never the person, the asker or the worker's text.
+    ``request`` is ``None`` for a refusal by the web process, which queues nothing."""
+    logger.info(
+        "ihr-staff: hospital=%s request=%s action=%s outcome=%s",
+        hospital.slug,
+        request if request is not None else "none",
+        action,
+        outcome,
+    )
+
+
+def problem_code(text):
+    """The fixed code for a recorded problem (None when there is none)."""
+    if not text:
+        return None
+    for start, code in PROBLEM_CODES:
+        if text.startswith(start):
+            return code
+    return "failed"
+
+
 # --- hospital admins' requests and expiry (P1-T5e2) -------------------------------------
 
 
 class RequestError(Exception):
-    """A request that cannot be carried out as things stand (shown to the admin)."""
+    """A request that cannot be carried out as things stand (its code is shown to the admin)."""
 
 
 def handle_request_once():
@@ -390,13 +458,20 @@ def handle_request_once():
         return True
     except (RequestError, InvitationError) as exc:
         status, error = StaffAccessRequest.Status.FAILED, str(exc)
+        logger.info(
+            "staff request %s refused: %s (%s)", req.pk, problem_code(error), error
+        )
+        log_outcome(req.hospital, req.pk, req.action, problem_code(error))
     except Exception as exc:
         logger.exception("staff request %s failed", req.pk)
         status = StaffAccessRequest.Status.FAILED
         error = f"{type(exc).__name__}: {exc}".replace("\n", " ")
+        log_outcome(req.hospital, req.pk, req.action, "failed")
     StaffAccessRequest.objects.filter(pk=req.pk).update(
         status=status, error=error[:MAX_ERROR], done_at=timezone.now()
     )
+    if status == StaffAccessRequest.Status.DONE:
+        log_outcome(req.hospital, req.pk, req.action, "done")
     return True
 
 
@@ -441,6 +516,12 @@ def _reset_sign_in(admin, req, hospital):
         raise RequestError("not active staff here: resend or cancel the invitation")
     if req.keycloak_sub and str(req.keycloak_sub) != str(identity.keycloak_sub):
         raise RequestError("the person's account changed since the request")
+    # Attack A1, re-checked now (roles change while a request waits): the asker is still a
+    # hospital-wide admin here, and the person is one at no hospital at all.
+    if not _asker_may_reset(req, hospital):
+        raise RequestError(NOT_ALLOWED)
+    if _admin_anywhere(identity.keycloak_sub):
+        raise RequestError(PROTECTED)
     reset_sign_in(
         admin,
         str(identity.keycloak_sub),
@@ -454,6 +535,72 @@ def _reset_sign_in(admin, req, hospital):
         StaffIdentity.objects.filter(pk=identity.pk).update(
             sessions_valid_after=timezone.now()
         )
+
+
+def _asker_may_reset(req, hospital):
+    from django.contrib.auth import get_user_model
+    from ihr_identity.staff_access import hospital_wide_admin
+
+    kind, _, external_id = req.requested_by.partition(":")
+    if kind != "user" or not external_id:
+        return False
+    with schema_context(hospital.schema_name):
+        # The account itself, not only its memberships (review A3): deactivating the admin
+        # who asked is the containment step for a suspected takeover, and a request can wait
+        # on the queue (a held hospital puts it back) long after it was asked.
+        asker = (
+            get_user_model()
+            .objects.filter(
+                external_id=external_id,
+                is_active=True,
+                deleted=False,
+                is_service_account=False,
+            )
+            .first()
+        )
+        return asker is not None and hospital_wide_admin(asker)
+
+
+def _admin_anywhere(sub):
+    """True if the person (Keycloak ``sub``) is a hospital-wide admin, or a superuser, at any
+    hospital whose schema is kept (fleet.MIGRATE_STATUSES: provisioning, active, suspended,
+    offboarding; not archived), this one included (P1-T24b, attack A1; review A1/A2). Run by
+    the provisioner only, which reads every hospital's schema anyway; the web process never
+    reads another hospital's. Each schema is read under its job lock, so a restore never races
+    the read. Fails closed: a hospital that is held, restoring, on another build or gated
+    raises RequestError(UNCHECKED), so one such hospital makes every reset in the fleet ask
+    again later (a known limit, Q-K121). Skipped: a provisioning hospital not yet past its
+    schema step (no recorded state), which holds no StaffIdentity yet."""
+    from ihr_identity.models import StaffIdentity
+    from ihr_identity.staff_access import hospital_wide_admin
+
+    from ihr_platform.fleet import MIGRATE_STATUSES
+
+    kept = Hospital.objects.filter(status__in=MIGRATE_STATUSES).exclude(
+        schema_name=release.PUBLIC
+    )
+    for other in kept.order_by("pk"):
+        if (
+            other.status == Hospital.Status.PROVISIONING
+            and release.recorded(other) is None
+        ):
+            continue
+        if not release.schema_ready(other):
+            raise RequestError(UNCHECKED)
+        with release.job(other.schema_name) as taken:
+            if not taken:
+                raise RequestError(UNCHECKED)
+            with schema_context(other.schema_name):
+                there = (
+                    StaffIdentity.objects.filter(keycloak_sub=sub)
+                    .select_related("user")
+                    .first()
+                )
+                if there is not None and (
+                    there.user.is_superuser or hospital_wide_admin(there.user)
+                ):
+                    return True
+    return False
 
 
 def _is_active(inv):
@@ -496,7 +643,8 @@ def _close(inv, allowed, status=None):
         if status:
             current.status = status
             current.join_token_hash = ""
-            current.save(update_fields=["status", "join_token_hash"])
+            current.error = ""  # a cancelled or expired invitation keeps no old problem
+            current.save(update_fields=["status", "join_token_hash", "error"])
     return current
 
 

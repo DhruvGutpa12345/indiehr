@@ -1,6 +1,6 @@
 import { zodResolver } from "@hookform/resolvers/zod";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Lock, Mail } from "lucide-react";
+import { Mail } from "lucide-react";
 import { useEffect, useState } from "react";
 import { useForm } from "react-hook-form";
 import { useTranslation } from "react-i18next";
@@ -192,7 +192,8 @@ export default function UserForm({
       phone_number: "",
       prefix: "",
       suffix: "",
-      password_setup_method: "immediate",
+      // IndieHR P1-T24b: the e-mail invitation is the only way (passwords live in Keycloak)
+      password_setup_method: "email",
       role_orgs: [],
     },
   });
@@ -577,33 +578,9 @@ export default function UserForm({
                         defaultValue={field.value}
                         className="space-y-3"
                       >
-                        <div
-                          className={cn(
-                            "flex items-start space-x-3 rounded-md border p-3",
-                            field.value === "immediate"
-                              ? "bg-white border-primary"
-                              : "bg-transparent  border-gray-200",
-                          )}
-                        >
-                          <RadioGroupItem
-                            value="immediate"
-                            id="immediate"
-                            className="mt-1"
-                          />
-                          <div className="space-y-1.5">
-                            <Label
-                              htmlFor="immediate"
-                              className="text-base font-medium cursor-pointer flex items-center"
-                            >
-                              <Lock className="size-4" />
-                              {t("set_password_now")}
-                            </Label>
-                            <p className="text-sm text-gray-500">
-                              {t("set_password_now_description")}
-                            </p>
-                          </div>
-                        </div>
-
+                        {/* IndieHR P1-T24b: the "set password now" option is removed; the e-mail
+                            invitation is the only way. The enum and its refinements stay as
+                            upstream (they never see "immediate" now). */}
                         <div
                           className={cn(
                             "flex items-start space-x-3 rounded-md border p-3",

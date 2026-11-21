@@ -1,6 +1,6 @@
 // IndieHR P1-T11c1 (docs/reviews/p1-t11/design-c.md §3.1, §9.1, §13.2): the web app's sidebar for
-// each of the 12 seeded logins (our eight roles, CARE's Doctor, Nurse and Facility Admin, and the
-// seeded hospital-wide admin).
+// each of the 13 seeded logins (our eight roles, CARE's Doctor, Nurse and Facility Admin, the
+// seeded hospital-wide admin, and the seeded facility-only admin).
 //
 // - The sidebar's link names equal the expected list EXACTLY. CARE's roles' lists are derived by
 //   hand from facility-nav.tsx (Q-K53 A), so an upstream menu change fails here until a person
@@ -167,6 +167,9 @@ const LOGINS: Login[] = [
   // (CARE's fixture gives him that role); admin.priya is the seeded one on alpha (Q-K117).
   { username: "admin.bhavesh", hospital: "beta", menu: [...CARE_FULL, AUDIT] },
   { username: "admin.priya", hospital: "alpha", menu: [...CARE_FULL, AUDIT] },
+  // Facility Admin at the facility root only (Q-K118 A): CARE's full menu, but NOT hospital-wide,
+  // so no audit trail (and no sign-in reset: staff-access.spec.ts)
+  { username: "admin.anil", hospital: "alpha", menu: CARE_FULL },
 ];
 
 const HOSPITAL_ADMINS = new Set(["admin.bhavesh", "admin.priya"]);

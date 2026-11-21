@@ -74,12 +74,21 @@ RESTORE_FAILED_LINE = (r"^ihr-restore: hospital=(?P<hospital>[a-z][a-z0-9-]{2,30
                        r"step=(?P<step>[a-z]{3,12})$")
 PARKED_LINE = (r"^ihr-restore: parked=(?P<schema>ihr_parked_h_[a-z0-9]{10}_[0-9]{8}T[0-9]{6}) "
                r"outcome=overdue$")
+# A refused staff sign-in reset (deploy/logs/alerts/staff.yml, P1-T24b review K5): our whole fixed
+# line, from the web backend (the 403s decided before anything is queued, request=none) and the
+# workers that carry out the request, a request id (UUID), an action and one of four outcomes
+STAFF_LINE = (r"^ihr-staff: hospital=(?P<hospital>[a-z][a-z0-9-]{2,30}) "
+              r"request=(?:none|[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}) "
+              r"action=(?:reset_sign_in|resend_invitation|cancel_invitation) "
+              r"outcome=(?:protected|not-allowed|admin-target|reset-refused)$")
+STAFF_SERVICES = "backend, provisioner, staff-worker"
 HOSPITAL_LINES = {"PackApplyFailed": ("ihr-packs", PACKS_LINE, "migrate, celery"),
                   "HospitalNotServed": ("ihr-fleet", FLEET_LINE, "migrate, celery, celery-worker"),
                   "ReleaseWindowOverrun": ("ihr-fleet", OVERRUN_LINE, "celery, celery-worker"),
                   "AuditHospitalCheckFailed": ("ihr-audit", AUDIT_LINE, "audit-watch"),
                   "AuditHospitalSealLate": ("ihr-audit", AUDIT_SEAL_LINE, "audit-watch"),
-                  "DumpHospitalHeld": ("ihr-dump", DUMP_HELD_LINE, "dumper")}
+                  "DumpHospitalHeld": ("ihr-dump", DUMP_HELD_LINE, "dumper"),
+                  "StaffResetRefused": ("ihr-staff", STAFF_LINE, STAFF_SERVICES)}
 # A refused database role (deploy/logs/alerts/db-roles.yml, P1-T19a): our whole fixed line, a
 # role and a reason code (never a value), from the services that run as a declared role
 DB_ROLE_LINE = r"^ihr-db-role: refused role=(?P<role>app|owner|watch|none) reason=(?P<reason>[a-z_]{3,24})$"
@@ -439,7 +448,31 @@ class LogAlerts(unittest.TestCase):
                                          "MrdRecordsOffHours", "MrdRecordsRefused", "MrdRecordsVolume",
                                          "PackApplyFailed", "PackFacilityDeferred", "ParkedSchemaOverdue",
                                          "RateLimitedAddress", "ReleaseWindowOverrun", "SignInLockoutStorm",
-                                         "SignInLockoutsFromAddress"])
+                                         "SignInLockoutsFromAddress", "StaffResetRefused"])
+
+    def test_staff_line_is_ours_alone(self):
+        """P1-T24b review K5: only the whole fixed line `invitations.log_outcome` writes, with a
+        slug-shaped hospital; never a request path, a longer line or another outcome."""
+        [rule] = [r for _, r in self.rules() if r["alert"] == "StaffResetRefused"]
+        self.assertTrue(rule["expr"].endswith("| filter refusals:>=3"))
+        line = re.compile(STAFF_LINE)
+        rid = "0a1b2c3d-4e5f-4a6b-8c7d-9e0f1a2b3c4d"
+        for ok in (f"ihr-staff: hospital=alpha request={rid} action=reset_sign_in outcome=protected",
+                   f"ihr-staff: hospital=alpha request={rid} action=reset_sign_in outcome=not-allowed",
+                   "ihr-staff: hospital=alpha request=none action=reset_sign_in outcome=admin-target",
+                   "ihr-staff: hospital=alpha request=none action=reset_sign_in outcome=reset-refused"):
+            self.assertEqual(line.match(ok)["hospital"], "alpha", ok)
+        for other in (f"ihr-staff: hospital=alpha request={rid} action=reset_sign_in outcome=done",
+                      f"ihr-staff: hospital=alpha request={rid} action=reset_sign_in outcome=try-later",
+                      "ihr-staff: hospital=alpha request=none action=reset_sign_in outcome=failed"):
+            self.assertIsNone(line.match(other), other)
+        for forged in ('10.0.0.9 - - [x] "GET /ihr-staff: hospital=fake request=none action=reset_sign_in outcome=protected" 404 179',
+                       "ihr-staff: hospital=x;curl evil|sh; request=none action=reset_sign_in outcome=protected",
+                       "ihr-staff: hospital=Alpha request=none action=reset_sign_in outcome=protected",
+                       "ihr-staff: hospital=alpha request=none action=reset_sign_in outcome=protected (and more)",
+                       "ihr-staff: hospital=alpha request=12 action=reset_sign_in outcome=protected",
+                       "ihr-staff: hospital=alpha request=none action=drop_tables outcome=protected"):
+            self.assertIsNone(line.search(forged), forged)
 
     def test_pack_line_is_ours_alone(self):
         """S1: the rule's regex takes only our own whole line with a slug-shaped hospital; text
@@ -798,7 +831,7 @@ class LogAlerts(unittest.TestCase):
                                  "DumpHospitalFailed": None, "DumpHospitalHeld": None,
                                  "HospitalRestoreFailed": None, "ParkedSchemaOverdue": None,
                                  "MrdRecordsRefused": None, "MrdRecordsVolume": None,
-                                 "MrdRecordsOffHours": None})
+                                 "MrdRecordsOffHours": None, "StaffResetRefused": None})
         anytime = sorted(r["alert"] for _, r in self.rules() if r["labels"].get("notify") == "anytime")
         self.assertEqual(anytime, ["FailedSignInsFromAddress", "RateLimitedAddress", "SignInLockoutsFromAddress"])
         cfg = func("monitoring_config")

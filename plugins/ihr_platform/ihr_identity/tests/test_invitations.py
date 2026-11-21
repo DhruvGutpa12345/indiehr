@@ -507,9 +507,48 @@ class JoinTests(InvitationCase):
         self.assert_not_joined()
 
 
-class RecoveryTests(InvitationCase):
-    """P1-T5e2: an admin resets a lost authenticator, resends or cancels an invitation, and
-    invitations nobody accepted are withdrawn at expiry."""
+def admin_role(testcase):
+    """A role holding ``can_create_user`` (an admin role, as CARE's "Administrator" is; the test
+    hospital has no system roles). Removed at the test's end."""
+    from care.security.models import PermissionModel, RoleModel, RolePermission
+
+    role = RoleModel.objects.create(name=f"ihr-test-admin-{time.time_ns()}")
+    permission, made = PermissionModel.objects.get_or_create(
+        slug="can_create_user", defaults={"name": "can_create_user"}
+    )
+    link = RolePermission.objects.create(role=role, permission=permission)
+    if made:
+        testcase.addCleanup(PermissionModel.objects.filter(pk=permission.pk).delete)
+    testcase.addCleanup(RoleModel.objects.filter(pk=role.pk).delete)
+    testcase.addCleanup(RolePermission.objects.filter(pk=link.pk).delete)
+    return role
+
+
+def make_hospital_wide(testcase, user, *, parent=None):
+    """Give ``user`` an admin role on a new top-level organisation of this hospital: a
+    hospital-wide admin (``staff_access.hospital_wide_admin``), the only kind who may reset a
+    colleague's sign-in since P1-T24b (attack A1). With ``parent``, the organisation sits inside
+    it instead (an admin who may add staff but is not hospital-wide). Undone at the test's end."""
+    from care.emr.models.organization import Organization, OrganizationUser
+
+    role = admin_role(testcase)
+    organization = Organization.objects.create(
+        name=f"hw-{user.username}-{time.time_ns()}"[:60], org_type="role", parent=parent
+    )
+    testcase.addCleanup(Organization.objects.filter(pk=organization.pk).delete)
+    membership = OrganizationUser.objects.create(
+        organization=organization, user=user, role=role
+    )
+    testcase.addCleanup(OrganizationUser.objects.filter(user=user).delete)
+    return membership
+
+
+class RecoveryCase(InvitationCase):
+    """Fixtures for the admins' requests (P1-T5e2; shared with test_staff_offers, P1-T24b)."""
+
+    def setUp(self):
+        super().setUp()
+        make_hospital_wide(self, self.admin)  # reset needs one (P1-T24b, attack A1)
 
     def act(self, user, action, api=None):
         return (api or self.api).post(f"/api/ihr/staff/{user.username}/{action}/")
@@ -542,6 +581,11 @@ class RecoveryTests(InvitationCase):
             StaffInvitation.objects.filter(pk=inv.pk).update(status="accepted")
         user.refresh_from_db()
         return user, sub
+
+
+class RecoveryTests(RecoveryCase):
+    """P1-T5e2: an admin resets a lost authenticator, resends or cancels an invitation, and
+    invitations nobody accepted are withdrawn at expiry."""
 
     def test_reset_sign_in(self):
         user, sub = self.active_staff()

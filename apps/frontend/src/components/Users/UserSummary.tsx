@@ -19,6 +19,8 @@ import {
 import useAuthUser from "@/hooks/useAuthUser";
 import EditUserSheet from "@/pages/Organization/components/EditUserSheet";
 import { PLUGIN_Component } from "@/PluginEngine";
+// IndieHR P1-T24b: the staff "Sign-in" card (see docs/UPSTREAM_PATCHES.md)
+import { IhrStaffAccessCard } from "@/components/ihr/IhrStaffAccessCard";
 import { useAtom } from "jotai";
 import { useState } from "react";
 import { useTranslation } from "react-i18next";
@@ -184,6 +186,14 @@ export default function UserSummaryTab({
             />
           </>
         )}
+        {/* IndieHR P1-T24b: invitation resend, cancel and sign-in reset; hides itself unless the
+            backend offers something */}
+        <IhrStaffAccessCard
+          username={userData.username}
+          displayName={`${userData.first_name} ${userData.last_name}`.trim()}
+          isOwnAccount={isOwnAccount}
+          isServiceAccount={!!userData.is_service_account}
+        />
         <PLUGIN_Component
           __name="UserProfileSections"
           user={userData}

@@ -14,11 +14,17 @@ from care.emr.models.organization import (
     Organization,
     OrganizationUser,
 )
+from care.security.authorization import AuthorizationController
 from django.contrib.auth import get_user_model
 from ihr_identity.staff_access import hospital_wide_admin
 from ihr_platform import seeding
 from ihr_platform.management.commands import ihr_keycloak_demo_users, ihr_seed_demo
-from ihr_platform.seeding import HOSPITAL_ADMIN, make_hospital_admin
+from ihr_platform.seeding import (
+    FACILITY_ADMIN,
+    HOSPITAL_ADMIN,
+    make_facility_admin,
+    make_hospital_admin,
+)
 
 from ihr_access import state
 from ihr_access.tests.base import SwapCase
@@ -108,3 +114,51 @@ class SeedHospitalAdmin(SwapCase):
             ),
             [top.pk],
         )
+
+
+class SeedFacilityAdmin(SwapCase):
+    """The facility-only admin login (P1-T24b, Q-K118 A): ``admin.anil`` signs in to alpha as
+    ``care-facility-admin``, "Facility Admin" at the demo facility's root and nothing above it.
+    The staff card's reset refusal (attack A1) is clicked with this login."""
+
+    def test_the_login_and_the_care_user(self):
+        self.assertEqual(FACILITY_ADMIN, "care-facility-admin")
+        self.assertIn(FACILITY_ADMIN, ihr_seed_demo.SEED_USERS)
+        (anil,) = [
+            row for row in ihr_keycloak_demo_users.DEMO_STAFF if row[0] == "admin.anil"
+        ]
+        self.assertEqual(anil[3], {"alpha": FACILITY_ADMIN})
+        self.assertTrue(anil[4])
+
+    def test_adds_staff_but_is_not_hospital_wide_and_never_resets(self):
+        w = self.world
+        self.assertTrue(make_facility_admin(w.facility))
+        user = get_user_model().objects.get(username=FACILITY_ADMIN)
+        place = FacilityOrganizationUser.objects.get(user=user)
+        self.assertEqual(
+            (place.organization, place.role.name), (w.root, "Facility Admin")
+        )
+        self.assertFalse(OrganizationUser.objects.filter(user=user).exists())
+        self.assertTrue(AuthorizationController.call("can_create_user", user))
+        self.assertFalse(hospital_wide_admin(user))
+        client = self.api(user)
+        self.assertFalse(client.get("/api/ihr/my-access/").json()["hospital_admin"])
+        state.end()
+        doctor = self.user("Doctor")
+        page = client.get(f"/api/ihr/staff/{doctor.username}/access/")
+        self.assertEqual(page.status_code, 200, page.content[:300])
+        self.assertNotIn("reset-sign-in", page.json()["offers"])
+        state.end()
+        refused = client.post(f"/api/ihr/staff/{doctor.username}/reset-sign-in/")
+        self.assertEqual(refused.status_code, 403, refused.content[:300])
+        state.end()
+        self.assertFalse(make_facility_admin(w.facility))  # safe to run again
+
+    def test_refuses_to_place_someone_hospital_wide(self):
+        """The seed never turns a hospital-wide admin into the facility-only login."""
+        w = self.world
+        make_facility_admin(w.facility)
+        user = get_user_model().objects.get(username=FACILITY_ADMIN)
+        make_hospital_admin(user, w.facility)
+        with self.assertRaisesMessage(RuntimeError, "hospital-wide"):
+            make_facility_admin(w.facility)

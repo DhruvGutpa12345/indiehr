@@ -512,6 +512,8 @@ def tenant_for(world):
         pincode="411001",
         # the pack update route's <pk>: the waiting item the full world seeds (P1-T15b1)
         pack_item_id=str(pack.pk) if (pack := world.extra.get("pack_item")) else "",
+        # the staff screen's <action> (P1-T24b): the one only hospital-wide admins may take
+        staff_action="reset-sign-in",
     )
 
 

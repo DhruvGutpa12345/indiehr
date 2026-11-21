@@ -347,3 +347,93 @@ T24b's A1 spec needs a facility-only admin login (Q-K118 proposed).
 the gate. This is on purpose: provisioning makes each hospital's first admin an Administrator of
 its state, so `org_type="role"` would lock real first admins out. The narrowing is Q-K76 B (a
 recorded hospital root), to be settled with Q-K118 before T24b relies on the gate.
+
+## T24b as decided
+
+Written by the T24b backend builder, 21-11-2026, from the code. Wins over §1–§6 and the attack where
+they differ. File:line references are to the code as built (build-b.md has the full list).
+
+**Endpoints touched** (plugins/ihr_platform/ihr_identity/staff_access.py, `StaffAccessView`):
+`GET /api/ihr/staff/<username>/access/` (`get`) and `POST …/<action>/` (`post`). Routes unchanged
+(staff_urls.py). The provisioner's `invitations.handle_request` → `_reset_sign_in` re-checks.
+
+**A1, the caller.** `reset-sign-in` needs `hospital_wide_admin(caller)` at this hospital (the
+`IsHospitalAdmin` rule, Q-K120 A still applies: a state-organisation admin passes). A facility-only
+admin keeps `can_create_user`: GET, resend and cancel as before; reset answers 403. A superuser
+counts only through a membership, as on my-access. The provisioner re-checks the asker (by
+`requested_by`) before it resets.
+
+**A1, the target (Q-K121 A).** A target who is a hospital-wide admin at *any* hospital is never
+reset from a hospital's staff screen (their own recovery: forgot-password, or the platform
+operator). Two layers:
+- Here, at request time: `hospital_wide_admin(target)` in this hospital → not offered, POST 403.
+- Every other hospital, in the provisioner (`invitations._admin_anywhere`): before Keycloak is
+  touched, it reads the schema of every hospital whose schema is kept (`fleet.MIGRATE_STATUSES`:
+  provisioning, active, suspended, offboarding; not archived; review A1/K2) (as it already does
+  for invitations, inside `release.job` so a restore never races it) for a `StaffIdentity` with
+  the target's Keycloak `sub` whose CARE user is `hospital_wide_admin` or a superuser there
+  (review A2/K3). A provisioning hospital with no recorded schema state yet is skipped (it holds
+  no StaffIdentity before its schema step). Found → the request fails with code `protected`; a
+  hospital it cannot read (held, restoring, other build, gated) → `try-later` (fails closed).
+  The provisioner also re-checks that the asker's account is active, not deleted and not a
+  service account (review A3/K4). The web process never reads another hospital's schema, and
+  nothing new is stored in `public`. What hospital X learns: one bit (review A6): `protected`,
+  after "admin here" was already refused at request time, means the person is a hospital-wide
+  admin or superuser at some other hospital (not which hospital). A `protected` failure counts toward the one-reset-a-day limit (review A4); `not-allowed` does not. Why not a public "admin anywhere" flag: nothing in `public` or Keycloak
+  holds roles today, and a flag kept by signals goes stale on bulk changes and restores (Q-K121 B).
+  *Limit:* the GET cannot know about other hospitals, so the button may show and the request
+  then ends `protected`. *Limit (review K1, kept):* the check fails closed on the first hospital
+  it cannot read, so while any one hospital is held (a release window, a failed migration, a
+  restore, a db_roles gate) every reset in the fleet ends `try-later` until it is served again;
+  each reset reads all N schemas. `try-later` is final for that request (not re-queued): the admin asks again by hand (by design, review A5). Scoping by Keycloak organisation membership was not taken
+  (Q-K121: the boundary would rest on two stores staying in step).
+
+**Offers (G2).** `GET …/access/` adds `state` and `offers` (`access_state`, `offers_for`); `post`
+applies the same rules, so an offered action is accepted except for the two timing answers
+that stay 400: reset once per person per day, and "already asked". Oneself: `offers: []`.
+
+| state | when | offers |
+|---|---|---|
+| active | user active, linked, set up | `reset-sign-in` if caller hospital-wide and target not hospital-wide here, else none |
+| awaiting-setup | not active, linked by a setup e-mail, no open invitation | none |
+| queued | invitation being sent | none |
+| sent / failed | invitation not accepted | `resend-invitation`, `cancel-invitation` |
+| cancelled / expired | | `resend-invitation` |
+| none | anything else (not linked; deactivated) | none |
+
+**A4, codes not text.** `invitation.problem` and `requests[].problem` are now a code (or null) from
+`invitations.problem_code()`; the stored text stays in the record and the provisioner's log.
+
+| code | from (worker text starts with) |
+|---|---|
+| hospital-not-live | "the hospital is not live" |
+| waiting-for-setup | "waiting:", "the address has another hospital's account" |
+| user-gone / account-gone | "the invited user no longer exists" / "the account made…", "the address's account disappeared" |
+| already-active | "the invited user is already active", "they are already active staff", "this person is already staff" |
+| already-set-up | "the account is already set up", "they have set up their account" |
+| linked-elsewhere | "the user is linked to another account", "the person's account changed" |
+| no-invitation | "this person has no invitation", "the invitation is <status>" |
+| not-active | "not active staff here" |
+| not-replaced | "the unused account could not be replaced" |
+| protected / try-later / not-allowed | the three A1 refusals above |
+| failed | anything else (an unexpected error; retried by the worker if it can help) |
+
+**Seed (Q-K118 A).** `admin.anil` (alpha, authenticator pre-set) signs in as `care-facility-admin`:
+"Facility Admin" at the demo facility's root only (`seeding.make_facility_admin`, step
+`_facility_admin` in ihr_seed_demo), never a top-level membership. `my-access.hospital_admin` false.
+
+**Role matrix.** `routes.ROUTE_CONVERTER_VALUES` fills `<slug:action>` with `reset-sign-in` for the
+matrix's world only (the isolation crawl still leaves it unfilled). The row
+`W /api/ihr/staff/<str:username>/<slug:action>/` changes from `all:skip` to `all:deny`, and
+role_matrix_writes.txt gains its cells: the Facility Admin (facility-only) is refused by
+authorization (`auth`), before T24b it would have reset the Doctor. The GET row is unchanged.
+
+**Review fixes (T24b, 21-11-2026).** A 400 from `post` carries `{"code", "detail"}` (`staff_access.RefusalError`):
+the card shows a phrase from the code (`ihr_staff_error_*`), never the English `detail` (review W3).
+Every refusal and carried-out action writes one line
+`ihr-staff: hospital=<slug> request=<id|none> action=<a> outcome=<code>` (`invitations.log_outcome`;
+`request=none` for the web's 403s `reset-refused` and `admin-target`); `deploy/logs/alerts/staff.yml`
+watches `protected`, `not-allowed`, `admin-target` and `reset-refused` (review K5). **Accepted 403
+(review W2):** a Doctor or Nurse on a colleague's page asks the access GET and gets 403, which hides
+the card; this is the binding Decision (F2 dropped a separate `manage_staff` flag). The card renders
+nothing while loading, so nothing flashes before it hides.

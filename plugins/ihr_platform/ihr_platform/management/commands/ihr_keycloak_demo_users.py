@@ -36,6 +36,9 @@ DEMO_STAFF = [
     # The hospital-wide admin (P1-T24a, Q-K117 A): audit trail and pack decisions on alpha;
     # ihr_seed_demo (seeding.make_hospital_admin) gives care-admin that role and the facility
     ("admin.priya", "Priya", "Deshpande", {"alpha": "care-admin"}, True),
+    # A facility-only admin (P1-T24b, Q-K118 A): adds staff, but "Reset sign-in" is refused
+    # (only hospital-wide admins); ihr_seed_demo (seeding.make_facility_admin) places him
+    ("admin.anil", "Anil", "Joshi", {"alpha": "care-facility-admin"}, True),
     ("new.neha", "Neha", "Kulkarni", {"alpha": "care-staff"}, False),
     # Our eight roles (P1-T11b1), each in both hospitals
     *(

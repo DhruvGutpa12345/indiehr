@@ -1,5 +1,5 @@
 {
- "_comment": "scripts/check-logs.py: these journal entries go through the real redaction steps into a throwaway VictoriaLogs, then vmalert runs deploy/logs/alerts/ on them. 'expect' lists, per alert, the values of its key label it must fire (or wait to fire) for, and no others: client_ip, hospital for PackApplyFailed, PackFacilityDeferred, HospitalNotServed, ReleaseWindowOverrun, AuditHospitalCheckFailed, AuditHospitalSealLate, DumpHospitalFailed, DumpHospitalHeld and HospitalRestoreFailed, schema for ParkedSchemaOverdue, or reason for DatabaseRoleRefused (hospital for BatchRequestRefused and the three MrdRecords alerts).",
+ "_comment": "scripts/check-logs.py: these journal entries go through the real redaction steps into a throwaway VictoriaLogs, then vmalert runs deploy/logs/alerts/ on them. 'expect' lists, per alert, the values of its key label it must fire (or wait to fire) for, and no others: client_ip, hospital for PackApplyFailed, PackFacilityDeferred, HospitalNotServed, ReleaseWindowOverrun, AuditHospitalCheckFailed, AuditHospitalSealLate, DumpHospitalFailed, DumpHospitalHeld and HospitalRestoreFailed, schema for ParkedSchemaOverdue, or reason for DatabaseRoleRefused (hospital for BatchRequestRefused, StaffResetRefused and the three MrdRecords alerts).",
  "fixtures": [
   {
    "count": 1,
@@ -2245,6 +2245,90 @@
     "CONTAINER_NAME": "indiehr-staging-backend-1",
     "COM_DOCKER_COMPOSE_SERVICE": "backend"
    }
+  },
+  {
+   "count": 3,
+   "record": {
+    "MESSAGE": "ihr-staff: hospital=alpha request=0a1b2c3d-4e5f-4a6b-8c7d-9e0f1a2b3c4d action=reset_sign_in outcome=protected",
+    "_HOSTNAME": "srv1",
+    "PRIORITY": "6",
+    "_TRANSPORT": "journal",
+    "_COMM": "dockerd",
+    "_UID": "0",
+    "_SYSTEMD_UNIT": "docker.service",
+    "CONTAINER_NAME": "indiehr-staging-staff-worker-1",
+    "COM_DOCKER_COMPOSE_SERVICE": "staff-worker"
+   }
+  },
+  {
+   "count": 2,
+   "record": {
+    "MESSAGE": "ihr-staff: hospital=beta request=0a1b2c3d-4e5f-4a6b-8c7d-9e0f1a2b3c4d action=reset_sign_in outcome=not-allowed",
+    "_HOSTNAME": "srv1",
+    "PRIORITY": "6",
+    "_TRANSPORT": "journal",
+    "_COMM": "dockerd",
+    "_UID": "0",
+    "_SYSTEMD_UNIT": "docker.service",
+    "CONTAINER_NAME": "indiehr-staging-staff-worker-1",
+    "COM_DOCKER_COMPOSE_SERVICE": "staff-worker"
+   }
+  },
+  {
+   "count": 3,
+   "record": {
+    "MESSAGE": "ihr-staff: hospital=gamma request=none action=reset_sign_in outcome=admin-target",
+    "_HOSTNAME": "srv1",
+    "PRIORITY": "6",
+    "_TRANSPORT": "journal",
+    "_COMM": "dockerd",
+    "_UID": "0",
+    "_SYSTEMD_UNIT": "docker.service",
+    "CONTAINER_NAME": "indiehr-staging-backend-1",
+    "COM_DOCKER_COMPOSE_SERVICE": "backend"
+   }
+  },
+  {
+   "count": 5,
+   "record": {
+    "MESSAGE": "ihr-staff: hospital=delta request=0a1b2c3d-4e5f-4a6b-8c7d-9e0f1a2b3c4d action=reset_sign_in outcome=done",
+    "_HOSTNAME": "srv1",
+    "PRIORITY": "6",
+    "_TRANSPORT": "journal",
+    "_COMM": "dockerd",
+    "_UID": "0",
+    "_SYSTEMD_UNIT": "docker.service",
+    "CONTAINER_NAME": "indiehr-staging-staff-worker-1",
+    "COM_DOCKER_COMPOSE_SERVICE": "staff-worker"
+   }
+  },
+  {
+   "count": 3,
+   "record": {
+    "MESSAGE": "ihr-staff: hospital=traefikforged request=none action=reset_sign_in outcome=protected",
+    "_HOSTNAME": "srv1",
+    "PRIORITY": "6",
+    "_TRANSPORT": "journal",
+    "_COMM": "dockerd",
+    "_UID": "0",
+    "_SYSTEMD_UNIT": "docker.service",
+    "CONTAINER_NAME": "indiehr-staging-traefik-1",
+    "COM_DOCKER_COMPOSE_SERVICE": "traefik"
+   }
+  },
+  {
+   "count": 3,
+   "record": {
+    "MESSAGE": "10.0.0.9 - - [x] \"GET /ihr-staff: hospital=webforged request=none action=reset_sign_in outcome=protected\" 404 179",
+    "_HOSTNAME": "srv1",
+    "PRIORITY": "6",
+    "_TRANSPORT": "journal",
+    "_COMM": "dockerd",
+    "_UID": "0",
+    "_SYSTEMD_UNIT": "docker.service",
+    "CONTAINER_NAME": "indiehr-staging-backend-1",
+    "COM_DOCKER_COMPOSE_SERVICE": "backend"
+   }
   }
  ],
  "expect": {
@@ -2343,6 +2427,10 @@
   "DatabaseStatementTimeouts": [
    "lock",
    "statement"
+  ],
+  "StaffResetRefused": [
+   "alpha",
+   "gamma"
   ]
  },
  "expect_state": {
@@ -2369,6 +2457,7 @@
   "MrdRecordsOffHours": "firing",
   "PackFacilityDeferred": "pending",
   "AuditWholeRestoreRecorded": "firing",
-  "DatabaseStatementTimeouts": "firing"
+  "DatabaseStatementTimeouts": "firing",
+  "StaffResetRefused": "firing"
  }
 }

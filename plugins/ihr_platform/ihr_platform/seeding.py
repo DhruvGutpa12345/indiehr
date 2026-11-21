@@ -217,3 +217,39 @@ def make_hospital_admin(user, facility):
         defaults={"role": RoleModel.objects.get(name="Facility Admin", is_system=True)},
     )
     return added or created
+
+
+# The demo's facility-only admin (P1-T24b, Q-K118 A): may add staff at the demo facility, is not
+# hospital-wide, so the staff card's "Reset sign-in" is refused to him (attack A1). Keycloak login
+# admin.anil on alpha (ihr_keycloak_demo_users.DEMO_STAFF). Synthetic name and phone number.
+FACILITY_ADMIN = "care-facility-admin"
+FACILITY_ADMIN_PROFILE = {
+    "first_name": "Anil",
+    "last_name": "Joshi",
+    "email": f"{FACILITY_ADMIN}@care.test",
+    "phone_number": "+919999900021",
+}
+
+
+def make_facility_admin(facility):
+    """Make sure ``FACILITY_ADMIN`` exists and is "Facility Admin" at ``facility``'s root
+    organisation only. Refuses (RuntimeError) if that user is a hospital-wide admin: the login
+    exists to be refused what only those may do. Safe to run again; returns True when anything
+    was added. Run inside a hospital's schema. Synthetic data only."""
+    from care.emr.models.organization import FacilityOrganizationUser
+    from care.security.models import RoleModel
+    from care.users.models import User
+    from ihr_identity.staff_access import hospital_wide_admin
+
+    user, created = User.objects.get_or_create(
+        username=FACILITY_ADMIN, defaults=FACILITY_ADMIN_PROFILE
+    )
+    if hospital_wide_admin(user):
+        message = f"{FACILITY_ADMIN} is a hospital-wide admin; the demo needs a facility-only one."
+        raise RuntimeError(message)
+    _, placed = FacilityOrganizationUser.objects.get_or_create(
+        organization=facility.default_internal_organization,
+        user=user,
+        defaults={"role": RoleModel.objects.get(name="Facility Admin", is_system=True)},
+    )
+    return created or placed

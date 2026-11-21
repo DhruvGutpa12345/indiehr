@@ -1151,6 +1151,8 @@ In the dev seed `admin.bhavesh` (beta, `care-fac-admin`) already holds "Facility
 - **A ⭐ (proposed).** T24b adds a facility-only admin login (Facility Admin at the facility root only) to test the A1 refusal. `roles-menus.spec.ts` lists bhavesh with the audit trail until then.
 - B. Remove the top-level role from bhavesh's fixture (changes CARE's demo data).
 
+*Built in P1-T24b:* `admin.anil` (alpha) signs in as `care-facility-admin`, "Facility Admin" at the demo facility's root only (`seeding.make_facility_admin`).
+
 ### Q-K119 — How is the audit page's patient and person filter set? (P1-T24a web builder; auto-accepted by Claude, 2026-11-21, awaiting owner confirmation)
 
 The design listed a patient search box and a typed "Who" box; the attack decision dropped "Who" (the actor is `user:<pk>:<username>`).
@@ -1169,6 +1171,33 @@ Review A1 found that `hospital_wide_admin` (the gate of the audit trail, the pac
 
 *Limit, unchanged:* anyone given an admin role on any state organisation passes. Only someone who may create users can do that, and our code does it only for the first admin. *Reverse:* none needed. Q-K76 B replaces this.
 
+
+### Q-K121 — How is "a hospital-wide admin at any hospital" protected from a reset? (P1-T24b backend builder, attack A1; auto-accepted by Claude, 2026-11-21, awaiting owner confirmation)
+
+A reset wipes a person's password and authenticator at every hospital, so attack A1 asked that someone who is a hospital-wide admin anywhere is never reset from one hospital's staff screen. Nothing in `public` or Keycloak holds roles today, and a hospital's web request must not read another hospital's schema.
+
+- **A ⭐ (taken).** This hospital checks its own schema when asked (not offered, POST 403). The provisioner, which already reads every hospital's schema, checks every hospital whose schema is kept (`fleet.MIGRATE_STATUSES`: provisioning, active, suspended, offboarding; not archived; corrected by review A1/K2, 2026-11-21: "any hospital" in the binding decision, which an earlier draft had narrowed to ACTIVE) before it touches Keycloak (`invitations._admin_anywhere`, each read under the hospital's job lock); a provisioning hospital not yet past its schema step (no recorded schema state) is skipped, since it holds no StaffIdentity yet. Found as a hospital-wide admin **or a superuser** there (review A2/K3) → the request fails with code `protected`; a hospital it cannot read (held, restoring, other build, db_roles-gated) → `try-later` (fails closed). It also re-checks that the asker is still an active, not deleted, non-service account (review A3/K4) and still a hospital-wide admin (`not-allowed`). Exact at the moment of the reset, nothing new stored. The asking hospital learns exactly one bit (review A6): since "admin here" was already refused at request time, `protected` tells its admin that the person is a hospital-wide admin (or superuser) at some other hospital. It does not learn which hospital. A `protected` refusal counts toward the one-reset-a-day limit for that person, so it cannot be repeated for free (review A4); a `not-allowed` one does not (it says something about the asker, and must not block another admin).
+- B. A public-schema flag "admin at some hospital" per Keycloak account, kept by signals on memberships, plus a nightly rebuild. Lets the GET hide the button, but goes stale on bulk changes and restores, and is a new table the app writes from every hospital.
+
+*Limits:* the GET cannot know about other hospitals, so "Reset sign-in" can show for such a person; the request then ends `protected` and the card says so. **Fleet-wide try-later (review K1, kept on purpose):** the check fails closed on the first hospital it cannot read, so while any one hospital is held (a release window, a failed migration left held, a single-hospital restore, a db_roles gate), every reset at every hospital ends `try-later` and the admin asks again once that hospital is served; each reset also reads all N schemas (a shared job lock, a few queries each). Scoping the scan to the hospitals whose Keycloak organisation holds the `sub` was considered and not taken: it would make the boundary rest on Keycloak's organisation membership matching the CARE `StaffIdentity` links (they are written by different steps and can drift, e.g. after a restore), and Keycloak could not then be the fail-closed fallback for a missing link. `try-later` is a final answer for that request (it is not re-queued like a held hospital's own job): the admin asks again by hand, and this is by design (review A5). Resets are rare, owner-visible and retryable; a bounded automatic re-queue can come later if this bites. **Known one-bit limits (review A6, K10):** the one-reset-a-day check counts requests from every hospital (`StaffAccessRequest` is in `public`), so a second hospital's admin who asks within the day is told only "reset in the last day" (no hospital named, since review K10); that still shows that a reset happened for the person recently, which the person's own e-mail already says. *Reverse:* drop the provisioner check (one function).
+
+### Q-K122 — May one hospital-wide admin reset another at the same hospital? (P1-T24b backend builder; auto-accepted by Claude, 2026-11-21, awaiting owner confirmation)
+
+The attack's decision says a target who is a hospital-wide admin at *any* hospital is protected; the module's old docstring allowed "another hospital-wide admin".
+
+- **A ⭐ (taken).** No. A hospital-wide admin is never reset from a hospital's staff screen, by anyone. They use "Forgot password" for a lost password; a lost authenticator goes to the platform operator, who today removes it in Keycloak's own admin console (there is no IndieHR command or console button for this yet: a follow-up for the operator console).
+- B. Allow a peer at the same hospital (only if the person is a hospital-wide admin nowhere else). More convenient; one compromised admin account could then wipe every other admin's sign-in.
+
+*Limit:* a hospital whose only admin loses their authenticator needs the operator. *Reverse:* in `staff_access.reset_allowed` and `invitations._admin_anywhere`, skip the asking hospital.
+
+### Q-K123 — Does a refused (`protected`) reset count toward the one-a-day limit, and what does the card say in Hindi? (P1-T24b review A4, W3; auto-accepted by Claude, 2026-11-21, awaiting owner confirmation)
+
+Before the review a failed reset never counted toward the daily limit, so a `protected` refusal could be asked again and again (one open request at a time; each one reads every hospital's schema), and every 400 showed the backend's English sentence on the Hindi card.
+
+- **A ⭐ (taken).** A `protected` failure counts: the next ask for that person (any hospital) within the day is a 400 with code `protected-recent` ("Try again tomorrow"). `not-allowed` and `try-later` do not count (they say something about the asker or the moment, and must not block another admin). Every 400 from the staff API is `{code, detail}` (`staff_access.Refusal`); the card chooses its own phrase from the code (`ihr_staff_error_*`, English and Hindi) and never shows `detail`. Alert `StaffResetRefused` (`deploy/logs/alerts/staff.yml`) watches protected, not-allowed, admin-target and reset-refused, 3 or more in an hour at one hospital.
+- B. Count every failure. Simpler, but one admin's `not-allowed` or a hold's `try-later` would block a colleague for a day.
+
+*Limit:* a person whose admin role is removed within the day cannot be reset from another hospital until the day passes. *Reverse:* drop the `protected-recent` query in `staff_access.StaffAccessView.post`.
 
 **Still open:** Q-B4 (final MVP module list: assumed as in PLAN.md Phase 2) and Q-B6/B7 (pricing, timeline). Q-F2 is moot while AI is deferred.
 

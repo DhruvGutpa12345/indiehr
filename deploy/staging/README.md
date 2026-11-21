@@ -1598,6 +1598,19 @@ migrates. Design: `docs/reviews/p1-t18/design.md`.
 | `scripts/staging.sh rollback --restore [--operator <you>]` | Back across migrations. Before anything changes: every image of the target is here, a backup from before the restore point exists, the repository holds the WAL up to the point (else, with no room for a copy, refused), and the disk has room for a copy of the whole database volume (`pg_wal` included) plus the 20 GB floor (`IHR_DEPLOY_MIN_FREE_GB`). Asks you to type the target release's tag, stops the stack (`down`, **never `down -v`**: that also deletes the log store, the signing keys and the WAL spool), keeps the current database in a new volume `indiehr-staging_pgdata-pre-rollback-<tag>-<time>` when the disk has room (marked `.ihr-rollback-copy-complete` when whole; a copy that fails is removed and nothing is restored; else the database is replaced: the prompt says which), points Postgres at the target's image, restores with pgBackRest to the window's restore point (`restore --target-name release-<tag>-<epoch> --set <the backup before it>`), logs the rollback, starts the previous release's images, serves the hospitals again, runs smoke and then a full backup of the new timeline |
 | `scripts/staging.sh releases` | The releases in force, newest last (and one in progress) |
 
+**Staff sign-in resets during a hold (P1-T24b, Q-K121).** Before an admin's "Reset sign-in" is
+carried out, the `staff-worker` reads every kept hospital's schema to make sure the person is a
+hospital-wide admin nowhere (`invitations._admin_anywhere`). It fails closed: while **any one**
+hospital is held (this window, a hospital left held by a failed migration, a single-hospital
+restore, a db_roles gate), every reset at every hospital ends with the card's "ask again later"
+(`try-later`; logged `staff request <id> refused: try-later`, and as one line
+`ihr-staff: hospital=<slug> request=<id> action=reset_sign_in outcome=try-later`). `try-later` is final
+for that request (not re-queued; review A5). Nothing to repair: once every hospital is served again, the
+admin asks again. Resends and cancels are not affected. **Alerts** (`deploy/logs/alerts/staff.yml`,
+review K5): `StaffResetRefused` fires when a hospital sees 3 or more `protected`, `not-allowed`,
+`admin-target` or `reset-refused` lines in an hour (an admin probing the protected path, or a facility
+admin trying a reset); look at that hospital's audit trail (the POSTs are recorded) and ask the admin.
+
 **What is kept** (`deploy/staging/releases/`, git-ignored, mode 600): `releases.log` (per release:
 tag, time, every image id, both migration fingerprints, the restore point and its LSN and time,
 the audit check's and the seal's results; per rollback: from, to, restored or not; never a

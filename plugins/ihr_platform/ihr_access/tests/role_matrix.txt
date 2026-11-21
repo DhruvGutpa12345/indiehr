@@ -60,7 +60,7 @@ GET /api/ihr/packs/updates/<int:pk>/  all:deny  # reference pack updates (P1-T15
 GET /api/ihr/pincode/<str:pincode>/  all:unavailable  # the PIN directory is not loaded in the test hospital: 503 for everyone (ihr_tenant_settings tests load it)
 GET /api/ihr/profile/  all:allow  # the hospital's own profile and branding (P1-T2a), no patient data
 GET /api/ihr/records-access/  all:empty mrdg:allow  # the caller's own live records grants (P1-T11b4): none for anyone but MRD with a grant
-GET /api/ihr/staff/<str:username>/access/  all:deny admin:allow  # the staff access screen: hospital admins only (P1-T5)
+GET /api/ihr/staff/<str:username>/access/  all:deny admin:allow  # the staff access screen: whoever may add staff (P1-T5); its offers leave out reset-sign-in for a facility-only admin (P1-T24b, test_staff_offers)
 GET /api/schema/  all:allow  # the API description: no hospital data
 GET /api/v1/encounter/  all:deny  # CARE needs facility or patient
 GET /api/v1/encounter/ ?facility=facility  all:project clinical:allow owner,lab,store:empty  # the facility status view: front desk through our branch, projected (b2); Owner, Lab and Store hold no status slug; Radiologist: CARE's Radiology visits
@@ -444,7 +444,7 @@ POST /api/v1/users/set_preferences/  all:care ours:allow  # the caller's own pre
 POST /health/statuspage  all:care ours:allow  # the health status page (no hospital data); tests: ihr_access.tests.test_role_matrix.AllowedWrites.test_preferences_are_the_callers_own
 
 # --- writes fill() cannot fill (no row of the kind in the access world; settings, no patient data) ---
-W /api/ihr/staff/<str:username>/<slug:action>/  all:skip  # fill() cannot fill <slug:action>; the staff access actions are hospital admins' only and ihr_identity tests them
+W /api/ihr/staff/<str:username>/<slug:action>/  all:deny  # reset-sign-in on the Doctor (routes.ROUTE_CONVERTER_VALUES, P1-T24b attack A1): only a hospital-wide admin may reset, and no one in this world is one, so the facility-only Facility Admin is refused (403) like every other role except the Doctor, who is the target and gets the self-check's 400 before anything else (role_matrix_writes.txt: body:doctor); resend and cancel keep can_create_user (tests: ihr_identity.tests.test_staff_offers.CallerRule, ihr_access.tests.test_seed_admin.SeedFacilityAdmin)
 W /api/v1/facility/{facility_external_id}/activity_definition/{slug}/  all:skip  # no row of this kind in the access world (a setting, no patient data): ihr_platform's isolation crawl seeds one
 W /api/v1/facility/{facility_external_id}/activity_definition/{slug}/add_favorite/  all:skip  # no row of this kind in the access world (a setting, no patient data): ihr_platform's isolation crawl seeds one
 W /api/v1/facility/{facility_external_id}/activity_definition/{slug}/remove_favorite/  all:skip  # no row of this kind in the access world (a setting, no patient data): ihr_platform's isolation crawl seeds one

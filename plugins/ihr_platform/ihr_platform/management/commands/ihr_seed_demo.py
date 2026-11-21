@@ -7,7 +7,8 @@ Creates the hospital if it is missing, loads CARE's synthetic demo data into it 
 profile, adds a pharmacist and a billing user, adds one user for each of our eight roles placed as
 design-b.md §4 says (P1-T11b1), puts one account's visit in a bed as an inpatient stay (P1-T11c2),
 makes CARE's ``care-admin`` a hospital-wide admin placed at the demo facility (P1-T24a, Q-K117 A:
-the Keycloak login admin.priya on alpha), and sets every test user's password to $TEST_PASSWORD (CARE's fixture passwords are public).
+the Keycloak login admin.priya on alpha), adds a facility-only admin (P1-T24b, Q-K118 A: the
+login admin.anil on alpha), and sets every test user's password to $TEST_PASSWORD (CARE's fixture passwords are public).
 Prints one JSON line.
 Run through ``scripts/care-dev.sh seed``.
 """
@@ -24,10 +25,12 @@ from ihr_tenant_settings.models import HospitalProfile
 
 from ihr_platform.models import Domain, Hospital
 from ihr_platform.seeding import (
+    FACILITY_ADMIN,
     HOSPITAL_ADMIN,
     add_inpatient_stay,
     complete_demo_contacts,
     load_demo_data,
+    make_facility_admin,
     make_hospital_admin,
 )
 
@@ -105,6 +108,13 @@ ROLE_USERS = [
     ("care-storekeeper", "Store Keeper", "Gopal", "Stores", "+919999900019", "Stores"),
     ("care-owner", "Owner", "Vikram", "Owner", "+919999900020", None),
 ]
+# Every user whose password the seed sets (CARE's fixture passwords are public)
+SEED_USERS = (
+    FIXTURE_USERS
+    + [u[0] for u in EXTRA_USERS]
+    + [u[0] for u in ROLE_USERS]
+    + [FACILITY_ADMIN]
+)
 # Department -> a location linked to it (lab queues, imaging rooms and stores are per location)
 DEPARTMENT_LOCATIONS = {
     "Laboratory": "Sample Collection Room",
@@ -157,6 +167,7 @@ class Command(BaseCommand):
             created = _add_extra_users()
             created += _add_role_users()
             admin_added = _hospital_admin()
+            facility_admin_added = _facility_admin()
             reset = _set_passwords(password)
 
         self.stdout.write(
@@ -169,6 +180,8 @@ class Command(BaseCommand):
                     "users_created": created,
                     "hospital_admin": HOSPITAL_ADMIN,
                     "hospital_admin_added": admin_added,
+                    "facility_admin": FACILITY_ADMIN,
+                    "facility_admin_added": facility_admin_added,
                     "passwords_reset": reset,
                 }
             )
@@ -217,9 +230,8 @@ def _add_extra_users():
 def _set_passwords(password):
     from care.users.models import User
 
-    names = FIXTURE_USERS + [u[0] for u in EXTRA_USERS] + [u[0] for u in ROLE_USERS]
     reset = 0
-    for user in User.objects.filter(username__in=names):
+    for user in User.objects.filter(username__in=SEED_USERS):
         user.set_password(password)
         user.save(update_fields=["password"])
         reset += 1
@@ -278,6 +290,13 @@ def _hospital_admin():
     template = User.objects.get(username="care-staff")
     user = User.objects.get(username=HOSPITAL_ADMIN)
     return make_hospital_admin(user, _demo_facility(template))
+
+
+@transaction.atomic
+def _facility_admin():
+    from care.users.models import User
+
+    return make_facility_admin(_demo_facility(User.objects.get(username="care-staff")))
 
 
 @transaction.atomic
