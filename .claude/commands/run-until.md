@@ -90,15 +90,28 @@ For every task, in this order:
    library, image or service.
 4. **Design, then attack the design** before building, as earlier tasks did (security +
    feasibility reviewers). Fix fatal flaws in the design, not in the code.
+   - Add the EGM goldfish lenses to every design attack. They start without our conversation, so
+     they catch what only the conversation "knows". Use the agent types `egm:egm-design`,
+     `egm:egm-zoom-out` and `egm:egm-implementation-readiness`, Sonnet high, on the design file.
+     Opus security, tenancy or audit lenses stay as before for those tasks.
+   - Write the design so a goldfish can follow it: name files and symbols, and state assumptions
+     as criteria.
 5. **Build** in plugins/ihr_* where possible. Log any edit inside apps/ in
-   docs/UPSTREAM_PATCHES.md.
+   docs/UPSTREAM_PATCHES.md. Builders work test-first: they follow the Superpowers
+   `test-driven-development` skill, so a regression test fails before the fix.
 6. **Test.** Write unit tests, isolation tests and mutation rows where the area has them, live
    tests where they exist (Keycloak, staging proofs), plus pre-commit run --all-files. Paste real
    results, failures included.
+   - Before claiming "passes", follow the Superpowers `verification-before-completion` skill:
+     the command, its output, then the claim.
+   - Stage new files with `git add` (not just `-N`) before the final hook run, so the gitleaks
+     hook sees them.
 7. **Independent review.** Use a fresh Opus subagent that didn't write the code, with lenses
    suited to the task (security, correctness, operations, tenancy). Have another agent challenge
    each finding. Fix every confirmed finding, with a regression test, and re-prove.
-8. **CI.** Push and watch the runs (gh run watch / gh run view). Fix failures. If CI cannot run
+8. **CI.** Push and watch the runs (gh run watch / gh run view). Fix failures; for a failure whose
+   cause is not obvious, follow the Superpowers `systematic-debugging` skill: reproduce it, find
+   the cause, then fix it with a test. If CI cannot run
    (e.g. a GitHub billing problem), say so plainly, as the tracker does, and continue on local
    results.
 9. **Record.** Add a TRACKER.md completed-log row in the existing style (what, proofs, reviews,
@@ -126,6 +139,24 @@ the constraints from CLAUDE.md that apply, and the exact output you want back.
 - Reviewers never review their own work. A finding counts only after a second agent tries and
   fails to refute it.
 - Agents return conclusions and evidence (paths, commands, outputs), not whole file dumps.
+- **Every brief for an agent that reads or changes code** includes these steps, word for word
+  where they fit. A rule stated only in CLAUDE.md was ignored: in the run to P1-T23, agents
+  called grep 559 times and the code graph twice.
+  1. "Before any grep or Read of code, run `graphify explain \"<symbol>\"` for each function or
+     class you will change or depend on, and `graphify affected \"<symbol>\"` before changing it.
+     Use grep only for exact text (strings, settings, log lines) or after the graph has named the
+     file."
+  2. "Builders: write the failing test first (Superpowers `test-driven-development`). Before
+     reporting done, show the command and its output (`verification-before-completion`)."
+  3. "Report how many graphify calls you made."
+- **Superpowers skills used here:** `test-driven-development`, `verification-before-completion`,
+  `systematic-debugging`, and `receiving-code-review` for fixers. **Not used here:**
+  - `using-git-worktrees`, `finishing-a-development-branch`: we commit straight to main.
+  - `brainstorming`: it asks the owner questions; this run writes decisions to QUESTIONS.md
+    instead.
+  - `subagent-driven-development`, `executing-plans`: the Workflow tool does this.
+  - `using-superpowers`: its "invoke a skill before every reply" rule; cite the skills above by
+    name instead.
 - **At the end of a phase** inside this run, run the independent Opus phase review against
   PLAN.md, the ADRs and the product goal (as in CLAUDE.md), save it under docs/reviews/, and add
   its findings as tasks before going on.
@@ -198,6 +229,10 @@ task up to it is blocked on me. Then:
    - known limits and risks;
    - this run's measured numbers (tasks and subtasks done, agent hours, pauses, decisions
      auto-taken, click-throughs created);
+   - **tool adoption:** the output of `scripts/tool-adoption.py --since <run start, UTC>` (graphify
+     calls against grep, EGM lenses used, Superpowers skills cited). If the graph share is below
+     25 %, name the briefs that skipped the graphify step and fix them for the next run. Then run
+     the CLAUDE.md "Tool upkeep" checks and record them;
    - **"Next run"**, chosen with §8.
 2. Put the same "Next run" recommendation in TRACKER.md, under the "Next task" line.
 3. Commit and push.
