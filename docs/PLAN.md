@@ -263,6 +263,12 @@ Task IDs are `P<phase>-T<n>`. Each task is sized for **one sitting (≈1–3 hou
 | P1-T22 | Nightly per-hospital dumps, single-hospital restore command and runbook, monthly drill (TENANCY §7.5); audit restore events (P1-T21 `events.write_restore`) for single-hospital and whole-database restores (`rollback --restore`) | Drill restores one hospital, others unchanged | Opus / high |
 | P1-T23 | Postgres operating rules (`statement_timeout`, `max_locks_per_transaction`) + full-stack load test on an 8 GB target; back-channel pool decision | Numbers recorded | Sonnet / high |
 | P1-T24 | Web screens: audit viewer, invitation resend/cancel, reset sign-in, access status | Clicked through by you | Opus / medium |
+| P1-T25 | Hospital-root admin gate: only admins on the hospital's root organisation pass `IsHospitalAdmin` (Q-K76 B) | Tests, mutation rows, CI | Opus / high |
+| P1-T26 | Dress rehearsal on a rented 8 GB India VM: full stack, load test, memory ceilings, terminology load time (closing review PR1-1; paid VM: owner gate) | Numbers recorded | Sonnet / high |
+| P1-T27 | Operator access record: operator one-offs and psql sessions leave who/what/when; Postgres connection logging (PR1-3) | Tests, live proof | Opus / high |
+| P1-T28 | ADR-020 environments: pilot on staging or production; the no-real-data rule (PR1-2) | Owner decision | Opus / medium |
+| P1-T29 | ADR and docs sync after Phase 1 (PR1-6, PR1-7) | Docs reviewed | Sonnet / medium |
+| P1-T30 | Operator surface: subcommand freeze, `staging.sh due`, alert tiers (PR1-8) | Tests | Sonnet / high |
 
 ### Phase 2 — MVP hospital workflows (sellable to a 10–100 bed hospital)
 
