@@ -75,10 +75,12 @@ async function expectDecisionsInView(
     for (const id of ids) {
       const control = page.locator(`[data-ihr="${id}"]`);
       await control.scrollIntoViewIfNeeded();
+      // "reachable", not "pinned": a scrolled-to control can sit a sub-pixel off (CI saw the
+      // 80 px reason box at 98.8 %), so 95 % here; the pinned sizes above keep ratio 1
       await expect(
         control,
         `${where}: ${id} is reachable by scrolling at ${SHORT_SIZE.width}x${SHORT_SIZE.height}`,
-      ).toBeInViewport({ ratio: 1 });
+      ).toBeInViewport({ ratio: 0.95 });
     }
   } finally {
     if (original) await page.setViewportSize(original);

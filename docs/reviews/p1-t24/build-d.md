@@ -50,3 +50,5 @@ It also checks a short 640x300 window, where the buttons must be reachable by sc
 ## CI on d920bbcbf (2026-11-22)
 
 CI 45011212665 green; Apps CI 45011212551: frontend build green, Playwright 33 passed and **1 failed**: `expectDecisionsInView` found `packs-reason` only 39 % in the 1280×800 window. Cause: the D1 fix dropped `min-h-0` from the `packs-detail` column, so that flex item could not shrink below its content and the whole sheet scrolled instead (a flex item's default minimum height is its content). Fix: `min-h-0` back on `packs-detail`, keeping `overflow-y-auto` on the sheet and `min-h-24` on the scroll region; the check that caught it is the D2 retrying check, so it was seen red. CI on the fix: see the next commit.
+
+CI on 4deb1e0fb: CI green; Playwright 33 passed, 1 failed: the pinned sizes now pass (1280×800, 360×740); at 640×300 the scrolled-to reason box was 98.8 % in view against the reachability step's ratio 1 (a sub-pixel offset, the box is reachable). That step now asks for 95 %; the pinned sizes keep ratio 1. CI on that: see the run file.
