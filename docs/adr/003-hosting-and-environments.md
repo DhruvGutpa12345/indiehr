@@ -1,6 +1,6 @@
 # ADR-003: Hosting and environments
 
-- **Status:** Accepted. **Amendment 1 (owner, 2026-11-08):** cloud = **AWS Mumbai** (ap-south-1), backups to Hyderabad (ap-south-2); the owner's own domain; until GitHub Actions works, staging is deployed from the owner's machine over SSH (images built on the VM), then from CI. **Amendment 2 (owner, 2026-11-08): superseded by ADR-011** — provider-neutral layout; target E2E Networks Delhi NCR (backups to Chennai), AWS Mumbai/Hyderabad as alternative, trials on this machine; domain amhcloud.in
+- **Status:** Accepted. **Amendment 1 (owner, 2026-11-08):** cloud = **AWS Mumbai** (ap-south-1), backups to Hyderabad (ap-south-2); the owner's own domain; until GitHub Actions works, staging is deployed from the owner's machine over SSH (images built on the VM), then from CI. **Amendment 2 (owner, 2026-11-08): superseded by ADR-011** — provider-neutral layout; target E2E Networks Delhi NCR (backups to Chennai), AWS Mumbai/Hyderabad as alternative, trials on this machine; domain amhcloud.in. **Amendment 3 (Claude, 2026-11-22, Proposed, awaiting owner confirmation; Q-K132, Q-K133): see ADR-020** — the first pilot's real data runs on the same Compose stack as a separate instance, production-1, with its own VM, secrets, buckets, Keycloak and suffix; synthetic staging lives apart and never receives real data; real dumps are drilled only on production-1's own restore-drill copy; the move to k3s/RKE2 + CloudNativePG (P9-T7) is triggered by measured limits, not "about 10 tenants"
 - **Date:** 2026-11-03
 - **Decided by:** product owner (Q-D5, Q-E1, Q-E4, Q-E5 default)
 
@@ -11,6 +11,8 @@
 | **local** | The user's Ubuntu 26.04 workstation, **after the RAM upgrade to 32 GB** | Docker Compose, one stack at a time |
 | **staging** | One VM in an **Indian region** (provider TBD before P1-T8) | Docker Compose + Traefik v3 (TLS via Let's Encrypt); deployed from CI |
 | **production** | Indian region, with backups replicated to a second Indian region | Starts as Compose on a VM. Moves to k3s/RKE2 + CloudNativePG at about 10 tenants or when HA is needed (P9-T7) |
+
+> **Amendment 3 (2026-11-22, Proposed):** the rows above are kept as decided on 2026-11-03. For the pilot, "staging" and "production" are now defined by ADR-020: production-1 is a separate instance of the Compose stack; the scale-out trigger is ADR-020 §4's measured limits.
 
 **Rules for every environment:**
 

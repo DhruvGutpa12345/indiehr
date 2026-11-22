@@ -27,11 +27,24 @@ That difference drives most of the changes below.
 | [ADR-000](adr/000-scope-and-segment.md) | Scope: web-only, online-only, English + Hindi, 10–100 bed segment, proprietary code, commits to `main` |
 | [ADR-001](adr/001-core-platform-care.md) | Core platform: fork CARE; our features as `ihr_*` plugins; pinned upstream SHAs |
 | [ADR-002](adr/002-tenancy-schema-per-hospital.md) | Tenancy: one Postgres schema per hospital; Keycloak global identity + Organizations |
-| [ADR-003](adr/003-hosting-and-environments.md) | Hosting: local → single India-region VM staging → k3s later; cloud provider chosen before P1-T8 |
+| [ADR-003](adr/003-hosting-and-environments.md) | Hosting: local → single India-region VM staging → k3s later; cloud provider chosen before P1-T8 (amended by ADR-011 and ADR-020) |
 | [ADR-004](adr/004-accounting-tally-and-erpnext.md) | Accounting: accounting outbox → Tally XML export **and** ERPNext v16 connector |
 | [ADR-005](adr/005-ai-deferred.md) | AI: deferred; deterministic clinical rules only |
 | [ADR-006](adr/006-upstream-fork-via-subtree.md) | CARE imported as squashed git subtrees in our private repo, pinned in `upstream.lock` |
 | [ADR-007](adr/007-blueprint-items-deferred.md) | Blueprint items deferred or dropped, with the reason and when to revisit |
+| [ADR-008](adr/008-identity-keycloak.md) | Staff identity in Keycloak |
+| [ADR-009](adr/009-staff-sessions-bff.md) | Staff sessions held by the backend |
+| [ADR-010](adr/010-audit-trail.md) | Audit trail in each hospital's schema, recorded by the database (amended for the hospital-root gate, P1-T25) |
+| [ADR-011](adr/011-provider-neutral-hosting.md) | Provider-neutral hosting (sovereign, switchable) |
+| [ADR-012](adr/012-client-authentication-keys.md) | Signed-key client authentication (private_key_jwt) |
+| [ADR-013](adr/013-log-collection-and-redaction.md) | Log collection, redaction and log alerts |
+| [ADR-014](adr/014-log-retention-and-archive.md) | The 180-day log record and the daily locked archive |
+| [ADR-015](adr/015-dashboards-and-operator-access.md) | The operator's dashboards and how they are reached |
+| [ADR-016](adr/016-terminology-engine.md) | Terminology answered in-process from shared, read-only tables |
+| [ADR-017](adr/017-roles-and-guarded-sync.md) | Hospital roles in code, and a role sync that never deletes a held role |
+| [ADR-018](adr/018-demographics-and-billing-access.md) | Demographics-and-billing access for the non-clinical roles |
+| [ADR-019](adr/019-database-limits-and-backchannel-pool.md) | Database limits per process, and the back-channel logout pool |
+| [ADR-020](adr/020-environments-for-pilots.md) | Environments for pilots (**Proposed**, 2026-11-22): the first pilot runs on the Compose stack as a separate instance, production-1; synthetic staging never holds real data; real dumps are drilled on production-1's own drill copy; P9-T7 is triggered by measured limits |
 
 ### 1.1 Who we sell to first (decided — ADR-000)
 
@@ -156,11 +169,17 @@ _Decided: Option B (ADR-001). The planned CARE-vs-Marley spike (P0-T6) was dropp
 
 ### 3.2 Environments
 
-| Env | Where | Purpose |
-|---|---|---|
-| **local** | Your Ubuntu 26.04 workstation (needs RAM upgrade — Q-E1) or a cloud dev VM | Dev + unit/integration tests |
-| **staging** | One India-region VM (AWS Mumbai / E2E / Azure Pune), Docker Compose → k3s later | One-click test URLs for you, demo hospitals |
-| **production** | India region, managed Postgres or CloudNativePG on k3s/RKE2, backups replicated to a second Indian region | Paying tenants |
+Aligned with [ADR-020](adr/020-environments-for-pilots.md) (Proposed, 2026-11-22; Q-K132, Q-K133). The stack in `deploy/staging/` and `scripts/staging.sh` is the one Compose stack for every server; the environment is set by `IHR_ENVIRONMENT`, not by the folder name.
+
+On this workstation, local and synthetic staging are the same environment until a synthetic VM exists.
+
+| Env | Where | Purpose | Real patient data? |
+|---|---|---|---|
+| **local** | Your Ubuntu 26.04 workstation (`care-dev.sh`, tests, `staging.sh local-proof`, the throwaway local VM); CI | Dev, unit and integration tests, release and drill rehearsals | Never |
+| **synthetic staging** | For now this workstation's local proof and local VM, plus P1-T26's rented VM while it exists; a paid always-on VM (own suffix, e.g. `<slug>.stg.amhcloud.in`) only when you choose (Q-K133) | One-click test URLs for you, demo and training hospitals, rehearsals | Never, including restored dumps or backups |
+| **production-1** | Its own India-region VM running the same Compose stack (ADR-011: E2E Delhi NCR, backups to Chennai), own secrets, buckets, Keycloak and suffix: `<slug>.app.amhcloud.in` | The first pilot hospitals | Yes |
+| **drill copy** | `ihr-restore-drill`, beside production-1's database on the same VM | Monthly restore drills of real backups and dumps | Yes; it never leaves production-1 |
+| **later cells / HA** | production-2… (more Compose cells), then P9-T7 (k3s/RKE2 + CloudNativePG) only on ADR-020 §4's limits | Growth beyond one VM | Yes |
 
 ---
 
@@ -395,7 +414,7 @@ Kept for reference. Nothing here is built until you re-approve it.
 | P9-T4 | Support desk + in-app help + training videos | Sonnet / low |
 | P9-T5 | Status page, SLAs, on-call runbooks | Sonnet / medium |
 | P9-T6 | NABH Digital Health Standards software certification (after 3 live hospitals + ABDM M3) **(you apply)** | Sonnet / medium |
-| P9-T7 | Scale-out: k3s/RKE2 + CloudNativePG 1.30 + SeaweedFS, horizontal workers | Opus / high |
+| P9-T7 | Scale-out and high availability: k3s/RKE2 + CloudNativePG 1.30 + SeaweedFS, horizontal workers. **Trigger (ADR-020 §4):** measured limits, not a tenant count: an availability or failover need one VM cannot meet (L6), or more Compose cells than can be run by hand (L7). A bigger VM and more Compose cells (production-2…) come first. It re-platforms Phase 1's ops tooling (pgBackRest, dumper and restore, database roles, release and rollback): roughly 80–150 agent hours plus a migration with downtime | Opus / high |
 
 ---
 

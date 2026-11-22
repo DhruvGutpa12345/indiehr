@@ -1269,6 +1269,24 @@ Q-K76 B needs one "hospital root" per hospital: the organisation whose admins ar
 
 *Reverse:* add B.
 
+### Q-K132 — Where does the first pilot's real data run? (P1-T28, ADR-020; auto-accepted by Claude, 2026-11-22, awaiting owner confirmation)
+
+CLAUDE.md says "No real patient data outside production", but everything built since P1-T8 is called "staging", and ADR-003 and PLAN §3.2 described production differently (closing review PR1-2).
+
+- **A ⭐ (taken).** The same Compose stack (`deploy/staging/`, `scripts/staging.sh`, `scripts/deploy.sh`) deployed as a separate instance, **production-1**. It gets its own new VM, its own `init` (own secrets), buckets with the instance in their names, its own Keycloak, acme-dns, ZeptoMail token and suffix (`<slug>.app.amhcloud.in`), and `IHR_ENVIRONMENT=production-1`. It never shares a VM, database, bucket, key or Keycloak with a synthetic environment, and the P1-T26 rehearsal VM is never reused for it. Its settings folder lives outside the repository checkout (`deploy.sh --env-dir`). The code supports this by configuration today. The "staging" names in folders and scripts stay; they now mean "the Compose stack". Safety checks still to build (ADR-020 §3, E1 to E5): `IHR_ENVIRONMENT` required, proof stand-ins refused on production, `deploy.sh` refusing a mismatched settings folder, the environment named in dump manifests, and a "synthetic data only" banner off production.
+- B. Put the pilot's real hospitals on the one staging server as it is. This is the cheapest, but it leaves nowhere to rehearse a release or drill away from real data, and demo hospitals would share a server with real ones.
+- C. Build P9-T7 (k3s/RKE2 + CloudNativePG) or a managed database first. This rebuilds the whole Phase 1 ops layer before the pilot (roughly 80 to 150 agent hours), and ADR-011 rules out managed databases.
+
+*Why A:* every go-live gate was proven on this stack, a second instance needs no new code, and the no-real-data rule then holds. *Limit:* until check E3 is built, only the operator's care stops the synthetic settings folder from being deployed to production-1, or the reverse. *Also decided in ADR-020:* real dumps are drilled only on production-1's own `ihr-restore-drill` copy, so real data never leaves production-1. P9-T7 is triggered by measured limits (ADR-020 §4: availability needs or too many cells), not by "about 10 tenants"; a bigger VM and more Compose cells come first. *Open for you:* provider, VM size (P1-T26 decides 8 or 16 GB, plus disk for the drill copy) and when to create it (after the go-live gates, when a pilot signs). *To reverse:* choose B or C and amend ADR-020. With B, the no-real-data rule must be reworded and the staging server's synthetic hospitals removed first.
+
+### Q-K133 — Where does synthetic staging live? (P1-T28, ADR-020 §2; auto-accepted by Claude, 2026-11-22, awaiting owner confirmation)
+
+- **A ⭐ (taken).** For now, this workstation: `staging.sh local-proof` and the throwaway local VM (`deploy.sh --local-proof`). P1-T26's rented VM is synthetic staging while it exists, and is destroyed afterwards. An always-on paid staging VM comes only when you choose to pay for one, for example when pilot staff need a training URL.
+- B. A second small paid VM from the first pilot on, always on, with its own suffix (e.g. `<slug>.stg.amhcloud.in`). It costs about ₹4,780 a month with GST at ADR-011's E2E price, or less if P1-T26 shows the small settings fit.
+- C. The restore-drill copy. **Not possible:** it holds production data.
+
+*Why A:* it costs nothing until a pilot needs a public demo or training URL, and releases and drills are already rehearsed in the local proof. *Rule in every case:* synthetic staging never receives real data, including production-1's backups, dumps, log archive or exports, and never holds a production-1 key. *To reverse:* choose B, then run `staging.sh init stg.amhcloud.in` on a new VM with its own buckets and acme zone.
+
 **Still open:** Q-B4 (final MVP module list: assumed as in PLAN.md Phase 2) and Q-B6/B7 (pricing, timeline). Q-F2 is moot while AI is deferred.
 
 ---
