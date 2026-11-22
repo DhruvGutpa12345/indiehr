@@ -659,8 +659,11 @@ function SheetBody({
   }
 
   return (
-    <div className="mt-4 flex flex-1 flex-col" data-ihr="packs-detail">
-      {/* the differences scroll here; the reason box and the buttons below stay in view (P1-T24d) */}
+    <div className="mt-4 flex min-h-0 flex-1 flex-col" data-ihr="packs-detail">
+      {/* the differences scroll here; the reason box and the buttons below stay in view (P1-T24d).
+          min-h-0 lets this column shrink to the sheet's height (a flex item's default minimum is its
+          content); when even the 6 rem of details plus the footer cannot fit, the overflow makes the
+          whole sheet scroll (overflow-y-auto above), so the buttons stay reachable. */}
       <div
         className="min-h-24 flex-1 space-y-5 overflow-y-auto pb-4 pr-1"
         data-ihr="packs-detail-scroll"

@@ -46,3 +46,7 @@ It also checks a short 640x300 window, where the buttons must be reachable by sc
 | D2 | one-shot `boundingBox()` maths can fail during the 500 ms slide-in | medium (flake) -> confirmed | `expect(...).toBeInViewport({ ratio: 1 })` (retries) | spec `expectDecisionsInView` |
 | D3 | the check was not seen failing on the old layout | low | none in code; stated above | CI |
 | D4 | scroll region not keyboard-reachable or named; redundant `bg-white` | low -> partly | `tabIndex=0`, `role=region`, `aria-label` from `ihr_packs_sheet_title`; `bg-white` dropped | none (markup) |
+
+## CI on d920bbcbf (2026-11-22)
+
+CI 45011212665 green; Apps CI 45011212551: frontend build green, Playwright 33 passed and **1 failed**: `expectDecisionsInView` found `packs-reason` only 39 % in the 1280×800 window. Cause: the D1 fix dropped `min-h-0` from the `packs-detail` column, so that flex item could not shrink below its content and the whole sheet scrolled instead (a flex item's default minimum height is its content). Fix: `min-h-0` back on `packs-detail`, keeping `overflow-y-auto` on the sheet and `min-h-24` on the scroll region; the check that caught it is the D2 retrying check, so it was seen red. CI on the fix: see the next commit.
