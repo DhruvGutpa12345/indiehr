@@ -38,6 +38,7 @@ groups:
         expr: '_time:24h source:=container service:in(migrate, celery) "ihr-root: hospital=" | extract_regexp "^ihr-root: hospital=(?P<hospital>[a-z][a-z0-9-]{2,30}) action=(?:ensure|place) outcome=(?:no-admin|invalid|failed) by=[A-Za-z0-9_.-]{1,64}$" | filter hospital:~"^[a-z][a-z0-9-]{2,30}$" | stats by (hospital) count() as problems'
         labels:
           severity: warning
+          notify: anytime
           service: root
         annotations:
           summary: 'Hospital {{ $labels.hospital }} has no hospital-wide admin: its root is missing an admin or is invalid ({{ $value }} times in 24 hours); its admin screens are closed'

@@ -35,6 +35,7 @@ groups:
         expr: '_time:30m source:=container service:in(celery, celery-worker) "ihr-restore: parked=" | extract_regexp "^ihr-restore: parked=(?P<schema>ihr_parked_h_[a-z0-9]{10}_[0-9]{8}T[0-9]{6}) outcome=overdue$" | filter schema:~"^ihr_parked_h_[a-z0-9]{10}_[0-9]{8}T[0-9]{6}$" | stats by (schema) count() as reports'
         labels:
           severity: warning
+          notify: anytime
           service: restore
         annotations:
           summary: 'Parked schema {{ $labels.schema }} is older than 8 days: it holds personal data and should have been dropped after 7'

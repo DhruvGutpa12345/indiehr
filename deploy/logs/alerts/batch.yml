@@ -27,6 +27,7 @@ groups:
         expr: '_time:1h source:=container service:in(backend) "ihr-batch: refused" | extract_regexp "^ihr-batch: refused hospital=(?P<hospital>[a-z][a-z0-9-]{2,30}) reason=(?P<reason>not_listed|bad_url|bad_method|nested|override) method=(?P<method>GET|POST|PUT|PATCH|DELETE|other) route=(?P<route>[A-Za-z0-9_.:-]{1,100})$" | filter hospital:~"^[a-z][a-z0-9-]{2,30}$" | stats by (hospital) count() as refusals'
         labels:
           severity: warning
+          notify: anytime
           service: batch
         annotations:
           summary: 'Hospital {{ $labels.hospital }}: {{ $value }} batch sub-requests refused in the last hour (a route the batch allow-list does not have)'

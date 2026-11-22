@@ -96,7 +96,11 @@ server error left no trace at all.
 
    The mail names the address (`client_ip`). That field is checked to be an IP address before
    it is stored. The three per-address alerts are mailed at any hour (owner, Q-O9). Other
-   warnings still wait for the day.
+   warnings still wait for the day. (Superseded by the P1-T30 note below.)
+   *(P1-T30, Q-K142 A: warnings now go out as one digest mail at 09:00 and 17:00 IST; critical pages
+   and `info` or `notify: anytime` alerts stay immediate. A warning that fires and clears between two
+   windows is not mailed, see Q-K143. Q-K143 C: every warning log alert carries `notify: anytime`, so
+   log alerts are mailed at once and only metric warnings wait for the digest.)*
 5. **The pipeline is watched by Prometheus:**
    - redaction drops;
    - shipping errors;

@@ -546,7 +546,8 @@ class PrometheusSettings(unittest.TestCase):
             name = rule["alert"]
             self.assertTrue(re.fullmatch(r"[A-Z][A-Za-z0-9]+", name), name)
             labels = rule.get("labels") or {}
-            self.assertIn(labels.get("severity"), {"critical", "warning", "info", "none"}, name)
+            # (P1-T30) three severities; only the always-firing Watchdog has none, exempt by name
+            self.assertIn(labels.get("severity"), {"critical", "warning", "info"} | ({"none"} if name == "Watchdog" else set()), name)
             self.assertFalse(banned & {k.lower() for k in labels}, name)
             self.assertFalse(re.search(r"by \((?:[^)]*\b(?:ip|user|username|email|path)\b)", rule["expr"]), name)
             summary = rule["annotations"]["summary"]
@@ -659,8 +660,9 @@ class AlertmanagerSettings(unittest.TestCase):
         c = self.CONFIG
         self.assertIn("matchers: ['alertname=\"Watchdog\"']", c)
         self.assertIn("repeat_interval: 4h", c)
-        self.assertIn("repeat_interval: 24h\n      active_time_intervals: [daytime-ist]", c)
-        self.assertIn('times: [{start_time: "08:00", end_time: "22:00"}]', c)
+        # warnings: a digest in two IST windows (P1-T30; the tiers are tested in test_staging_surface.py)
+        self.assertIn("repeat_interval: 23h\n      active_time_intervals: [digest-ist]", c)
+        self.assertIn('times: [{start_time: "09:00", end_time: "09:30"}, {start_time: "17:00", end_time: "17:30"}]', c)
         self.assertIn("location: Asia/Kolkata", c)
         self.assertIn("inhibit_rules:", c)
 

@@ -65,6 +65,7 @@ groups:
         expr: '_time:1h source:=host service:="ihr-operator" "event=refused" | extract_regexp "^ihr-operator: event=refused why=(?P<why>[a-z-]{2,30}) command=(?P<command>[a-z<>:-]{1,60}) operator=" | stats by (why, command) count() as refusals'
         labels:
           severity: warning
+          notify: anytime
           service: operator
         annotations:
           summary: 'scripts/staging.sh refused {{ $value }} operator session(s) in the last hour: {{ $labels.why }} ({{ $labels.command }})'
@@ -73,6 +74,7 @@ groups:
         expr: '_time:12h offset 12h source:=host service:="ihr-operator" ("event=start" or "was=start") | extract_regexp "^ihr-operator: (?:event=late at=[0-9T:+-]+ )?session=(?P<session>[0-9a-f]{12}) (?:event|was)=start tier=(?P<tier>data|job) operator=(?P<operator>[a-z][a-z0-9.-]{1,31}) command=(?P<command>[a-z<>:_-]{1,70}) " | filter session:~"^[0-9a-f]{12}$" | filter not session:in(_time:36h source:=host service:="ihr-operator" ("event=end" or "was=end") | extract_regexp "^ihr-operator: (?:event=late at=[0-9T:+-]+ )?session=(?P<session>[0-9a-f]{12}) (?:event|was)=end " | fields session) | stats by (session, operator, command) count() as starts'
         labels:
           severity: warning
+          notify: anytime
           service: operator
         annotations:
           summary: 'Operator session {{ $labels.session }} ({{ $labels.operator }}, {{ $labels.command }}) started 12 or more hours ago and has no end line'

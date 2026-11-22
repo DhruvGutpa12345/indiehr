@@ -675,8 +675,9 @@ notices when that watching stops. `status` and `ops` are reserved slugs; every o
 `status.` and all of `ops.` answer 418.
 
 **Alerts** (rules in `deploy/monitoring/prometheus/rules/`, each unit-tested by promtool in
-`../tests/`). Critical: mailed at once, repeated every 4 h. Warning: mailed between 08:00 and
-22:00 IST, repeated every 24 h. A critical alert mutes the warning of the same name for the same
+`../tests/`). Critical: mailed at once as `[IndieHR PAGE]`, repeated every 4 h. Metric warning: one
+digest mail in two windows a day, 09:00-09:30 and 17:00-17:30 IST (see "Operator surface (P1-T30)"
+at the end). Info, `notify: anytime` and every log-alert warning (all carry `notify: anytime`): mailed at once. A critical alert mutes the warning of the same name for the same
 thing only (same service, job, instance, mount, key purpose and endpoint); a service down as a
 whole (BackendHealth, KeycloakNotReady, BackupUnhealthy) mutes its container alerts. A container
 alert can still arrive a few minutes first (it fires sooner); its repeats are then muted.
@@ -807,8 +808,9 @@ checked to be an IP address before it is stored):
 | FailedSignInsFromAddress | 30 or more failed sign-ins from one address in 15 min: wrong passwords, unknown users, tries on a locked or disabled account (session errors such as an expired sign-in page do not count) | warning, mailed day or night |
 | RateLimitedAddress | 100 or more "too many requests" (429) answers to one address in 10 min, for 5 min | warning, mailed day or night |
 
-The three per-address alerts carry `notify: anytime`. Alertmanager mails them at once, day or
-night, at most daily per address (owner, Q-O9). Other warnings still wait for 08:00–22:00 IST.
+The three per-address alerts carry `notify: anytime` (owner, Q-O9), and since P1-T30 so does every other warning
+log alert (Q-K143 C). Alertmanager mails them at once, day or night, at most daily per alert and address.
+Only metric warnings go to the digest windows (see "Operator surface (P1-T30)").
 They arrive about 2 minutes after the event: vmalert waits 30 s for late lines, then runs once a
 minute. Only container lines count. A hospital whose staff share one address and outgrow the per-address limit shows up as
 RateLimitedAddress: raise its limit (see "Per-IP limits" above).
@@ -1155,9 +1157,9 @@ measure` is bounded (the last 7 days, 200,000 entries a hospital); `--full` runs
 | AuditWatchFailing (fast, incremental) | the every-minute pass fails for 5 min; the chain pass twice in a row | critical |
 | AuditWatchStale / Absent, FullCheckStale / Absent, Failing (nightly, sweep), AuditRehashOverdue | a pass has not ended without an error (fast 5 min, incremental 45 min, nightly 26 h, sweep 8 days, or never), the nightly or sweep fails for 30 min, or the 30-day recompute did not complete for two nights (the alert names the limit that ended it) | warning |
 | AuditHospitalCheckFailed (log) | the watch's line for chain, fingerprint, triggers or unchecked, in 30 min; the mail names the hospital | critical |
-| AuditHospitalSealLate (log) | the watch's line for seal, in 10 min; the mail names the hospital | warning |
-| AuditEventRecorded (log) | a new restore or offboarding event in the bucket, once; the mail names the hospital | warning |
-| AuditWholeRestoreRecorded (log) | a whole-database restore's result in the bucket, once; the mail names the restore id's first 8 digits and the number of hospitals (P1-T22c) | warning |
+| AuditHospitalSealLate (log) | the watch's line for seal, in 10 min; the mail names the hospital | warning, mailed at once |
+| AuditEventRecorded (log) | a new restore or offboarding event in the bucket, once; the mail names the hospital | warning, mailed at once |
+| AuditWholeRestoreRecorded (log) | a whole-database restore's result in the bucket, once; the mail names the restore id's first 8 digits and the number of hospitals (P1-T22c) | warning, mailed at once |
 | AuditDatabaseRestoredUnannounced | the database's timeline changed and no whole-database restore's result explains it (`ihr_audit_timeline_unexplained`: the number of changes the watch keeps that none explains; P1-T22c) | critical |
 | AuditRestorePlanAbandoned | a whole-database restore's plan has had no result for a day and the database is still on its timeline (a rollback stopped before its restore and was not run again; `ihr_audit_restore_plans_abandoned`) | warning |
 | AuditWholeRestoreUnanchored | a whole-database restore's result the timeline chain does not anchor: its events excuse nothing (`ihr_audit_whole_restores_unanchored`) | warning |
@@ -1236,7 +1238,8 @@ superseded segment, `write_offboarding` with the deletion certificate before the
 Without one, the watch reports the rollback as a cut and the deleted hospital as unknown, as it
 must. Order for an offboarding (TENANCY §7.7): seal, let the hourly fingerprint name the final
 seal, write the event with that seal, then drop the schema and delete the hospital's row in one
-transaction. Each new event is mailed once (AuditEventRecorded); a hospital held for a restore
+transaction. Each new event raises AuditEventRecorded (a log-alert warning with `notify: anytime`: mailed at once,
+P1-T30, Q-K143 C); a hospital held for a restore
 counts in AuditHospitalsRestoring until the hold ends.
 
 **Disaster restores (P1-T22c2a; design `docs/reviews/p1-t22c/design-c2.md`, "c2a as decided").**
@@ -1312,7 +1315,7 @@ the fingerprints stored after T stay in the bucket. So the rollback, after you t
    generations the restore took away are loaded back as they were; then the **result** with the
    new timeline. Logged in `releases.log` as `supersede=<id>`.
 
-The watch then mails one AuditEventRecorded per hospital and one AuditWholeRestoreRecorded:
+The watch then mails at once (log alerts are immediate, P1-T30, Q-K143 C) one AuditEventRecorded per hospital and one AuditWholeRestoreRecorded:
 confirm the restore id is the one in `releases.log`, and run
 `scripts/staging.sh audit-supersede status <id>` (per hospital: planned, outcome, seals, generation,
 any problem). This build also requires, beyond the archived segment, a plan stored before the event,
@@ -1956,3 +1959,93 @@ ihr-operator: event=late at=<time> session=<s> was=<start|scope|end> ...
 - Until P1-T27b ships, a one-off's own Django session is named `manage:<command>`, not `op:...`, and
   `PrivilegedLoginUnrecorded` fires for it; the reviewed service-login list is built from the code and
   corrected by the local proof's capture of every authorization line (the live step).
+
+## Operator surface (P1-T30)
+
+Design: `docs/reviews/p1-t30/design.md`; binding where they differ, its section 10 "Attack and
+orchestrator decision" (Q-K140, Q-K141, Q-K142). Source: PR1-8 of the Phase 1 closing review: the
+operator surface grew a command or a mail at a time, with no list of what exists, no view of what
+is due and no way to tell a page from a note. Three small parts, no new subsystem.
+
+### The ops freeze (Q-K140 A)
+
+`deploy/staging/subcommands.txt` is the reviewed list of `scripts/staging.sh`'s subcommands (the case
+labels of `main`, names only). **No new subcommand and no new ops subsystem until PR1-1 (P1-T26, the
+dress rehearsal on a real server) is done and the owner lifts the freeze.** `scripts/test_staging_surface.py`
+(pre-commit hook `staging-surface-static`) fails when the labels and the file differ. To ask for one: write
+the question in `docs/QUESTIONS.md`, and when the owner agrees, add the name to the list in a commit whose
+message says so ("owner OK: <date>"). What is not frozen: fixes, new options on an existing subcommand,
+new alert rules, and the compose overlays. The freeze lifts when P1-T26 shows done in `docs/TRACKER.md`
+and the owner says so; then delete the header of the list, not the list.
+
+### `scripts/staging.sh due`
+
+The operator's due list: the chores (`dumps-expire`, `hospital-restore-expire`, `logs-archive-expire`),
+the restore drill and the key checks (the three client keys, the two public certificates). It writes
+nothing, opens **no operator session** (it reaches none of the five wrappers: a static test and a stack
+test prove no `ihr-operator` line) and asks only Prometheus's own container, three questions (the firing
+alerts, the plain gauges the alerts read, Alertmanager's alert list for the log alert), saved in a private
+temporary folder removed on the way out; `scripts/ops_due.py` (shipped by `scripts/deploy.sh`) draws the table.
+
+- A row is `OVERDUE` exactly when the alert it follows is firing now (`DumpErasureOverdue`,
+  `ParkedSchemaOverdue`, `LogArchiveErasureOverdue`, `DumpDrillOverdue`, `ClientKeyAge` or `ClientKeyMissing`,
+  `TlsCertExpiry`),
+  so the list and the inbox never disagree; `ok` otherwise; `off` when the feature is not switched on here
+  (`IHR_DUMPS`, `IHR_LOGS_ARCHIVE`); `UNREADABLE` when a source did not answer, or the client key check is stale
+  (`ClientKeyCheckStale`), or the target that exports a row's gauge (the dumper, the log archiver, the public
+  probe) is down or unknown (`up` is 0 or absent: its alert cannot fire, so "none yet" would be a false ok;
+  a target that is up but has no gauge yet stays `ok`). The plain gauge is context only (oldest dump, last drill, key age, certificate expiry),
+  in IST, `DD-MM-YYYY HH:MM`. No hospital, schema or operator name is ever printed. Every row prints the command to run.
+- Exit codes: **0** nothing firing; **1** something is overdue; **2** a source was unreadable (it wins over 1:
+  overdue rows are still printed) or there is no monitoring here (`monitoring-init`) or arguments were given.
+- It does not compute due dates (that would be a second bookkeeping of the alert thresholds) and does not read the
+  log store or the operator record: the drills and chores that have no alert (the monthly `restore-drill`, the
+  quarterly live drill) are not rows; they stay in the schedule of "Database backups and restore drill" and
+  "Restoring one hospital".
+
+### Alert tiers (Q-K142 A)
+
+| Tier | Which alerts | Receiver, subject | When |
+|---|---|---|---|
+| Page | `severity: critical` | `page`, `[IndieHR PAGE] FIRING: <alert> (critical)` | at once, any hour, again every 4 h, resolved mailed. A phone mail rule on the prefix is the channel |
+| Immediate | `severity: info` (`alert-test`'s `IhrAlertTest`, `MrdRecordsOffHours`, owner Q-K36 A) and every `notify: anytime` alert (the three per-address sign-in alerts, owner Q-O9, and every warning log alert under `deploy/logs/alerts/`, Q-K143 C; a test checks the label) | `email`, `[IndieHR FIRING] ...` | at once, any hour (unchanged) |
+| Digest | `severity: warning` without `notify: anytime` (the metric warnings) | `digest`, `[IndieHR digest] <n> warning alert(s) firing` | one mail listing every firing metric warning (`group_by: [severity]`), sent only inside 09:00-09:30 and 17:00-17:30 IST; a repeat only after 23 h or when the set changes; resolved is not mailed |
+| Own routes | Watchdog (dead-man switch), DailyHeartbeat (09:00 IST mail check), AlertmanagerNotificationsFailing (dead-man `/fail`, and a page) | unchanged | unchanged |
+
+Every rule has a `severity` of `critical`, `warning` or `info` (Watchdog's `none` is exempt by name); a test
+checks the Prometheus rules and the log alerts, and walks the rendered Alertmanager tree for each of them.
+`scripts/check-monitoring.sh` also runs a fixed matrix through the pinned `amtool config routes test --verify.receivers`
+(its pre-commit hook now also runs when `deploy/logs/alerts/` changes). An unknown severity falls to the root
+`email` receiver: loud, never silent. The vmalert log alerts go through the same Alertmanager, so they follow the same tiers.
+
+**How the windows work** (checked against Alertmanager v0.35.0, the pinned version): a route with
+`active_time_intervals` sends only inside them. Outside, the time stage removes every alert from that flush
+("Notifications not sent, route is not within active time", `notify/mute.go`, TimeActiveStage:
+https://github.com/prometheus/alertmanager/blob/v0.35.0/notify/mute.go), and the dispatcher has already set the
+timer for the next flush one `group_interval` later (`dispatch/dispatch.go`, `aggrGroup.run`:
+https://github.com/prometheus/alertmanager/blob/v0.35.0/dispatch/dispatch.go). With a 15-minute `group_interval`
+at least one flush falls inside each 30-minute window, and that one sends the whole group. The next live
+proof (P1-T26) checks it on a real server; no local proof of the clock was run.
+
+- **Worst-case delay:** the first mail of a metric warning that starts at 17:31 IST comes at the next
+  09:00-09:30 window, about 16 h later. A warning that must not wait gets `notify: anytime` in its rule (then it
+  is mailed at once, at most daily per alert). Every warning log alert has it (Q-K143 C): a log alert is a rare
+  event, so the reasoning that makes a digest sensible for metric warnings does not apply, and none of them waits.
+- **What the digest loses:** a metric warning that fires and clears between two windows is **never mailed**.
+  `scripts/staging.sh alerts` and Prometheus's history still show it; only the mail is missing. Log alerts,
+  page-tier alerts and anything marked `notify: anytime` or `info` are not affected (a log alert that fires and
+  clears is mailed when it fires).
+- `alert-test` sends `severity=info`, so it still mails within about 30 s at any hour.
+
+### Secrets with no rotation policy
+
+Rotation is policed for the three client keys (180 days, `due` and `ClientKeyAge`) and certificates (automatic,
+`TlsCertExpiry`). **These have no rotation policy, no alert and no row in `due`** (Q-K142; a rotation record would
+be new bookkeeping, after the freeze): the object-storage keys (`secrets/s3-gateway.env`, and the patient files
+and pictures keys in `secrets/app.env`), the database passwords (`secrets/db.env`, `db-owner.env`, `app.env`,
+`dumper-db.env`, `audit-watch.env`), the dump key (`secrets/dumps.env`), the log archive key
+(`secrets/logs-archive.env`), the fingerprint and events keys (`secrets/anchor-read.env`, `anchor-write.env`,
+`anchor-events.env`), the Keycloak bootstrap admin (`secrets/keycloak.env`), the alert mail token
+(`secrets/alertmanager-smtp-password`), the mail service password (`secrets/mail.env`) and the Grafana and log
+store logins (`secrets/grafana-admin.env`, `secrets/logs-http-password`). Rotate one by hand after a leak or a
+staff change; decide a cadence with P1-T26.

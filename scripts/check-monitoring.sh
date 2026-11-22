@@ -5,6 +5,10 @@
 #   - promtool check rules + promtool test rules: the alert rules and their unit tests
 #   - amtool check-config: alertmanager.yml as scripts/staging.sh writes it, for a real server
 #     and for a proof, from sample settings (no secrets: the secret files are empty here)
+#   - amtool config routes test: a fixed matrix of label sets (critical, warning, info,
+#     notify="anytime", Watchdog, DailyHeartbeat, AlertmanagerNotificationsFailing,
+#     MrdRecordsOffHours, IhrAlertTest) must reach the receivers the tiers promise (P1-T30);
+#     the same matrix is in scripts/test_staging_surface.py, which also walks every rule
 #   - blackbox_exporter --config.check: the probe modules
 # Run by pre-commit (hook "monitoring-promtool") and so by CI. Usage: scripts/check-monitoring.sh
 set -euo pipefail
@@ -67,6 +71,35 @@ for v in "on yes" "on no" "test no"; do
   d="$WORK/${v/ /-}"
   run "$AM" amtool -v "$d/run:/run/ihr-alerts:ro" -v "$d/run/ca.pem:/proof/ca.pem:ro" \
     -v "$d/generated/monitoring:/c:ro" -- check-config /c/alertmanager.yml
+done
+echo "== Alert routing: the fixed matrix through amtool ($AM)"
+for v in "on yes" "on no" "test no"; do
+  d="$WORK/${v/ /-}"
+  dm=deadman; dmf=deadman-fail
+  [[ "$v" != "on no" ]] || { dm=blackhole; dmf=blackhole; }
+  # <receivers the alert reaches, in route order>|<its labels>
+  matrix=(
+    "page|alertname=SomeCritical severity=critical"
+    "digest|alertname=SomeWarning severity=warning"
+    "email|alertname=SomeInfo severity=info"
+    "email|alertname=FailedSignInsFromAddress severity=warning notify=anytime"
+    "$dm|alertname=Watchdog severity=none"
+    "email-heartbeat|alertname=DailyHeartbeat severity=info"
+    "$dmf,page|alertname=AlertmanagerNotificationsFailing severity=critical"
+    "email|alertname=MrdRecordsOffHours severity=info"
+    "email|alertname=IhrAlertTest severity=info"
+  )
+  # one container per variant: the rows become lines of a script that runs in the image's own shell
+  mkdir -p "$d/routes"
+  {
+    echo "set -u"
+    for row in "${matrix[@]}"; do
+      printf 'amtool config routes test --config.file=/c/alertmanager.yml --verify.receivers=%s %s >/dev/null || { echo "routing mismatch (%s): %s should reach %s" >&2; exit 1; }\n' \
+        "${row%%|*}" "${row#*|}" "$v" "${row#*|}" "${row%%|*}"
+    done
+  } > "$d/routes/routes.sh"
+  run "$AM" /bin/sh -v "$d/run:/run/ihr-alerts:ro" -v "$d/run/ca.pem:/proof/ca.pem:ro" \
+    -v "$d/generated/monitoring:/c:ro" -v "$d/routes:/r:ro" -- /r/routes.sh
 done
 echo "== blackbox_exporter's probes ($BB)"
 run "$BB" /bin/blackbox_exporter -- --config.file=/m/blackbox/blackbox.yml --config.check

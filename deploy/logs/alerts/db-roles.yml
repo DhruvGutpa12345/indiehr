@@ -77,6 +77,7 @@ groups:
         expr: '_time:10m source:=container service:=db ("canceling statement due to" OR "terminating connection due to idle-in-transaction") | extract_regexp "(?:ERROR|FATAL): +(?:canceling statement due to|terminating connection due to) (?P<kind>statement|lock|idle-in-transaction) timeout$" | filter kind:~"^(statement|lock|idle-in-transaction)$" | stats by (kind) count() as cancels | filter cancels:>5'
         labels:
           severity: warning
+          notify: anytime
           service: database
         annotations:
           summary: 'Postgres ended {{ $value }} {{ $labels.kind }} time-outs in 10 minutes: requests or tasks are being cut off by the database limits'

@@ -890,7 +890,11 @@ class LogAlerts(unittest.TestCase):
                                  "PrivilegedLoginUnrecorded": None, "OperatorSessionRefused": None,
                                  "OperatorSessionNoEnd": None, "KeycloakAdminCredentialChange": None})
         anytime = sorted(r["alert"] for _, r in self.rules() if r["labels"].get("notify") == "anytime")
-        self.assertEqual(anytime, ["FailedSignInsFromAddress", "RateLimitedAddress", "SignInLockoutsFromAddress"])
+        # P1-T30, Q-K143 C: every warning log alert is immediate (the per-address three, owner Q-O9, among them)
+        warnings = sorted(r["alert"] for _, r in self.rules() if r["labels"].get("severity") == "warning")
+        self.assertEqual(anytime, warnings)
+        for name in ("FailedSignInsFromAddress", "RateLimitedAddress", "SignInLockoutsFromAddress"):
+            self.assertIn(name, anytime)
         cfg = func("monitoring_config")
         route = cfg.index("matchers: ['notify=\"anytime\"']")
         self.assertLess(route, cfg.index("matchers: ['severity=\"warning\"']"))

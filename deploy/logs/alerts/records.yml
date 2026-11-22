@@ -34,6 +34,7 @@ groups:
         expr: '_time:10m source:=container service:in(backend) "ihr-records: hospital=" | extract_regexp "^ihr-records: hospital=(?P<hospital>[a-z][a-z0-9-]{2,30}) grant=none user=(?P<user>[0-9]{1,18}) reason=(?:patient_request|legal|insurer|internal_audit|nabh_review|continuity_of_care|invalid|none) outcome=refused hour=(?:[01][0-9]|2[0-3])$" | filter hospital:~"^[a-z][a-z0-9-]{2,30}$" | stats by (hospital, user) count() as refusals | filter refusals:>=3'
         labels:
           severity: warning
+          notify: anytime
           service: records
         annotations:
           summary: 'Hospital {{ $labels.hospital }}: staff user {{ $labels.user }} was refused records access {{ $value }} times in 10 minutes'
@@ -42,6 +43,7 @@ groups:
         expr: '_time:24h source:=container service:in(backend) "ihr-records: hospital=" | extract_regexp "^ihr-records: hospital=(?P<hospital>[a-z][a-z0-9-]{2,30}) grant=[0-9]{1,18} user=(?P<user>[0-9]{1,18}) reason=(?:patient_request|legal|insurer|internal_audit|nabh_review|continuity_of_care) outcome=granted hour=(?:[01][0-9]|2[0-3])$" | filter hospital:~"^[a-z][a-z0-9-]{2,30}$" | stats by (hospital, user) count() as grants | filter grants:>40'
         labels:
           severity: warning
+          notify: anytime
           service: records
         annotations:
           summary: 'Hospital {{ $labels.hospital }}: staff user {{ $labels.user }} was given {{ $value }} records grants in 24 hours (more than 40)'

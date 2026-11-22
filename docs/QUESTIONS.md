@@ -1333,6 +1333,30 @@ PG 18's `log_connections` cannot be set per role.
 - B. Also every root command by a logged-in user (more volume, more redaction).
 - C. Immutable rules (`-e 2`): bootstrap could no longer be re-run without a reboot.
 
+### Q-K140 — How strict is the ops freeze? (P1-T30; auto-accepted by Claude, 2026-11-23, awaiting owner confirmation)
+
+- **A ⭐ (taken).** `staging.sh` subcommands only: a names-only list (`deploy/staging/subcommands.txt`) that a test keeps equal to the dispatcher; a new name needs your OK, until P1-T26 (PR1-1) is ✅.
+- B. Also pin the compose overlays.
+- C. A rule in the README only, no test.
+
+### Q-K141 — What does `staging.sh due` show? (P1-T30; auto-accepted by Claude, 2026-11-23, awaiting owner confirmation)
+
+- **A ⭐ (taken).** Chores, drills and key ages that already have an alert: OVERDUE means that alert is firing now, with the gauge it reads as context and the command to run; no session, no second bookkeeping.
+- B. Computed due dates from each chore's cadence (needs "last done" records that do not exist yet).
+
+### Q-K142 — Alert tiers (P1-T30; auto-accepted by Claude, 2026-11-23, awaiting owner confirmation)
+
+- **A ⭐ (taken).** Critical pages at once (same mailbox, subject `[IndieHR PAGE]`); `notify=anytime` and info stay immediate (your Q-O9 and Q-K36 answers kept); warnings come as one digest mail at 09:00 and 17:00 IST. A warning can wait up to about 16 h; one that fires and clears between windows is never mailed.
+- B. One digest a day (09:00 only).
+- C. Keep today's per-alert warning mails 08:00-22:00.
+
+### Q-K143 — Should event and security warnings skip the digest? (P1-T30 review R1; auto-accepted by Claude, 2026-11-23, awaiting owner confirmation)
+
+- Under Q-K142 A a warning is mailed only if it is still firing at 09:00 or 17:00 IST. The log alerts last only their `_time` window (10 minutes to 1 hour), so one-off events can fire and clear unmailed: AuditEventRecorded and AuditWholeRestoreRecorded (the add-only writer key used by someone else), OperatorSessionRefused, BatchRequestRefused, MrdRecordsRefused, StaffResetRefused, DatabaseStatementTimeouts. A 1-hour alert is inside a window about 12.5 % of the day.
+- A. Add `notify: anytime` to the event and security warning rules only (audit, operator, batch, records, staff, root, dumps failures), and a Severity test that every warning log alert with a window under 16 h carries it. In practice that is every log alert (all windows are 10 minutes to 1 hour), so it equals C with a longer list to keep.
+- B. Keep as built: the digest only, and read the inbox plus `staging.sh alerts` for one-off events.
+- **C ⭐ (taken).** Every log alert (deploy/logs/alerts) carries `notify: anytime` and is mailed at once; the digest keeps the metric warnings, which are states that stay firing until a window. A test fails on a log alert without it. Reverse by removing the label from a rule.
+
 **Still open:** Q-B4 (final MVP module list: assumed as in PLAN.md Phase 2) and Q-B6/B7 (pricing, timeline). Q-F2 is moot while AI is deferred.
 
 ---

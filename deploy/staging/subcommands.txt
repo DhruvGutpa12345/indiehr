@@ -1,0 +1,78 @@
+# Reviewed list of scripts/staging.sh's subcommands (P1-T30, Q-K140 A; PR1-8 of the Phase 1
+# closing review). One name per line, no other text; lines starting with # are comments.
+#
+# OPS FREEZE: no new subcommand until PR1-1 (P1-T26, the dress rehearsal on a real server) is
+# done (TRACKER shows it as done) and the owner lifts the freeze. A name added here needs the
+# owner's OK, stated in the commit message that adds it. Fixes, new options on an existing
+# subcommand and new alert rules are not frozen. scripts/test_staging_surface.py checks that
+# this list and the case labels of main() in scripts/staging.sh are the same set.
+acme-init
+acme-new-cert
+acme-proof
+acme-proof-run
+acme-register
+acme-retry
+alert-test
+alerts
+audit-supersede
+audit-verify
+backup-init
+backup-now
+backup-status
+cert
+db-roles
+db-split-secrets
+down
+due
+dumps-check
+dumps-drill-mark
+dumps-expire
+dumps-get
+dumps-init
+dumps-now
+dumps-probe
+dumps-role
+fleet
+grafana-reset-admin
+hospital-restore
+hospital-restore-drill
+hospital-restore-expire
+hospital-restore-status
+hospital-root
+init
+keys
+level-guard
+local-proof
+logs
+logs-archive-check
+logs-archive-expire
+logs-archive-get
+logs-archive-init
+logs-archive-now
+logs-archive-probe
+logs-volume
+mail-check
+mail-init
+manage
+monitoring-deadman
+monitoring-init
+monitoring-render
+monitoring-textfile
+ops-tunnel
+ps
+release
+release-note
+release-record
+releases
+restore
+restore-drill
+restore-drill-psql
+rollback
+s3-check
+s3-events-key
+s3-init
+s3-split-keys
+smoke
+start-existing
+up
+watch-reader

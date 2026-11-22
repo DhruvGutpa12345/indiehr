@@ -1,5 +1,5 @@
 # Availability alerts (P1-T9a). Severity: critical = e-mail at once, again every 4 h until fixed;
-# warning = e-mail between 08:00 and 22:00 IST, again every 24 h. Tests: ../tests/availability.yml
+# warning = one digest mail at 09:00 or 17:00 IST (P1-T30). Tests: ../tests/availability.yml
 #
 # Alert text is built from label values only (service, endpoint, job): never log lines, user
 # names, addresses or patient data.

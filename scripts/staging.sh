@@ -88,6 +88,9 @@
 #                                                ZeptoMail token and dead-man ping URL on stdin
 #   scripts/staging.sh monitoring-deadman        set the dead-man switch's ping URL later (stdin)
 #   scripts/staging.sh alerts | alert-test       alerts held now | one test alert, mailed now
+#   scripts/staging.sh due                       the operator's due list (P1-T30): the chores, drills and
+#                                                key checks, each OVERDUE only when its alert fires; read-only,
+#                                                no operator session; exit 0 none, 1 something, 2 unreadable
 #   scripts/staging.sh ops-tunnel [ihr@<server>] Grafana, Prometheus and Alertmanager on 127.0.0.1 (SSH)
 #   scripts/staging.sh grafana-reset-admin       a new Grafana admin password (P1-T9d), file and database together
 #   scripts/staging.sh monitoring-textfile [--keys]   the host timer's run (deploy/host/bootstrap.sh)
@@ -4537,24 +4540,33 @@ route:
       matchers: ['alertname="AlertmanagerNotificationsFailing"']
       continue: true
       repeat_interval: 1h
-    - receiver: email
+    # Critical: its own receiver, subject "[IndieHR PAGE]" (a phone mail rule can ring on it),
+    # at once at any hour, again every 4 h (P1-T30, Q-K142 A)
+    - receiver: page
       matchers: ['severity="critical"']
       repeat_interval: 4h
     # Sign-in abuse naming an address (log alerts, notify="anytime"): mailed at once, day or
-    # night, at most daily per address (owner, Q-O9); still a warning for the inhibit rule
+    # night, at most daily per address (owner, Q-O9); still a warning for the inhibit rule.
+    # Any other warning that must not wait gets notify: anytime in its rule.
     - receiver: email
       matchers: ['notify="anytime"']
       repeat_interval: 24h
-    # Warnings wait for the day (08:00-22:00 IST) and repeat once a day
-    - receiver: email
+    # Warnings: one digest mail per group (grouped by severity), sent only inside the two
+    # windows below; a flush outside them is dropped and the next one inside sends. Info alerts
+    # (alert-test, MrdRecordsOffHours, owner Q-K36 A) are not matched here: they fall to the
+    # root receiver, at once.
+    - receiver: digest
       matchers: ['severity="warning"']
-      repeat_interval: 24h
-      active_time_intervals: [daytime-ist]
+      group_by: [severity]
+      group_wait: 30s
+      group_interval: 15m
+      repeat_interval: 23h
+      active_time_intervals: [digest-ist]
 
 time_intervals:
-  - name: daytime-ist
+  - name: digest-ist
     time_intervals:
-      - times: [{start_time: "08:00", end_time: "22:00"}]
+      - times: [{start_time: "09:00", end_time: "09:30"}, {start_time: "17:00", end_time: "17:30"}]
         location: Asia/Kolkata
 
 inhibit_rules:
@@ -4577,6 +4589,20 @@ receivers:
 $tls
         headers:
           Subject: '[IndieHR {{ .Status | toUpper }}] {{ .CommonLabels.alertname }} ({{ .CommonLabels.severity }})'
+  - name: page
+    email_configs:
+      - to: "$to"
+        send_resolved: true
+$tls
+        headers:
+          Subject: '[IndieHR PAGE] {{ .Status | toUpper }}: {{ .CommonLabels.alertname }} ({{ .CommonLabels.severity }})'
+  - name: digest
+    email_configs:
+      - to: "$to"
+        send_resolved: false
+$tls
+        headers:
+          Subject: '[IndieHR digest] {{ .Alerts.Firing | len }} {{ .CommonLabels.severity }} alert(s) firing'
   - name: email-heartbeat
     email_configs:
       - to: "$to"
@@ -4991,12 +5017,42 @@ alerts() {  # alerts: what Alertmanager holds now (firing, silenced, inhibited)
   fi
 }
 
+due_cmd() {  # due: the due list (P1-T30, Q-K141 A). Read-only and no operator session: it reaches none of
+  # the wrappers, only prom_get (Prometheus's own container, which holds no secret and no data). The
+  # answers go to a private temporary folder, removed on the way out; scripts/ops_due.py shows them.
+  # Exit: 0 nothing firing, 1 something firing, 2 a source unreadable (or no monitoring here).
+  (($# == 0)) || { echo "usage: scripts/staging.sh due (no arguments; no session)" >&2; return 2; }
+  if [[ -z "$(env_get IHR_MONITORING)" ]]; then
+    echo "no monitoring here (monitoring-init): due has no source to read" >&2
+    return 2
+  fi
+  local id where path url feats="" rc=0
+  DUE_TMP="$(mktemp -d)"
+  trap 'rm -rf "${DUE_TMP:-}"' EXIT
+  chmod 700 "$DUE_TMP"
+  # (stdin of the exec is /dev/null: it would otherwise eat the question list)
+  while IFS=$'\t' read -r id where path; do
+    case "$where" in
+      prom) url="http://127.0.0.1:9090$path" ;;
+      am) url="http://$(am_ip):9093$path" ;;
+      *) die "ops_due.py plan names an unknown source: $where" ;;
+    esac
+    if prom_get "$url" > "$DUE_TMP/$id.json" 2> "$DUE_TMP/$id.err" < /dev/null; then rm -f "$DUE_TMP/$id.err"
+    else rm -f "$DUE_TMP/$id.json"; fi
+  done < <(python3 -I "$ROOT/scripts/ops_due.py" plan)
+  [[ -z "$(env_get IHR_DUMPS)" ]] || feats+="dumps,"
+  [[ -z "$(env_get IHR_LOGS_ARCHIVE)" ]] || feats+="logs-archive,"
+  python3 -I "$ROOT/scripts/ops_due.py" render "$DUE_TMP" --now "$(date +%s)" --features "${feats%,}" || rc=$?
+  rm -rf "$DUE_TMP"; trap - EXIT
+  return "$rc"
+}
+
 alert_test() {  # alert-test: one synthetic alert, mailed now; it resolves itself after 5 minutes
   local end tag
   [[ -n "$(env_get IHR_MONITORING)" ]] || die "no monitoring here (monitoring-init)"
   end="$(date -u -d '+5 min' +%Y-%m-%dT%H:%M:%SZ)"
   tag="test-$(date +%Y%m%d%H%M%S)"
-  # severity info: routed at once at any hour (warnings wait for the day)
+  # severity info: routed at once at any hour (warnings go to the digest windows)
   am_tool alert add IhrAlertTest \
     severity=info "run=$tag" --annotation=summary="Test alert from scripts/staging.sh alert-test. No action needed." \
     --end="$end"
@@ -5881,6 +5937,7 @@ main() {
   monitoring-textfile) monitoring_textfile "${@:2}" ;;
   alerts) alerts ;;
   alert-test) alert_test ;;
+  due) due_cmd "${@:2}" ;;
   ops-tunnel) ops_tunnel "${@:2}" ;;
   grafana-reset-admin) grafana_reset_admin ;;
   logs-volume) logs_volume "${@:2}" ;;
@@ -5932,7 +5989,7 @@ main() {
     admin_manage ihr_keycloak_sync --all >/dev/null
     smoke
     ;;
-  *) sed -n '5,105p' "$0"; exit 1 ;;
+  *) sed -n '5,/^set -euo pipefail$/{/^set -/!p}' "$0"; exit 1 ;;
   esac
 }
 

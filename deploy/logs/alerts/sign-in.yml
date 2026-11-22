@@ -1,6 +1,6 @@
 # Log alerts (P1-T9b, ADR-013; owner decision Q-O8). vmalert runs these LogsQL queries against
 # VictoriaLogs every minute and hands the results to Alertmanager, which mails them like the
-# metric alerts (critical at once, warnings 08:00-22:00 IST).
+# metric alerts (critical at once, warnings in the 09:00/17:00 IST digest).
 #
 # The address involved is the label client_ip: the client address Keycloak recorded (only
 # Traefik's, P1-T8d1) or Traefik's own ClientHost, checked to look like an IP address by

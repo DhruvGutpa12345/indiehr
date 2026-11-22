@@ -357,7 +357,7 @@ git ls-files -z deploy/staging deploy/s3 deploy/monitoring deploy/logs deploy/li
     plugins/ihr_platform/ihr_platform/restore/package.py deploy/keycloak/password-blocklist \
     deploy/grafana/provisioning deploy/grafana/dashboards deploy/grafana/logs-reader.yml deploy/grafana/allowed-empty.txt \
     deploy/docker/frontend-nginx.conf.template scripts/staging.sh scripts/client-keys.sh scripts/check-dashboards.py \
-    scripts/release_log.py \
+    scripts/release_log.py scripts/ops_due.py \
   | tar --null -T - -czf "$CM_DIR/stack.tgz"
 # Never a setting or secret in it (tracked files only; checked, as .gitignore could change)
 if tar -tzf "$CM_DIR/stack.tgz" | grep -Eq '(^|/)(\.env|secrets/|generated/|\.local$|\.db-created$|releases/)'; then

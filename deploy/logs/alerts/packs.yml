@@ -32,6 +32,7 @@ groups:
         expr: '_time:24h source:=container service:in(migrate, celery) "ihr-packs: hospital=" | extract_regexp "^ihr-packs: hospital=(?P<hospital>[a-z][a-z0-9-]{2,30}) outcome=failed$" | filter hospital:~"^[a-z][a-z0-9-]{2,30}$" | stats by (hospital) count() as failures'
         labels:
           severity: warning
+          notify: anytime
           service: packs
         annotations:
           summary: 'Reference packs failed to apply to hospital {{ $labels.hospital }} ({{ $value }} times in 24 hours)'
@@ -41,6 +42,7 @@ groups:
         for: 2h
         labels:
           severity: warning
+          notify: anytime
           service: packs
         annotations:
           summary: 'A facility of hospital {{ $labels.hospital }} has waited over two hours for its per-facility reference packs'
