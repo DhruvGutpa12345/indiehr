@@ -90,12 +90,13 @@
 | Q-O12 | **Erasure after 400 days (DPDP Rules 8(3)) runs monthly from the owner's machine** with the bucket's admin key (owner, 2026-11-12); the server never holds a key that can delete; an alert when it is overdue | ADR-014 (T9c) |
 | Q-G4 | **`/goal` and `/advisor` = second-opinion reviews:** an independent Opus agent reviews each finished phase against the plan | Working agreement §5 |
 
-## 🟡 Auto-accepted by Claude, awaiting owner confirmation (run 2026-11-12, `/run-until auto`)
+## ✅ Auto-accepted by Claude in the run of 2026-11-12, confirmed by you 2026-11-22
 
-Taken during an unattended run (docs/runs/2026-11-12-run-to-P1-T10a.md). Each is built to be easy
-to reverse; say "Q-xx: confirm" or give another answer.
+Taken during an unattended run (docs/runs/2026-11-12-run-to-P1-T10a.md). **Owner answer (2026-11-22):**
+Q-O13, Q-O14, Q-F6, Q-F7, Q-F8 and Q-F9 confirmed as taken (option A each), in chat. Q-F6's
+benchmark condition stands: one clean load on an 8 GB VM (P1-T26) before P1-T10b's first real load.
 
-### Q-O13 — Which dashboard tool, and what may it do? (P1-T9d)
+### Q-O13 — Which dashboard tool, and what may it do? (P1-T9d; confirmed by you 2026-11-22)
 
 - **A ⭐ (taken). Grafana OSS 13.3.1, unmodified, as a viewer only.** The VictoriaLogs plugin
   v0.34.0 is baked into our image, checked by its SHA-256. Dashboards and datasources come from
@@ -111,7 +112,7 @@ Why A: it was already planned (PLAN, ADR-013), it reads both stores, and being A
 unmodified and reached over the network only (CLAUDE.md). **To reverse:** drop
 `compose.dashboards.yaml` from `scripts/staging.sh compose()`. Nothing else depends on it.
 
-### Q-O14 — How does the operator reach Grafana and sign in? (P1-T9d)
+### Q-O14 — How does the operator reach Grafana and sign in? (P1-T9d; confirmed by you 2026-11-22)
 
 - **A ⭐ (taken). The existing SSH tunnel only, with Grafana's own admin login.**
   - `scripts/staging.sh ops-tunnel` adds `http://grafana.localhost:3000`.
@@ -128,7 +129,7 @@ unmodified and reached over the network only (CLAUDE.md). **To reverse:** drop
 **To reverse:** B is an added `[auth.generic_oauth]` block plus a Keycloak client, and the tunnel
 stays as a way in when Keycloak is down.
 
-### Q-F6 — Which terminology engine? (P1-T10a1)
+### Q-F6 — Which terminology engine? (P1-T10a1; confirmed by you 2026-11-22)
 
 - **A ⭐ (taken). Our own engine** in the plugin `ihr_terminology`, answering CARE's four FHIR
   terminology calls in-process from shared, read-only tables in `public`. It adds no process,
@@ -142,8 +143,8 @@ Why A: CARE needs only a small subset, and the 8 GB server is tight. **To revers
 synthetic SNOMED-scale benchmark is the trigger for that. Evidence:
 docs/reviews/p1-t10a/scorecard.md, ADR-016.
 
-**Benchmark result (P1-T10a2, 2026-11-12; A kept, auto-accepted by Claude, awaiting owner
-confirmation):**
+**Benchmark result (P1-T10a2, 2026-11-12; A kept, auto-accepted by Claude, confirmed by you
+2026-11-22):**
 - **Queries:** every limit passes with room once the engine has one expression index. Multi-word
   p95 was 107–145 ms against 300 ms, with no timeouts, in runs 4–7.
 - **Loads:** the 30-minute limit was met in 2 of 4 fresh loads (21–22 min). It was missed in the
@@ -153,7 +154,7 @@ confirmation):**
   still takes more than 30 min with no swap, tune the load path, or reopen this question.
 - Details: docs/reviews/p1-t10a2/bench-results.md.
 
-### Q-F7 — What counts as a valid code? (P1-T10a1)
+### Q-F7 — What counts as a valid code? (P1-T10a1; confirmed by you 2026-11-22)
 
 - **A ⭐ (taken). Strict.**
   - A coded write is accepted only when it carries the value set's system, an active code
@@ -169,14 +170,14 @@ confirmation):**
 
 **To reverse:** the rules are in one module, `ihr_terminology/engine.py`, with a test each.
 
-### Q-F8 — What content ships with the code? (P1-T10a1)
+### Q-F8 — What content ships with the code? (P1-T10a1; confirmed by you 2026-11-22)
 
 - **A ⭐ (taken).** HL7 Terminology 7.5.0 (CC0): the 7 code systems CARE uses. UCUM common
   units from FHIR R4 4.0.1 (CC0, UCUM's terms of use). Nothing licensed.
 - SNOMED CT India, LOINC, ICD-10/11 and a drug list wait for P1-T10b, which needs your licences
   and accounts.
 
-### Q-F9 — Splitting P1-T10 (P1-T10a1, T10a2, T10b)
+### Q-F9 — Splitting P1-T10 (P1-T10a1, T10a2, T10b; confirmed by you 2026-11-22)
 
 - **A ⭐ (taken).** Split as in TRACKER: the engine and free content first; then SNOMED
   readiness with a benchmark; then licensed content, behind your licences.
@@ -1221,7 +1222,7 @@ The dev stack has one pack release, so nothing waits for a decision and the scre
 
 *Limit:* the demo shows "unknown origin", not "edited". *Reverse:* delete the call in `ihr_seed_demo` and `seeding.make_waiting_pack_item`.
 
-### Q-K126 — Where is a hospital's root recorded? (P1-T25 design attack Z1/D3; auto-accepted by Claude, 2026-11-22, awaiting owner confirmation)
+### Q-K126 — Where is a hospital's root recorded? (P1-T25 design attack Z1/D3; auto-accepted by Claude, 2026-11-22, confirmed by you 2026-11-22)
 
 Q-K76 B needs one "hospital root" per hospital: the organisation whose admins are hospital-wide (audit trail, pack decisions, records-grant ends, sign-in resets).
 
@@ -1231,7 +1232,7 @@ Q-K76 B needs one "hospital root" per hospital: the organisation whose admins ar
 
 *Why A:* the app role can already write memberships, so a protected pointer protects nothing that matters; A has no table, migration, restore branch or dump change. *Limit:* a superuser can still edit or unmark the root (superusers are trusted everywhere). *Reverse:* add B and make `valid_root` read it.
 
-### Q-K127 — What kind of organisation is the root? (P1-T25; auto-accepted by Claude, 2026-11-22, awaiting owner confirmation)
+### Q-K127 — What kind of organisation is the root? (P1-T25; auto-accepted by Claude, 2026-11-22, confirmed by you 2026-11-22)
 
 - **A ⭐ (taken).** A new top-level `role` organisation, `system_generated`, named "Hospital administration" (the name means nothing; `ensure_root` never adopts an organisation by name). CARE refuses non-superusers who try to update, deactivate, retype or delete a role organisation, or add a child to it, and its "Add user" places staff only in role organisations (checked first: `test_r5_a_root_admin_adds_staff_to_the_root_up_to_administrator`).
 - B. A `team` organisation: an "Admin" of it could deactivate, rename or retype it.
@@ -1239,14 +1240,14 @@ Q-K76 B needs one "hospital root" per hospital: the organisation whose admins ar
 
 *Limit:* an Administrator on the root can add staff to it only with roles whose permissions are a subset of their own (Administrator yes; Admin, Staff no), as CARE rules. *Reverse:* change `roots.ensure_root`.
 
-### Q-K128 — What happens to the first admin's state membership? (P1-T25; auto-accepted by Claude, 2026-11-22, awaiting owner confirmation)
+### Q-K128 — What happens to the first admin's state membership? (P1-T25; auto-accepted by Claude, 2026-11-22, confirmed by you 2026-11-22)
 
 - **A ⭐ (taken).** Removed. New hospitals never get it (`first_admin` places the admin on the root only); for existing ones the fleet step soft-deletes only the moved admin's own Administrator row on a top-level government organisation, audited. Other admin rows on states are counted (`ihr-root: … outcome=state-admins n=<k>`) and removed only by the operator (`ihr_hospital_root remove-state`).
 - B. Keep it, ignored by the gate.
 
 *Why A:* B is not harmless: an Administrator of the state lists every patient of the hospital with an address in that state, visit or not. The admin keeps user and facility creation (as root Administrator) and facility updates (as Facility Admin). *Reverse:* drop the `remove_state` call in `roots.converge`.
 
-### Q-K129 — Which existing admins move onto the root? (P1-T25 attack S1/D2; auto-accepted by Claude, 2026-11-22, awaiting owner confirmation)
+### Q-K129 — Which existing admins move onto the root? (P1-T25 attack S1/D2; auto-accepted by Claude, 2026-11-22, confirmed by you 2026-11-22)
 
 - **A ⭐ (taken).** The fleet step `root` (active and suspended hospitals; start-up and releases; also the restore) places only the provisioning record's first admin, and only if that person still exists, is active or awaiting setup, and is an admin on some top-level organisation today. Everyone else goes through `ihr_hospital_root show`, then `place`.
 - B. Also carry over everyone who passes the old gate (carries the hole over).
@@ -1254,14 +1255,14 @@ Q-K76 B needs one "hospital root" per hospital: the organisation whose admins ar
 
 *Limit:* a hospital made by `ihr_create_tenant` (dev, tests) gets a root with nobody on it (`no-admin`, alert `HospitalRootProblem`) until the seed or `place` adds one. *Reverse:* change `roots.converge`.
 
-### Q-K130 — Who is protected from a sign-in reset? (P1-T25; auto-accepted by Claude, 2026-11-22, awaiting owner confirmation)
+### Q-K130 — Who is protected from a sign-in reset? (P1-T25; auto-accepted by Claude, 2026-11-22, confirmed by you 2026-11-22)
 
 - **A ⭐ (taken).** The person being reset keeps the old, wider rule (`staff_access.top_level_admin`: an admin role on any top-level organisation, the root included), here (`reset_allowed`, `_reset_sub`) and at every other hospital (`invitations._admin_anywhere`). Only the asker's side narrowed to the root. The refusal keeps the existing `admin-target` code.
 - B. The root only, like the gate.
 
 *Why A:* protection must not narrow while admins move. *Limit:* a state-only admin's lost authenticator goes to the platform operator (Q-K122). *Reverse:* use `hospital_wide_admin` on the target side.
 
-### Q-K131 — Does anything guard the root beyond CARE's own rules? (P1-T25 attack Z2; auto-accepted by Claude, 2026-11-22, awaiting owner confirmation)
+### Q-K131 — Does anything guard the root beyond CARE's own rules? (P1-T25 attack Z2; auto-accepted by Claude, 2026-11-22, confirmed by you 2026-11-22)
 
 - **A ⭐ (taken).** No trigger: CARE's role-organisation rules, pinned by `ihr_identity.tests.test_root.CareRoleOrganisationRules` (update, deactivate, retype, delete and a child refused; a managing organisation makes `valid_root` None, so the screens close and never widen). An upstream sync that changes those rules fails the tests. Pack forms are unchanged (Q-K80 A, Q-K81 A stand: the root is a non-government top-level organisation, so a new form links to it).
 - B. A database trigger refusing changes to the root's row (the first design): its only extra reach is stopping a superuser.
