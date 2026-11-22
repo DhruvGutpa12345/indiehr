@@ -163,5 +163,23 @@ class Limits(unittest.TestCase):
                 self.assertTrue(burst_ok(mw["rateLimit"]), name)
 
 
+class DatabaseSessionName(unittest.TestCase):
+    """P1-T27 live proof F3: Keycloak's sessions logged in with no application_name. pgjdbc sends
+    ApplicationName in the start-up packet only when assumeMinServerVersion is 9.0 or more
+    (ConnectionFactoryImpl.getParametersForStartup); otherwise it SETs it after the login line.
+    db-url-properties is appended to Keycloak's default PostgreSQL URL (keycloak.org/server/db;
+    Database.java: ...${kc.db-url-database:keycloak}${kc.db-url-properties:}) and is ignored when
+    db-url is set."""
+
+    def test_the_jdbc_url_names_the_session_at_login(self):
+        props = ENV["KC_DB_URL_PROPERTIES"]
+        self.assertTrue(props.startswith("?"), props)
+        q = dict(p.split("=", 1) for p in props[1:].split("&"))
+        self.assertEqual(q["ApplicationName"], "ihr-keycloak")
+        self.assertGreaterEqual(float(q["assumeMinServerVersion"]), 9.0)
+        self.assertNotIn("KC_DB_URL", ENV)
+        self.assertNotIn("KC_DB_URL", DOCKERFILE.replace("KC_DB_URL_", ""))
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -506,6 +506,11 @@ services:
     environment:
       KC_DB_URL_HOST: db
       KC_DB_URL_DATABASE: keycloak
+      # Named at login (P1-T27 live proof F3; deploy/postgres/service-logins.txt): appended to
+      # Keycloak's default PostgreSQL URL (https://www.keycloak.org/server/db, db-url-properties;
+      # ignored if KC_DB_URL is ever set). pgjdbc sends ApplicationName in the start-up packet only
+      # with assumeMinServerVersion >= 9.0; otherwise it SETs it after Postgres logged the login.
+      KC_DB_URL_PROPERTIES: "?ApplicationName=ihr-keycloak&assumeMinServerVersion=18"
       KC_DB_USERNAME: keycloak
       KC_DB_POOL_MAX_SIZE: "20"
       # One server: caches stay in this process, no cluster discovery. With the default

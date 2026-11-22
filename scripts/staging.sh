@@ -14,6 +14,9 @@
 #                                                (--new-database: an empty database where backups exist)
 #   scripts/staging.sh smoke                     check every public address through Traefik
 #   scripts/staging.sh manage --operator <you> --reason "<ticket>" --hospital <slug>|all <args>   one-off manage.py command (data tier)
+#     (SQL on the live database: `manage ... shell -c "..."`; `dbshell` does not work, the admin image has no psql)
+#   scripts/staging.sh audit-verify --operator <you> --slug <slug> | --all   the full audit check, read-only,
+#                                                in the audit watch (else the backend): chains and fingerprints
 #   scripts/staging.sh fleet <args>              ihr_fleet_run (P1-T18a), logged for its alert
 #   scripts/staging.sh release [--now [--minutes N] [--note T]] [--operator NAME] | --finish
 #                                                the new images in the announced window (P1-T18b):
@@ -411,6 +414,10 @@ op_job_scope() {  # op_job_scope <cmd> <args>: all for the jobs that open every 
   case "${1:-}" in
     release|restore-drill|dumps-now|hospital-restore-drill) echo all ;;
     hospital-restore) if [[ "${2:-}" =~ $OP_SLUG_RE ]]; then echo "$2"; else echo none; fi ;;
+    # The audit check reads the hospitals it names (--slug S, or --all)
+    audit-verify)
+      if [[ "${2:-}" == --slug && "${3:-}" =~ $OP_SLUG_RE ]]; then echo "$3"
+      elif [[ " ${*:2} " == *" --all "* ]]; then echo all; else echo none; fi ;;
     *) echo none ;;
   esac
 }
@@ -5850,6 +5857,18 @@ main() {
   backup-init) backup_init "${@:2}" ;;
   backup-status) backup_status ;;
   backup-now) app_exec backup pgbackrest --stanza=main --type="${2:-diff}" backup ;;
+  # The full audit check, read-only (P1-T27 live proof F5), where the fingerprint bucket's reader
+  # key is: the audit watch's container (its role also reads the superseded archive, so a restore's
+  # events verify), else the backend. Never the admin one-off: it holds no reader key, on purpose.
+  # Sealing is the beat's job and fingerprints are written in celery-worker.
+  audit-verify)
+    [[ " ${*:2} " != *" --seal "* && " ${*:2} " != *" --anchor "* ]] \
+      || die "audit-verify only reads: the beat seals every minute, and fingerprints are written in celery-worker (ihr_audit_verify --all --seal --anchor there)"
+    if [[ -n "$(compose ps -q audit-watch 2>/dev/null || true)" ]]; then
+      app_exec audit-watch python manage.py ihr_audit_verify "${@:2}"
+    else
+      app_exec backend python manage.py ihr_audit_verify "${@:2}"
+    fi ;;
   restore-drill) restore_drill "${@:2}" ;;
   restore-drill-psql) restore_drill_psql "${@:2}" ;;
   restore) restore_cmd "${@:2}" ;;

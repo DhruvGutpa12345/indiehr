@@ -1100,5 +1100,87 @@ class ReviewFixes(Base):
         self.assertRegex(text, r'"OperatorSessionRefused": "why"')
 
 
+class LiveProofFindings(Base):
+    """The P1-T27 live proof (docs/reviews/p1-t27/live-proof.md, F1-F6) against PG 18.6."""
+
+    README = (ROOT / "deploy" / "staging" / "README.md").read_text()
+
+    def section(self):
+        return self.README.split("## Operator access record (P1-T27)", 1)[1].split("\n## ", 1)[0]
+
+    # F1-F3: services that logged in unnamed are named, never listed unnamed
+    def test_backup_and_keycloak_sessions_are_listed_by_their_new_names(self):
+        rows = service_logins()
+        self.assertIn(("db", "postgres", "ihr-backup"), rows)
+        self.assertIn(("db", "keycloak", "ihr-keycloak"), rows)
+        for service, role, app in rows:
+            if role in ("postgres", "keycloak", "ihr_owner", "ihr_app"):
+                with self.subTest(role=role, app=app):
+                    # an empty name, psql or pg_isready would let a careless raw session through
+                    self.assertNotIn(app, ("", "psql", "pg_isready", "PostgreSQL JDBC Driver"))
+                    self.assertFalse(app.startswith("pgBackRest"))
+
+    # F4: no container environment names an operator's `docker exec ... psql`
+    def test_no_database_container_environment_sets_a_session_name(self):
+        for f in ("compose.yaml", "compose.backup.yaml", "compose.dumps.yaml"):
+            doc = yaml.safe_load((ROOT / "deploy" / "staging" / f).read_text()
+                                 .replace("!reset", "").replace("!override", ""))
+            for name, svc in (doc.get("services") or {}).items():
+                env = svc.get("environment") or {}
+                with self.subTest(file=f, service=name):
+                    self.assertNotIn("PGAPPNAME", env if isinstance(env, dict) else " ".join(env))
+
+    def test_the_first_start_logins_are_documented(self):
+        text = self.section()
+        self.assertIn("first `up` on a new server", text)
+        self.assertIn("docker-entrypoint-initdb.d", text)
+
+    # F5: the full audit check runs where the reader's key is, recorded, never in the admin one-off
+    def test_audit_verify_runs_in_the_audit_watch_or_the_backend(self):
+        for running, where in (("audit-watch", "audit-watch"), ("", "backend")):
+            with self.subTest(running=running):
+                self.stack.log.write_text("")
+                self.stack.journal.write_text("")
+                out = self.stack.run("audit-verify", "--operator", "alice", "--slug", "alpha",
+                                     env={"RUNNING": running, "OPEN_OUT": "opened=alpha skipped=-"})
+                self.assertEqual(out.returncode, 0, out.stderr)
+                runs = [c for c in self.stack.runs() if "ihr_audit_verify" in c]
+                self.assertEqual(len(runs), 1, runs)
+                call = runs[0]
+                self.assertIn("exec", call)
+                self.assertEqual(call[call.index("python") - 1], where)
+                self.assertEqual(call[call.index("ihr_audit_verify") + 1:], ["--slug", "alpha"])
+                start = START_RE.match(self.stack.lines()[0])
+                self.assertEqual((start["tier"], start["hospital"], start["command"]), ("job", "alpha", "audit-verify"))
+                self.assertEqual(env_of(call)["IHR_OPERATOR_SESSION"], start["session"])
+        self.stack.journal.write_text("")
+        out = self.stack.run("audit-verify", "--operator", "alice", "--all",
+                             env={"RUNNING": "audit-watch", "OPEN_OUT": "opened=alpha,beta skipped=-"})
+        self.assertEqual(out.returncode, 0, out.stderr)
+        self.assertEqual(START_RE.match(self.stack.lines()[0])["hospital"], "all")
+
+    def test_audit_verify_only_reads(self):
+        for flag in ("--seal", "--anchor"):
+            with self.subTest(flag=flag):
+                self.stack.log.write_text("")
+                out = self.stack.run("audit-verify", "--operator", "alice", "--all", flag, env={"RUNNING": "audit-watch"})
+                self.assertNotEqual(out.returncode, 0)
+                self.assertFalse([c for c in self.stack.runs() if "ihr_audit_verify" in c])
+
+    def test_no_document_sends_ihr_audit_verify_through_the_admin_one_off(self):
+        bad = [ln.strip() for ln in self.README.splitlines()
+               if re.search(r"staging\.sh manage\b[^`]*ihr_audit_verify", ln)]
+        self.assertEqual(bad, [])
+        self.assertRegex(self.README, r"staging\.sh audit-verify --operator <you> --slug <")
+
+    # F6: the admin image has no psql: dbshell is not a recorded path, shell -c is
+    def test_dbshell_is_not_offered_as_a_recorded_path(self):
+        for ln in self.README.splitlines():
+            if "dbshell" in ln:
+                with self.subTest(line=ln.strip()[:80]):
+                    self.assertIn("no `psql`", ln)
+        self.assertIn("shell -c", self.section())
+
+
 if __name__ == "__main__":
     unittest.main()

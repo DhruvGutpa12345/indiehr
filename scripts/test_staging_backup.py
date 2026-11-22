@@ -166,5 +166,40 @@ class Secrets(unittest.TestCase):
         self.assertIn("--no-start) NO_START=1", deploy)
 
 
+class SessionNames(unittest.TestCase):
+    """P1-T27 live proof F1/F2: pgBackRest 2.60 logs in through libpq's PQconnectdb with no
+    application_name (it SETs its own name only after Postgres wrote the "connection authorized"
+    line), and pg_isready names itself. The schedule names every session it opens with libpq's
+    PGAPPNAME, exported inside its own process only: a hand-typed `docker exec backup psql` gets
+    the container's environment, stays unnamed and still alerts (PrivilegedLoginUnrecorded)."""
+
+    def test_the_name_is_exported_before_the_first_session(self):
+        code = [ln for ln in SCHEDULE.splitlines() if not ln.lstrip().startswith("#")]
+        at = code.index("export PGAPPNAME=ihr-backup")
+        first_pg = min(i for i, ln in enumerate(code) if re.search(r"(?:^|\s)(?:pg_isready|pgbackrest) -", ln))
+        self.assertLess(at, first_pg)
+        self.assertNotIn("PGAPPNAME=", SCHEDULE.replace("export PGAPPNAME=ihr-backup", ""))
+
+    def test_pg_isready_gets_the_name(self):
+        import stat
+        import subprocess
+        import tempfile
+        head = SCHEDULE.split("push_wal() {", 1)[0]
+        with tempfile.TemporaryDirectory() as tmp:
+            fake = Path(tmp) / "pg_isready"
+            fake.write_text('#!/bin/sh\nprintf "%s" "${PGAPPNAME:-<none>}" > "$SEEN"\n')
+            fake.chmod(fake.stat().st_mode | stat.S_IEXEC)
+            env = {"PATH": f"{tmp}:/usr/bin:/bin", "SEEN": str(Path(tmp) / "seen")}
+            out = subprocess.run(["sh", "-c", head], env=env, capture_output=True, text=True, timeout=30)
+            self.assertEqual(out.returncode, 0, out.stderr)
+            self.assertEqual((Path(tmp) / "seen").read_text(), "ihr-backup")
+
+    def test_the_container_itself_carries_no_name(self):
+        for svc in (BACKUP["services"]["backup"], BASE["services"]["db"]):
+            env = svc.get("environment") or {}
+            self.assertNotIn("PGAPPNAME", env if isinstance(env, dict) else " ".join(env))
+        self.assertNotIn("PGAPPNAME", DOCKERFILE)
+
+
 if __name__ == "__main__":
     unittest.main()

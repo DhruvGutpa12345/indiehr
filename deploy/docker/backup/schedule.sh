@@ -16,6 +16,12 @@ FULL_DAY="${IHR_BACKUP_FULL_DAY:-7}"
 case "$AT" in [0-2][0-9]:[0-5][0-9]) ;; *) echo "backup: IHR_BACKUP_TIME must be HH:MM" >&2; exit 1 ;; esac
 case "$FULL_DAY" in [1-7]) ;; *) echo "backup: IHR_BACKUP_FULL_DAY must be 1-7" >&2; exit 1 ;; esac
 export TZ="${TZ:-Asia/Kolkata}"
+# Every database session this schedule opens is named at login (libpq's PGAPPNAME; P1-T27 live
+# proof F1/F2): pgBackRest 2.60 logs in with no name and pg_isready as "pg_isready", and Postgres's
+# "connection authorized" line (PrivilegedLoginUnrecorded, deploy/postgres/service-logins.txt)
+# comes before any SET. Exported here only, never in the container's environment, so a hand-typed
+# `docker exec backup psql` stays unnamed and alerts.
+export PGAPPNAME=ihr-backup
 
 log() { echo "backup: $*"; }
 status() {  # status <key> <value>: one line per key in the status file (both loops write it)

@@ -1,5 +1,5 @@
 {
- "_comment": "scripts/check-logs.py: these journal entries go through the real redaction steps into a throwaway VictoriaLogs, then vmalert runs deploy/logs/alerts/ on them. 'expect' lists, per alert, the values of its key label it must fire (or wait to fire) for, and no others: client_ip, hospital for PackApplyFailed, PackFacilityDeferred, HospitalNotServed, ReleaseWindowOverrun, AuditHospitalCheckFailed, AuditHospitalSealLate, DumpHospitalFailed, DumpHospitalHeld HospitalRestoreFailed and HospitalRootProblem, schema for ParkedSchemaOverdue, or reason for DatabaseRoleRefused (hospital for BatchRequestRefused, StaffResetRefused and the three MrdRecords alerts). P1-T27a: PrivilegedLoginUnrecorded is compared by its application name (app) and OperatorSessionRefused by its refusal code (why), one value per firing group (P1-T27 review O9; the redaction cases are stored too: their e-mail-named postgres login and their shared-operator refusal fire as well); KeycloakAdminCredentialChange the admin's client_ip.",
+ "_comment": "scripts/check-logs.py: these journal entries go through the real redaction steps into a throwaway VictoriaLogs, then vmalert runs deploy/logs/alerts/ on them. 'expect' lists, per alert, the values of its key label it must fire (or wait to fire) for, and no others: client_ip, hospital for PackApplyFailed, PackFacilityDeferred, HospitalNotServed, ReleaseWindowOverrun, AuditHospitalCheckFailed, AuditHospitalSealLate, DumpHospitalFailed, DumpHospitalHeld HospitalRestoreFailed and HospitalRootProblem, schema for ParkedSchemaOverdue, or reason for DatabaseRoleRefused (hospital for BatchRequestRefused, StaffResetRefused and the three MrdRecords alerts). P1-T27a: PrivilegedLoginUnrecorded is compared by its application name (app) and OperatorSessionRefused by its refusal code (why), one value per firing group (P1-T27 review O9; the redaction cases are stored too: their e-mail-named postgres login and their shared-operator refusal fire as well); KeycloakAdminCredentialChange the admin's client_ip. The live proof's real PG 18.6 lines (docs/reviews/p1-t27/live-proof.md F1-F3): a postgres and a keycloak login with no application name (an empty app) and pg_isready must fire; the backup schedule's ihr-backup and Keycloak's ihr-keycloak must not.",
  "fixtures": [
   {
    "count": 1,
@@ -2711,7 +2711,21 @@
   {
    "count": 1,
    "record": {
-    "MESSAGE": "2026-11-22 04:30:00.123 UTC [200] LOG:  connection authorized: user=keycloak database=keycloak application_name=PostgreSQL JDBC Driver",
+    "MESSAGE": "2026-11-22 04:30:00.123 UTC [200] LOG:  connection authorized: user=keycloak database=keycloak application_name=ihr-keycloak",
+    "_HOSTNAME": "srv1",
+    "PRIORITY": "6",
+    "_TRANSPORT": "journal",
+    "_COMM": "dockerd",
+    "_UID": "0",
+    "_SYSTEMD_UNIT": "docker.service",
+    "CONTAINER_NAME": "indiehr-staging-db-1",
+    "COM_DOCKER_COMPOSE_SERVICE": "db"
+   }
+  },
+  {
+   "count": 1,
+   "record": {
+    "MESSAGE": "2026-11-22 04:30:00.123 UTC [120] LOG:  connection authorized: user=keycloak database=keycloak",
     "_HOSTNAME": "srv1",
     "PRIORITY": "6",
     "_TRANSPORT": "journal",
@@ -2739,7 +2753,7 @@
   {
    "count": 1,
    "record": {
-    "MESSAGE": "2026-11-22 04:30:00.123 UTC [200] LOG:  connection authorized: user=postgres database=postgres application_name=pgBackRest [backup]",
+    "MESSAGE": "2026-11-22 04:30:00.123 UTC [200] LOG:  connection authorized: user=postgres database=postgres application_name=ihr-backup",
     "_HOSTNAME": "srv1",
     "PRIORITY": "6",
     "_TRANSPORT": "journal",
@@ -2753,7 +2767,7 @@
   {
    "count": 1,
    "record": {
-    "MESSAGE": "2026-11-22 04:30:00.123 UTC [200] LOG:  connection authorized: user=postgres database=postgres application_name=pgBackRest [check]",
+    "MESSAGE": "2026-11-22 04:30:00.123 UTC [102] LOG:  connection authorized: user=postgres database=postgres",
     "_HOSTNAME": "srv1",
     "PRIORITY": "6",
     "_TRANSPORT": "journal",
@@ -2767,7 +2781,7 @@
   {
    "count": 1,
    "record": {
-    "MESSAGE": "2026-11-22 04:30:00.123 UTC [200] LOG:  connection authorized: user=postgres database=postgres application_name=pgBackRest [stanza-create]",
+    "MESSAGE": "2026-11-22 04:30:00.123 UTC [110] LOG:  connection authorized: user=postgres database=postgres application_name=pg_isready",
     "_HOSTNAME": "srv1",
     "PRIORITY": "6",
     "_TRANSPORT": "journal",
@@ -3069,8 +3083,11 @@
   ],
   "PrivilegedLoginUnrecorded": [
    "<email>",
+   "",
+   "",
    "manage:shell",
    "op:aaaaaaaaaaa1:admin",
+   "pg_isready",
    "psql"
   ],
   "OperatorSessionRefused": [

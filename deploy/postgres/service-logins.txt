@@ -9,6 +9,12 @@
 # Built from the code (2026-11-22). The local proof (design.md §9.4 step 4) captures every
 # "connection authorized" line of a full local-proof, release and hospital-restore-drill run and
 # corrects this list; until then a missing line shows as a false alert, never as a silent one.
+# Corrected by the live proof (docs/reviews/p1-t27/live-proof.md, F1-F4, PG 18.6): Postgres logs
+# this line at login, before a client's own SET application_name, so pgBackRest (2.60: libpq, no
+# name at login) and Keycloak (pgjdbc: SET after login unless assumeMinServerVersion >= 9.0) showed
+# no name; both are now named at login. Never list an empty name, psql or pg_isready for postgres:
+# an operator's careless raw session looks exactly like that. The postgres image's init scripts on
+# a new data directory (two psql lines) alert once; deploy/staging/README.md says how to tell them.
 db	ihr_app	gunicorn	the web app and the back-channel logout service (backend, backchannel)
 db	ihr_app	celery	the worker and beat (celery-worker, celery-beat)
 db	ihr_app	manage:ihr_db_role_check	each app container's pre-start role check
@@ -21,9 +27,7 @@ db	ihr_owner	manage:ihr_provision_worker	the provisioner (ihr_provision_worker -
 db	ihr_audit_watch	ihr-audit-watch	the audit watch (P1-T21; settings/watch.py)
 db	ihr_dump	ihr-dumper	the nightly dumper (P1-T22a; deploy/dumps/dumper.py)
 db	ihr_monitor	-	postgres-exporter (pg_monitor only; it sets no application name)
-db	keycloak	PostgreSQL JDBC Driver	Keycloak's own database (the JDBC driver's default name)
+db	keycloak	ihr-keycloak	Keycloak's own database (KC_DB_URL_PROPERTIES ApplicationName, sent at login: compose.yaml)
 db	postgres	ihr-health	the db healthcheck (pg_isready, compose.yaml)
-db	postgres	pgBackRest [backup]	the backup service's scheduled backups (compose.backup.yaml)
-db	postgres	pgBackRest [check]	the backup service's hourly check
-db	postgres	pgBackRest [stanza-create]	the backup set-up (backup-init)
+db	postgres	ihr-backup	the backup service's schedule: its wait for the db (pg_isready), stanza-create, backups and hourly check (PGAPPNAME in deploy/docker/backup/schedule.sh only)
 ihr-restore-drill	ihr_owner	ihr-restore-drill	the monthly restore drill's Django checks, on the copy only (settings/drill.py)

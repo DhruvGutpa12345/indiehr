@@ -620,8 +620,10 @@ memory") and rolls back: raise the setting and `--resume`.
 - **`ihr_audit_verify` after a restore** must run as the owner or the audit watch's role: the app
   role has no right on the archive (its entries hold values), so run as the app it reads a restore
   event as unverifiable. `release`'s pre-check runs it in the backend: after a restore, run
-  `scripts/staging.sh manage --reason "<ticket>" --hospital all ihr_audit_verify --all` with the reader key instead
-  (proof-b.md).
+  `scripts/staging.sh audit-verify --operator <you> --all` instead, which runs in the audit watch's
+  container (its role, and the fingerprint reader key; monitoring must be on, else it falls back to
+  the backend) (proof-b.md; the admin one-off of `manage` holds no reader key, on purpose, so
+  `ihr_audit_verify` there always exits 1: P1-T27 live proof F5).
 - **Queued Celery tasks** of the hospital made before the restore run after it (the gate holds
   them while it is held); ones naming rows the restore removed fail harmlessly.
 - **Offboarding** must also erase the hospital's archived segments (append-only; P4-T1/§7.7).
@@ -1127,7 +1129,7 @@ and `release` refuse before they change anything (run `s3-init`, or fill it for 
 bucket), and `scripts/deploy.sh` before it sends anything (`staging.sh watch-reader --check` on
 the folder it sends).
 
-Look at a hospital yourself: `scripts/staging.sh manage --reason "<ticket>" --hospital <slug> ihr_audit_verify --slug <slug>` (from seal
+Look at a hospital yourself: `scripts/staging.sh audit-verify --operator <you> --slug <slug>` (from seal
 1), or in the watch's container `python manage.py ihr_audit_watch once --pass incremental
 --metrics`: it reads the serving watch's state and never writes it, and counts the nightly and
 sweep findings that stand until the next nightly apart (`standing_findings`). `ihr_audit_watch
@@ -1168,7 +1170,7 @@ measure` is bounded (the last 7 days, 200,000 entries a hospital); `--full` runs
 
 - **AuditChainBroken / AuditFingerprintMismatch / AuditHospitalCheckFailed.** Treat it as a
   possible incident (CERT-In: report within 6 hours). Run
-  `scripts/staging.sh manage --reason "<ticket>" --hospital <it> ihr_audit_verify --slug <the hospital named>`: it names the seal,
+  `scripts/staging.sh audit-verify --operator <you> --slug <the hospital named>`: it names the seal,
   the entry window or the fingerprint. Do not "fix" the trail: it is evidence. A checkpoint is
   never reset by hand. After a genuine restore the restore's event clears it (P1-T22); a restore
   without one stays a cut. **`staging.sh rollback --restore`** writes one per hospital it rolls
@@ -1823,7 +1825,8 @@ export IHR_OPERATOR=dhruv            # the same as --operator on every command o
   the bootstrap's admin user (`/etc/indiehr/admin-user`). There is no default: the deploy account is
   shared, so its login name says nothing (Q-K134). `scripts/deploy.sh --operator NAME` (or
   `IHR_OPERATOR`) passes it to every call on the server.
-- **Data tier** (they reach patient data or raw logs): `manage` (shells and `dbshell` included),
+- **Data tier** (they reach patient data or raw logs): `manage` (`shell` included; SQL on the live
+  database is `manage ... shell -c "..."` as `ihr_owner`; `dbshell` fails: the admin image has no `psql`),
   `hospital-root`, `dumps-get`, `logs`, `logs-archive-get`, `restore-drill --keep`,
   `restore-drill-psql`, `audit-supersede export`. They need `--reason` and a hospital, and open their session before anything runs.
   - `--reason`: 3-120 characters of letters, digits, space and `. _ : / # -`, no number of 6 or more
@@ -1836,6 +1839,9 @@ export IHR_OPERATOR=dhruv            # the same as --operator on every command o
   `restore`, `fleet`, `keys`, backups, dumps, the restores and drills...). It opens at its first
   privileged call, reason `job:<command>` unless you give one. `release`, `restore-drill`, `dumps-now`
   and `hospital-restore-drill` open every hospital's schema: their session's scope is `all`.
+  `audit-verify --slug S | --all` (the full audit check, read-only, in the audit watch's container,
+  else the backend: where the fingerprint reader key is) has scope `S` or `all`; it refuses `--seal`
+  and `--anchor` (the beat seals, celery-worker writes fingerprints).
 - A command that reaches no privileged call (`ps`, `down`, `init`, `releases`, `monitoring-textfile`,
   `ops-tunnel`, the secret and key tools of the deploying machine, `acme-proof`) writes nothing and
   needs no name.
@@ -1881,6 +1887,23 @@ ihr-operator: event=late at=<time> session=<s> was=<start|scope|end> ...
   (`PostgresSettingOverridden`, critical). Expect two lines per web request and per Celery task: the
   local proof measures them per hour at two hospitals and extrapolates to 200 against the log store's
   budget (`logs-volume`); a budget overrun is a decision, never a silent drop.
+- **Service sessions are named at login.** Postgres writes the "connection authorized" line before
+  a client can `SET application_name`, so a service must name itself in the start-up packet:
+  the backup service's schedule exports `PGAPPNAME=ihr-backup` inside its own process only
+  (pgBackRest 2.60 opens libpq sessions with no name and SETs `pgBackRest [<command>]` later;
+  `pg_isready` would say `pg_isready`), and Keycloak's JDBC URL carries
+  `?ApplicationName=ihr-keycloak&assumeMinServerVersion=18` (`KC_DB_URL_PROPERTIES`; pgjdbc sends
+  the name at login only with `assumeMinServerVersion` 9.0 or more). No container's environment
+  sets `PGAPPNAME`: a hand-typed `docker exec <db|backup> psql` stays `psql` and alerts (P1-T27 live
+  proof F1-F4; a test keeps it so).
+- **A new server's first start alerts once.** On an empty data directory the postgres image's
+  entrypoint runs its init scripts (`/docker-entrypoint-initdb.d`) through `psql`, which logs two
+  `user=postgres ... application_name=psql` lines; `PrivilegedLoginUnrecorded` fires once for them
+  on the first `up` on a new server (and after a `down -v`). Recognise them by the time: the db
+  container's first start, seconds after `initdb`'s own lines in its log, before any `ihr-operator`
+  start line; note them, no incident. They are not allow-listed (that would let an operator's raw
+  `psql` through), and `PGAPPNAME` is not set in the db service (an operator's `docker exec db psql`
+  would then carry the same name).
 
 ### Fail closed, and break-glass
 
