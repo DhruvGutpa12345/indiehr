@@ -239,7 +239,7 @@ class Hardening(unittest.TestCase):
         # only pg_monitor, and CONNECT to the postgres database (never ihr or keycloak)
         self.assertNotRegex(role, r"GRANT (?!pg_monitor |CONNECT ON DATABASE postgres TO ihr_monitor;)")
         # the password reaches psql on stdin (a heredoc), never as an argument
-        self.assertIn("psql -U postgres -d postgres -v ON_ERROR_STOP=1 -q >/dev/null <<SQL", role)
+        self.assertIn("pg_su -d postgres -q >/dev/null <<SQL", role)
 
     def test_redis_exporter_least_access(self):
         re_ = OVERLAY["services"]["redis-exporter"]
@@ -449,7 +449,7 @@ class AuditWatchOperations(unittest.TestCase):
         self.assertLess(release.index("rel_seal_new"), release.index("\n  up\n"))
         new = func("rel_seal_new")
         self.assertIn('python manage.py shell -c "$REL_SEAL_PY"', new)
-        self.assertIn("compose run --rm --no-deps -T celery-worker", new)
+        self.assertIn("migrate_run celery-worker", new)
         self.assertNotIn("IHR_BACKEND_IMAGE=", new)  # this build, not the outgoing one
 
     def test_a_restoring_rollback_says_what_the_watch_will_report(self):
@@ -760,8 +760,9 @@ class HostMetricsRun(unittest.TestCase):
     FAKE_DOCKER = """#!/usr/bin/env bash
 case "$1 $2" in
   "ps -aq") cut -d'|' -f5 "$FAKE_INSPECT" ;;
-  "ps -q") ;;
+  "ps -q") [[ -z "${FAKE_AUTO_CONF:-}" ]] || echo dbid ;;
   "inspect --format") cat "$FAKE_INSPECT" ;;
+  "exec dbid") script="$5"; script="${script//\/var\/lib\/postgresql\/18\/docker\/postgresql.auto.conf/$FAKE_AUTO_CONF}"; sh -c "$script"; exit $? ;;
   *) echo "fake docker: $*" >&2; exit 1 ;;
 esac
 """
@@ -774,18 +775,20 @@ esac
         "migrate|exited|none|0|eee|0",
     ]
 
-    def run_script(self, services, chrony=None, chrony_age=0):
+    def run_script(self, services, chrony=None, chrony_age=0, containers=None, cgroup=True, auto_conf=None):
         with tempfile.TemporaryDirectory() as d:
             d = Path(d)
             (d / "bin").mkdir()
             (d / "bin" / "docker").write_text(self.FAKE_DOCKER)
             (d / "bin" / "docker").chmod(0o755)
-            (d / "inspect").write_text("\n".join(self.CONTAINERS) + "\n")
-            scope = d / "cg" / "system.slice" / "docker-aaa.scope"
-            scope.mkdir(parents=True)
-            (scope / "memory.current").write_text("1500000000\n")
-            (scope / "memory.stat").write_text("anon 400000000\nfile 1100000000\ninactive_file 1000000000\n")
-            (scope / "memory.events").write_text("low 0\nhigh 0\nmax 3\noom 2\noom_kill 2\n")
+            (d / "inspect").write_text("\n".join(containers or self.CONTAINERS) + "\n")
+            (d / "cg").mkdir()
+            if cgroup:
+                scope = d / "cg" / "system.slice" / "docker-aaa.scope"
+                scope.mkdir(parents=True)
+                (scope / "memory.current").write_text("1500000000\n")
+                (scope / "memory.stat").write_text("anon 400000000\nfile 1100000000\ninactive_file 1000000000\n")
+                (scope / "memory.events").write_text("low 0\nhigh 0\nmax 3\noom 2\noom_kill 2\n")
             (d / "chrony").mkdir()
             for name, text in (chrony or {}).items():
                 f = d / "chrony" / name
@@ -796,6 +799,9 @@ esac
             (d / "out").mkdir()
             env = {**os.environ, "PATH": f"{d / 'bin'}:{os.environ['PATH']}", "FAKE_INSPECT": str(d / "inspect"),
                    "IHR_CGROUP_ROOT": str(d / "cg")}
+            if auto_conf is not None:  # a running database container whose postgresql.auto.conf is this text
+                (d / "auto.conf").write_text(auto_conf)
+                env["FAKE_AUTO_CONF"] = str(d / "auto.conf")
             subprocess.run(["bash", str(MON / "host-metrics.sh"), "--out", str(d / "out"), "--project", "indiehr-staging",
                             "--services", services, "--chrony-dir", str(d / "chrony")],
                            check=True, env=env, capture_output=True, timeout=60)
@@ -804,6 +810,40 @@ esac
 
     SOURCES = "^,*,samay1.nic.in,1,6,377,12,0.000012,0.000010,0.020\n^,+,samay2.nic.in,1,6,377,13,0.000020,0.000018,0.025\n"
     TRACKING = "A29FC87B,samay1.nic.in,2,1700000000.123456789,-0.000123456,0.000001,0.000010,-12.345,0.001,0.020,0.005,0.001,64.5,Normal\n"
+
+    # P1-T27 review O8: a declared-but-never-assigned associative array aborted the script under
+    # set -u (bash 5.3), so no metric was written at all
+    def test_metrics_are_written_when_no_service_runs(self):
+        containers = ["db|exited|none|0|aaa|0", "provisioner|exited|none|1|bbb|0"]
+        m = self.run_script("db provisioner", containers=containers, cgroup=False)
+        self.assertEqual(m['ihr_container_running{service="db"}'], "0")
+        self.assertIn("ihr_host_metrics_last_run_timestamp_seconds", m)
+
+    def test_no_readable_cgroup_still_writes_the_metrics(self):
+        m = self.run_script("db", cgroup=False)
+        self.assertEqual(m['ihr_container_running{service="db"}'], "1")
+        self.assertNotIn('ihr_container_memory_working_set_bytes{service="db"}', m)
+        self.assertIn("ihr_host_metrics_last_run_timestamp_seconds", m)
+
+    # P1-T27 review S2: pgBackRest's own recovery settings are not an ALTER SYSTEM
+    PGBACKREST_AUTO_CONF = (
+        "# Do not edit this file or use ALTER SYSTEM manually!\n"
+        "# Recovery settings generated by pgBackRest restore on 2026-11-22 10:00:00\n"
+        "restore_command = 'pgbackrest --stanza=main archive-get %f \"%p\"'\n"
+        "recovery_target_time = '2026-11-22 09:30:00+05:30'\n"
+        "recovery_target_action = 'promote'\n"
+    )
+
+    def test_a_restores_recovery_settings_are_not_an_override(self):
+        m = self.run_script("db", auto_conf=self.PGBACKREST_AUTO_CONF)
+        self.assertEqual(m["ihr_postgres_auto_conf_check_ok"], "1")
+        self.assertEqual(m["ihr_postgres_auto_conf_settings"], "0")
+
+    def test_an_alter_system_setting_still_counts(self):
+        m = self.run_script("db", auto_conf=self.PGBACKREST_AUTO_CONF + "logging_collector = 'on'\nlog_connections = 'off'\n")
+        self.assertEqual(m["ihr_postgres_auto_conf_settings"], "2")
+        m = self.run_script("db", auto_conf="# Do not edit this file or use ALTER SYSTEM manually!\n")
+        self.assertEqual(m["ihr_postgres_auto_conf_settings"], "0")
 
     def test_exited_one_shots_never_reported(self):
         for services in ("db provisioner backend migrate", ""):

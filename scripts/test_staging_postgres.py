@@ -57,6 +57,20 @@ def server_lines():
     ]
 
 
+STAGING_ONLY_MARKER = "# ---- staging and recovery only"
+
+
+def shared_lines():
+    """The lines every database container carries, dev's and CI's upstream postgres:17 too:
+    those before the staging-only marker (the rest need our Postgres 18 image)."""
+    head = SETTINGS_FILE.read_text().split(STAGING_ONLY_MARKER, 1)
+    return [
+        line.strip()
+        for line in head[0].splitlines()
+        if line.strip() and not line.lstrip().startswith("#")
+    ]
+
+
 def pairs(command):
     """The ``-c name=value`` options of a Postgres command, as a set of name=value."""
     found = set()
@@ -79,17 +93,30 @@ class ServerSettings(unittest.TestCase):
     def test_the_file_is_what_the_design_says(self):
         self.assertEqual(
             server_lines(),
-            ["max_locks_per_transaction=256", "effective_cache_size=3GB"],
+            ["max_locks_per_transaction=256", "effective_cache_size=3GB", "log_connections=authorization",
+             "log_disconnections=on", "log_min_messages=warning", "log_destination=stderr"],
         )
 
     def test_every_database_container_carries_every_line(self):
-        for name, command in (
-            ("staging", SERVICES["db"]["command"]),
-            ("dev", DEV["services"]["db"]["command"]),
-            ("ci", CI["services"]["db"]["command"]),
+        for name, command, lines in (
+            ("staging", SERVICES["db"]["command"], server_lines()),
+            ("dev", DEV["services"]["db"]["command"], shared_lines()),
+            ("ci", CI["services"]["db"]["command"], shared_lines()),
         ):
             with self.subTest(environment=name):
-                self.assertLessEqual(set(server_lines()), pairs(command))
+                self.assertLessEqual(set(lines), pairs(command))
+
+    def test_dev_and_ci_carry_no_line_of_our_own_postgres(self):
+        """Review O1: dev and CI run upstream's postgres:17 (apps/backend/docker-compose.yaml),
+        where log_connections is a boolean: `authorization` stops the server from starting.
+        Lines after the staging-only marker are for our Postgres 18 image only."""
+        upstream = load(ROOT / "apps" / "backend" / "docker-compose.yaml")["services"]["db"]["image"]
+        self.assertRegex(upstream, r"^postgres:17")
+        self.assertIn("log_connections=authorization", set(server_lines()) - set(shared_lines()))
+        for name, command in (("dev", DEV["services"]["db"]["command"]), ("ci", CI["services"]["db"]["command"])):
+            with self.subTest(environment=name):
+                self.assertEqual(pairs(command) & (set(server_lines()) - set(shared_lines())), set())
+                self.assertFalse(any(p.startswith("log_connections=") for p in pairs(command)))
 
     def test_both_recovery_starts_carry_them_too(self):
         """A copy that replays this server's WAL refuses a smaller lock table than the
@@ -105,7 +132,7 @@ class ServerSettings(unittest.TestCase):
             capture_output=True, text=True, check=True)
         self.assertEqual(
             out.stdout.split(),
-            ["-c", "max_locks_per_transaction=256", "-c", "effective_cache_size=3GB"],
+            [w for line in server_lines() for w in ("-c", line)],
         )
 
     # /dev/shm and shared_buffers are both shared memory charged to the db container's limit:
@@ -229,11 +256,16 @@ pg_su() { cat <<OUT
 max_locks_per_transaction=${FAKE_LOCKS:-256}
 effective_cache_size=${FAKE_CACHE:-3GB}
 shared_buffers=${FAKE_BUFFERS:-512MB}
+log_connections=${FAKE_LOG_CONNECTIONS:-authorization}
+log_disconnections=on
+log_min_messages=warning
+log_destination=stderr
 stored_database_settings=${FAKE_STORED:-0}
 OUT
 }
-compose() { printf 'Filesystem 1024-blocks Used Available Capacity Mounted\ntmpfs %s 0 %s 0%% /dev/shm\n' "${FAKE_SHM_KB:-262144}" "${FAKE_SHM_KB:-262144}"; }
-PG_SERVER_SETTINGS=(-c max_locks_per_transaction=256 -c effective_cache_size=3GB)
+app_exec() { printf 'Filesystem 1024-blocks Used Available Capacity Mounted\ntmpfs %s 0 %s 0%% /dev/shm\n' "${FAKE_SHM_KB:-262144}" "${FAKE_SHM_KB:-262144}"; }
+PG_SERVER_SETTINGS=(-c max_locks_per_transaction=256 -c effective_cache_size=3GB -c log_connections=authorization
+  -c log_disconnections=on -c log_min_messages=warning -c log_destination=stderr)
 '''
 
 
@@ -257,6 +289,7 @@ class ServerCheck(unittest.TestCase):
             ({"FAKE_BUFFERS": "128MB"}, "shared_buffers is 128MB"),
             ({"FAKE_STORED": "1"}, "stored for the whole database"),
             ({"FAKE_SHM_KB": "65536"}, "/dev/shm is 64 MiB"),
+            ({"FAKE_LOG_CONNECTIONS": "off"}, "log_connections is off"),
         ):
             with self.subTest(env=env):
                 out = run_check(**env)

@@ -1,0 +1,22 @@
+# Host audit (P1-T27c, Q-K139). deploy/host/bootstrap.sh loads 10 auditd rules (keys ihr-*) that
+# record who ran docker, ctr, runc, nsenter or psql from a login session; the host timer's root
+# step reads `auditctl -s` and `auditctl -l` every minute (deploy/monitoring/host-metrics.sh).
+# The rules are not locked (`-e 2` would also lock out bootstrap's own reloads until a reboot):
+# removing one, switching auditing off, or removing auditd is caught here instead. A reload by
+# bootstrap takes under a second and is never seen by a one-minute reading held for 2 minutes.
+# The number 10 is the rule count in bootstrap.sh (AUDIT_RULE_COUNT; scripts/test_bootstrap_static.py
+# keeps them equal). Tests: ../tests/host-audit.yml.
+groups:
+  - name: host-audit
+    rules:
+      - alert: HostAuditRulesMissing
+        expr: >-
+          (ihr_host_audit_rule_keys < 10)
+          or (ihr_host_audit_enabled == 0)
+          or (ihr_host_audit_reading_ok == 0)
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: "The host's audit rules for docker, ctr, runc, nsenter and psql are not all loaded, auditing is off, or they cannot be read: who ran those tools is not being recorded"
+          action: "sudo auditctl -s; sudo auditctl -l | grep -c 'key=ihr-' (want 10); sudo /usr/local/sbin/ihr-bootstrap --no-upgrade reloads them. Find who changed them (journalctl -t sudo, the ihr-operator lines, /var/log/audit/audit.log) and treat an unexplained change as an incident (deploy/host/README.md, Host audit)"

@@ -1343,8 +1343,8 @@ class StagingScript(unittest.TestCase):
         and the fleet migration never wait for."""
         up = self.func("up")
         stop = '[[ -z "$(env_get IHR_DUMPS)" ]] || compose stop dumper'
-        self.assertLess(up.index(stop), up.index("compose run --rm --no-deps -T migrate\n"))
-        self.assertLess(up.index("compose run --rm --no-deps -T migrate\n"), up.index("|| dumps_up"))
+        self.assertLess(up.index(stop), up.index("migrate_run migrate\n"))
+        self.assertLess(up.index("migrate_run migrate\n"), up.index("|| dumps_up"))
         rel = self.func("release")
         at = rel.index('compose stop "${REL_WORKERS[@]}"')
         self.assertLess(at, rel.index(stop, at))
@@ -1385,6 +1385,11 @@ class StagingScript(unittest.TestCase):
                   'compose() { echo "compose $*" >> "$LOG"\n'
                   '  case "$*" in "ps -q --status running dumper") [[ -z "$RUNNING" ]] || echo cid-dumper ;;\n'
                   '    "run "*) return "$RC" ;; esac; }\n'
+                  # the operator record's wrapper (P1-T27a) as the compose call it makes
+                  'migrate_run() { compose run --rm --no-deps -T "$@"; }\n'
+                  # the session's operator (P1-T27 review O4): fleet's own --operator, else the session's
+                  f'op_arg() {{{self.func("op_arg")}}}\n'
+                  'rel_operator() { echo "${1:-tester}"; }\n'
                   'rel_db_single() { return 1; }\nrel_outgoing_unmigrated() { return 1; }\n'
                   'old_manage() { echo "old_manage $*" >> "$LOG"; }\n'
                   'start_existing() { echo "start_existing $*" >> "$LOG"; }\n'
@@ -1414,7 +1419,8 @@ class StagingScript(unittest.TestCase):
                          ({}, ("check",))):
             with self.subTest(kw=kw, args=args):
                 code, calls = self.fleet(*args, **kw)
-                self.assertEqual((code, calls), (0, [f"{run} {' '.join(args)}"]))
+                # the session's operator is passed on when the command line has none
+                self.assertEqual((code, calls), (0, [f"{run} {' '.join(args)} --operator tester"]))
         # The move of the roles stops the dumper before its fleet migration
         move = self.func("db_roles_move_stopped")
         self.assertLess(move.index('compose stop "${DB_APP_SERVICES[@]}"'),

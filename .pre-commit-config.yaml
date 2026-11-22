@@ -159,7 +159,24 @@ repos:
         name: host bootstrap keeps its required settings
         entry: python3 -m unittest scripts/test_bootstrap_static.py
         language: system
-        files: ^(deploy/host/|scripts/(deploy|local-vm)\.sh$|scripts/test_bootstrap_static\.py$)
+        files: ^(deploy/host/|deploy/monitoring/host-metrics\.sh$|deploy/monitoring/prometheus/rules/host-audit\.yml$|deploy/logs/(alerts/|fluent-bit/redact\.lua$)|docs/VERSIONS\.md$|scripts/(deploy|local-vm|staging)\.sh$|scripts/test_bootstrap_static\.py$)
+        pass_filenames: false
+      # The operator access record (P1-T27): no privileged call outside the wrappers, deploy.sh passes
+      # the operator, the alert file and the reviewed service logins agree, the Postgres pins
+      - id: staging-operator-static
+        name: operator access record keeps its required shape
+        entry: python -m unittest scripts/test_staging_operator.py
+        language: python
+        additional_dependencies: ["pyyaml==6.0.3"]
+        files: ^(scripts/(staging|deploy)\.sh$|deploy/postgres/|deploy/logs/alerts/|deploy/staging/|deploy/(ci|dev)/|deploy/monitoring/prometheus/(rules|tests)/|deploy/host/README\.md$|\.github/workflows/|\.gitignore$|\.pre-commit-config\.yaml$|scripts/(check-logs|test_staging_operator)\.py$)
+        pass_filenames: false
+      # Postgres operating rules (P1-T23, P1-T27): server settings, process limits, drift check
+      - id: staging-postgres-static
+        name: Postgres operating rules keep their required settings
+        entry: python -m unittest scripts/test_staging_postgres.py
+        language: python
+        additional_dependencies: ["pyyaml==6.0.3"]
+        files: ^(deploy/postgres/|deploy/staging/|deploy/(ci|dev)/|scripts/staging\.sh$|plugins/ihr_platform/ihr_platform/db_limits\.py$|scripts/test_staging_postgres\.py$)
         pass_filenames: false
       # Backups (P1-T8c): database offline and unprivileged, encrypted repository, drill
       - id: staging-backup-static

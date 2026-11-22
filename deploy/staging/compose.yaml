@@ -169,6 +169,16 @@ services:
       - log_error_verbosity=terse
       - -c
       - password_encryption=scram-sha-256
+      # Who opened a session (P1-T27a, Q-K137; deploy/postgres/server-settings.txt): every
+      # authorized session and its end, to the container's output (the journal, then the log store)
+      - -c
+      - log_connections=authorization
+      - -c
+      - log_disconnections=on
+      - -c
+      - log_min_messages=warning
+      - -c
+      - log_destination=stderr
       # WAL archiving for backups (P1-T8c, compose.backup.yaml): on when backups are set up.
       # Finished WAL files go to a spool; the backup service pushes them off the server.
       - -c
@@ -183,7 +193,8 @@ services:
       - ./initdb:/docker-entrypoint-initdb.d:ro
     networks: [internal]
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U postgres -d postgres"]
+      # Named, so its sessions are a reviewed service login (deploy/postgres/service-logins.txt)
+      test: ["CMD-SHELL", "PGAPPNAME=ihr-health pg_isready -U postgres -d postgres"]
       interval: 10s
       timeout: 5s
       retries: 10

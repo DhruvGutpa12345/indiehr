@@ -66,6 +66,8 @@ deploy/staging/releases/
 deploy/staging/restore/
 # A whole-database restore's exported audit tails (P1-T22c): personal data, never committed
 deploy/staging/supersede/
+# The operator access record's pending lines (P1-T27: operator names, reasons, client addresses)
+deploy/staging/operator-pending.log
 
 # OpenTofu (P1-T8b4): providers, state, plans and real settings never go into git
 infra/**/.terraform/

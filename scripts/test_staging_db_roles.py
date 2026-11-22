@@ -269,7 +269,8 @@ class Roles(unittest.TestCase):
         # the local proof's `ihr_db_role_check --for migrate`)
         self.assertIn("pg_su -1 -q -d ihr >/dev/null", apply)
         self.assertNotRegex(apply, r"-v v[oa]=|-c .*PASSWORD")
-        self.assertIn("docker exec -i \"$PG_TARGET\" psql -U postgres", func("pg_su"))
+        self.assertIn('docker exec -i ${tty[@]+"${tty[@]}"} "${OP_ENV[@]}" "$PG_TARGET" "${cmd[@]}"', func("pg_su"))
+        self.assertIn("local cmd=(\"$tool\" -U postgres)", func("pg_su"))
 
     def test_every_role_as_the_model_has_it(self):
         """Attributes match db_roles.ROLES (the app NOINHERIT, the dump role INHERIT and in
@@ -363,7 +364,7 @@ class Roles(unittest.TestCase):
         self.assertLess(up.index('== single ]]; then'), up.index("compose up -d --wait db redis"))
         at = up.index("split) db_roles_apply; db_server_check ;;")
         self.assertLess(up.index("compose up -d --wait db redis"), at)
-        self.assertLess(at, up.index("compose run --rm --no-deps -T migrate"))
+        self.assertLess(at, up.index("migrate_run migrate"))
         self.assertIn("single) die", up)
         self.assertNotIn("--move", up)
 
@@ -465,7 +466,7 @@ class Roles(unittest.TestCase):
         owner's logged migrate container (never the admin one)."""
         old = func("old_manage")
         self.assertIn("if backend_runs_as_app; then", old)
-        self.assertIn('IHR_BACKEND_IMAGE="$repo" compose run --rm --no-deps -T migrate python manage.py "$@"', old)
+        self.assertIn('IHR_BACKEND_IMAGE="$repo" migrate_run migrate python manage.py "$@"', old)
         self.assertIn("grep -qx 'IHR_DB_ROLE=app'", func("backend_runs_as_app"))
 
     def test_the_restore_drill_runs_as_the_owner_on_its_copy(self):

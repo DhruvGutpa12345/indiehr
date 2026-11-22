@@ -1,5 +1,5 @@
 {
- "_comment": "scripts/check-logs.py: these journal entries go through the real redaction steps into a throwaway VictoriaLogs, then vmalert runs deploy/logs/alerts/ on them. 'expect' lists, per alert, the values of its key label it must fire (or wait to fire) for, and no others: client_ip, hospital for PackApplyFailed, PackFacilityDeferred, HospitalNotServed, ReleaseWindowOverrun, AuditHospitalCheckFailed, AuditHospitalSealLate, DumpHospitalFailed, DumpHospitalHeld HospitalRestoreFailed and HospitalRootProblem, schema for ParkedSchemaOverdue, or reason for DatabaseRoleRefused (hospital for BatchRequestRefused, StaffResetRefused and the three MrdRecords alerts).",
+ "_comment": "scripts/check-logs.py: these journal entries go through the real redaction steps into a throwaway VictoriaLogs, then vmalert runs deploy/logs/alerts/ on them. 'expect' lists, per alert, the values of its key label it must fire (or wait to fire) for, and no others: client_ip, hospital for PackApplyFailed, PackFacilityDeferred, HospitalNotServed, ReleaseWindowOverrun, AuditHospitalCheckFailed, AuditHospitalSealLate, DumpHospitalFailed, DumpHospitalHeld HospitalRestoreFailed and HospitalRootProblem, schema for ParkedSchemaOverdue, or reason for DatabaseRoleRefused (hospital for BatchRequestRefused, StaffResetRefused and the three MrdRecords alerts). P1-T27a: PrivilegedLoginUnrecorded is compared by its application name (app) and OperatorSessionRefused by its refusal code (why), one value per firing group (P1-T27 review O9; the redaction cases are stored too: their e-mail-named postgres login and their shared-operator refusal fire as well); KeycloakAdminCredentialChange the admin's client_ip.",
  "fixtures": [
   {
    "count": 1,
@@ -2427,6 +2427,538 @@
     "CONTAINER_NAME": "indiehr-staging-backend-1",
     "COM_DOCKER_COMPOSE_SERVICE": "backend"
    }
+  },
+  {
+   "count": 1,
+   "record": {
+    "MESSAGE": "2026-11-22 04:30:00.123 UTC [101] LOG:  connection authorized: user=ihr_owner database=ihr application_name=manage:shell",
+    "_HOSTNAME": "srv1",
+    "PRIORITY": "6",
+    "_TRANSPORT": "journal",
+    "_COMM": "dockerd",
+    "_UID": "0",
+    "_SYSTEMD_UNIT": "docker.service",
+    "CONTAINER_NAME": "indiehr-staging-db-1",
+    "COM_DOCKER_COMPOSE_SERVICE": "db"
+   }
+  },
+  {
+   "count": 1,
+   "record": {
+    "MESSAGE": "2026-11-22 04:30:00.123 UTC [102] LOG:  connection authorized: user=ihr_owner database=ihr application_name=op:aaaaaaaaaaa1:admin",
+    "_HOSTNAME": "srv1",
+    "PRIORITY": "6",
+    "_TRANSPORT": "journal",
+    "_COMM": "dockerd",
+    "_UID": "0",
+    "_SYSTEMD_UNIT": "docker.service",
+    "CONTAINER_NAME": "indiehr-staging-db-1",
+    "COM_DOCKER_COMPOSE_SERVICE": "db"
+   }
+  },
+  {
+   "count": 1,
+   "record": {
+    "MESSAGE": "2026-11-22 04:30:00.123 UTC [103] LOG:  connection authorized: user=postgres database=postgres application_name=psql",
+    "_HOSTNAME": "srv1",
+    "PRIORITY": "6",
+    "_TRANSPORT": "journal",
+    "_COMM": "dockerd",
+    "_UID": "0",
+    "_SYSTEMD_UNIT": "docker.service",
+    "CONTAINER_NAME": "indiehr-staging-db-1",
+    "COM_DOCKER_COMPOSE_SERVICE": "db"
+   }
+  },
+  {
+   "count": 1,
+   "record": {
+    "MESSAGE": "2026-11-22 04:30:00.123 UTC [104] LOG:  connection authorized: user=ihr_owner database=ihr application_name=op:bbbbbbbbbbb2:admin",
+    "_HOSTNAME": "srv1",
+    "PRIORITY": "6",
+    "_TRANSPORT": "journal",
+    "_COMM": "dockerd",
+    "_UID": "0",
+    "_SYSTEMD_UNIT": "docker.service",
+    "CONTAINER_NAME": "indiehr-staging-db-1",
+    "COM_DOCKER_COMPOSE_SERVICE": "db"
+   }
+  },
+  {
+   "count": 1,
+   "record": {
+    "MESSAGE": "ihr-operator: session=bbbbbbbbbbb2 event=start tier=data operator=alice command=manage:shell args=- hospital=alpha ses=3 from=local reason=\"INC-12 bed fix\"",
+    "_HOSTNAME": "srv1",
+    "PRIORITY": "5",
+    "SYSLOG_IDENTIFIER": "ihr-operator",
+    "_TRANSPORT": "syslog",
+    "_COMM": "logger",
+    "_UID": "1000",
+    "_PID": "4242",
+    "_CMDLINE": "logger -t ihr-operator --secret-flag Hunter2Cmdline"
+   }
+  },
+  {
+   "count": 1,
+   "record": {
+    "MESSAGE": "2026-11-22 04:30:00.123 UTC [105] LOG:  connection authorized: user=postgres database=ihr application_name=op:ccccccccccc3:psql",
+    "_HOSTNAME": "srv1",
+    "PRIORITY": "6",
+    "_TRANSPORT": "journal",
+    "_COMM": "dockerd",
+    "_UID": "0",
+    "_SYSTEMD_UNIT": "docker.service",
+    "CONTAINER_NAME": "indiehr-staging-db-1",
+    "COM_DOCKER_COMPOSE_SERVICE": "db"
+   }
+  },
+  {
+   "count": 1,
+   "record": {
+    "MESSAGE": "ihr-operator: session=ccccccccccc3 event=start tier=job operator=alice command=smoke args=- hospital=none ses=3 from=local reason=\"job:smoke\"",
+    "_HOSTNAME": "srv1",
+    "PRIORITY": "5",
+    "SYSLOG_IDENTIFIER": "ihr-operator",
+    "_TRANSPORT": "syslog",
+    "_COMM": "logger",
+    "_UID": "1000",
+    "_PID": "4242",
+    "_CMDLINE": "logger -t ihr-operator --secret-flag Hunter2Cmdline"
+   }
+  },
+  {
+   "count": 1,
+   "record": {
+    "MESSAGE": "ihr-operator: session=ccccccccccc3 event=end outcome=ok rc=0 seconds=40",
+    "_HOSTNAME": "srv1",
+    "PRIORITY": "5",
+    "SYSLOG_IDENTIFIER": "ihr-operator",
+    "_TRANSPORT": "syslog",
+    "_COMM": "logger",
+    "_UID": "1000",
+    "_PID": "4242",
+    "_CMDLINE": "logger -t ihr-operator --secret-flag Hunter2Cmdline"
+   }
+  },
+  {
+   "count": 1,
+   "record": {
+    "MESSAGE": "2026-11-22 04:30:00.123 UTC [200] LOG:  connection authorized: user=ihr_app database=ihr application_name=gunicorn",
+    "_HOSTNAME": "srv1",
+    "PRIORITY": "6",
+    "_TRANSPORT": "journal",
+    "_COMM": "dockerd",
+    "_UID": "0",
+    "_SYSTEMD_UNIT": "docker.service",
+    "CONTAINER_NAME": "indiehr-staging-db-1",
+    "COM_DOCKER_COMPOSE_SERVICE": "db"
+   }
+  },
+  {
+   "count": 1,
+   "record": {
+    "MESSAGE": "2026-11-22 04:30:00.123 UTC [200] LOG:  connection authorized: user=ihr_app database=ihr application_name=celery",
+    "_HOSTNAME": "srv1",
+    "PRIORITY": "6",
+    "_TRANSPORT": "journal",
+    "_COMM": "dockerd",
+    "_UID": "0",
+    "_SYSTEMD_UNIT": "docker.service",
+    "CONTAINER_NAME": "indiehr-staging-db-1",
+    "COM_DOCKER_COMPOSE_SERVICE": "db"
+   }
+  },
+  {
+   "count": 1,
+   "record": {
+    "MESSAGE": "2026-11-22 04:30:00.123 UTC [200] LOG:  connection authorized: user=ihr_app database=ihr application_name=manage:ihr_db_role_check",
+    "_HOSTNAME": "srv1",
+    "PRIORITY": "6",
+    "_TRANSPORT": "journal",
+    "_COMM": "dockerd",
+    "_UID": "0",
+    "_SYSTEMD_UNIT": "docker.service",
+    "CONTAINER_NAME": "indiehr-staging-db-1",
+    "COM_DOCKER_COMPOSE_SERVICE": "db"
+   }
+  },
+  {
+   "count": 1,
+   "record": {
+    "MESSAGE": "2026-11-22 04:30:00.123 UTC [200] LOG:  connection authorized: user=ihr_app database=ihr application_name=manage:ihr_provision_worker",
+    "_HOSTNAME": "srv1",
+    "PRIORITY": "6",
+    "_TRANSPORT": "journal",
+    "_COMM": "dockerd",
+    "_UID": "0",
+    "_SYSTEMD_UNIT": "docker.service",
+    "CONTAINER_NAME": "indiehr-staging-db-1",
+    "COM_DOCKER_COMPOSE_SERVICE": "db"
+   }
+  },
+  {
+   "count": 1,
+   "record": {
+    "MESSAGE": "2026-11-22 04:30:00.123 UTC [200] LOG:  connection authorized: user=ihr_owner database=ihr application_name=manage:ihr_db_role_check",
+    "_HOSTNAME": "srv1",
+    "PRIORITY": "6",
+    "_TRANSPORT": "journal",
+    "_COMM": "dockerd",
+    "_UID": "0",
+    "_SYSTEMD_UNIT": "docker.service",
+    "CONTAINER_NAME": "indiehr-staging-db-1",
+    "COM_DOCKER_COMPOSE_SERVICE": "db"
+   }
+  },
+  {
+   "count": 1,
+   "record": {
+    "MESSAGE": "2026-11-22 04:30:00.123 UTC [200] LOG:  connection authorized: user=ihr_owner database=ihr application_name=manage:migrate_schemas",
+    "_HOSTNAME": "srv1",
+    "PRIORITY": "6",
+    "_TRANSPORT": "journal",
+    "_COMM": "dockerd",
+    "_UID": "0",
+    "_SYSTEMD_UNIT": "docker.service",
+    "CONTAINER_NAME": "indiehr-staging-db-1",
+    "COM_DOCKER_COMPOSE_SERVICE": "db"
+   }
+  },
+  {
+   "count": 1,
+   "record": {
+    "MESSAGE": "2026-11-22 04:30:00.123 UTC [200] LOG:  connection authorized: user=ihr_owner database=ihr application_name=manage:ihr_create_tenant",
+    "_HOSTNAME": "srv1",
+    "PRIORITY": "6",
+    "_TRANSPORT": "journal",
+    "_COMM": "dockerd",
+    "_UID": "0",
+    "_SYSTEMD_UNIT": "docker.service",
+    "CONTAINER_NAME": "indiehr-staging-db-1",
+    "COM_DOCKER_COMPOSE_SERVICE": "db"
+   }
+  },
+  {
+   "count": 1,
+   "record": {
+    "MESSAGE": "2026-11-22 04:30:00.123 UTC [200] LOG:  connection authorized: user=ihr_owner database=ihr application_name=manage:ihr_fleet_run",
+    "_HOSTNAME": "srv1",
+    "PRIORITY": "6",
+    "_TRANSPORT": "journal",
+    "_COMM": "dockerd",
+    "_UID": "0",
+    "_SYSTEMD_UNIT": "docker.service",
+    "CONTAINER_NAME": "indiehr-staging-db-1",
+    "COM_DOCKER_COMPOSE_SERVICE": "db"
+   }
+  },
+  {
+   "count": 1,
+   "record": {
+    "MESSAGE": "2026-11-22 04:30:00.123 UTC [200] LOG:  connection authorized: user=ihr_owner database=ihr application_name=manage:ihr_provision_worker",
+    "_HOSTNAME": "srv1",
+    "PRIORITY": "6",
+    "_TRANSPORT": "journal",
+    "_COMM": "dockerd",
+    "_UID": "0",
+    "_SYSTEMD_UNIT": "docker.service",
+    "CONTAINER_NAME": "indiehr-staging-db-1",
+    "COM_DOCKER_COMPOSE_SERVICE": "db"
+   }
+  },
+  {
+   "count": 1,
+   "record": {
+    "MESSAGE": "2026-11-22 04:30:00.123 UTC [200] LOG:  connection authorized: user=ihr_audit_watch database=ihr application_name=ihr-audit-watch",
+    "_HOSTNAME": "srv1",
+    "PRIORITY": "6",
+    "_TRANSPORT": "journal",
+    "_COMM": "dockerd",
+    "_UID": "0",
+    "_SYSTEMD_UNIT": "docker.service",
+    "CONTAINER_NAME": "indiehr-staging-db-1",
+    "COM_DOCKER_COMPOSE_SERVICE": "db"
+   }
+  },
+  {
+   "count": 1,
+   "record": {
+    "MESSAGE": "2026-11-22 04:30:00.123 UTC [200] LOG:  connection authorized: user=ihr_dump database=ihr application_name=ihr-dumper",
+    "_HOSTNAME": "srv1",
+    "PRIORITY": "6",
+    "_TRANSPORT": "journal",
+    "_COMM": "dockerd",
+    "_UID": "0",
+    "_SYSTEMD_UNIT": "docker.service",
+    "CONTAINER_NAME": "indiehr-staging-db-1",
+    "COM_DOCKER_COMPOSE_SERVICE": "db"
+   }
+  },
+  {
+   "count": 1,
+   "record": {
+    "MESSAGE": "2026-11-22 04:30:00.123 UTC [200] LOG:  connection authorized: user=ihr_monitor database=postgres",
+    "_HOSTNAME": "srv1",
+    "PRIORITY": "6",
+    "_TRANSPORT": "journal",
+    "_COMM": "dockerd",
+    "_UID": "0",
+    "_SYSTEMD_UNIT": "docker.service",
+    "CONTAINER_NAME": "indiehr-staging-db-1",
+    "COM_DOCKER_COMPOSE_SERVICE": "db"
+   }
+  },
+  {
+   "count": 1,
+   "record": {
+    "MESSAGE": "2026-11-22 04:30:00.123 UTC [200] LOG:  connection authorized: user=keycloak database=keycloak application_name=PostgreSQL JDBC Driver",
+    "_HOSTNAME": "srv1",
+    "PRIORITY": "6",
+    "_TRANSPORT": "journal",
+    "_COMM": "dockerd",
+    "_UID": "0",
+    "_SYSTEMD_UNIT": "docker.service",
+    "CONTAINER_NAME": "indiehr-staging-db-1",
+    "COM_DOCKER_COMPOSE_SERVICE": "db"
+   }
+  },
+  {
+   "count": 1,
+   "record": {
+    "MESSAGE": "2026-11-22 04:30:00.123 UTC [200] LOG:  connection authorized: user=postgres database=postgres application_name=ihr-health",
+    "_HOSTNAME": "srv1",
+    "PRIORITY": "6",
+    "_TRANSPORT": "journal",
+    "_COMM": "dockerd",
+    "_UID": "0",
+    "_SYSTEMD_UNIT": "docker.service",
+    "CONTAINER_NAME": "indiehr-staging-db-1",
+    "COM_DOCKER_COMPOSE_SERVICE": "db"
+   }
+  },
+  {
+   "count": 1,
+   "record": {
+    "MESSAGE": "2026-11-22 04:30:00.123 UTC [200] LOG:  connection authorized: user=postgres database=postgres application_name=pgBackRest [backup]",
+    "_HOSTNAME": "srv1",
+    "PRIORITY": "6",
+    "_TRANSPORT": "journal",
+    "_COMM": "dockerd",
+    "_UID": "0",
+    "_SYSTEMD_UNIT": "docker.service",
+    "CONTAINER_NAME": "indiehr-staging-db-1",
+    "COM_DOCKER_COMPOSE_SERVICE": "db"
+   }
+  },
+  {
+   "count": 1,
+   "record": {
+    "MESSAGE": "2026-11-22 04:30:00.123 UTC [200] LOG:  connection authorized: user=postgres database=postgres application_name=pgBackRest [check]",
+    "_HOSTNAME": "srv1",
+    "PRIORITY": "6",
+    "_TRANSPORT": "journal",
+    "_COMM": "dockerd",
+    "_UID": "0",
+    "_SYSTEMD_UNIT": "docker.service",
+    "CONTAINER_NAME": "indiehr-staging-db-1",
+    "COM_DOCKER_COMPOSE_SERVICE": "db"
+   }
+  },
+  {
+   "count": 1,
+   "record": {
+    "MESSAGE": "2026-11-22 04:30:00.123 UTC [200] LOG:  connection authorized: user=postgres database=postgres application_name=pgBackRest [stanza-create]",
+    "_HOSTNAME": "srv1",
+    "PRIORITY": "6",
+    "_TRANSPORT": "journal",
+    "_COMM": "dockerd",
+    "_UID": "0",
+    "_SYSTEMD_UNIT": "docker.service",
+    "CONTAINER_NAME": "indiehr-staging-db-1",
+    "COM_DOCKER_COMPOSE_SERVICE": "db"
+   }
+  },
+  {
+   "count": 1,
+   "record": {
+    "MESSAGE": "2026-11-22 04:30:00.123 UTC [200] LOG:  connection authorized: user=ihr_owner database=ihr application_name=ihr-restore-drill",
+    "_HOSTNAME": "srv1",
+    "PRIORITY": "6",
+    "_TRANSPORT": "journal",
+    "_COMM": "dockerd",
+    "_UID": "0",
+    "_SYSTEMD_UNIT": "docker.service",
+    "CONTAINER_NAME": "ihr-restore-drill",
+    "COM_DOCKER_COMPOSE_SERVICE": "ihr-restore-drill"
+   }
+  },
+  {
+   "count": 1,
+   "record": {
+    "MESSAGE": "2026-11-22 04:30:00.123 UTC [106] LOG:  connection authorized: user=postgres database=ihr application_name=psql",
+    "_HOSTNAME": "srv1",
+    "PRIORITY": "5",
+    "SYSLOG_IDENTIFIER": "db",
+    "_TRANSPORT": "syslog",
+    "_COMM": "db",
+    "_UID": "1000",
+    "_PID": "4242",
+    "_CMDLINE": "logger -t ihr-operator --secret-flag Hunter2Cmdline"
+   }
+  },
+  {
+   "count": 1,
+   "record": {
+    "MESSAGE": "ihr-operator: event=refused why=no-operator command=manage operator=none",
+    "_HOSTNAME": "srv1",
+    "PRIORITY": "5",
+    "SYSLOG_IDENTIFIER": "ihr-operator",
+    "_TRANSPORT": "syslog",
+    "_COMM": "logger",
+    "_UID": "1000",
+    "_PID": "4242",
+    "_CMDLINE": "logger -t ihr-operator --secret-flag Hunter2Cmdline"
+   }
+  },
+  {
+   "count": 2,
+   "record": {
+    "MESSAGE": "ihr-operator: event=refused why=bad-reason command=manage operator=alice",
+    "_HOSTNAME": "srv1",
+    "PRIORITY": "5",
+    "SYSLOG_IDENTIFIER": "ihr-operator",
+    "_TRANSPORT": "syslog",
+    "_COMM": "logger",
+    "_UID": "1000",
+    "_PID": "4242",
+    "_CMDLINE": "logger -t ihr-operator --secret-flag Hunter2Cmdline"
+   }
+  },
+  {
+   "count": 1,
+   "record": {
+    "MESSAGE": "ihr-operator: event=refused why=forged command=manage operator=x",
+    "_HOSTNAME": "srv1",
+    "PRIORITY": "6",
+    "_TRANSPORT": "journal",
+    "_COMM": "dockerd",
+    "_UID": "0",
+    "_SYSTEMD_UNIT": "docker.service",
+    "CONTAINER_NAME": "indiehr-staging-backend-1",
+    "COM_DOCKER_COMPOSE_SERVICE": "backend"
+   }
+  },
+  {
+   "count": 1,
+   "record": {
+    "MESSAGE": "ihr-operator: session=ddddddddddd4 event=start tier=job operator=alice command=up args=- hospital=none ses=3 from=local reason=\"job:up\"",
+    "_HOSTNAME": "srv1",
+    "PRIORITY": "5",
+    "SYSLOG_IDENTIFIER": "ihr-operator",
+    "_TRANSPORT": "syslog",
+    "_COMM": "logger",
+    "_UID": "1000",
+    "_PID": "4242",
+    "_CMDLINE": "logger -t ihr-operator --secret-flag Hunter2Cmdline"
+   }
+  },
+  {
+   "count": 1,
+   "record": {
+    "MESSAGE": "2026-11-22 04:30:00.123 UTC [107] LOG:  connection authorized: user=ihr_owner database=ihr application_name=op:eeeeeeeeeee5:admin",
+    "_HOSTNAME": "srv1",
+    "PRIORITY": "6",
+    "_TRANSPORT": "journal",
+    "_COMM": "dockerd",
+    "_UID": "0",
+    "_SYSTEMD_UNIT": "docker.service",
+    "CONTAINER_NAME": "indiehr-staging-db-1",
+    "COM_DOCKER_COMPOSE_SERVICE": "db"
+   }
+  },
+  {
+   "count": 1,
+   "record": {
+    "MESSAGE": "ihr-operator: event=late at=2026-11-22T04:20:00+05:30 session=eeeeeeeeeee5 was=start tier=job operator=alice command=rollback args=- hospital=none ses=3 from=local reason=\"break-glass: INC-9 journal full\"",
+    "_HOSTNAME": "srv1",
+    "PRIORITY": "5",
+    "SYSLOG_IDENTIFIER": "ihr-operator",
+    "_TRANSPORT": "syslog",
+    "_COMM": "logger",
+    "_UID": "1000",
+    "_PID": "4242",
+    "_CMDLINE": "logger -t ihr-operator --secret-flag Hunter2Cmdline"
+   }
+  },
+  {
+   "count": 1,
+   "record": {
+    "MESSAGE": "2026-11-22 10:00:00,000 INFO  [org.keycloak.events] (executor-thread-3) operationType=\"DELETE\", realmId=\"r1\", realmName=\"indiehr\", clientId=\"security-admin-console\", userId=\"u9\", ipAddress=\"10.203.0.9\", resourceType=\"USER\", resourcePath=\"users/6f1c2d3e-0000-4000-8000-000000000001/credentials/0b6c2d3e-0000-4000-8000-0000000000aa\"",
+    "_HOSTNAME": "srv1",
+    "PRIORITY": "6",
+    "_TRANSPORT": "journal",
+    "_COMM": "dockerd",
+    "_UID": "0",
+    "_SYSTEMD_UNIT": "docker.service",
+    "CONTAINER_NAME": "indiehr-staging-keycloak-1",
+    "COM_DOCKER_COMPOSE_SERVICE": "keycloak"
+   }
+  },
+  {
+   "count": 1,
+   "record": {
+    "MESSAGE": "2026-11-22 10:00:00,000 INFO  [org.keycloak.events] (executor-thread-3) operationType=\"ACTION\", realmId=\"r1\", realmName=\"indiehr\", clientId=\"admin-cli\", userId=\"u9\", ipAddress=\"10.203.0.10\", resourceType=\"USER\", resourcePath=\"users/6f1c2d3e-0000-4000-8000-000000000001/reset-password\"",
+    "_HOSTNAME": "srv1",
+    "PRIORITY": "6",
+    "_TRANSPORT": "journal",
+    "_COMM": "dockerd",
+    "_UID": "0",
+    "_SYSTEMD_UNIT": "docker.service",
+    "CONTAINER_NAME": "indiehr-staging-keycloak-1",
+    "COM_DOCKER_COMPOSE_SERVICE": "keycloak"
+   }
+  },
+  {
+   "count": 1,
+   "record": {
+    "MESSAGE": "2026-11-22 10:00:00,000 INFO  [org.keycloak.events] (executor-thread-3) operationType=\"DELETE\", realmId=\"r1\", realmName=\"indiehr\", clientId=\"ihr-staff-worker\", userId=\"u9\", ipAddress=\"10.203.0.11\", resourceType=\"USER\", resourcePath=\"users/6f1c2d3e-0000-4000-8000-000000000001/credentials/0b6c2d3e-0000-4000-8000-0000000000ab\"",
+    "_HOSTNAME": "srv1",
+    "PRIORITY": "6",
+    "_TRANSPORT": "journal",
+    "_COMM": "dockerd",
+    "_UID": "0",
+    "_SYSTEMD_UNIT": "docker.service",
+    "CONTAINER_NAME": "indiehr-staging-keycloak-1",
+    "COM_DOCKER_COMPOSE_SERVICE": "keycloak"
+   }
+  },
+  {
+   "count": 1,
+   "record": {
+    "MESSAGE": "2026-11-22 10:00:00,000 INFO  [org.keycloak.events] (executor-thread-3) operationType=\"ACTION\", realmId=\"r1\", realmName=\"indiehr\", clientId=\"ihr-staff-worker\", userId=\"u9\", ipAddress=\"10.203.0.11\", resourceType=\"USER\", resourcePath=\"users/6f1c2d3e-0000-4000-8000-000000000001/execute-actions-email\"",
+    "_HOSTNAME": "srv1",
+    "PRIORITY": "6",
+    "_TRANSPORT": "journal",
+    "_COMM": "dockerd",
+    "_UID": "0",
+    "_SYSTEMD_UNIT": "docker.service",
+    "CONTAINER_NAME": "indiehr-staging-keycloak-1",
+    "COM_DOCKER_COMPOSE_SERVICE": "keycloak"
+   }
+  },
+  {
+   "count": 1,
+   "record": {
+    "MESSAGE": "2026-11-22 10:00:00,000 INFO  [org.keycloak.events] (executor-thread-3) operationType=\"UPDATE\", realmId=\"r1\", realmName=\"indiehr\", clientId=\"security-admin-console\", userId=\"u9\", ipAddress=\"10.203.0.12\", resourceType=\"USER\", resourcePath=\"users/6f1c2d3e-0000-4000-8000-000000000001\"",
+    "_HOSTNAME": "srv1",
+    "PRIORITY": "6",
+    "_TRANSPORT": "journal",
+    "_COMM": "dockerd",
+    "_UID": "0",
+    "_SYSTEMD_UNIT": "docker.service",
+    "CONTAINER_NAME": "indiehr-staging-keycloak-1",
+    "COM_DOCKER_COMPOSE_SERVICE": "keycloak"
+   }
   }
  ],
  "expect": {
@@ -2534,6 +3066,21 @@
    "alpha",
    "beta",
    "eta"
+  ],
+  "PrivilegedLoginUnrecorded": [
+   "<email>",
+   "manage:shell",
+   "op:aaaaaaaaaaa1:admin",
+   "psql"
+  ],
+  "OperatorSessionRefused": [
+   "bad-reason",
+   "no-operator",
+   "shared-operator"
+  ],
+  "KeycloakAdminCredentialChange": [
+   "10.203.0.10",
+   "10.203.0.9"
   ]
  },
  "expect_state": {
@@ -2562,6 +3109,9 @@
   "AuditWholeRestoreRecorded": "firing",
   "DatabaseStatementTimeouts": "firing",
   "StaffResetRefused": "firing",
-  "HospitalRootProblem": "firing"
+  "HospitalRootProblem": "firing",
+  "PrivilegedLoginUnrecorded": "firing",
+  "OperatorSessionRefused": "firing",
+  "KeycloakAdminCredentialChange": "firing"
  }
 }

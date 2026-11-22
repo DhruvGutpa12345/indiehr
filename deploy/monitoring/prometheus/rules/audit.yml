@@ -2,7 +2,7 @@
 # From the audit watch (compose.monitoring.yaml, ihr_audit/watch.py): counts and ages only, never a
 # hospital (privacy). Which hospital: the log alerts AuditHospitalCheckFailed / AuditHospitalSealLate
 # (deploy/logs/alerts/audit.yml) name it from the watch's fixed line, and
-# `scripts/staging.sh manage ihr_audit_verify --all` says what is wrong.
+# `scripts/staging.sh manage --operator <you> --reason "<ticket>" --hospital all ihr_audit_verify --all` says what is wrong.
 # Runbooks: deploy/staging/README.md, "Audit watch". Tests: ../tests/audit.yml.
 # Fail closed (A9): every gauge is always exported (0 means none), and each pass has its own
 # staleness rule and an absent() rule on the time it last ended WITHOUT an error
@@ -17,7 +17,7 @@ groups:
           severity: critical
           service: audit-watch
         annotations:
-          summary: "The audit chain of {{ $value | printf \"%.0f\" }} hospital(s) fails its check (changed, cut or rewritten): run scripts/staging.sh manage ihr_audit_verify --all"
+          summary: "The audit chain of {{ $value | printf \"%.0f\" }} hospital(s) fails its check (changed, cut or rewritten): run scripts/staging.sh manage --operator <you> --reason \"<ticket>\" --hospital all ihr_audit_verify --all"
 
       - alert: AuditFingerprintMismatch
         expr: ihr_audit_fingerprint_mismatch_hospitals > 0
@@ -270,7 +270,7 @@ groups:
           severity: warning
           service: audit-watch
         annotations:
-          summary: "{{ $value | printf \"%.0f\" }} whole-database restore(s) restored the database and have not loaded their audit tails: scripts/staging.sh audit-supersede export <id>, then load <id> (or close <id> --reason)"
+          summary: "{{ $value | printf \"%.0f\" }} whole-database restore(s) restored the database and have not loaded their audit tails: scripts/staging.sh audit-supersede --operator <you> --reason \"<ticket>\" export <id>, then load <id> --operator <you> (or close <id> --reason \"<why>\" --operator <you>)"
 
       # A restore closed without its load (review T2, Q-K105): the timeline change is explained
       # and the cuts stay, but data after the last fingerprint can be lost with no trace. Stays

@@ -11,18 +11,22 @@
 #     chronyd answers root only (bootstrap.sh: cmdport 0), so the timer's unit reads it with root
 #     rights first and leaves the CSV output in a root-owned folder (--chrony-dir); a reading
 #     that is missing or old writes no value at all, never a false 0;
-#   - the backup service's own markers (the files deploy/docker/backup/health.sh checks).
+#   - the backup service's own markers (the files deploy/docker/backup/health.sh checks);
+#   - the host audit rules the kernel holds (P1-T27c): auditctl answers root only, so the unit's
+#     root step leaves `auditctl -s` and `auditctl -l` in a root-owned folder (--audit-dir), as
+#     for chrony; a reading that is missing or old writes no count at all.
 # Run every minute by scripts/staging.sh monitoring-textfile (a systemd timer on the server,
 # deploy/host/bootstrap.sh). Prints nothing but errors: no secret, no log line, no environment
 # variable of any container is ever read or printed. Only states, counts, sizes and times.
 #
 #   host-metrics.sh --out DIR --project NAME --services "svc ..." [--backup-spool-max-mb N]
-#                   [--chrony-dir DIR]
+#                   [--chrony-dir DIR] [--audit-dir DIR]
 # IHR_CGROUP_ROOT (tests only) replaces /sys/fs/cgroup.
 set -euo pipefail
 export LC_ALL=C
 
 OUT="" PROJECT="" SERVICES="" SPOOL_MAX_MB="" CHRONY_DIR="/run/indiehr-chrony"
+AUDIT_DIR="/run/indiehr-audit"
 CGROUP_ROOT="${IHR_CGROUP_ROOT:-/sys/fs/cgroup}"
 while (($#)); do
   case "$1" in
@@ -31,6 +35,7 @@ while (($#)); do
     --services) SERVICES="${2:-}"; shift ;;
     --backup-spool-max-mb) SPOOL_MAX_MB="${2:?}"; shift ;;
     --chrony-dir) CHRONY_DIR="${2:?}"; shift ;;
+    --audit-dir) AUDIT_DIR="${2:?}"; shift ;;
     *) echo "host-metrics: unknown option $1" >&2; exit 2 ;;
   esac
   shift
@@ -47,7 +52,7 @@ metric() { LINES+=("$1"); }  # metric '<name>{labels} <value>'
 describe() { LINES+=("# HELP $1 $2" "# TYPE $1 ${3:-gauge}"); }
 
 # ---- Containers ---------------------------------------------------------------------------
-declare -A present running unhealthy restarts memory limit ooms wanted=()
+declare -A present=() running=() unhealthy=() restarts=() memory=() limit=() ooms=() wanted=()  # all assigned: an unassigned one aborts family() under set -u
 for s in $SERVICES; do
   [[ "$s" =~ $NAME_RE && ! "$s" =~ $ONESHOT_RE ]] || continue
   wanted[$s]=1; present[$s]=0; running[$s]=0; unhealthy[$s]=0
@@ -176,6 +181,28 @@ if command -v chronyc >/dev/null 2>&1 || [[ -d "$CHRONY_DIR" ]]; then
   metric "ihr_ntp_reading_ok $reading"
 fi
 
+# ---- Host audit rules (P1-T27c, Q-K139; deploy/host/bootstrap.sh audit_rules) -----------------
+# Read by the timer's unit as root (`auditctl -s`, `auditctl -l`) into $AUDIT_DIR; this script only
+# counts. A host without that folder or auditd (a proof on a workstation) writes nothing here.
+# Alert HostAuditRulesMissing: fewer ihr-* rules than bootstrap loads, auditing off, or not read.
+if [[ -x /usr/sbin/auditctl || -d "$AUDIT_DIR" ]]; then
+  st="$AUDIT_DIR/status.txt" rl="$AUDIT_DIR/rules.txt" reading=0
+  if [[ -f "$st" && -f "$rl" && -n "$(find "$st" "$rl" -mmin -5 2>/dev/null | sed -n 2p)" ]]; then
+    enabled="$(awk '$1 == "enabled" {print $2; exit}' "$st")"
+    if [[ "$enabled" =~ ^[0-9]$ ]]; then
+      reading=1
+      # one rule a line: "-F key=ihr-…" (syscall rules) or "-k ihr-…" (watches)
+      keys="$(grep -cE -- '(-k |-F key=)ihr-[a-z0-9-]+$' "$rl" || true)"
+      describe ihr_host_audit_enabled "The kernel's audit switch (auditctl -s: 0 off, 1 on, 2 on and locked)"
+      metric "ihr_host_audit_enabled $enabled"
+      describe ihr_host_audit_rule_keys "Audit rules the kernel holds with an ihr-* key (auditctl -l)"
+      metric "ihr_host_audit_rule_keys ${keys:-0}"
+    fi
+  fi
+  describe ihr_host_audit_reading_ok "1 when the kernel's audit rules could be read (0: unknown, and auditctl failed or is gone)"
+  metric "ihr_host_audit_reading_ok $reading"
+fi
+
 # ---- Backups (the backup service's own markers; compose.backup.yaml) -------------------------
 backup_id="$(docker ps -q --filter "label=com.docker.compose.project=$PROJECT" \
   --filter "label=com.docker.compose.service=backup" --filter "label=com.docker.compose.oneoff=False" \
@@ -213,6 +240,29 @@ if [[ -n "$backup_id" ]]; then
       describe ihr_backup_spool_max_bytes "The spool's cap (IHR_BACKUP_SPOOL_MAX_MB)"
       metric "ihr_backup_spool_max_bytes $((SPOOL_MAX_MB * 1048576))"
     fi
+  fi
+fi
+
+# ---- Postgres settings stored by ALTER SYSTEM (P1-T27a, Q-K137) -----------------------------
+# postgresql.auto.conf (what pg_file_settings shows for it) must hold nothing: a superuser's
+# ALTER SYSTEM there could move the log elsewhere (logging_collector) or quieten it once the server
+# restarts; the logging lines are pinned with -c, which outranks it, but nothing else is. A
+# sanctioned restore's own recovery settings (pgBackRest writes restore_command and recovery_target*
+# there and they stay after the promotion) are not counted. Read as a
+# file (no database session every minute). Alert: PostgresSettingOverridden.
+db_id="$(docker ps -q --filter "label=com.docker.compose.project=$PROJECT" \
+  --filter "label=com.docker.compose.service=db" --filter "label=com.docker.compose.oneoff=False" \
+  --filter status=running | head -1)"
+if [[ -n "$db_id" ]]; then
+  # shellcheck disable=SC2016  # runs in the container's shell
+  n="$(docker exec "$db_id" sh -c 'f=/var/lib/postgresql/18/docker/postgresql.auto.conf; [ -r "$f" ] || exit 3; grep -cEv "^[[:space:]]*(#|$|(restore_command|recovery_target[a-z_]*|recovery_end_command|archive_cleanup_command)[[:space:]]*=)" "$f" || true' 2>/dev/null)" || n=""
+  describe ihr_postgres_auto_conf_check_ok "1 when postgresql.auto.conf could be read in the database container"
+  if [[ "$n" =~ ^[0-9]+$ ]]; then
+    metric "ihr_postgres_auto_conf_check_ok 1"
+    describe ihr_postgres_auto_conf_settings "Settings stored in postgresql.auto.conf by ALTER SYSTEM (must be 0)"
+    metric "ihr_postgres_auto_conf_settings $n"
+  else
+    metric "ihr_postgres_auto_conf_check_ok 0"
   fi
 fi
 

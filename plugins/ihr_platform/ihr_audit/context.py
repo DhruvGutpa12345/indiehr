@@ -47,6 +47,17 @@ def _set(ctx, actor):
     _apply(connection, values)
 
 
+def adopt(ctx, actor):
+    """This process's values for its whole run (an operator one-off, ``ihr_audit.operator``):
+    kept for every connection it opens (``reapply``), and put on the default connection now
+    only if it is already open (no database access while the apps load). A request, task or
+    job inside the process sets its own and restores these as usual."""
+    values = (json.dumps(ctx, separators=(",", ":"), default=str), actor)
+    _current.set(values)
+    if connection.connection is not None:
+        _apply(connection, values)
+
+
 def reapply(sender=None, connection=None, **kwargs):
     """``connection_created``: a new connection gets this thread's current values."""
     values = _current.get()

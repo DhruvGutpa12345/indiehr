@@ -23,7 +23,10 @@ from django.core.exceptions import ImproperlyConfigured  # noqa: E402
 
 from ihr_platform import db_limits  # noqa: E402
 from ihr_platform.settings import secure  # noqa: E402
-from ihr_platform.settings.tenancy import apply_tenancy  # noqa: E402
+from ihr_platform.settings.tenancy import (  # noqa: E402
+    apply_tenancy,
+    operator_appname,
+)
 
 SENTRY_DSN = _SENTRY_DSN_GIVEN
 IHR_ENVIRONMENT = env("IHR_ENVIRONMENT", default="staging")
@@ -44,7 +47,8 @@ DATABASES["default"]["CONN_MAX_AGE"] = 0
 IHR_DB_LIMITS = "watch"
 DATABASES["default"].setdefault("OPTIONS", {}).update(
     {
-        "application_name": "ihr-audit-watch",
+        # op:<session>:ihr-audit-watch inside an operator session (P1-T27), else the fixed name
+        "application_name": operator_appname("ihr-audit-watch"),
         # Read-only sessions, and no statement or idle transaction that can hold anything up
         # (the "watch" profile of db_limits.py: 300 s statement, 10 s lock, 60 s idle)
         "options": db_limits.options_string("watch", read_only=True),

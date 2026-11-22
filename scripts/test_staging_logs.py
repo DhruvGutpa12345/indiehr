@@ -128,6 +128,20 @@ DEPLOY_SH = (ROOT / "scripts" / "deploy.sh").read_text()
 LONG_RUNNING = ("victorialogs", "fluent-bit", "vmalert")
 
 
+# The operator access record's alerts (P1-T27a): (stats by, the start of the query, the summary's refs)
+OPERATOR_ALERTS = {
+    "PrivilegedLoginUnrecorded": ("service, user, app",
+                                  '_time:10m source:=container service:in(db, ihr-restore-drill, ihr-restore-recovery) "connection authorized:"',
+                                  r"^\$(labels\.(user|app|service)|value)$"),
+    "OperatorSessionRefused": ("why, command", '_time:1h source:=host service:="ihr-operator" "event=refused"',
+                               r"^\$(labels\.(why|command)|value)$"),
+    "OperatorSessionNoEnd": ("session, operator, command", '_time:12h offset 12h source:=host service:="ihr-operator" ("event=start" or "was=start")',
+                             r"^\$(labels\.(session|operator|command)|value)$"),
+    "KeycloakAdminCredentialChange": ("client, what, client_ip", '_time:10m source:=container service:="keycloak" ',
+                                      r"^\$(labels\.(client|what|client_ip)|value)$"),
+}
+
+
 def func(name):
     m = re.search(r"^%s\(\) \{(.*?)^\}" % re.escape(name), STAGING_SH, re.S | re.M)
     assert m, name
@@ -437,6 +451,12 @@ class LogAlerts(unittest.TestCase):
                                  r'for user" \| extract_regexp "' + re.escape(LOGIN_FAILED.replace('"', '\\"')) + r'" ')
                 allowed = r"^\$(labels\.role|value)$"
                 self.assertNotIn("{{", r["annotations"]["action"], r["alert"])
+            elif r["alert"] in OPERATOR_ALERTS:
+                # The operator access record (P1-T27a; its own tests: scripts/test_staging_operator.py)
+                want_by, start, allowed = OPERATOR_ALERTS[r["alert"]]
+                self.assertEqual(by, [want_by], r["alert"])
+                self.assertTrue(r["expr"].startswith(start), r["alert"])
+                self.assertNotIn("{{", r["annotations"]["action"], r["alert"])
             else:
                 self.assertLessEqual(set(by), {"client_ip"}, r["alert"])
                 # container lines only: journald's own fields say Docker wrote them (redact.lua)
@@ -450,10 +470,11 @@ class LogAlerts(unittest.TestCase):
                                          "DatabaseStatementTimeouts",
                                          "DumpHospitalFailed", "DumpHospitalHeld",
                                          "FailedSignInsFromAddress", "HospitalNotServed", "HospitalRestoreFailed",
-                                         "HospitalRootProblem",
+                                         "HospitalRootProblem", "KeycloakAdminCredentialChange",
                                          "MrdRecordsOffHours", "MrdRecordsRefused", "MrdRecordsVolume",
+                                         "OperatorSessionNoEnd", "OperatorSessionRefused",
                                          "PackApplyFailed", "PackFacilityDeferred", "ParkedSchemaOverdue",
-                                         "RateLimitedAddress", "ReleaseWindowOverrun", "SignInLockoutStorm",
+                                         "PrivilegedLoginUnrecorded", "RateLimitedAddress", "ReleaseWindowOverrun", "SignInLockoutStorm",
                                          "SignInLockoutsFromAddress", "StaffResetRefused"])
 
     def test_staff_line_is_ours_alone(self):
@@ -805,7 +826,7 @@ class LogAlerts(unittest.TestCase):
         container the rule reads ("migrate"), never the unlogged admin one; the worker's
         per-minute report writes the same whole line, unprefixed, from "celery-worker"."""
         [case] = re.findall(r"^  fleet\)(.*?);;$", STAGING_SH, re.M | re.S)
-        self.assertIn("run --rm --no-deps -T migrate python manage.py ihr_fleet_run", case)
+        self.assertIn("migrate_run migrate python manage.py ihr_fleet_run", case)
         self.assertNotIn("admin", case)
         # only `fleet window` (no "ihr-fleet:" line) runs as the running backend's build (P1-T18b
         # review D10): in it before the move of the roles, after it (P1-T19b: the backend runs as
@@ -821,11 +842,11 @@ class LogAlerts(unittest.TestCase):
         unmigrated = STAGING_SH.split("rel_outgoing_unmigrated() {", 1)[1].split("\n}\n", 1)[0]
         self.assertIn('"$(attempt_get migrations)" != started', unmigrated)
         self.assertIn('"$(running_backend_id 2>/dev/null)" != "$(image_id "$(env_get IHR_BACKEND_IMAGE)")"', unmigrated)
-        self.assertIn('old_manage ihr_fleet_run "${@:2}"', case)
+        self.assertIn('old_manage ihr_fleet_run "${fleet_args[@]}"', case)
         self.assertIn('"$(db_roles_state 2>/dev/null || true)" == single', STAGING_SH.split("rel_db_single() {", 1)[1][:200])
         old = STAGING_SH.split("old_manage() {", 1)[1].split("\n}\n", 1)[0]
-        self.assertIn('compose run --rm --no-deps -T migrate python manage.py "$@"', old)
-        self.assertIn("compose exec -T backend python manage.py", old)
+        self.assertIn('migrate_run migrate python manage.py "$@"', old)
+        self.assertIn("app_exec backend python manage.py", old)
         self.assertNotIn("admin", old.split("\n  local", 1)[1])
         tasks = (ROOT / "plugins" / "ihr_platform" / "ihr_platform" / "tasks.py").read_text()
         self.assertIn('os.write(2, f"{line}\\n".encode())', tasks)
@@ -838,7 +859,7 @@ class LogAlerts(unittest.TestCase):
         # P1-T22c1 review T1: the export one-off writes audit entries (personal data) to its
         # standard output, which a log driver would put into the journal and the archive
         self.assertEqual(services["audit-supersede"]["logging"]["driver"], "none")
-        self.assertIn('run --rm --no-deps -T audit-supersede', STAGING_SH)
+        self.assertIn('audit_supersede_run audit-supersede', STAGING_SH)
 
     def test_exported_audit_tails_are_never_committed(self):
         """P1-T22c1 review T3: the export's folder holds audit entries; the repo is public."""
@@ -865,7 +886,9 @@ class LogAlerts(unittest.TestCase):
                                  "HospitalRestoreFailed": None, "ParkedSchemaOverdue": None,
                                  "MrdRecordsRefused": None, "MrdRecordsVolume": None,
                                  "MrdRecordsOffHours": None, "StaffResetRefused": None,
-                                 "HospitalRootProblem": None})
+                                 "HospitalRootProblem": None,
+                                 "PrivilegedLoginUnrecorded": None, "OperatorSessionRefused": None,
+                                 "OperatorSessionNoEnd": None, "KeycloakAdminCredentialChange": None})
         anytime = sorted(r["alert"] for _, r in self.rules() if r["labels"].get("notify") == "anytime")
         self.assertEqual(anytime, ["FailedSignInsFromAddress", "RateLimitedAddress", "SignInLockoutsFromAddress"])
         cfg = func("monitoring_config")

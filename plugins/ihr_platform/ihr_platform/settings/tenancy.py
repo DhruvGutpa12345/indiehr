@@ -5,6 +5,7 @@ Applied last on purpose: CARE's test settings redefine CACHES, which would drop 
 """
 
 import os
+import re
 import sys
 from pathlib import Path
 
@@ -46,6 +47,26 @@ def process_name():
     return program[:63]
 
 
+# A one-off of a recorded operator session (P1-T27, staging.sh op_need): IHR_OPERATOR_SESSION
+# is its 12-hex id. Its database sessions are named op:<session>:<process>, so Postgres's
+# connection lines name the session (PrivilegedLoginUnrecorded accepts it while it is open).
+OPERATOR_SESSION = re.compile(r"[0-9a-f]{12}")
+
+
+def operator_appname(base, environ=None):
+    """``base`` (an application_name) as this process should give it: ``op:<session>:<base>``
+    under an operator session, cut to Postgres's 63 characters; ``base`` otherwise.
+    ``process_name()`` itself never changes (db_limits derives the profile from it)."""
+    environ = os.environ if environ is None else environ
+    session = environ.get("IHR_OPERATOR_SESSION", "")
+    if not session:
+        return base
+    if not OPERATOR_SESSION.fullmatch(session):
+        msg = "IHR_OPERATOR_SESSION must be 12 lowercase hex characters (staging.sh sets it)."
+        raise ImproperlyConfigured(msg)
+    return f"op:{session}:{base}"[:63]
+
+
 def apply_tenancy(settings):  # noqa: PLR0915 (one flat list of settings)
     care_apps = [a for a in settings["INSTALLED_APPS"] if a not in PLATFORM_ONLY_APPS]
 
@@ -61,7 +82,8 @@ def apply_tenancy(settings):  # noqa: PLR0915 (one flat list of settings)
     # Writes made outside a request or task are named after the process in the audit trail
     # ("system:manage:ihr_create_tenant", "system:celery"; P1-T6a).
     options = settings["DATABASES"]["default"].setdefault("OPTIONS", {})
-    options.setdefault("application_name", process_name())
+    # ... and under an operator session "op:<session>:manage:shell" (P1-T27)
+    options.setdefault("application_name", operator_appname(process_name()))
     settings["DATABASE_ROUTERS"] = ("django_tenants.routers.TenantSyncRouter",)
 
     settings["TENANT_MODEL"] = "ihr_platform.Hospital"

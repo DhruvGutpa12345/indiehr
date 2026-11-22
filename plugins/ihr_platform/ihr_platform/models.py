@@ -27,6 +27,8 @@ RESERVED_SLUGS = {
     "public",
     "files",  # files.<suffix>: object storage behind Traefik (P1-T8b3)
     "ops",  # ops.<suffix>: kept for operator tools such as dashboards (P1-T9a)
+    "all",  # the operator record's scopes (P1-T27): the whole fleet, and no hospital
+    "none",
 }
 _ALPHABET = "abcdefghijklmnopqrstuvwxyz0123456789"
 

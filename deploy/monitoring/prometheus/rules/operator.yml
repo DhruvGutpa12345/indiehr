@@ -1,0 +1,28 @@
+# The operator access record's metric alerts (P1-T27a, Q-K137). The host timer reads the database
+# container's postgresql.auto.conf every minute (deploy/monitoring/host-metrics.sh): it must hold
+# no setting. Postgres's logging lines (log_connections, log_disconnections, log_min_messages,
+# log_destination) are pinned with -c on its command line, which outranks that file; anything else
+# a superuser stores there with ALTER SYSTEM (logging_collector, which moves the log out of the
+# container's output at the next restart) is a change to who-opened-what evidence. The log alerts
+# of the same record are in deploy/logs/alerts/operator.yml. Nothing fires on a stack without a
+# running database. Tests: ../tests/operator.yml.
+groups:
+  - name: operator
+    rules:
+      - alert: PostgresSettingOverridden
+        expr: ihr_postgres_auto_conf_settings > 0
+        labels:
+          severity: critical
+          service: db
+        annotations:
+          summary: "{{ $value | printf \"%.0f\" }} setting(s) are stored in postgresql.auto.conf (ALTER SYSTEM; a restore's own recovery lines are not counted): only a superuser session does that, and it can change what Postgres logs"
+          action: "As postgres, SELECT name, setting FROM pg_file_settings WHERE sourcefile LIKE '%postgresql.auto.conf'; find the operator session that ran it (ihr-operator lines, Postgres's connection lines); ALTER SYSTEM RESET ALL and restart the db in a window; treat an unowned change as an incident (deploy/staging/README.md, Operator access record)"
+
+      - alert: PostgresSettingCheckFailing
+        expr: ihr_postgres_auto_conf_check_ok == 0
+        for: 15m
+        labels:
+          severity: warning
+          service: db
+        annotations:
+          summary: "The host timer could not read postgresql.auto.conf in the database container for 15 minutes: PostgresSettingOverridden cannot fire"

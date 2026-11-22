@@ -29,7 +29,7 @@ groups:
           severity: critical
           service: dumper
         annotations:
-          summary: "The nightly dumper has not finished a run for more than 26 hours (scripts/staging.sh logs dumper)"
+          summary: "The nightly dumper has not finished a run for more than 26 hours (scripts/staging.sh logs --operator <you> --reason \"<ticket>\" dumper)"
 
       - alert: DumpRunFailing
         expr: ihr_dump_hospitals_failed > 0

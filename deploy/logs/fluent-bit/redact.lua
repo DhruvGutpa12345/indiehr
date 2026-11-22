@@ -19,6 +19,116 @@ local function str(v)
   return tostring(v)
 end
 
+-- ---- host audit records (P1-T27c, Q-K139) -------------------------------------------------
+-- The kernel's audit records reach journald through systemd-journald-audit.socket (bootstrap.sh
+-- enables it): _TRANSPORT "audit", which only journald sets. MESSAGE is "<TYPE> <body>" with the
+-- "audit(time:serial):" head taken off; the serial is _AUDIT_ID (systemd journald-audit.c).
+-- Kept: the SYSCALL record of a rule with an "ihr-" key (deploy/host/bootstrap.sh audit_rules)
+-- and the EXECVE record of the same event, both rebuilt from an allow-list. Everything else is
+-- dropped: PROCTITLE (the whole command line, in hex), PATH, CWD, every other type, and any
+-- record that does not parse. The arguments are shaped like the operator line's args=
+-- (scripts/staging.sh op_shape): option names kept, every value <v>; a0 only as a plain program
+-- name. The kernel writes an event's SYSCALL record before its EXECVE record, and journald keeps
+-- that order; an EXECVE whose SYSCALL was not ours (or not seen) is dropped (assumption A6, proved
+-- on a real host in P1-T26).
+
+local AUDIT_SYSCALL_KEEP = { "syscall", "success", "auid", "uid", "euid", "ses", "tty", "comm", "exe", "key" }
+local AUDIT_ARGS = 4            -- a0..a3; the rest are counted (more=N)
+local AUDIT_SEEN_MAX = 256      -- events of ours whose EXECVE may still come
+local audit_seen, audit_order = {}, {}
+
+-- One field of an audit body: a quoted value, or an unquoted word (hex-encoded when the value
+-- held a space, a quote or a control character). nil when absent.
+local function audit_field(body, name)
+  local s = " " .. body
+  local _, e = s:find(" " .. name .. "=", 1, true)
+  if not e then return nil end
+  if s:sub(e + 1, e + 1) == '"' then
+    local v = s:match('^"([^"]*)"', e + 1)
+    return v, v ~= nil
+  end
+  return s:match("^(%S*)", e + 1), false
+end
+
+local function audit_word(v, quoted, re)  -- a value kept only when quoted and plain
+  if quoted and v and #v <= 64 and v:match(re) then return v end
+  return "<v>"
+end
+
+local function audit_arg(v)  -- op_shape's rule: -x / --name kept, --name=<v>, -x<v> for a short option
+  -- with its value attached (-pSECRET, -Uname), anything else <v>
+  if v:match("^%-[A-Za-z]$") then return v end
+  if v:match("^%-%-[A-Za-z][A-Za-z0-9-]*$") and #v <= 42 then return v end
+  local opt = v:match("^(%-%-[A-Za-z][A-Za-z0-9-]*)=") or v:match("^(%-[A-Za-z])=")
+  if opt and #opt <= 42 then return opt .. "=<v>" end
+  local short = v:match("^(%-[A-Za-z])[A-Za-z0-9=]")
+  if short then return short .. "<v>" end
+  return "<v>"
+end
+
+local function audit_record(r, out)
+  local id = str(r._AUDIT_ID)
+  local kind, body = out.msg:match("^(%u[%u_]*) (.*)$")
+  if not kind or not id or not id:match("^%d+$") then return -1 end
+  if kind ~= r._AUDIT_TYPE_NAME and r._AUDIT_TYPE_NAME ~= nil then return -1 end
+  local parts = { kind }
+  if kind == "SYSCALL" then
+    local key, quoted = audit_field(body, "key")
+    if not quoted or not key or not key:match("^ihr%-[a-z0-9-]+$") then return -1 end
+    for _, name in ipairs(AUDIT_SYSCALL_KEEP) do
+      local v, q = audit_field(body, name)
+      if v then
+        if name == "comm" or name == "exe" then
+          v = audit_word(v, q, "^[%w%._/+-]+$")
+        elseif name == "tty" then
+          v = v:match("^[%w()/]+$") and v or "<v>"
+        elseif name == "success" then
+          v = (v == "yes" or v == "no") and v or "<v>"
+        elseif name ~= "key" then
+          v = v:match("^%-?%d+$") and v or "<v>"
+        end
+        parts[#parts + 1] = name .. "=" .. v
+      end
+    end
+    if not audit_seen[id] then
+      audit_order[#audit_order + 1] = id
+      if #audit_order > AUDIT_SEEN_MAX then audit_seen[table.remove(audit_order, 1)] = nil end
+    end
+    audit_seen[id] = key
+    out.audit_key = key
+  elseif kind == "EXECVE" then
+    local key = audit_seen[id]
+    if not key then return -1 end
+    audit_seen[id] = nil  -- one EXECVE record an event
+    local argc = tonumber(body:match("^argc=(%d+)"))
+    if not argc then return -1 end
+    parts[#parts + 1] = "argc=" .. argc
+    for i = 0, math.min(argc, AUDIT_ARGS) - 1 do
+      local v, quoted = audit_field(body, "a" .. i)
+      local shaped = "<v>"
+      if i == 0 then
+        local name = quoted and v and v:match("([^/]+)$")
+        if name and #name <= 32 and name:match("^[a-z][a-z0-9._+-]*$") then shaped = name end
+      elseif quoted and v then
+        shaped = audit_arg(v)
+      elseif v and v ~= "" and #v % 2 == 0 and v:match("^%x+$") then
+        shaped = audit_arg((v:gsub("%x%x", function(h) return string.char(tonumber(h, 16)) end)))
+      end
+      parts[#parts + 1] = "a" .. i .. "=" .. shaped
+    end
+    if argc > AUDIT_ARGS then parts[#parts + 1] = "more=" .. (argc - AUDIT_ARGS) end
+    out.audit_key = key
+  else
+    return -1
+  end
+  out.msg = table.concat(parts, " ")
+  out.source = "audit"
+  out.service = "audit"
+  out.audit_type = kind
+  out.audit_id = id
+  return 2
+end
+
 function shape(tag, ts, r)
   local out = {}
   local msg = r.MESSAGE
@@ -28,6 +138,12 @@ function shape(tag, ts, r)
     msg = ok and s or ""
   end
   out.msg = str(msg) or ""
+  if r._TRANSPORT == "audit" then
+    out.host = str(r._HOSTNAME)
+    out.priority = tonumber(r.PRIORITY)
+    if audit_record(r, out) ~= 2 then return -1, ts, r end
+    return 2, ts, out
+  end
   out.host = str(r._HOSTNAME)
   out.priority = tonumber(r.PRIORITY)
   -- A container's line only when journald itself says it came from Docker: these "_" fields are
@@ -46,6 +162,9 @@ function shape(tag, ts, r)
     out.service = str(r.SYSLOG_IDENTIFIER) or str(r._COMM) or "unknown"
     out.unit = str(r._SYSTEMD_UNIT)
     out.pid = str(r._PID)
+    -- The account that wrote it, as journald saw it (P1-T27a): an operator line (service
+    -- ihr-operator) written by root or another account than the deploy user's is worth a look
+    out.uid = str(r._UID)
   end
   return 2, ts, out
 end

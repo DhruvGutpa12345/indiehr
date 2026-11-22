@@ -27,7 +27,7 @@ tests:
         exp_alerts:
           - exp_labels: {severity: critical, service: audit-watch, job: audit-watch}
             exp_annotations:
-              summary: "The audit chain of 1 hospital(s) fails its check (changed, cut or rewritten): run scripts/staging.sh manage ihr_audit_verify --all"
+              summary: "The audit chain of 1 hospital(s) fails its check (changed, cut or rewritten): run scripts/staging.sh manage --operator <you> --reason \"<ticket>\" --hospital all ihr_audit_verify --all"
       - eval_time: 9m
         alertname: AuditFingerprintMismatch
         exp_alerts: []
@@ -687,7 +687,7 @@ tests:
         exp_alerts:
           - exp_labels: {severity: warning, service: audit-watch, job: audit-watch}
             exp_annotations:
-              summary: "1 whole-database restore(s) restored the database and have not loaded their audit tails: scripts/staging.sh audit-supersede export <id>, then load <id> (or close <id> --reason)"
+              summary: "1 whole-database restore(s) restored the database and have not loaded their audit tails: scripts/staging.sh audit-supersede --operator <you> --reason \"<ticket>\" export <id>, then load <id> --operator <you> (or close <id> --reason \"<why>\" --operator <you>)"
       - eval_time: 6m
         alertname: AuditWholeRestorePendingOverdue
         exp_alerts: []

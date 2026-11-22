@@ -1,0 +1,46 @@
+# promtool unit tests for ../rules/operator.yml (scripts/check-monitoring.sh).
+rule_files:
+  - ../rules/operator.yml
+evaluation_interval: 30s
+
+tests:
+  - name: a setting stored by ALTER SYSTEM
+    interval: 1m
+    input_series:
+      - series: 'ihr_postgres_auto_conf_settings{instance="n"}'
+        values: '0 0 1 1'
+      - series: 'ihr_postgres_auto_conf_check_ok{instance="n"}'
+        values: '1x3'
+    alert_rule_test:
+      - eval_time: 1m
+        alertname: PostgresSettingOverridden
+        exp_alerts: []
+      - eval_time: 2m
+        alertname: PostgresSettingOverridden
+        exp_alerts:
+          - exp_labels: {severity: critical, service: db, instance: n}
+            exp_annotations:
+              summary: "1 setting(s) are stored in postgresql.auto.conf (ALTER SYSTEM; a restore's own recovery lines are not counted): only a superuser session does that, and it can change what Postgres logs"
+              action: "As postgres, SELECT name, setting FROM pg_file_settings WHERE sourcefile LIKE '%postgresql.auto.conf'; find the operator session that ran it (ihr-operator lines, Postgres's connection lines); ALTER SYSTEM RESET ALL and restart the db in a window; treat an unowned change as an incident (deploy/staging/README.md, Operator access record)"
+      - eval_time: 3m
+        alertname: PostgresSettingCheckFailing
+        exp_alerts: []
+
+  - name: the file cannot be read
+    interval: 1m
+    input_series:
+      - series: 'ihr_postgres_auto_conf_check_ok{instance="n"}'
+        values: '0x20'
+    alert_rule_test:
+      - eval_time: 10m
+        alertname: PostgresSettingCheckFailing
+        exp_alerts: []
+      - eval_time: 16m
+        alertname: PostgresSettingCheckFailing
+        exp_alerts:
+          - exp_labels: {severity: warning, service: db, instance: n}
+            exp_annotations:
+              summary: "The host timer could not read postgresql.auto.conf in the database container for 15 minutes: PostgresSettingOverridden cannot fire"
+      - eval_time: 16m
+        alertname: PostgresSettingOverridden
+        exp_alerts: []

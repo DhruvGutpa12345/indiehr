@@ -10,13 +10,13 @@ One VM in an Indian region (provider-neutral, ADR-011), Docker Compose, Traefik 
 | `scripts/staging.sh up` | Database, Redis, the platform's (public) migrations, web app, Celery, Keycloak, Traefik; then the Keycloak realms and the two workers' narrow accounts. Never migrates a hospital (P1-T18a): if a live hospital's schema is not the new build's, the `migrate` one-shot refuses and nothing starts; migrate hospitals in the announced window (`staging.sh release`, P1-T18b: see "Releases" below). A hospital this build's release already tried and left held (its migration failed) stays at 503 and the others start |
 | `scripts/staging.sh release` / `rollback` / `releases` | The new images in the announced window, rolling back, the releases in force (P1-T18b): see "Releases" below |
 | `scripts/staging.sh smoke` | 20 checks through Traefik: what is public and what is not, TLS redirect, HSTS, token issuer, production mode, no query strings in logs; and every active hospital served (a held one, 503 "upgrading", fails it: P1-T18b) |
-| `scripts/staging.sh manage <args>` | One-off `manage.py` as the database owner `ihr_owner` (never logged; no Keycloak admin credential) |
+| `scripts/staging.sh manage --operator <you> --reason "<ticket>" --hospital <slug>\|all <args>` | One-off `manage.py` as the database owner `ihr_owner` (its output never logged; its session start and end are: "Operator access record (P1-T27)"; no Keycloak admin credential) |
 | `scripts/staging.sh db-split-secrets` / `db-roles --migrate \| --serve-previous \| --assert \| --status` | The split database roles (P1-T19b): their secrets, moving a restored database, serving the build that ran after a release stopped before the move, re-asserting them: see "Moving to split roles" below |
 | `scripts/staging.sh start-existing <service>…` | Starts the existing (stopped) containers of app services again as they were: their own image, settings and secrets, with `docker start`. Never `up` (it would recreate them with this stack's new images and secrets) and never `docker compose start`: Compose also starts each service's dependencies, and every app service depends on the one-shot `migrate`, which has no container on this stack (it runs with `compose run --rm`), so it fails with `missing dependency migrate` and starts nothing. Refuses a service that is not an app service or has no container left, and starts no one-off left by `compose run` |
 | `scripts/staging.sh local-proof` | All of the above on this machine (127.0.0.1, self-signed certificate) |
 | `scripts/staging.sh acme-init …` etc. | The wildcard certificate: see below |
-| `scripts/deploy.sh --host ihr@<address>` | From this machine to a bootstrapped server: builds our two images (web app from the CI bundle), sends them with `docker save \| ssh docker load` (skipped when the server has that build), sends the tracked stack files and, as a tar stream over SSH, `.env` + `secrets/` (mode 600), then runs `staging.sh up` and `smoke` there (or, with `--release`, `staging.sh release`: required when the build changes a schema, decided before anything is sent; see "Releases"), logs the release once smoke passes, removes release images beyond the last 3 logged releases and untagged ones, and writes `/srv/indiehr/DEPLOYED` (commit and dirty flag as labelled on the images, image IDs, web bundle id). `/srv/indiehr/DEPLOYING` is written first and removed only on success: if it is still there, the last deploy failed part-way. The backend image is built from the committed files (`git archive`), never from git-ignored ones. Refuses a dirty git tree without `--allow-dirty`, images built from another commit with `--no-build` unless `--allow-dirty`, and a server whose host key is not yet in `known_hosts` |
-| `scripts/deploy.sh --local-proof` | The same into the throwaway VM of `scripts/local-vm.sh` (settings from `staging.sh init app.ihr-proof.in --vm`, kept in `~/.cache/indiehr/vm/staging`); runs `staging.sh local-proof` there (hospital `alpha` + smoke). Runbook: `deploy/host/README.md` |
+| `scripts/deploy.sh --host ihr@<address> --operator <you>` | From this machine to a bootstrapped server: builds our two images (web app from the CI bundle), sends them with `docker save \| ssh docker load` (skipped when the server has that build), sends the tracked stack files and, as a tar stream over SSH, `.env` + `secrets/` (mode 600), then runs `staging.sh up` and `smoke` there (or, with `--release`, `staging.sh release`: required when the build changes a schema, decided before anything is sent; see "Releases"), logs the release once smoke passes, removes release images beyond the last 3 logged releases and untagged ones, and writes `/srv/indiehr/DEPLOYED` (commit and dirty flag as labelled on the images, image IDs, web bundle id). `/srv/indiehr/DEPLOYING` is written first and removed only on success: if it is still there, the last deploy failed part-way. The backend image is built from the committed files (`git archive`), never from git-ignored ones. Refuses a dirty git tree without `--allow-dirty`, images built from another commit with `--no-build` unless `--allow-dirty`, and a server whose host key is not yet in `known_hosts` |
+| `scripts/deploy.sh --local-proof --operator <you>` | The same into the throwaway VM of `scripts/local-vm.sh` (settings from `staging.sh init app.ihr-proof.in --vm`, kept in `~/.cache/indiehr/vm/staging`); runs `staging.sh local-proof` there (hospital `alpha` + smoke). Runbook: `deploy/host/README.md` |
 
 **On the server** the layout mirrors the repository (compose.yaml uses `../keycloak` and
 `../docker`): `/srv/indiehr/{deploy/staging,deploy/keycloak,deploy/docker,scripts/staging.sh}`.
@@ -271,7 +271,7 @@ Everything is **encrypted on the server** before it leaves (aes-256-cbc).
 | `scripts/staging.sh backup-init https://in-south1-objectstore.e2enetworks.net <bucket> Chennai --uri-style path` | Once: asks for the backup bucket's key (typed or piped, never an argument), makes the encryption passphrase, turns archiving on. AWS: `https://s3.ap-south-2.amazonaws.com <bucket> ap-south-2`. `--local`: a proof into this stack's SeaweedFS (automatic in `local-proof`; same disk, so not a real backup) |
 | `scripts/staging.sh backup-status` | Backups in the repository, the service's last backup / push / check, WAL files still waiting. The service is **unhealthy** (Docker, and `smoke`) when a WAL file waits over 10 minutes, the hourly check fails, or no backup succeeded for 26 hours |
 | `scripts/staging.sh backup-now [full\|diff]` | A backup now (e.g. before an upgrade) |
-| `scripts/staging.sh restore-drill [--target "2026-11-09 14:00:55+05:30"]` | Restores into a throwaway copy beside the live database (refused without room for it), gives the copy's roles the secrets' passwords (and moves them there too if the copy predates the move of the roles, P1-T19b), then checks every hospital's audit trail **in the copy**, as `ihr_owner`, against the outside fingerprints the storage had by the copy's last transaction, and removes it. `--keep` leaves the copy for a look (`--clean` removes it). The target always carries its offset (+05:30): without one Postgres would read UTC |
+| `scripts/staging.sh restore-drill [--target "2026-11-09 14:00:55+05:30"]` | Restores into a throwaway copy beside the live database (refused without room for it), gives the copy's roles the secrets' passwords (and moves them there too if the copy predates the move of the roles, P1-T19b), then checks every hospital's audit trail **in the copy**, as `ihr_owner`, against the outside fingerprints the storage had by the copy's last transaction, and removes it. `--keep` leaves the copy for a look (`--clean` removes it): a data-tier session, and the way into it is `scripts/staging.sh restore-drill-psql --operator <you> --reason "<ticket>" [psql args]` (psql as postgres in the copy, recorded like `manage`; never a raw `docker exec`, which PrivilegedLoginUnrecorded flags). The target always carries its offset (+05:30): without one Postgres would read UTC |
 | `scripts/staging.sh restore [--target …]` | **A lost database:** restores into this stack's own, empty database volume (never over an existing one, never while the stack runs), recovers with archiving on so the new timeline reaches the repository. Before recovery it sweeps the WAL spool: our database's surviving WAL is pushed and replayed (less is lost); another database's WAL (e.g. an empty database started by mistake) is set aside in the backup state volume's `rejected-wal/` (`backup-status` lists it), since it would block every later push |
 
 **The passphrase:** `PGBACKREST_REPO1_CIPHER_PASS` in `secrets/backup.env`. Without it no backup
@@ -413,7 +413,7 @@ Postgres 18.6 image plus Python, so `pg_dump` matches the server):
 | `scripts/staging.sh dumps-init https://in-south1-objectstore.e2enetworks.net <bucket> Chennai [--uri-style path\|host]` | Once: asks for the dumps bucket's dumper key (typed or two lines on stdin), makes the dump key, writes `secrets/dumps.env` (mode 600) and `IHR_DUMPS=s3`. **Copy `IHR_DUMP_KEY` into your password manager.** `--existing-key`: a rebuilt server continuing the dumps. `--local`: a proof into this stack's SeaweedFS (automatic in `local-proof`; same disk, not a second copy). AWS: `https://s3.ap-south-2.amazonaws.com <dumps bucket> ap-south-2` (`tofu output -json dumper_key`) |
 | `scripts/staging.sh dumps-now [--slug S]...` | A run now: every due hospital without a dump since today's 03:30 (or the named ones, again), then the check |
 | `scripts/staging.sh dumps-check [--deep [--all]]` | Every manifest and erasure record authentic, each hospital's chain whole, every name under `dumps/` written once, every object present with its size (the version its manifest recorded), the bucket's lock. `--deep`: each hospital's newest dump (`--all`: every dump) read back, decrypted, read whole by `pg_restore`, listed and restored schema-only. Runs from your machine too, without the server (its copies on a Docker volume of its own, removed afterwards: room for the largest sealed dump) |
-| `scripts/staging.sh dumps-get <hospital uuid> <YYYY-MM-DD\|latest> <dump\|public> > file` | One dump (or its public rows, gzip JSON) back, in the version its manifest recorded, checked whole and decrypted (P1-T22b restores from it). Needs disk for the sealed object (a Docker volume, removed afterwards) and for the decrypted file |
+| `scripts/staging.sh dumps-get --operator <you> --reason "<ticket>" <hospital uuid> <YYYY-MM-DD\|latest> <dump\|public> > file` | One dump (or its public rows, gzip JSON) back, in the version its manifest recorded, checked whole and decrypted (P1-T22b restores from it). Needs disk for the sealed object (a Docker volume, removed afterwards) and for the decrypted file |
 | `scripts/staging.sh dumps-probe` | What the dumper key may do and whether the bucket is locked for 30 days with versioning. Run it at go-live; it leaves a small file under `dumps/ihr-key-check/` |
 | `scripts/staging.sh dumps-role` | The dumper's database role is `ihr_dump` as modelled |
 | `scripts/staging.sh dumps-expire [--dry-run] [--erase-suspect]` | **Weekly, from your machine:** asks for the bucket's admin key and erases every version of nightly dumps older than 14 days and Sunday dumps older than 28, lifting the Governance lock. It refuses shorter periods (`--allow-short` only in a proof on the local stand-in, never abbreviated) and a clock more than an hour off the bucket's, counts an object's age from the younger of its name and its upload, and **first writes a signed erasure record** (`erasure/<time>.json`) so `dumps-check` follows each hospital's chain through what was erased (a record erasing anything inside its retention is a problem). A dump name with more than one version is **SUSPECT** and left alone: look at it (`dumps-check`), then `--erase-suspect`. Run `--dry-run` first |
@@ -620,7 +620,7 @@ memory") and rolls back: raise the setting and `--resume`.
 - **`ihr_audit_verify` after a restore** must run as the owner or the audit watch's role: the app
   role has no right on the archive (its entries hold values), so run as the app it reads a restore
   event as unverifiable. `release`'s pre-check runs it in the backend: after a restore, run
-  `scripts/staging.sh manage ihr_audit_verify --all` with the reader key instead
+  `scripts/staging.sh manage --reason "<ticket>" --hospital all ihr_audit_verify --all` with the reader key instead
   (proof-b.md).
 - **Queued Celery tasks** of the hospital made before the restore run after it (the gate holds
   them while it is held); ones naming rows the restore removed fail harmlessly.
@@ -683,9 +683,10 @@ alert can still arrive a few minutes first (it fires sooner); its repeats are th
 |---|---|
 | Pipeline | Watchdog (always on, pings the dead-man switch about once a minute), DailyHeartbeat (a mail at 09:00 IST every day), AlertmanagerNotificationsFailing (also to the dead-man switch's `/fail`), AlertmanagerConfigNotLoaded, PrometheusRuleFailures, PrometheusCannotReachAlertmanager, HostMetricsStale |
 | Availability | PublicEndpointDown (auth, status; 3 min), TargetDown (5 min; critical for traefik, keycloak, postgres, redis, s3, node), PostgresDown / RedisDown (the exporter answers but cannot reach its server or log in; 5 min), BackendHealth, KeycloakNotReady, ContainerNotRunning (critical for the hospitals' services and `celery-worker`/`celery-beat`, warning for `provisioner`, `staff-worker` and monitoring; the four workers not until the window's end while a release has them stopped, see "Releases"), ContainerUnhealthy, ContainerRestarting (more than 2 in 15 min) |
-| Capacity | DiskFreeLow (20 GB warning, 12 GB critical on `/`; other data mounts also below 25 % / 15 %; `/boot` never), DiskFillingUp (below 12 GB within 7 days), MemoryLow (10 % / 5 %), OomKill, SwapInUse, ContainerMemoryNearLimit (90 %), CpuLoadHigh, JournalNearCap, JournalSuppressed, PgConnectionsHigh (80 of 100), PgLongTransaction (1 h), RedisMemoryHigh (80 % / 90 %), RedisPersistenceFailing, CeleryBacklog (200 for 10 min) |
+| Capacity | DiskFreeLow (20 GB warning, 12 GB critical on `/`; other data mounts also below 25 % / 15 %; `/boot` never), DiskFillingUp (below 12 GB within 7 days), MemoryLow (10 % / 5 %), OomKill, SwapInUse, ContainerMemoryNearLimit (90 %), CpuLoadHigh, JournalNearCap, JournalSuppressed (critical since P1-T27a: dropped lines can hide database sessions and operator lines), PgConnectionsHigh (80 of 100), PgLongTransaction (1 h), RedisMemoryHigh (80 % / 90 %), RedisPersistenceFailing, CeleryBacklog (200 for 10 min) |
 | Backups | BackupUnhealthy, BackupTooOld (26 h), BackupCheckStale (2 h), WalSpoolStuck (10 min), WalSpoolNearCap (75 %), WalArchiveFailing |
 | Audit trail (P1-T21) | AuditChainBroken, AuditFingerprintMismatch, AuditTriggerDisabled (all at once), AuditTriggersMissing (30 min), AuditFingerprintLate (2 h 15 min / 6 h), AuditSealLag (15 min / 1 h), AuditSealHeldBack, the fingerprint store's problems by class, and the watch's own staleness: see "Audit watch" |
+| Operator access (P1-T27a) | PostgresSettingOverridden (critical: a setting stored by ALTER SYSTEM in postgresql.auto.conf), PostgresSettingCheckFailing (15 min): see "Operator access record (P1-T27)" |
 | Time, certificates, keys | NtpUnsynced, NtpOffset (chrony's own offset; 100 ms / 1 s), NtpSourceNotIndian, NtpReadingFailed, TlsCertExpiry (21 / 7 days), AcmeDnsDown, ClientKeyAge (150 / 365 days), ClientKeyMissing, ClientKeyCheckStale (also when never checked) |
 
 Alert text is built from label values only (service, endpoint, job, key purpose): never a log
@@ -844,14 +845,14 @@ redone by its catch-up run).
 | AuditEventRecorded | exactly the audit watch's `ihr-audit: hospital=<slug> event=<restore\|offboarding> outcome=recorded` line, once per new event, in the last hour | warning |
 | AuditWholeRestoreRecorded | exactly the audit watch's `ihr-audit: restore=<id8> event=whole-database hospitals=<n> outcome=recorded` line, once per whole-database restore's result, in the last hour (P1-T22c) | warning |
 
-Fix the cause, then `scripts/staging.sh manage ihr_pack_apply --slug <slug> --operator <you>`
+Fix the cause, then `scripts/staging.sh manage --reason "<ticket>" --hospital <slug> ihr_pack_apply --slug <slug> --operator <you>`
 (`<you>`: 1-64 letters, digits or `. _ @ -`; recorded as `packs:<you>`).
 A busy hospital (another job holds its lock) is tried again after 5, 15 and 30 seconds; still
 busy after that, it is recorded (`outcome=deferred`) and alerted on like a failure.
 A data check that hit its cap (P1-T15b2a: identifier configs) has no `PackApply` error: the
 line before the alerted one reads `ihr-packs: hospital=<slug> pack=<pack> item=<item> data check
 not fully checked`, and it comes back at every apply until the check is finished with
-`scripts/staging.sh manage ihr_pack_pending --slug <slug> --recheck --operator <you>` (it takes
+`scripts/staging.sh manage --reason "<ticket>" --hospital <slug> ihr_pack_pending --slug <slug> --recheck --operator <you>` (it takes
 the same hospitals as `ihr_pack_apply --slug`; `ihr_pack_pending --slug <slug>` lists what holds
 each item: a conflict, the counts, whether fully checked, and when).
 
@@ -1020,7 +1021,7 @@ all others.
 |---|---|
 | `scripts/staging.sh logs-archive-init https://in-south1-objectstore.e2enetworks.net <bucket> Chennai [--uri-style path\|host]` | Once: asks for the bucket's Writer key (typed or two lines on stdin), makes the encryption key, writes `secrets/logs-archive.env` (mode 600) and `IHR_LOGS_ARCHIVE=s3`. **Copy `IHR_LOGS_ARCHIVE_ENCRYPTION_KEY` into your password manager.** `--existing-key`: a rebuilt server continuing an archive (the key typed, or the last line on stdin). `--local`: a proof into this stack's SeaweedFS (automatic in `local-proof`) |
 | `scripts/staging.sh logs-archive-check [--deep] [--recent N]` | Every manifest and erasure record authentic, the chain whole, every file present with its size, and the bucket's lock. `--recent N`: only the last N days' files fetched and their SHA-256 checked (`smoke` uses 2; the default fetches all). `--deep`: every file also decrypted, its lines counted, and each revision checked to hold every line of the one before |
-| `scripts/staging.sh logs-archive-get <YYYY-MM-DD> [revision] > day.jsonl` | One day back as JSON lines (the latest revision unless one is named), checked and decrypted; a day's revisions are listed on the terminal. For an incident report to CERT-In older than the store's 180 days |
+| `scripts/staging.sh logs-archive-get --operator <you> --reason "<ticket>" <YYYY-MM-DD> [revision] > day.jsonl` | One day back as JSON lines (the latest revision unless one is named), checked and decrypted; a day's revisions are listed on the terminal. For an incident report to CERT-In older than the store's 180 days |
 | `scripts/staging.sh logs-archive-probe` | What the server's archive key may do (add, read; never delete, hide, unlock or write outside `logs/`) and whether the bucket is locked for 400 days. Run it at go-live: E2E documents neither. It leaves a small probe file under `logs/ihr-key-check/`, erased with the rest after 400 days |
 | `scripts/staging.sh logs-archive-now` | A pass now (the service does one every 10 minutes) |
 | `scripts/staging.sh logs-archive-expire [--dry-run] [--older-than-days 400]` | **Monthly, from your machine** (the deploy folder with `.env` and `secrets/`): asks for the bucket's admin key and deletes every version of each day older than 400 days, lifting the Governance lock. Run `--dry-run` first. Safety: it refuses fewer than 400 days, refuses when your machine's clock is more than an hour off the bucket's, and never touches a file whose own lock still runs. **Before the first deletion** it writes a signed erasure record (`erasure/<time>.json`: the days, the files, each erased manifest's hash and its predecessor), so `logs-archive-check` follows the chain through the erased days; a second record says how it ended. The record's key is derived from the archive key on your machine; the erasure tool never sees the archive key itself |
@@ -1126,7 +1127,7 @@ and `release` refuse before they change anything (run `s3-init`, or fill it for 
 bucket), and `scripts/deploy.sh` before it sends anything (`staging.sh watch-reader --check` on
 the folder it sends).
 
-Look at a hospital yourself: `scripts/staging.sh manage ihr_audit_verify --slug <slug>` (from seal
+Look at a hospital yourself: `scripts/staging.sh manage --reason "<ticket>" --hospital <slug> ihr_audit_verify --slug <slug>` (from seal
 1), or in the watch's container `python manage.py ihr_audit_watch once --pass incremental
 --metrics`: it reads the serving watch's state and never writes it, and counts the nightly and
 sweep findings that stand until the next nightly apart (`standing_findings`). `ihr_audit_watch
@@ -1167,7 +1168,7 @@ measure` is bounded (the last 7 days, 200,000 entries a hospital); `--full` runs
 
 - **AuditChainBroken / AuditFingerprintMismatch / AuditHospitalCheckFailed.** Treat it as a
   possible incident (CERT-In: report within 6 hours). Run
-  `scripts/staging.sh manage ihr_audit_verify --slug <the hospital named>`: it names the seal,
+  `scripts/staging.sh manage --reason "<ticket>" --hospital <it> ihr_audit_verify --slug <the hospital named>`: it names the seal,
   the entry window or the fingerprint. Do not "fix" the trail: it is evidence. A checkpoint is
   never reset by hand. After a genuine restore the restore's event clears it (P1-T22); a restore
   without one stays a cut. **`staging.sh rollback --restore`** writes one per hospital it rolls
@@ -1177,7 +1178,7 @@ measure` is bounded (the last 7 days, 200,000 entries a hospital); `--full` runs
   repository's last WAL stay cut (P1-T22c2b). Run it only for a real incident, record it as one,
   and never silence the alerts.
 - **AuditHospitalsUnchecked / a `check=unchecked` line.** The watch cannot read that hospital's
-  trail: `scripts/staging.sh logs audit-watch` names the error. A lock held past 10 s (a
+  trail: `scripts/staging.sh logs --operator <you> --reason "<ticket>" audit-watch` names the error. A lock held past 10 s (a
   migration, or someone holding the trail's tables), a statement over 5 minutes (a very long
   chain), or a grant of `ihr_audit_watch` taken away (`up` puts them back). Treat a hospital that
   stays unchecked as failing its check.
@@ -1218,7 +1219,7 @@ measure` is bounded (the last 7 days, 200,000 entries a hospital); `--full` runs
   wiped or replaced, or a checkpoint file removed: the checkpoints were seeded from the newest
   fingerprint (never the database), so a rewrite since then is still caught; find out who removed
   it. A hospital made after the volume is not counted; each hospital is counted once per start.
-- **AuditWatchStale / Absent / Failing.** `scripts/staging.sh logs audit-watch`. A stuck pass does
+- **AuditWatchStale / Absent / Failing.** `scripts/staging.sh logs --operator <you> --reason "<ticket>" audit-watch`. A stuck pass does
   not stop the others (each has its own thread). **AuditRehashOverdue:** the 30-day horizon no
   longer fits a night; the alert's `limit` label says which limit ended it
   (`ihr_audit_rehash_stopped_by`; `ihr_audit_rehash_rate_entries_per_second` is the rate it
@@ -1254,7 +1255,7 @@ The old database is gone; the hospitals are served first, the audit tails loaded
    (AuditChainBroken, critical) and **AuditWholeRestorePending** (warning) names the restore; after
    48 h **AuditWholeRestorePendingOverdue** (critical). Both come from the plans alone, so a new
    server's audit watch reports them on its first pass.
-3. `scripts/staging.sh audit-supersede export <id> --operator <you>`: a copy of the database from
+3. `scripts/staging.sh audit-supersede --operator <you> --reason "<ticket>" export <id>`: a copy of the database from
    the repository (backup set and old timeline to its end; container `ihr-supersede-copy`, 768 MB,
    killed first under memory pressure, the dumper stopped meanwhile; disk = the set's size + 3 GB),
    read by the audit watch's role; then the **export doc** (events key). The copy goes on every
@@ -1478,7 +1479,7 @@ post_migrate converges the app role's grants (`ensure_grants`, as the owner).
 | Command | What it does |
 |---|---|
 | `scripts/staging.sh db-split-secrets` | **On the deploying machine** (as `s3-init`; `IHR_STAGING_OUT=<dir>` for another folder): a **new** owner password (never the old shared one) into `secrets/db-owner.env`, an app password into `secrets/app.env`'s `DATABASE_URL`, and the old `IHR_DB_PASSWORD` out of `secrets/db.env`. Prints file names only. Idempotent: a secret already made is kept, never replaced (after an interruption, run it again); anything it does not recognise is refused untouched. **Copy the owner password into your password manager** (it is in `secrets/db-owner.env`) |
-| `scripts/deploy.sh --host … --release` | The first deploy after the split: refused without `--release` (and refused if the deploying machine has no `db-owner.env`). `staging.sh release` sees the database still has its single role and moves it inside the window: hold every hospital, stop the workers, drain, seal (the outgoing build with its own address), restore point, **then stop every app container, rename `ihr` to `ihr_owner`, set both passwords, make `ihr_app` (and the watch and dump roles), reset every stored setting (in every database), revoke the large-object creators from PUBLIC** (one transaction, as postgres), then `ihr_db_role_check --for migrate`, the migrations (converging every schema's grants as the owner), `up`, smoke |
+| `scripts/deploy.sh --host … --operator <you> --release` | The first deploy after the split: refused without `--release` (and refused if the deploying machine has no `db-owner.env`). `staging.sh release` sees the database still has its single role and moves it inside the window: hold every hospital, stop the workers, drain, seal (the outgoing build with its own address), restore point, **then stop every app container, rename `ihr` to `ihr_owner`, set both passwords, make `ihr_app` (and the watch and dump roles), reset every stored setting (in every database), revoke the large-object creators from PUBLIC** (one transaction, as postgres), then `ihr_db_role_check --for migrate`, the migrations (converging every schema's grants as the owner), `up`, smoke |
 | `scripts/staging.sh db-roles --migrate [--operator <you>]` | The same move without a release, **only on a stopped stack whose backend image is the build of the release logged last**: after a restore of a moment before the move. Refused (nothing changed) while any app container runs, or when `docker compose ps` cannot say whether one does (on a running server the roles move inside `release`), while a release is unfinished, with no release logged, or when this stack's backend image is not the last logged release's (it would migrate a build that was never released, outside the window, with no restore point). Starts only the database, moves, converges the grants (`ihr_db_role_check --for migrate`, `migrate_schemas --shared`, a fleet-wide `ihr_fleet_run migrate`, which also lifts the restored holds of every hospital it finishes), `up`. A move that stops part-way says where and how to finish. Then `scripts/staging.sh smoke`, and `fleet window --clear` if the restored database brought a window back |
 | `scripts/staging.sh db-roles --serve-previous [--operator <you>]` | A release that stopped **before** the move (its backup, restore point or the stop failed): the database still has its single role, so `up`, every rollback and the owner's one-offs refuse or cannot log in. This starts the existing containers of the build that ran again as they were (`docker start`, as `start-existing`: the backend first, its other containers after the holds are lifted; never `up`, which would recreate them with the new images and secrets, nor `docker compose start`, which fails on the `migrate` dependency), lifts the holds and clears the window with that build (in its backend, as `ihr`). The release stays unfinished: fix the cause and run `release` again. The release's own failure message names it; before the move, `fleet release`, `fleet hold` and `fleet window` also run in the running backend, so while its backend still runs the message also names `fleet release` then `fleet window --clear` (they leave stopped workers stopped: `start-existing` them) |
 | `scripts/staging.sh db-roles --assert` | As postgres, both roles again as the model has them: passwords from the secrets, every stored setting reset in every database (`RESET ALL`, and `IN DATABASE <each> RESET ALL` for every row `pg_db_role_setting` holds; it fails if any is left), no memberships, the large-object revoke. **Every `up` does this**; this is the runbook of DatabaseRoleLoginFailed and of a `role_settings` refusal. Then `scripts/staging.sh up` |
@@ -1576,7 +1577,7 @@ table and `shared_buffers`).
 **The back-channel service.** Keycloak posts logout tokens to `http://backchannel:9000/api/ihr/backchannel-logout/`
 (its own small gunicorn: 1 worker x 2 threads, 256 MB, internal network only, no Traefik route, no client
 key; it answers that path, `/ping/` and `/health/` only). Before, the post landed in the same eight threads
-as the sign-out that waits for it. **Nothing to run by hand:** `staging.sh up` (and so every `release`) runs `ihr_keycloak_sync --realm --all` as the admin one-off (it holds the Keycloak bootstrap client; `staging.sh manage` does not, so it cannot run the sync), and each hospital's Keycloak client takes the new address there; until the first `up` of this build Keycloak keeps posting to `backend`, which still answers (as before, in the shared threads). To go back: set `IHR_BACKCHANNEL_LOGOUT_URL` to `backend` in `compose.yaml`, sync, drop the service.
+as the sign-out that waits for it. **Nothing to run by hand:** `staging.sh up` (and so every `release`) runs `ihr_keycloak_sync --realm --all` as the admin one-off (it holds the Keycloak bootstrap client; a plain `manage` one-off does not, so it cannot run the sync), and each hospital's Keycloak client takes the new address there; until the first `up` of this build Keycloak keeps posting to `backend`, which still answers (as before, in the shared threads). To go back: set `IHR_BACKCHANNEL_LOGOUT_URL` to `backend` in `compose.yaml`, sync, drop the service.
 
 **Load test on an 8 GB server** (owner; blocked until there is one): see `docs/reviews/p1-t23/build.md`
 ("The 8 GB load test") and `scripts/load-test.py`. Never reported from this machine.
@@ -1591,7 +1592,7 @@ migrates. Design: `docs/reviews/p1-t18/design.md`.
 | Command | What it does |
 |---|---|
 | `scripts/staging.sh fleet window --start "DD-MM-YYYY HH:MM" --minutes 90 --note "…" --operator <you>` | Announce the window ahead (IST; public: `/api/ihr/bootstrap/` carries it for the web app's notice). Runs in the running backend when one runs (after deploy.sh has loaded a new build too: never the new build on the old schema). E-mailing hospital admins is yours: it is not built |
-| `scripts/deploy.sh --host … --release [--now]` | Build, send, then `staging.sh release` on the server, **detached there** (`setsid nohup`: a dropped SSH connection never stops it half-way); deploy.sh follows its output (`deploy/staging/releases/release-<tag>-<time>.out`, its exit status in `….out.rc`) until it ends. A build that changes the hospitals' or the platform's schema (its migration fingerprints differ from the release logged on the server; the first P1-T18 release on a server with a database), and any build while a release is unfinished on the server (`releases/attempt`), is **refused without `--release`, before anything is sent**. A build without migrations deploys with a plain start as before |
+| `scripts/deploy.sh --host … --operator <you> --release [--now]` | Build, send, then `staging.sh release` on the server, **detached there** (`setsid nohup`: a dropped SSH connection never stops it half-way); deploy.sh follows its output (`deploy/staging/releases/release-<tag>-<time>.out`, its exit status in `….out.rc`) until it ends. A build that changes the hospitals' or the platform's schema (its migration fingerprints differ from the release logged on the server; the first P1-T18 release on a server with a database), and any build while a release is unfinished on the server (`releases/attempt`), is **refused without `--release`, before anything is sent**. A build without migrations deploys with a plain start as before |
 | `scripts/staging.sh release [--now [--minutes N] [--note T]] [--operator <you>]` | On the server, with the new images already loaded (deploy.sh did it), the old ones still running. Refused if the backend is not running while another app service (a worker, the web app) is: stop the stack first (`down`) or start the old backend again (`scripts/staging.sh start-existing backend`); refused too if `docker compose ps` cannot say which run. First it writes the release's record (`releases/attempt`), before any change. In order: **(1)** refuses unless an announced window is open now (`--now`: announce one from this minute); **(2a)** the full audit check (`ihr_audit_verify --all`: every hash chain and stored fingerprint) by the outgoing build while it still serves, capped (`IHR_RELEASE_AUDIT_SECONDS`, 1800 s; its result is the release's `audit=`); **(2)** holds every hospital in one transaction (`ihr_fleet_run hold`, by the outgoing build); **(3)** stops `celery-worker`, `celery-beat`, `provisioner`, `staff-worker` (not paged as down until the window's end, below); **(4)** waits until no transaction that began before the hold is open (60 s cap, `IHR_RELEASE_DRAIN_SECONDS`); **(5)** seals the audit trail and writes one fingerprint, with the outgoing build and the worker's add-only key: no chain recomputed, no fingerprint read (capped: `IHR_RELEASE_SEAL_SECONDS`, 300 s; `seal=` and `seal_s=` in the log; skipped, and said, without the fingerprint bucket); **(6)** `pg_create_restore_point('release-<tag>-<epoch>')`, a name never used before, its LSN and time recorded (a full backup first if the repository has none); **(7)** the platform's migrations, then `ihr_fleet_run migrate check roles root packs` (2 hospitals at a time, in the logged `migrate` container); **(8)** `up` with the new images; **(9)** smoke, which checks every active hospital. Logged in `releases/releases.log` only when every live hospital is served and smoke passes; then the window is cleared. The same build deployed again (a plain start for a changed setting) is logged once |
 | `scripts/staging.sh release --finish` | After a failed hospital was fixed and resumed: checks again (every hospital served, smoke), logs the release, clears the window |
 | `scripts/staging.sh rollback [--operator <you>]` | Back to the release before the running one, or, while a release is unfinished, back to the release logged last (whether the unfinished one had started or still stopped before its start), **only when nothing changed in the database or Keycloak**: the hospitals' and the platform's fingerprints equal, and the same Keycloak and Postgres images; or the unfinished release stopped before its restore point (nothing migrated). Checks first that every image of the target is still here (nothing changes otherwise), and refuses while hospitals are held for a window with no release in progress (nothing says what held them). Then it re-points the backend and web app images, restores that release's stack files (server), runs `up`, lifts the window's holds, syncs the roles again (holding any hospital whose sync this build refuses), clears the window and runs smoke; the rollback is logged after smoke (a rollback that stopped is run again as it was). Otherwise it refuses and says why |
@@ -1774,8 +1775,8 @@ sign-in reset keeps the wider rule (an admin role on any top-level organisation,
   state): remove them with `remove-state` once the hospital confirms. The fleet step, a restore and
   provisioning write their lines from logged containers (`migrate`, `celery`). **`hospital-root place`
   and `remove-state` run in the admin one-off, which is not logged**: an operator's own write is
-  recorded in the hospital's audit trail (`root:<operator>`, with the reason), not in the log store
-  (review T5). An operator name that an automatic source writes (`fleet-*`, `restore-*`,
+  recorded in the hospital's audit trail (`root:<operator>`, with the reason) and, since P1-T27a, the
+  session's start and end lines reach the log store (`ihr-operator:`, "Operator access record"). An operator name that an automatic source writes (`fleet-*`, `restore-*`,
   `provisioning-*`, `demo-seed`, `ihr_create_tenant`, `test`, `startup`) is refused, so a manual write
   cannot pose as one (review T4).
 - **HospitalRootProblem** (`deploy/logs/alerts/root.yml`, warning): a `no-admin`, `invalid` or `failed`
@@ -1786,7 +1787,7 @@ sign-in reset keeps the wider rule (an admin role on any top-level organisation,
 
 | Command | What it does |
 |---|---|
-| `scripts/staging.sh hospital-root --slug S show` | The root, its admins, and every admin role on other top-level organisations (who lost the admin screens with P1-T25). Usernames only. |
+| `scripts/staging.sh hospital-root --operator <you> --reason "<ticket>" --slug S show` | The root, its admins, and every admin role on other top-level organisations (who lost the admin screens with P1-T25). Usernames only. |
 | `scripts/staging.sh hospital-root --slug S place <username> --operator <you> --reason "<ticket>"` | The recovery when nobody is hospital-wide (Q-K122): makes that person Administrator on the root. Check first who the hospital's admin is (in person or a known phone number). Refuses superusers and service accounts. |
 | `scripts/staging.sh hospital-root --slug S remove-state <username> --operator <you> --reason "<ticket>"` | Soft-deletes that person's Administrator rows on top-level government organisations (review S5). |
 
@@ -1794,3 +1795,141 @@ An **invalid** root is never replaced automatically and never "fixed" by marking
 organisation: look at what changed (the audit trail records every write to `emr_organization`), then
 put the organisation right with a superuser's care, or ask for a decision. A root admin can remove
 every other root admin, themselves included (CARE's member removal): `place` is the way back.
+
+## Operator access record (P1-T27)
+
+Design: `docs/reviews/p1-t27/design.md`, and binding where they differ its attack's "Orchestrator
+decision" (`docs/reviews/p1-t27/attack.md`; Q-K134 to Q-K139). ADR-010's P1-T27 amendment says what it
+proves and what it does not. P1-T27a (this part): the session lines, the grammar, the Postgres session
+lines and the alerts. P1-T27b: one `operator` entry per hospital in the hospital's own audit trail.
+P1-T27c: the host's kernel audit records.
+
+### How to run commands now
+
+Every `scripts/staging.sh` run that reaches a privileged call is an **operator session**: an admin,
+migrate or audit-supersede one-off, an exec in an app, worker, database, backup, dumper or archive
+container, or psql/pg_dump as `postgres`. Give your own name, always:
+
+```
+scripts/staging.sh <command> [--operator NAME] [--reason "TEXT"] [--hospital SLUG|all] <its arguments>
+export IHR_OPERATOR=dhruv            # the same as --operator on every command of this shell
+```
+
+- The three options come **right after the command** and are not passed on (`manage --operator dhruv
+  --reason "INC-12 bed 4 fix" --hospital alpha shell`). A command's own `--operator` (release,
+  rollback, restore, db-roles, hospital-restore, audit-supersede, hospital-root, fleet's) must name the
+  same person; two different names are refused.
+- **Name:** 2-32 of `a-z 0-9 . -`, starting with a letter; never `ihr`, `root`, `admin`, `postgres` or
+  the bootstrap's admin user (`/etc/indiehr/admin-user`). There is no default: the deploy account is
+  shared, so its login name says nothing (Q-K134). `scripts/deploy.sh --operator NAME` (or
+  `IHR_OPERATOR`) passes it to every call on the server.
+- **Data tier** (they reach patient data or raw logs): `manage` (shells and `dbshell` included),
+  `hospital-root`, `dumps-get`, `logs`, `logs-archive-get`, `restore-drill --keep`,
+  `restore-drill-psql`, `audit-supersede export`. They need `--reason` and a hospital, and open their session before anything runs.
+  - `--reason`: 3-120 characters of letters, digits, space and `. _ : / # -`, no number of 6 or more
+    digits. A ticket or incident id and a few words: **never a patient's name or number**.
+  - `--hospital SLUG` or `--hospital all` for `manage`; `hospital-root` takes its `--slug` (its own
+    `--operator`/`--reason` count too); `dumps-get` names the hospital from the dump's bucket path
+    (its uuid); `logs`, `logs-archive-get`, `restore-drill --keep`, `restore-drill-psql` and
+    `audit-supersede export` are every hospital (`all`).
+- **Job tier:** everything else that reaches a privileged call (`up`, `smoke`, `release`, `rollback`,
+  `restore`, `fleet`, `keys`, backups, dumps, the restores and drills...). It opens at its first
+  privileged call, reason `job:<command>` unless you give one. `release`, `restore-drill`, `dumps-now`
+  and `hospital-restore-drill` open every hospital's schema: their session's scope is `all`.
+- A command that reaches no privileged call (`ps`, `down`, `init`, `releases`, `monitoring-textfile`,
+  `ops-tunnel`, the secret and key tools of the deploying machine, `acme-proof`) writes nothing and
+  needs no name.
+
+### What is written
+
+Lines to this server's journal (`logger -t ihr-operator`; Fluent Bit ships them to the log store, 180
+days, and the daily locked archive, 400 days), each also on your terminal:
+
+```
+ihr-operator: session=<s> event=start tier=<data|job> operator=<name> command=<cmd> args=<shape> hospital=<scope> ses=<n|none> from=<addr> reason="<text>"
+ihr-operator: session=<s> event=scope hospital=<scope> hospital_entry=<opened:<slug>|skipped:<slug>:<why>,...|->
+ihr-operator: session=<s> event=end outcome=<ok|failed|interrupted> rc=<n> seconds=<n>
+ihr-operator: event=refused why=<why> command=<cmd> operator=<name|<v>|none>
+ihr-operator: event=late at=<time> session=<s> was=<start|scope|end> ...
+```
+
+- `session`: 12 hex characters, new for every run (an exported `IHR_OPERATOR_SESSION` is ignored).
+  `ses`: the kernel's login session id (`/proc/self/sessionid`), which P1-T27c's audit records carry
+  too. `from`: the SSH client's address (`SSH_CONNECTION`), else `local`; sshd's own "Accepted
+  publickey ... from <addr>" line and the time join it to a key.
+- `command` and `args`: the command and the names of its options only; **every value is `<v>`**
+  (`manage shell -c "..."` is `command=manage:shell args=-c,<v>`). Shell code, SQL, slugs, dates and
+  paths never reach the line (Q-K135).
+- `scope` line: the hospitals the session opened, from P1-T27b's `manage.py ihr_operator_open` (run in
+  the admin one-off at the start of a data-tier session with a hospital, and before the first one-off
+  of a job of every hospital). `skipped:all:old-build`: the running image predates that command (a
+  rollback to an older build keeps working). `skipped:<slug>:failed`: that hospital's entry could not
+  be written (the others were still tried and stay written); the scope line is written, then the
+  session is refused (the command exits 3). Any other failure refuses the session.
+- A one-off's own row writes are attributed `operator:<name>` with the session and tier; since a
+  write may land in any hospital's trail, their context names no hospital and no given reason
+  (scope `all`, `none` or `one`, and a fixed text naming the session). The given reason is in that
+  hospital's own `operator` entry and in the log store, joined by the session.
+- Every one-off and exec the session starts gets `IHR_OPERATOR`, `IHR_OPERATOR_SESSION`,
+  `IHR_OPERATOR_SCOPE` (slug, `all` or `none`), `IHR_OPERATOR_REASON` and `IHR_OPERATOR_TIER`;
+  psql and pg_dump connect as `PGAPPNAME=op:<session>:psql|pg_dump`, Django one-offs as
+  `op:<session>:<process>` once P1-T27b names them.
+- **Postgres** logs every authorized session and its end (`log_connections=authorization`,
+  `log_disconnections=on`, with `log_min_messages=warning` and `log_destination=stderr` pinned on its
+  command line; `deploy/postgres/server-settings.txt`, checked by `db_server_check` at every `up` and
+  release). The host timer checks every minute that `postgresql.auto.conf` holds no setting
+  (`PostgresSettingOverridden`, critical). Expect two lines per web request and per Celery task: the
+  local proof measures them per hour at two hospitals and extrapolates to 200 against the log store's
+  budget (`logs-volume`); a budget overrun is a decision, never a silent drop.
+
+### Fail closed, and break-glass
+
+- No name, a shared or malformed name, a missing or bad reason or hospital: **refused**, nothing run,
+  a `refused` line (`OperatorSessionRefused`).
+- The journal cannot be written (`logger` fails): **refused**. Break-glass for a job-tier `rollback`,
+  `restore` or `hospital-restore` only: `IHR_BREAK_GLASS="INC-9 journal full" scripts/staging.sh
+  rollback ...` runs; its lines go to your terminal and to `deploy/staging/operator-pending.log`
+  (mode 600), the session's reason becomes `break-glass: <text>`, and the next recorded session ships
+  them first as `event=late` lines. Data-tier commands never break glass. The steps a rollback runs
+  as nested `staging.sh` calls (`up`, `fleet release|roles|window`, `smoke`, `backup-now`) join the
+  rollback's own session (its operator, and break-glass) instead of opening their own: only from a
+  running `staging.sh` above them (`op_child`, `op_parent_ok`), never from a file the caller names.
+- A local proof (`.local`) or CI writes the lines to stderr only with `IHR_OPERATOR_LOCAL=stderr`
+  (`local-proof` sets it unless `.env` has `IHR_LOG_DRIVER=journald`); on a server the setting is
+  ignored, and on a host `deploy/host/bootstrap.sh` set up (`/etc/indiehr/installed-at`) it is
+  refused whatever else the environment says.
+- `logger` is called with `--size 65536` (by default it cuts a message at 1 KiB and still succeeds);
+  a line longer than 60,000 characters is refused, never cut. An `all` scope line at 200 hospitals
+  is under 15 KB.
+- A killed run or a dropped SSH connection leaves a start line with no end line: normal then
+  (`OperatorSessionNoEnd` after 12 hours).
+
+### Alerts (`deploy/logs/alerts/operator.yml`)
+
+| Alert | When | What to do |
+|---|---|---|
+| PrivilegedLoginUnrecorded (critical) | A database session in the last 10 minutes that is neither a reviewed service login (`deploy/postgres/service-logins.txt`: service, role, application name) nor an open operator session's (`op:<session>:...` with a start line in 24 hours and no end line older than the window). | Find who ran it (operator lines, sshd logins). A hand-typed `docker exec db psql` is a mistake to note; unowned, an incident. A new service login is added to the list only after review (the test keeps the rule and the list the same). |
+| OperatorSessionRefused (warning) | staging.sh refused a session in the last hour, by `why`. | Usually a typo; repeated `shared-operator` or an unknown person: ask. |
+| OperatorSessionNoEnd (warning) | A session started 12-24 hours ago has no end line. | Ask the operator named. |
+| KeycloakAdminCredentialChange (critical) | A Keycloak admin event that removes or resets a user's credential by any client other than our onboarding and staff-reset accounts (`ihr-onboarding`, `ihr-staff-worker`). | Whoever resets a sign-in can act as that person, and the hospital's trail would name them: ask who did it in the admin console; unowned, an incident. |
+| PostgresSettingOverridden (critical, Prometheus) | `postgresql.auto.conf` holds a setting (not counted: the `restore_command`, `recovery_target*` and `recovery_end_command` lines a pgBackRest restore writes there, which stay after the promotion). | `pg_file_settings` names it; find the session; `ALTER SYSTEM RESET ALL`, restart in a window. |
+| JournalSuppressed (critical, Prometheus) | journald dropped lines (rate limit). | Lines of the record may be missing: find the flooding container. |
+
+### What it does and does not prove
+
+- It **attributes and bounds an honest or careless operator**: who ran what, when, from where, for
+  which hospitals and why, with the values of the command left out. A hand-typed privileged session
+  outside staging.sh alerts.
+- It is **attribution by convention, not authentication**: the name is declared; anyone with the
+  deploy account can type another person's name. Personal Unix accounts are the answer once a second
+  operator joins (ADR-020's production-1).
+- Against a **deliberate insider** with the deploy account (the docker group is root on the host) it is
+  evidence, not a barrier: application names and start lines can be forged, and the journal, the log
+  store and vmalert run on the same host. The off-host copy is the daily locked archive (P1-T9c);
+  P1-T27c adds the kernel's audit records. Alert delivery to a second person who is not an operator is
+  an owner go-live item (with PR1-4's second channel), not built here.
+- It says a session **had access**, not what an operator saw: a shell or SQL session cannot be
+  narrowed to rows, and raw SQL inside a session can reach hospitals outside its declared scope.
+- Until P1-T27b ships, a one-off's own Django session is named `manage:<command>`, not `op:...`, and
+  `PrivilegedLoginUnrecorded` fires for it; the reviewed service-login list is built from the code and
+  corrected by the local proof's capture of every authorization line (the live step).

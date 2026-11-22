@@ -452,8 +452,9 @@ class HostMetricsTests(unittest.TestCase):
         service = heredoc("metrics_service")
         self.assertIn("cmdport 0", BOOTSTRAP)
         pre = [line for line in service.splitlines() if line.startswith("ExecStartPre=")]
-        self.assertEqual(len(pre), 1, pre)
-        line = pre[0]
+        # two root steps: chrony's, and the audit rules' (P1-T27c, HostAuditTests)
+        self.assertEqual(len(pre), 2, pre)
+        line = next(p for p in pre if "chronyc" in p)
         self.assertTrue(line.startswith("ExecStartPre=+/bin/sh -c '") and line.endswith("'"), line)
         for part in ("install -d -m 755 -o root -g root $CHRONY_READ_DIR", "cd $CHRONY_READ_DIR",
                      "/usr/bin/chronyc -N -c sources > sources.new", "/usr/bin/chronyc -c tracking > tracking.new",
@@ -472,3 +473,218 @@ class HostMetricsTests(unittest.TestCase):
         # the deploy user never joins chrony's group (its socket takes every control command)
         self.assertNotRegex(BOOTSTRAP, r"(usermod|gpasswd|adduser)[^\n]*chrony")
         self.assertNotIn("chrony", service.split("SupplementaryGroups=", 1)[1].splitlines()[0])
+
+
+class HostAuditTests(unittest.TestCase):
+    """P1-T27c (Q-K139): auditd rules for root-equivalent tools run from a login, their shipping
+    through journald, and the tamper metric. Applying them needs sudo on a real host (P1-T26)."""
+
+    TOOLS = {"docker": "ihr-docker", "ctr": "ihr-docker", "runc": "ihr-docker",
+             "nsenter": "ihr-nsenter", "psql": "ihr-psql"}
+
+    def render_rules(self, links=None):
+        """audit_rules as bootstrap prints it, with ``readlink -f`` standing in: ``links`` maps a
+        path to the one it resolves to (any other path resolves to itself)."""
+        defs = "\n".join(re.search(rf"^{name}\(\) \{{.*?^\}}$", BOOTSTRAP, re.S | re.M).group(0)
+                         for name in ("audit_path", "audit_rules"))
+        cases = "".join(f'    "{src}") echo "{dst}" ;;\n' for src, dst in (links or {}).items())
+        stub = 'readlink() {\n  case "$2" in\n' + cases + '    *) echo "$2" ;;\n  esac\n}\n'
+        out = subprocess.run(["bash", "-c", stub + defs + "\naudit_rules"], capture_output=True, text=True, timeout=30)
+        self.assertEqual(out.returncode, 0, out.stderr)
+        return out.stdout
+
+    def rule_lines(self, links=None):
+        return [line for line in self.render_rules(links).splitlines() if line.startswith("-")]
+
+    def test_a_tool_that_is_a_link_is_watched_at_its_target(self):
+        """Review S3: an audit path rule binds to one inode and execve records the target, so
+        a rule on /usr/bin/psql (a link to postgresql-common's pg_wrapper) would never match."""
+        wrapper = "/usr/share/postgresql-common/pg_wrapper"
+        lines = self.rule_lines({"/usr/bin/psql": wrapper})
+        psql = [line for line in lines if line.endswith("-k ihr-psql")]
+        self.assertEqual(len(psql), 2)
+        for line in psql:
+            self.assertIn(f"-F path={wrapper} ", line)
+            self.assertNotIn("path=/usr/bin/psql", line)
+        self.assertEqual(len(lines), int(assignment("AUDIT_RULE_COUNT")))
+        # a tool that is not installed yet keeps its usual path
+        self.assertTrue(all("path=/usr/bin/" in line for line in self.rule_lines()))
+        self.assertIn("readlink -f", function("audit_path"))
+
+    def test_execve_of_each_tool_by_a_logged_in_person_both_arches(self):
+        lines = self.rule_lines()
+        for tool, key in self.TOOLS.items():
+            for arch in ("b64", "b32"):
+                want = (f"-a always,exit -F arch={arch} -S execve,execveat -F path=/usr/bin/{tool} "
+                        f"-F auid>=1000 -F auid!=unset -k {key}")
+                self.assertEqual(lines.count(want), 1, want)
+        self.assertEqual(len(lines), 2 * len(self.TOOLS), lines)
+        self.assertEqual(int(assignment("AUDIT_RULE_COUNT")), len(lines))
+        for line in lines:
+            self.assertRegex(line, r" -F auid>=1000 -F auid!=unset -k ihr-[a-z]+$")
+
+    def test_no_lock_no_all_root_rule_no_unproven_socket_watch(self):
+        text = heredoc("audit_rules")
+        for line in text.splitlines():
+            if line.startswith("#"):
+                continue
+            self.assertNotRegex(line, r"^\s*-e\s+2\b")   # tamper is alerted, not locked (Q-K139)
+            self.assertNotIn("euid=0", line)               # no rule for every root exec
+            self.assertNotIn("docker.sock", line)          # not proven to record (A5): left out
+            if "-S execve" in line:
+                self.assertIn("-F path=", line)
+        self.assertNotRegex(BOOTSTRAP, r"(?m)^[^#]*auditctl -e 2")
+
+    def test_installed_and_loaded_by_bootstrap(self):
+        self.assertEqual(assignment("AUDIT_RULES_FILE"), "/etc/audit/rules.d/60-indiehr.rules")
+        self.assertIn('write_file "$AUDIT_RULES_FILE" 640 < <(audit_rules)', BOOTSTRAP)
+        self.assertIn("augenrules --load", BOOTSTRAP)
+        self.assertIn('act "auditd enabled and started" systemctl enable --now auditd', BOOTSTRAP)
+        # Ubuntu 26.04 (systemd 259) ships journald's audit socket disabled: enabled here, then
+        # journald restarted so it takes the socket
+        sock = BOOTSTRAP.index("systemctl enable --now systemd-journald-audit.socket")
+        self.assertLess(sock, BOOTSTRAP.index("systemctl restart systemd-journald", sock))
+        # the marker line, written by root after each load (log rules count it only with uid 0)
+        self.assertIn('logger -t ihr-bootstrap "audit-rules=loaded keys=$loaded"', BOOTSTRAP)
+        self.assertLess(BOOTSTRAP.index("augenrules --load"),
+                        BOOTSTRAP.index('logger -t ihr-bootstrap "audit-rules=loaded'))
+
+    def test_auditd_pinned_per_release_and_recorded(self):
+        m = re.search(r"^declare -A AUDITD_PINS=\(([^)]*)\)", BOOTSTRAP, re.M)
+        self.assertTrue(m)
+        pins = dict(re.findall(r'\[([\d.]+)\]="([^"]+)"', m.group(1)))
+        self.assertEqual(sorted(pins), sorted(array("SUPPORTED_RELEASES")))
+        for version in pins.values():
+            self.assertRegex(version, r"^1:\d+\.\d+\.\d+-[0-9A-Za-z.+~]+$")
+        self.assertEqual(pins["26.04"], "1:4.1.2-1ubuntu0.1")
+        self.assertIn('"auditd=$AUDITD_PIN"', BOOTSTRAP)
+        versions = (ROOT / "docs/VERSIONS.md").read_text()
+        for version in pins.values():
+            self.assertIn(version, versions)
+
+    def test_check_mode_proves_rules_socket_and_canary(self):
+        check = function("run_check")
+        for part in ('same_content "$AUDIT_RULES_FILE" "$(audit_rules)"', "version_ge",
+                     "auditctl -l", '"$AUDIT_RULE_COUNT"', "auditctl -s",
+                     "systemctl is-active --quiet systemd-journald-audit.socket",
+                     "systemctl is-active --quiet auditd", "auditctl -m", "_TRANSPORT=audit",
+                     '$AUDIT_READ_DIR/status.txt" "$AUDIT_READ_DIR/rules.txt" -mmin -5'):
+            self.assertIn(part, check)
+
+    def test_rule_count_read_as_root_by_a_fixed_line_only(self):
+        service = heredoc("metrics_service")
+        pre = [line for line in service.splitlines() if line.startswith("ExecStartPre=")]
+        self.assertEqual(len(pre), 2, pre)
+        line = next(p for p in pre if "auditctl" in p)
+        self.assertTrue(line.startswith("ExecStartPre=+/bin/sh -c '") and line.endswith("'"), line)
+        for part in ("install -d -m 755 -o root -g root $AUDIT_READ_DIR", "cd $AUDIT_READ_DIR",
+                     "/usr/sbin/auditctl -s > status.new", "/usr/sbin/auditctl -l > rules.new",
+                     "mv -f status.new status.txt", "mv -f rules.new rules.txt",
+                     "else rm -f status.new rules.new status.txt rules.txt"):
+            self.assertIn(part, line)
+        for banned in ("$SRV_DIR", "$TEXTFILE_DIR", "$DEPLOY_USER", "staging.sh", "%", "$$"):
+            self.assertNotIn(banned, line)
+        self.assertEqual(assignment("AUDIT_READ_DIR"), "/run/indiehr-audit")
+        host_metrics = (ROOT / "deploy/monitoring/host-metrics.sh").read_text()
+        self.assertIn('AUDIT_DIR="/run/indiehr-audit"', host_metrics)
+        code = "\n".join(line for line in host_metrics.splitlines() if not line.lstrip().startswith("#"))
+        self.assertNotRegex(code, r"(\$\(|^\s*|\|\s*|&&\s*)(/usr/sbin/)?auditctl\s")
+
+    def run_metrics(self, files: dict, age: int = 0) -> dict:
+        with tempfile.TemporaryDirectory() as d:
+            d = Path(d)
+            (d / "bin").mkdir()
+            # one running service (host-metrics.sh needs a container's numbers; its other
+            # sections are tested in scripts/test_staging_monitoring.py)
+            (d / "bin" / "docker").write_text(
+                '#!/bin/sh\ncase "$1 $2" in\n  "ps -aq") echo aaa ;;\n'
+                '  "inspect --format") echo "db|running|healthy|0|aaa|0" ;;\nesac\nexit 0\n')
+            (d / "bin" / "docker").chmod(0o755)
+            for sub in ("out", "chrony", "audit"):
+                (d / sub).mkdir()
+            scope = d / "cg" / "system.slice" / "docker-aaa.scope"
+            scope.mkdir(parents=True)
+            (scope / "memory.current").write_text("100\n")
+            (scope / "memory.stat").write_text("inactive_file 0\n")
+            (scope / "memory.events").write_text("oom_kill 0\n")
+            for name, text in files.items():
+                f = d / "audit" / name
+                f.write_text(text)
+                if age:
+                    t = __import__("time").time() - age
+                    __import__("os").utime(f, (t, t))
+            env = {**__import__("os").environ, "PATH": f"{d / 'bin'}:/usr/bin:/bin", "IHR_CGROUP_ROOT": str(d / "cg"),
+                   "IHR_INSTALLED_FILE": str(d / "none")}
+            subprocess.run(["bash", str(ROOT / "deploy/monitoring/host-metrics.sh"), "--out", str(d / "out"),
+                            "--project", "indiehr-staging", "--services", "db", "--chrony-dir", str(d / "chrony"),
+                            "--audit-dir", str(d / "audit")], check=True, env=env, capture_output=True, timeout=60)
+            text = (d / "out" / "ihr_host.prom").read_text()
+        return {line.rsplit(" ", 1)[0]: line.rsplit(" ", 1)[1] for line in text.splitlines() if not line.startswith("#")}
+
+    STATUS = "enabled 1\nfailure 1\npid 812\nrate_limit 0\nbacklog_limit 8192\nlost 0\nbacklog 0\n"
+
+    def loaded(self, n: int) -> str:
+        rules = [line.replace("auid!=unset", "auid!=-1").replace(" -k ", " -F key=")
+                 for line in self.rule_lines()][:n]
+        return "\n".join(["-a never,task"] + rules) + "\n"
+
+    def test_metric_counts_loaded_ihr_rules(self):
+        m = self.run_metrics({"status.txt": self.STATUS, "rules.txt": self.loaded(10)})
+        self.assertEqual((m["ihr_host_audit_reading_ok"], m["ihr_host_audit_enabled"], m["ihr_host_audit_rule_keys"]),
+                         ("1", "1", "10"))
+        # watch-style listing (-w ... -k) counts the same way; a removed rule shows as fewer
+        m = self.run_metrics({"status.txt": self.STATUS.replace("enabled 1", "enabled 0"),
+                              "rules.txt": "-w /usr/bin/docker -p x -k ihr-docker\n" + self.loaded(3)})
+        self.assertEqual((m["ihr_host_audit_enabled"], m["ihr_host_audit_rule_keys"]), ("0", "4"))
+        m = self.run_metrics({"status.txt": self.STATUS, "rules.txt": "No rules\n"})
+        self.assertEqual(m["ihr_host_audit_rule_keys"], "0")
+
+    def test_metric_unknown_when_not_read(self):
+        for files, age in (({}, 0), ({"status.txt": self.STATUS, "rules.txt": self.loaded(10)}, 600),
+                           ({"status.txt": "", "rules.txt": ""}, 0)):
+            m = self.run_metrics(files, age)
+            self.assertEqual(m["ihr_host_audit_reading_ok"], "0", (files, age))
+            self.assertNotIn("ihr_host_audit_rule_keys", m)
+            self.assertNotIn("ihr_host_audit_enabled", m)
+
+    def test_alert_fires_below_the_rule_count(self):
+        import yaml
+        rules = yaml.safe_load((ROOT / "deploy/monitoring/prometheus/rules/host-audit.yml").read_text())
+        alerts = {r["alert"]: r for g in rules["groups"] for r in g["rules"]}
+        rule = alerts["HostAuditRulesMissing"]
+        self.assertEqual(rule["labels"]["severity"], "critical")
+        expr = " ".join(rule["expr"].split())
+        self.assertIn(f"ihr_host_audit_rule_keys < {len(self.rule_lines())}", expr)
+        self.assertIn("ihr_host_audit_enabled == 0", expr)
+        self.assertIn("ihr_host_audit_reading_ok == 0", expr)
+        self.assertNotIn("HostAuditSilent", alerts)   # no volume-based alert (Q-K139)
+
+    def test_bootstrap_marker_counts_only_from_root(self):
+        """Any log rule that uses the bootstrap's marker line must ask for uid 0 (S4): any account
+        can write a line tagged ihr-bootstrap."""
+        for path in sorted((ROOT / "deploy/logs/alerts").glob("*.yml")):
+            for chunk in re.split(r"(?m)^\s*- alert:", path.read_text())[1:]:
+                if "ihr-bootstrap" in chunk:
+                    self.assertIn("uid:=0", chunk, f"{path.name}: {chunk.splitlines()[0]}")
+
+    def test_our_scripts_never_run_nsenter(self):
+        """An nsenter record is then always a person's (design §5.4)."""
+        for base in ("scripts", "deploy"):
+            for path in (ROOT / base).rglob("*"):
+                if path.suffix not in (".sh", ".py") or path.name.startswith("test_"):
+                    continue
+                if path.name == "bootstrap.sh":
+                    # the rules function only names the tool's path (readlink -f), never runs it
+                    code = re.sub(r"^audit_rules\(\) \{.*?^\}$", "", BOOTSTRAP, flags=re.S | re.M)
+                    code = "\n".join(line for line in code.splitlines() if not line.lstrip().startswith("#"))
+                    self.assertNotIn("nsenter", code.replace('"nsenter"', ""), path)
+                    continue
+                self.assertNotIn("nsenter", path.read_text(errors="replace"), path.relative_to(ROOT))
+
+    def test_readme_section(self):
+        readme = (ROOT / "deploy/host/README.md").read_text()
+        self.assertIn("## Host audit (P1-T27c)", readme)
+        section = readme.split("## Host audit (P1-T27c)", 1)[1].split("\n## ", 1)[0]
+        for part in ("auditctl -l", "ausearch -k ihr-docker", "P1-T26", "HostAuditRulesMissing",
+                     "not recorded", "docker.sock"):
+            self.assertIn(part, section)

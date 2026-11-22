@@ -29,7 +29,7 @@ ssh <new-admin>@<address> sudo /usr/local/sbin/ihr-bootstrap --check
 
 # 5. Deploy the stack (from this machine, as the deploy user). deploy.sh refuses a host whose
 #    key is not already in known_hosts (step 1), whatever ~/.ssh/config says.
-scripts/deploy.sh --host ihr@<address>
+scripts/deploy.sh --host ihr@<address> --operator <you>
 ```
 
 After step 2 only `ihr` and the admin user can sign in over SSH (`AllowGroups ihr-ssh`). Any
@@ -79,6 +79,7 @@ a server is created, before this script exists (`infra/README.md`); there, re-ru
 | Swap | 2 GB `/swapfile` if the server has no swap | Headroom on an 8 GB server |
 | Kernel | `/etc/sysctl.d/60-indiehr.conf` (keys this kernel lacks, e.g. IPv6 ones under `ipv6.disable=1`, are skipped): no ICMP redirects or source routing, SYN cookies, `kptr_restrict`, `dmesg_restrict`, no unprivileged BPF, `swappiness 10` | Common hardening that leaves Docker's forwarding alone |
 | Directories | `/srv/indiehr` owned by `ihr`, mode 750 | Where `scripts/deploy.sh` puts the stack |
+| Host audit (P1-T27c) | `auditd` (pinned minimum version, not held); 10 rules in `/etc/audit/rules.d/60-indiehr.rules` (mode 640); `systemd-journald-audit.socket` enabled so journald collects the records; the metrics timer's root step reads `auditctl -s` and `auditctl -l` | Who ran docker, ctr, runc, nsenter or psql from a login session: below |
 | Host metrics (P1-T9a) | `/var/lib/indiehr/textfile` owned by `ihr` (755); `ihr-host-metrics.timer` every minute runs `ihr-host-metrics.service` as `ihr` (extra group `systemd-journal`, `NoNewPrivileges`): `scripts/staging.sh monitoring-textfile` writes container states, journal size, chrony's source, backup markers and client-key ages for node_exporter. Skipped until the first deploy; does nothing until `.env` has `IHR_MONITORING`. `--check`: units as managed, timer active, the file fresh once monitoring is on | No container gets the Docker socket (it would control the whole server); the host itself reads `docker inspect` and the cgroup files |
 
 **Chrony without editing Ubuntu's file.** Our sources live in `/etc/chrony/indiehr.conf`; a
@@ -103,6 +104,92 @@ running this script with the 14-day setting, or those older lines are deleted un
 **Not covered here:** IPv6 to containers (the stack's networks are IPv4 only, and without the
 userland proxy IPv6 does not reach them); journald sealing (`Seal=yes` needs a key kept
 off-server); a private SSH tunnel (may come with P1-T8d).
+
+## Host audit (P1-T27c)
+
+The operator record (`ihr-operator:` lines, P1-T27a) is written by `scripts/staging.sh`; an
+operator who goes around it with `docker` by hand leaves no such line. The kernel's audit records
+are the second witness (decision Q-K139, `docs/reviews/p1-t27/`): they come from the kernel, not
+from our scripts, and are shipped off the host like every journal line.
+
+**What is recorded.** Every `execve`/`execveat` (64-bit and 32-bit entry points) of
+`/usr/bin/docker`, `/usr/bin/ctr`, `/usr/bin/runc` (key `ihr-docker`), `/usr/bin/nsenter`
+(`ihr-nsenter`) and `/usr/bin/psql` (`ihr-psql`) by a process with a login uid of 1000 or more
+(`auid>=1000 auid!=unset`). The login uid is set at SSH login and survives `sudo`, so
+`sudo docker exec …` is recorded under the person who signed in, with the SSH session's `ses=`
+(the operator line records the same `ses=`, which joins the two). Our scripts never run
+`nsenter`, so any `ihr-nsenter` record is a person's (a static test keeps it so).
+
+**Paths are resolved at bootstrap.** An audit path rule binds to one inode and `execve` records the
+target, so a rule on a symbolic link would load, be counted and never match. `bootstrap.sh` writes each
+rule with `readlink -f` of the tool's path (on Debian and Ubuntu `/usr/bin/psql` is a link to
+postgresql-common's `pg_wrapper`; the rule then names that file). A tool installed later needs the
+script run again (`--check` compares the rules file with what it would write now). The live proof
+(P1-T26) runs each tool once from a login and finds its keyed record, `psql` first.
+
+**What is shipped.** journald collects the records (`systemd-journald-audit.socket`; Ubuntu 26.04
+ships it disabled, bootstrap enables it and restarts journald once). Fluent Bit keeps only the
+`SYSCALL` record of an `ihr-*` rule (`syscall success auid uid euid ses tty comm exe key`) and
+the same event's `EXECVE` record with its first four arguments shaped like the operator line's
+`args=`: option names kept (`-x`, `--name`), every value `<v>` (a short option with its value attached,
+`-pSECRET`, keeps its letter only: `-p<v>`), the rest counted (`more=N`). So
+`docker exec -it <container> psql -U postgres` is stored as
+`EXECVE argc=7 a0=docker a1=<v> a2=-i<v> a3=<v> more=3` (store: `source:=audit`, joined to its
+`SYSCALL` by `audit_id`). `PROCTITLE` (the whole command line), `PATH`, `CWD`, every other audit
+type (sudo's `USER_CMD`, `CONFIG_CHANGE`, AppArmor) and any record that does not parse are
+dropped (`deploy/logs/fluent-bit/redact.lua`, cases in `deploy/logs/tests/redaction-cases.json`).
+
+**What is not recorded** (stated limits):
+- Anything the stack itself starts (no login uid), including the commands a `docker exec` runs
+  inside a container: the `docker` call is the record, not what ran inside.
+- Use of the Docker API without these binaries (`curl --unix-socket /var/run/docker.sock`, a copy
+  of the `docker` binary elsewhere, a container with the socket mounted). A watch on
+  `docker.sock` is **left out**: whether it records socket connections at all is unproven
+  (assumption A5); it is tested on a real host in P1-T26 and added only if it records.
+- Root's other commands. A root shell opened from the admin user's SSH login keeps that user's
+  login uid, so its calls of these five tools are recorded; a process started without a login
+  uid (a timer, a service) is not. There is no rule for every root exec (Q-K139: too much volume
+  for what it adds).
+- The raw records stay on the host, root-only: `/var/log/audit/audit.log` (auditd's own rotation)
+  and the journal (14 days). Only the shaped copy leaves.
+
+**Tamper.** The rules are not locked (`-e 2` would also stop bootstrap's own reloads until a
+reboot). Instead the metrics timer's root step writes `auditctl -s` and `auditctl -l` to
+`/run/indiehr-audit/` every minute, `host-metrics.sh` counts the `ihr-*` rules, and
+**`HostAuditRulesMissing`** (critical) fires after 2 minutes with fewer than 10 rules, auditing
+off (`enabled 0`), or the reading failing (auditd removed). Each load by bootstrap writes
+`ihr-bootstrap: audit-rules=loaded keys=10` as root; a log rule that ever uses that marker must
+ask for `uid:=0` (any account can write a line tagged `ihr-bootstrap`; a static test enforces it).
+Removing auditd, rules or the socket needs root, so this is evidence against a careless or
+honest operator, not a barrier against a deliberate insider with root (design §1).
+
+**How to check** (as the admin user):
+
+```bash
+sudo auditctl -s                         # enabled 1 (not 2), a pid for auditd
+sudo auditctl -l | grep -c 'key=ihr-'    # 10
+sudo ausearch -k ihr-docker -i --start today          # who ran docker today (local, raw)
+journalctl _TRANSPORT=audit --since -10min            # the journal's copy (raw)
+sudo /usr/local/sbin/ihr-bootstrap --check            # rules file, loaded count, socket, canary
+```
+
+In the log store: `source:=audit audit_key:=ihr-docker`.
+
+**Live proof (waits for P1-T26, a host with sudo).** These files and the static tests
+(`scripts/test_bootstrap_static.py`, `scripts/check-logs.py`, the promtool tests) are built; the
+following needs a real Ubuntu 26.04 host:
+1. Run bootstrap; `--check` passes (auditd version, 10 rules loaded, socket active, canary).
+2. As a person: `docker ps`, `sudo docker exec <db container> true`, `nsenter --version`. Each
+   shows in `ausearch -k ihr-docker|ihr-nsenter` with that person's `auid` and `ses`, and in the
+   log store as one `SYSCALL` and one shaped `EXECVE` record; the stack's own processes add
+   none. Compare the real journald fields and record layout with the redaction cases (A6) and fix
+   the cases first if they differ.
+3. `sudo auditctl -W`/`-d` one rule, then `sudo auditctl -e 0`: `HostAuditRulesMissing` fires
+   within about 3 minutes; bootstrap restores the rules and logs the marker line.
+4. A5: with a temporary `-w /var/run/docker.sock -p rwa -k ihr-docker-sock` rule, call the API
+   with `curl --unix-socket`; add the watch to `audit_rules` only if it records the connection.
+5. The added journal and log-store volume per day (`scripts/staging.sh logs-volume`), recorded
+   here.
 
 ## Never locked out
 
@@ -138,7 +225,7 @@ scripts/deploy.sh --local-proof --build-only     # images first (RAM: before the
 scripts/local-vm.sh fetch && scripts/local-vm.sh up
 scripts/local-vm.sh bootstrap    # run 1, run 2 ("No changes."), --check
 scripts/local-vm.sh reboot       # --check again after a reboot
-scripts/deploy.sh --local-proof --no-build --allow-dirty   # stack + smoke checks inside the VM
+scripts/deploy.sh --local-proof --no-build --allow-dirty --operator <you>   # stack + smoke checks inside the VM
 scripts/local-vm.sh verify       # SSH rules, ufw + DOCKER-USER probes (with mutations), HTTPS from outside
 scripts/local-vm.sh destroy
 ```

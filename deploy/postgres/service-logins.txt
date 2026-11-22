@@ -1,0 +1,29 @@
+# The reviewed service logins (P1-T27a, design.md §4.4): the database sessions that are not an
+# operator's and so carry no "op:<session>:" application name. One per line, tab-separated:
+#   <container's compose service or name>	<role>	<application name, exact; - for none>	<who, why>
+# The log alert PrivilegedLoginUnrecorded (deploy/logs/alerts/operator.yml) leaves out exactly these
+# (service, role, application) triples; scripts/test_staging_operator.py checks the two agree.
+# Any other session that Postgres authorizes, and an op:<session> name whose session is not open,
+# alerts. The application name is chosen by the client: a deliberate insider can borrow one of
+# these (ADR-010, P1-T27 amendment); the alert catches mistakes and the careless path.
+# Built from the code (2026-11-22). The local proof (design.md §9.4 step 4) captures every
+# "connection authorized" line of a full local-proof, release and hospital-restore-drill run and
+# corrects this list; until then a missing line shows as a false alert, never as a silent one.
+db	ihr_app	gunicorn	the web app and the back-channel logout service (backend, backchannel)
+db	ihr_app	celery	the worker and beat (celery-worker, celery-beat)
+db	ihr_app	manage:ihr_db_role_check	each app container's pre-start role check
+db	ihr_app	manage:ihr_provision_worker	the staff worker (ihr_provision_worker --role staff)
+db	ihr_owner	manage:ihr_db_role_check	the start-up one-shot's role check (migrate)
+db	ihr_owner	manage:migrate_schemas	the start-up one-shot: shared migrations (migrate)
+db	ihr_owner	manage:ihr_create_tenant	the start-up one-shot: the public tenant (migrate)
+db	ihr_owner	manage:ihr_fleet_run	the start-up one-shot: check, roles, root, packs (migrate)
+db	ihr_owner	manage:ihr_provision_worker	the provisioner (ihr_provision_worker --role onboarding)
+db	ihr_audit_watch	ihr-audit-watch	the audit watch (P1-T21; settings/watch.py)
+db	ihr_dump	ihr-dumper	the nightly dumper (P1-T22a; deploy/dumps/dumper.py)
+db	ihr_monitor	-	postgres-exporter (pg_monitor only; it sets no application name)
+db	keycloak	PostgreSQL JDBC Driver	Keycloak's own database (the JDBC driver's default name)
+db	postgres	ihr-health	the db healthcheck (pg_isready, compose.yaml)
+db	postgres	pgBackRest [backup]	the backup service's scheduled backups (compose.backup.yaml)
+db	postgres	pgBackRest [check]	the backup service's hourly check
+db	postgres	pgBackRest [stanza-create]	the backup set-up (backup-init)
+ihr-restore-drill	ihr_owner	ihr-restore-drill	the monthly restore drill's Django checks, on the copy only (settings/drill.py)

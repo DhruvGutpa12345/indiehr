@@ -1132,5 +1132,578 @@
    "_SYSTEMD_UNIT": "docker.service"
   },
   "expect_msg": "ihr-records: hospital=alpha grant=123456789 user=9876543 reason=legal outcome=expired hour=00"
+ },
+ {
+  "name": "operator record: a start line is stored as written, a host line with its uid (P1-T27a)",
+  "record": {
+   "MESSAGE": "ihr-operator: session=0a1b2c3d4e5f event=start tier=data operator=alice command=manage:shell args=-c,<v> hospital=alpha ses=3 from=203.0.113.9 reason=\"INC-12 bed fix: ward 3/4 #77\"",
+   "_HOSTNAME": "srv1",
+   "PRIORITY": "5",
+   "SYSLOG_IDENTIFIER": "ihr-operator",
+   "_TRANSPORT": "syslog",
+   "_COMM": "logger",
+   "_UID": "1000",
+   "_PID": "4242",
+   "_CMDLINE": "logger -t ihr-operator --secret-flag Hunter2Cmdline"
+  },
+  "expect": {
+   "source": "host",
+   "service": "ihr-operator",
+   "uid": "1000",
+   "pid": "4242"
+  },
+  "expect_msg": "ihr-operator: session=0a1b2c3d4e5f event=start tier=data operator=alice command=manage:shell args=-c,<v> hospital=alpha ses=3 from=203.0.113.9 reason=\"INC-12 bed fix: ward 3/4 #77\"",
+  "forbid": [
+   "Hunter2Cmdline"
+  ]
+ },
+ {
+  "name": "operator record: a job start, the scope, end, refused and late lines pass unchanged",
+  "record": {
+   "MESSAGE": "ihr-operator: session=abcdef012345 event=start tier=job operator=dhruv.g command=release args=--now hospital=all ses=none from=local reason=\"job:release\"",
+   "_HOSTNAME": "srv1",
+   "PRIORITY": "5",
+   "SYSLOG_IDENTIFIER": "ihr-operator",
+   "_TRANSPORT": "syslog",
+   "_COMM": "logger",
+   "_UID": "1000",
+   "_PID": "4242",
+   "_CMDLINE": "logger -t ihr-operator --secret-flag Hunter2Cmdline"
+  },
+  "expect": {
+   "source": "host",
+   "service": "ihr-operator"
+  },
+  "expect_msg": "ihr-operator: session=abcdef012345 event=start tier=job operator=dhruv.g command=release args=--now hospital=all ses=none from=local reason=\"job:release\""
+ },
+ {
+  "name": "operator record: scope line",
+  "record": {
+   "MESSAGE": "ihr-operator: session=abcdef012345 event=scope hospital=all hospital_entry=opened:alpha,opened:beta,skipped:gamma:held",
+   "_HOSTNAME": "srv1",
+   "PRIORITY": "5",
+   "SYSLOG_IDENTIFIER": "ihr-operator",
+   "_TRANSPORT": "syslog",
+   "_COMM": "logger",
+   "_UID": "1000",
+   "_PID": "4242",
+   "_CMDLINE": "logger -t ihr-operator --secret-flag Hunter2Cmdline"
+  },
+  "expect_msg": "ihr-operator: session=abcdef012345 event=scope hospital=all hospital_entry=opened:alpha,opened:beta,skipped:gamma:held"
+ },
+ {
+  "name": "operator record: end line",
+  "record": {
+   "MESSAGE": "ihr-operator: session=abcdef012345 event=end outcome=failed rc=3 seconds=1234",
+   "_HOSTNAME": "srv1",
+   "PRIORITY": "5",
+   "SYSLOG_IDENTIFIER": "ihr-operator",
+   "_TRANSPORT": "syslog",
+   "_COMM": "logger",
+   "_UID": "1000",
+   "_PID": "4242",
+   "_CMDLINE": "logger -t ihr-operator --secret-flag Hunter2Cmdline"
+  },
+  "expect_msg": "ihr-operator: session=abcdef012345 event=end outcome=failed rc=3 seconds=1234"
+ },
+ {
+  "name": "operator record: refused line",
+  "record": {
+   "MESSAGE": "ihr-operator: event=refused why=shared-operator command=manage operator=ihr",
+   "_HOSTNAME": "srv1",
+   "PRIORITY": "5",
+   "SYSLOG_IDENTIFIER": "ihr-operator",
+   "_TRANSPORT": "syslog",
+   "_COMM": "logger",
+   "_UID": "1000",
+   "_PID": "4242",
+   "_CMDLINE": "logger -t ihr-operator --secret-flag Hunter2Cmdline"
+  },
+  "expect_msg": "ihr-operator: event=refused why=shared-operator command=manage operator=ihr"
+ },
+ {
+  "name": "operator record: a late line (break-glass) keeps its time",
+  "record": {
+   "MESSAGE": "ihr-operator: event=late at=2026-11-22T10:00:00+05:30 session=abcdef012345 was=start tier=job operator=alice command=rollback args=--restore hospital=none ses=4 from=local reason=\"break-glass: INC-9 journal full\"",
+   "_HOSTNAME": "srv1",
+   "PRIORITY": "5",
+   "SYSLOG_IDENTIFIER": "ihr-operator",
+   "_TRANSPORT": "syslog",
+   "_COMM": "logger",
+   "_UID": "1000",
+   "_PID": "4242",
+   "_CMDLINE": "logger -t ihr-operator --secret-flag Hunter2Cmdline"
+  },
+  "expect_msg": "ihr-operator: event=late at=2026-11-22T10:00:00+05:30 session=abcdef012345 was=start tier=job operator=alice command=rollback args=--restore hospital=none ses=4 from=local reason=\"break-glass: INC-9 journal full\""
+ },
+ {
+  "name": "operator record: a line staging.sh would refuse (a number and a token in the reason) is masked anyway",
+  "record": {
+   "MESSAGE": "ihr-operator: session=0a1b2c3d4e5f event=start tier=data operator=alice command=manage:shell args=-c,<v> hospital=alpha ses=3 from=local reason=\"call 9123456780 token=tk7Zq9 2345 6789 0123\"",
+   "_HOSTNAME": "srv1",
+   "PRIORITY": "5",
+   "SYSLOG_IDENTIFIER": "ihr-operator",
+   "_TRANSPORT": "syslog",
+   "_COMM": "logger",
+   "_UID": "1000",
+   "_PID": "4242",
+   "_CMDLINE": "logger -t ihr-operator --secret-flag Hunter2Cmdline"
+  },
+  "expect_msg": "ihr-operator: session=0a1b2c3d4e5f event=start tier=data operator=alice command=manage:shell args=-c,<v> hospital=alpha ses=3 from=local reason=\"call <phone> token=<redacted> <aadhaar>\"",
+  "forbid": [
+   "9123456780",
+   "tk7Zq9",
+   "2345 6789 0123"
+  ]
+ },
+ {
+  "name": "postgres: an operator session's authorization line is stored unchanged",
+  "record": {
+   "MESSAGE": "2026-11-22 04:30:00.123 UTC [57] LOG:  connection authorized: user=ihr_owner database=ihr application_name=op:0a1b2c3d4e5f:admin",
+   "_HOSTNAME": "srv1",
+   "PRIORITY": "6",
+   "_TRANSPORT": "journal",
+   "_COMM": "dockerd",
+   "_UID": "0",
+   "_SYSTEMD_UNIT": "docker.service",
+   "CONTAINER_NAME": "indiehr-staging-db-1",
+   "COM_DOCKER_COMPOSE_SERVICE": "db"
+  },
+  "expect": {
+   "source": "container",
+   "service": "db"
+  },
+  "expect_msg": "2026-11-22 04:30:00.123 UTC [57] LOG:  connection authorized: user=ihr_owner database=ihr application_name=op:0a1b2c3d4e5f:admin"
+ },
+ {
+  "name": "postgres: an e-mail address chosen as application name is masked",
+  "record": {
+   "MESSAGE": "2026-11-22 04:30:00.123 UTC [58] LOG:  connection authorized: user=postgres database=ihr application_name=ravi.k@example.in",
+   "_HOSTNAME": "srv1",
+   "PRIORITY": "6",
+   "_TRANSPORT": "journal",
+   "_COMM": "dockerd",
+   "_UID": "0",
+   "_SYSTEMD_UNIT": "docker.service",
+   "CONTAINER_NAME": "indiehr-staging-db-1",
+   "COM_DOCKER_COMPOSE_SERVICE": "db"
+  },
+  "expect_msg": "2026-11-22 04:30:00.123 UTC [58] LOG:  connection authorized: user=postgres database=ihr application_name=<email>",
+  "forbid": [
+   "ravi.k@example.in"
+  ]
+ },
+ {
+  "name": "postgres: a disconnection line is stored unchanged",
+  "record": {
+   "MESSAGE": "2026-11-22 04:30:05.456 UTC [57] LOG:  disconnection: session time: 0:00:05.333 user=ihr_owner database=ihr host=172.18.0.5 port=51234",
+   "_HOSTNAME": "srv1",
+   "PRIORITY": "6",
+   "_TRANSPORT": "journal",
+   "_COMM": "dockerd",
+   "_UID": "0",
+   "_SYSTEMD_UNIT": "docker.service",
+   "CONTAINER_NAME": "indiehr-staging-db-1",
+   "COM_DOCKER_COMPOSE_SERVICE": "db"
+  },
+  "expect_msg": "2026-11-22 04:30:05.456 UTC [57] LOG:  disconnection: session time: 0:00:05.333 user=ihr_owner database=ihr host=172.18.0.5 port=51234"
+ },
+ {
+  "name": "postgres: a host process writing a connection line with Docker's field names stays a host line",
+  "record": {
+   "MESSAGE": "2026-11-22 04:30:00.123 UTC [59] LOG:  connection authorized: user=postgres database=ihr application_name=pgBackRest [backup]",
+   "_HOSTNAME": "srv1",
+   "PRIORITY": "5",
+   "SYSLOG_IDENTIFIER": "postgres",
+   "_TRANSPORT": "syslog",
+   "_COMM": "postgres",
+   "_UID": "1000",
+   "_PID": "4242",
+   "_CMDLINE": "logger -t ihr-operator --secret-flag Hunter2Cmdline",
+   "CONTAINER_NAME": "indiehr-staging-db-1",
+   "COM_DOCKER_COMPOSE_SERVICE": "db"
+  },
+  "expect": {
+   "source": "host",
+   "service": "postgres",
+   "uid": "1000"
+  }
+ },
+ {
+  "name": "keycloak: an admin event that removes a user's credential keeps its path and client",
+  "record": {
+   "MESSAGE": "2026-11-22 10:00:00,000 INFO  [org.keycloak.events] (executor-thread-3) operationType=\"DELETE\", realmId=\"r1\", realmName=\"indiehr\", clientId=\"security-admin-console\", userId=\"u9\", ipAddress=\"10.203.0.9\", resourceType=\"USER\", resourcePath=\"users/6f1c2d3e-0000-4000-8000-000000000001/credentials/0b6c2d3e-0000-4000-8000-0000000000aa\"",
+   "_HOSTNAME": "srv1",
+   "PRIORITY": "6",
+   "_TRANSPORT": "journal",
+   "_COMM": "dockerd",
+   "_UID": "0",
+   "_SYSTEMD_UNIT": "docker.service",
+   "CONTAINER_NAME": "indiehr-staging-keycloak-1",
+   "COM_DOCKER_COMPOSE_SERVICE": "keycloak"
+  },
+  "expect": {
+   "kc_event": "DELETE",
+   "client_ip": "10.203.0.9",
+   "service": "keycloak"
+  },
+  "expect_msg": "2026-11-22 10:00:00,000 INFO  [org.keycloak.events] (executor-thread-3) operationType=\"DELETE\", realmId=\"r1\", realmName=\"indiehr\", clientId=\"security-admin-console\", userId=\"u9\", ipAddress=\"10.203.0.9\", resourceType=\"USER\", resourcePath=\"users/6f1c2d3e-0000-4000-8000-000000000001/credentials/0b6c2d3e-0000-4000-8000-0000000000aa\""
+ },
+ {
+  "name": "host audit (P1-T27c): a SYSCALL record of our rule keeps only the allow-listed fields",
+  "record": {
+   "_HOSTNAME": "srv1",
+   "_TRANSPORT": "audit",
+   "_SOURCE_REALTIME_TIMESTAMP": "1795000000123000",
+   "MESSAGE": "SYSCALL arch=c000003e syscall=59 success=yes exit=0 a0=55d5c1e2a3b0 a1=55d5c1e2a400 a2=55d5c1e2a4f8 a3=7ffd2a1b0c10 items=2 ppid=4100 pid=4242 auid=1000 uid=1000 gid=1000 euid=1000 suid=1000 fsuid=1000 egid=1000 sgid=1000 fsgid=1000 tty=pts0 ses=3 comm=\"psql\" exe=\"/usr/lib/postgresql/18/bin/psql\" subj=unconfined key=\"ihr-psql\"",
+   "_AUDIT_TYPE_NAME": "SYSCALL",
+   "_AUDIT_ID": "5001",
+   "_UID": "1000",
+   "_PID": "4242",
+   "_COMM": "psql",
+   "_AUDIT_FIELD_PPID": "4100",
+   "_CMDLINE": "psql -c SELECT * FROM emr_patient WHERE phone='9123400017'"
+  },
+  "expect": {
+   "source": "audit",
+   "service": "audit",
+   "audit_type": "SYSCALL",
+   "audit_key": "ihr-psql",
+   "audit_id": "5001"
+  },
+  "expect_msg": "SYSCALL syscall=59 success=yes auid=1000 uid=1000 euid=1000 ses=3 tty=pts0 comm=psql exe=/usr/lib/postgresql/18/bin/psql key=ihr-psql",
+  "forbid": [
+   "9123400017",
+   "emr_patient",
+   "55d5c1e2a3b0",
+   "ppid=",
+   "subj="
+  ]
+ },
+ {
+  "name": "host audit: its EXECVE keeps a0 to a3, flags as they are and every value <v> (SQL in hex never stored)",
+  "record": {
+   "_HOSTNAME": "srv1",
+   "_TRANSPORT": "audit",
+   "_SOURCE_REALTIME_TIMESTAMP": "1795000000123000",
+   "MESSAGE": "EXECVE argc=4 a0=\"psql\" a1=\"-c\" a2=53454C454354202A2046524F4D20656D725F70617469656E742057484552452070686F6E653D273938373635343332313027 a3=\"--no-psqlrc\"",
+   "_AUDIT_TYPE_NAME": "EXECVE",
+   "_AUDIT_ID": "5001",
+   "_AUDIT_FIELD_A2": "SELECT * FROM emr_patient WHERE phone='9123400017'"
+  },
+  "expect": {
+   "source": "audit",
+   "service": "audit",
+   "audit_type": "EXECVE",
+   "audit_key": "ihr-psql",
+   "audit_id": "5001"
+  },
+  "expect_msg": "EXECVE argc=4 a0=psql a1=-c a2=<v> a3=--no-psqlrc",
+  "forbid": [
+   "9123400017",
+   "emr_patient",
+   "FROM emr",
+   "53454C454354202A2046524F"
+  ]
+ },
+ {
+  "name": "host audit (P1-T27 review S5): a SYSCALL of docker, for the next case",
+  "record": {
+   "_HOSTNAME": "srv1",
+   "_TRANSPORT": "audit",
+   "_SOURCE_REALTIME_TIMESTAMP": "1795000000223000",
+   "MESSAGE": "SYSCALL arch=c000003e syscall=59 success=yes exit=0 items=2 ppid=4100 pid=4243 auid=1000 uid=1000 gid=1000 euid=1000 tty=pts0 ses=3 comm=\"docker\" exe=\"/usr/bin/docker\" key=\"ihr-docker\"",
+   "_AUDIT_TYPE_NAME": "SYSCALL",
+   "_AUDIT_ID": "5101",
+   "_UID": "1000",
+   "_PID": "4243",
+   "_COMM": "docker"
+  },
+  "expect": {
+   "source": "audit",
+   "service": "audit",
+   "audit_type": "SYSCALL",
+   "audit_key": "ihr-docker",
+   "audit_id": "5101"
+  },
+  "expect_msg": "SYSCALL syscall=59 success=yes auid=1000 uid=1000 euid=1000 ses=3 tty=pts0 comm=docker exe=/usr/bin/docker key=ihr-docker"
+ },
+ {
+  "name": "host audit (P1-T27 review S5): a short option with its value attached keeps its letter only, never the value",
+  "record": {
+   "_HOSTNAME": "srv1",
+   "_TRANSPORT": "audit",
+   "_SOURCE_REALTIME_TIMESTAMP": "1795000000223000",
+   "MESSAGE": "EXECVE argc=4 a0=\"docker\" a1=\"login\" a2=\"-pS3cretToken\" a3=\"-uregistryuser\"",
+   "_AUDIT_TYPE_NAME": "EXECVE",
+   "_AUDIT_ID": "5101"
+  },
+  "expect": {
+   "source": "audit",
+   "service": "audit",
+   "audit_type": "EXECVE",
+   "audit_key": "ihr-docker",
+   "audit_id": "5101"
+  },
+  "expect_msg": "EXECVE argc=4 a0=docker a1=<v> a2=-p<v> a3=-u<v>",
+  "forbid": [
+   "S3cretToken",
+   "registryuser"
+  ]
+ },
+ {
+  "name": "host audit: the same event's PROCTITLE (the whole command line, in hex) is dropped",
+  "record": {
+   "_HOSTNAME": "srv1",
+   "_TRANSPORT": "audit",
+   "_SOURCE_REALTIME_TIMESTAMP": "1795000000123000",
+   "MESSAGE": "PROCTITLE proctitle=7073716C002D630053454C454354002A0046524F4D00656D725F70617469656E740057484552450070686F6E653D273938373635343332313027",
+   "_AUDIT_TYPE_NAME": "PROCTITLE",
+   "_AUDIT_ID": "5001",
+   "_CMDLINE": "psql -c SELECT * FROM emr_patient WHERE phone='9123400017'"
+  },
+  "expect_dropped": true,
+  "forbid": [
+   "9123400017",
+   "7073716C002D630053454C45"
+  ]
+ },
+ {
+  "name": "host audit: the same event's PATH record is dropped",
+  "record": {
+   "_HOSTNAME": "srv1",
+   "_TRANSPORT": "audit",
+   "_SOURCE_REALTIME_TIMESTAMP": "1795000000123000",
+   "MESSAGE": "PATH item=0 name=\"/home/dhruv.case/secret-notes/psql\" inode=1234 dev=fd:00 mode=0100755 ouid=0 ogid=0 rdev=00:00 nametype=NORMAL",
+   "_AUDIT_TYPE_NAME": "PATH",
+   "_AUDIT_ID": "5001",
+   "_AUDIT_FIELD_NAME": "/home/dhruv.case/secret-notes/psql"
+  },
+  "expect_dropped": true,
+  "forbid": [
+   "dhruv.case",
+   "secret-notes"
+  ]
+ },
+ {
+  "name": "host audit: a CWD record is dropped",
+  "record": {
+   "_HOSTNAME": "srv1",
+   "_TRANSPORT": "audit",
+   "_SOURCE_REALTIME_TIMESTAMP": "1795000000123000",
+   "MESSAGE": "CWD cwd=\"/home/dhruv.case/cwd-private\"",
+   "_AUDIT_TYPE_NAME": "CWD",
+   "_AUDIT_ID": "5001"
+  },
+  "expect_dropped": true,
+  "forbid": [
+   "cwd-private"
+  ]
+ },
+ {
+  "name": "host audit: a docker SYSCALL (ses joins the operator's start line)",
+  "record": {
+   "_HOSTNAME": "srv1",
+   "_TRANSPORT": "audit",
+   "_SOURCE_REALTIME_TIMESTAMP": "1795000000123000",
+   "MESSAGE": "SYSCALL arch=c000003e syscall=322 success=yes exit=0 a0=ffffff9c a1=5600 a2=5610 a3=0 items=2 ppid=900 pid=901 auid=1001 uid=1001 gid=1001 euid=1001 suid=1001 fsuid=1001 egid=1001 sgid=1001 fsgid=1001 tty=pts1 ses=7 comm=\"docker\" exe=\"/usr/bin/docker\" subj=unconfined key=\"ihr-docker\"",
+   "_AUDIT_TYPE_NAME": "SYSCALL",
+   "_AUDIT_ID": "5002"
+  },
+  "expect": {
+   "source": "audit",
+   "audit_type": "SYSCALL",
+   "audit_key": "ihr-docker"
+  },
+  "expect_msg": "SYSCALL syscall=322 success=yes auid=1001 uid=1001 euid=1001 ses=7 tty=pts1 comm=docker exe=/usr/bin/docker key=ihr-docker"
+ },
+ {
+  "name": "host audit: docker exec into the database: a0 named, subcommand and container are values, the rest counted",
+  "record": {
+   "_HOSTNAME": "srv1",
+   "_TRANSPORT": "audit",
+   "_SOURCE_REALTIME_TIMESTAMP": "1795000000123000",
+   "MESSAGE": "EXECVE argc=7 a0=\"/usr/bin/docker\" a1=\"exec\" a2=\"-it\" a3=\"ihr-case-db-x7\" a4=\"psql\" a5=\"-U\" a6=\"postgres\"",
+   "_AUDIT_TYPE_NAME": "EXECVE",
+   "_AUDIT_ID": "5002"
+  },
+  "expect": {
+   "audit_type": "EXECVE",
+   "audit_key": "ihr-docker",
+   "audit_id": "5002"
+  },
+  "expect_msg": "EXECVE argc=7 a0=docker a1=<v> a2=-i<v> a3=<v> more=3",
+  "forbid": [
+   "ihr-case-db-x7",
+   "a6=",
+   "a4="
+  ]
+ },
+ {
+  "name": "host audit: an nsenter SYSCALL whose comm came hex-encoded (a space in the name) gives comm=<v>",
+  "record": {
+   "_HOSTNAME": "srv1",
+   "_TRANSPORT": "audit",
+   "_SOURCE_REALTIME_TIMESTAMP": "1795000000123000",
+   "MESSAGE": "SYSCALL arch=c000003e syscall=59 success=yes exit=0 items=2 ppid=1 pid=2 auid=1000 uid=0 gid=0 euid=0 suid=0 fsuid=0 egid=0 sgid=0 fsgid=0 tty=pts0 ses=3 comm=707320716C exe=\"/usr/bin/nsenter\" subj=unconfined key=\"ihr-nsenter\"",
+   "_AUDIT_TYPE_NAME": "SYSCALL",
+   "_AUDIT_ID": "5003"
+  },
+  "expect": {
+   "audit_type": "SYSCALL",
+   "audit_key": "ihr-nsenter"
+  },
+  "expect_msg": "SYSCALL syscall=59 success=yes auid=1000 uid=0 euid=0 ses=3 tty=pts0 comm=<v> exe=/usr/bin/nsenter key=ihr-nsenter"
+ },
+ {
+  "name": "host audit: an nsenter EXECVE with an option value and a split long argument",
+  "record": {
+   "_HOSTNAME": "srv1",
+   "_TRANSPORT": "audit",
+   "_SOURCE_REALTIME_TIMESTAMP": "1795000000123000",
+   "MESSAGE": "EXECVE argc=4 a0=\"nsenter\" a1=\"--target=4242\" a2_len=9000 a2[0]=39383736353433323130203938373635343332313020393837363534333231302039383736353433323130203938373635343332313020393837363534333231302039383736353433323130203938373635343332313020393837363534333231302039383736353433323130203938373635343332313020393837363534333231302039383736353433323130203938373635343332313020393837363534333231302039383736353433323130203938373635343332313020393837363534333231302039383736353433323130203938373635343332313020 a3=\"9123400017\"",
+   "_AUDIT_TYPE_NAME": "EXECVE",
+   "_AUDIT_ID": "5003"
+  },
+  "expect": {
+   "audit_type": "EXECVE",
+   "audit_key": "ihr-nsenter"
+  },
+  "expect_msg": "EXECVE argc=4 a0=nsenter a1=--target=<v> a2=<v> a3=<v>",
+  "forbid": [
+   "9123400017",
+   "--target=4242",
+   "39383736353433323130"
+  ]
+ },
+ {
+  "name": "host audit: a SYSCALL of another rule (not an ihr- key) is dropped",
+  "record": {
+   "_HOSTNAME": "srv1",
+   "_TRANSPORT": "audit",
+   "_SOURCE_REALTIME_TIMESTAMP": "1795000000123000",
+   "MESSAGE": "SYSCALL arch=c000003e syscall=59 success=yes exit=0 items=2 ppid=1 pid=2 auid=1000 uid=1000 gid=1000 euid=1000 suid=1000 fsuid=1000 egid=1000 sgid=1000 fsgid=1000 tty=pts0 ses=3 comm=\"cat\" exe=\"/usr/bin/cat\" key=\"other-team\"",
+   "_AUDIT_TYPE_NAME": "SYSCALL",
+   "_AUDIT_ID": "5004"
+  },
+  "expect_dropped": true,
+  "forbid": [
+   "other-team"
+  ]
+ },
+ {
+  "name": "host audit: its EXECVE is dropped too (only events of our keys are kept)",
+  "record": {
+   "_HOSTNAME": "srv1",
+   "_TRANSPORT": "audit",
+   "_SOURCE_REALTIME_TIMESTAMP": "1795000000123000",
+   "MESSAGE": "EXECVE argc=2 a0=\"cat\" a1=\"/srv/other-team-file\"",
+   "_AUDIT_TYPE_NAME": "EXECVE",
+   "_AUDIT_ID": "5004"
+  },
+  "expect_dropped": true,
+  "forbid": [
+   "other-team-file"
+  ]
+ },
+ {
+  "name": "host audit: an EXECVE with no SYSCALL of ours before it is dropped",
+  "record": {
+   "_HOSTNAME": "srv1",
+   "_TRANSPORT": "audit",
+   "_SOURCE_REALTIME_TIMESTAMP": "1795000000123000",
+   "MESSAGE": "EXECVE argc=2 a0=\"psql\" a1=\"orphan-execve-value\"",
+   "_AUDIT_TYPE_NAME": "EXECVE",
+   "_AUDIT_ID": "5999"
+  },
+  "expect_dropped": true,
+  "forbid": [
+   "orphan-execve-value"
+  ]
+ },
+ {
+  "name": "host audit: a SYSCALL without a key, or with several keys (hex), is dropped",
+  "record": {
+   "_HOSTNAME": "srv1",
+   "_TRANSPORT": "audit",
+   "_SOURCE_REALTIME_TIMESTAMP": "1795000000123000",
+   "MESSAGE": "SYSCALL arch=c000003e syscall=59 success=yes exit=0 items=2 ppid=1 pid=2 auid=1000 uid=1000 tty=pts0 ses=3 comm=\"psql\" exe=\"/usr/bin/psql\" key=6968722D7073716C0173706172652D6B65792D74657874",
+   "_AUDIT_TYPE_NAME": "SYSCALL",
+   "_AUDIT_ID": "5005"
+  },
+  "expect_dropped": true,
+  "forbid": [
+   "spare-key-text"
+  ]
+ },
+ {
+  "name": "host audit: sudo's USER_CMD record (another audit type) is dropped",
+  "record": {
+   "_HOSTNAME": "srv1",
+   "_TRANSPORT": "audit",
+   "_SOURCE_REALTIME_TIMESTAMP": "1795000000123000",
+   "MESSAGE": "USER_CMD pid=77 uid=1000 auid=1000 ses=3 subj=unconfined msg='cwd=\"/home/x\" cmd=636174202F6574632F696E64696568722F7365637265742D636D64 exe=\"/usr/bin/sudo\" terminal=pts/0 res=success'",
+   "_AUDIT_TYPE_NAME": "USER_CMD",
+   "_AUDIT_ID": "5006"
+  },
+  "expect_dropped": true,
+  "forbid": [
+   "636174202F6574632F696E64",
+   "secret-cmd"
+  ]
+ },
+ {
+  "name": "host audit: a CONFIG_CHANGE record is dropped",
+  "record": {
+   "_HOSTNAME": "srv1",
+   "_TRANSPORT": "audit",
+   "_SOURCE_REALTIME_TIMESTAMP": "1795000000123000",
+   "MESSAGE": "CONFIG_CHANGE auid=1000 ses=3 subj=unconfined op=remove_rule key=\"ihr-docker\" list=4 res=1",
+   "_AUDIT_TYPE_NAME": "CONFIG_CHANGE",
+   "_AUDIT_ID": "5007"
+  },
+  "expect_dropped": true,
+  "forbid": [
+   "remove_rule"
+  ]
+ },
+ {
+  "name": "host audit: a host process naming itself audit with an audit-like text stays a host line",
+  "record": {
+   "MESSAGE": "SYSCALL syscall=59 success=yes auid=1000 uid=1000 euid=0 ses=3 tty=pts0 comm=docker exe=/usr/bin/docker key=\"ihr-docker\"",
+   "_HOSTNAME": "srv1",
+   "PRIORITY": "6",
+   "SYSLOG_IDENTIFIER": "audit",
+   "_TRANSPORT": "syslog",
+   "_COMM": "logger",
+   "_UID": "1000",
+   "_PID": "99",
+   "_AUDIT_TYPE_NAME": "SYSCALL",
+   "_AUDIT_ID": "5008"
+  },
+  "expect": {
+   "source": "host",
+   "service": "audit",
+   "uid": "1000"
+  }
+ },
+ {
+  "name": "host audit: the bootstrap's marker line is a host line with its uid (only uid 0 counts; P1-T27c S4)",
+  "record": {
+   "MESSAGE": "audit-rules=loaded keys=10",
+   "_HOSTNAME": "srv1",
+   "PRIORITY": "5",
+   "SYSLOG_IDENTIFIER": "ihr-bootstrap",
+   "_TRANSPORT": "syslog",
+   "_COMM": "logger",
+   "_UID": "0",
+   "_PID": "321"
+  },
+  "expect": {
+   "source": "host",
+   "service": "ihr-bootstrap",
+   "uid": "0"
+  },
+  "expect_msg": "audit-rules=loaded keys=10"
  }
 ]

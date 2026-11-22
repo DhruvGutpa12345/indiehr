@@ -1,8 +1,10 @@
 # Postgres server settings every IndieHR database container carries (P1-T23, Q-K94).
 # One name=value per line. scripts/test_staging_postgres.py checks that the staging db command
-# (deploy/staging/compose.yaml), the dev override (deploy/dev/care-local.override.yaml), CI's
-# override (deploy/ci/tenancy.override.yaml) and the two recovery starts in scripts/staging.sh
-# all carry each line. Per environment, and so not listed here: shared_buffers, max_connections.
+# (deploy/staging/compose.yaml) and the two recovery starts in scripts/staging.sh carry each line;
+# the dev override (deploy/dev/care-local.override.yaml) and CI's (deploy/ci/tenancy.override.yaml)
+# carry the lines above the "staging and recovery only" marker. db_server_check (scripts/staging.sh)
+# compares each with the running server. Per environment, and so not listed here: shared_buffers,
+# max_connections.
 #
 # 64 (the default) ran out in a transaction that read a few hospitals (P1-T1c, scale-results §6);
 # one hospital's restore load holds 3,794 locks for 1,101 relations (P1-T22b). The table is
@@ -12,3 +14,17 @@
 max_locks_per_transaction=256
 # Planner hint only (no memory is taken); the 8 GB server's page cache is about 3 GB
 effective_cache_size=3GB
+# ---- staging and recovery only: our Postgres 18 image. Dev and CI run upstream's postgres:17
+# (apps/backend/docker-compose.yaml), where log_connections is a boolean and `authorization` stops
+# the server from starting (review O1); scripts/test_staging_postgres.py keeps these out of them.
+# Who opened a session (P1-T27a, PR1-3, Q-K137): one line per authorized session (its user,
+# database and application name) and one at its end. Server-wide: Postgres cannot log one role
+# only. Pinned with -c on the command line, which outranks postgresql.auto.conf: ALTER SYSTEM cannot
+# switch them off short of a restart with another command (and the host timer alerts on any
+# setting stored there: PostgresSettingOverridden). The disconnection line is kept but never
+# relied on (a client may switch it off for its own session).
+log_connections=authorization
+log_disconnections=on
+# ...and the lines must reach the container's output: no level that hides them, no other place
+log_min_messages=warning
+log_destination=stderr

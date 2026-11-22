@@ -22,7 +22,10 @@ from config.settings.base import *  # noqa: E402, F403
 from config.settings.base import env  # noqa: E402
 from django.core.exceptions import ImproperlyConfigured  # noqa: E402
 
-from ihr_platform.settings.tenancy import apply_tenancy  # noqa: E402
+from ihr_platform.settings.tenancy import (  # noqa: E402
+    apply_tenancy,
+    operator_appname,
+)
 
 # What would reach the live system, if it came in through the environment
 # (setting names only, as one string: a quoted list of *_SECRET names reads as keys to a scanner)
@@ -68,7 +71,7 @@ DATABASES = {"default": env.db("DATABASE_URL", default="")}
 DATABASES["default"]["ATOMIC_REQUESTS"] = False
 DATABASES["default"]["CONN_MAX_AGE"] = 0
 DATABASES["default"].setdefault("OPTIONS", {}).update(
-    {"application_name": "ihr-restore-drill"}
+    {"application_name": operator_appname("ihr-restore-drill")}
 )
 
 apply_tenancy(globals())

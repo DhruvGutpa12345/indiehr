@@ -51,7 +51,8 @@ KEY_LABEL = {"PackApplyFailed": "hospital", "PackFacilityDeferred": "hospital", 
              "DumpHospitalFailed": "hospital", "DumpHospitalHeld": "hospital",
              "HospitalRestoreFailed": "hospital", "ParkedSchemaOverdue": "schema",
              "MrdRecordsRefused": "hospital", "MrdRecordsVolume": "hospital", "MrdRecordsOffHours": "hospital",
-             "StaffResetRefused": "hospital", "HospitalRootProblem": "hospital"}
+             "StaffResetRefused": "hospital", "HospitalRootProblem": "hospital",
+             "PrivilegedLoginUnrecorded": "app", "OperatorSessionRefused": "why"}
 
 
 def check(ok, what):
@@ -95,7 +96,16 @@ def run_fluent_bit(work, records, name):
 
 
 def redaction(out, cases):
-    for c, o in zip(cases, out):
+    # A case marked "expect_dropped" must leave no record (host audit types we never ship,
+    # P1-T27c): the others line up with the output one to one, so a dropped case that came
+    # through, or a kept one that vanished, fails the count in main() and the messages here
+    kept = [c for c in cases if not c.get("expect_dropped")]
+    blob = json.dumps(out)
+    for c in cases:
+        if c.get("expect_dropped"):
+            bad = ["forbidden %r present" % f for f in c.get("forbid", []) if f in blob]
+            check(not bad, "redaction: " + c["name"] + "".join("\n      " + b for b in bad))
+    for c, o in zip(kept, out):
         bad = []
         if "expect_msg" in c and o.get("msg") != c["expect_msg"]:
             bad.append("message\n        got:  %s\n        want: %s" % (o.get("msg"), c["expect_msg"]))
@@ -130,7 +140,8 @@ def main():
             out = run_fluent_bit(work, [c["record"] for c in cases] + fixtures, names[2])
         except subprocess.TimeoutExpired as e:
             sys.exit("Fluent Bit did not finish within 120 s:\n%s" % ((e.stderr or b"")[-2000:] if isinstance(e.stderr, bytes) else (e.stderr or "")[-2000:]))
-        check(len(out) == len(cases) + len(fixtures), "every line came through (%d of %d)" % (len(out), len(cases) + len(fixtures)))
+        kept = len([c for c in cases if not c.get("expect_dropped")])
+        check(len(out) == kept + len(fixtures), "every line came through, the dropped cases did not (%d of %d)" % (len(out), kept + len(fixtures)))
         redaction(out, cases)
 
         print("== vmalert's rule files (%s)" % VMA)
@@ -158,7 +169,7 @@ def main():
         forbidden = sorted({f for c in cases for f in c.get("forbid", []) if f in stored})
         check(not forbidden, "nothing forbidden in the store" + (": " + ", ".join(forbidden) if forbidden else ""))
         streams = {r.get("_stream") for r in rows}
-        check(all(s and re.fullmatch(r'\{host="[^"]*",service="[^"]*",source="(container|host)"\}', s) for s in streams),
+        check(all(s and re.fullmatch(r'\{host="[^"]*",service="[^"]*",source="(container|host|audit)"\}', s) for s in streams),
               "streams are host, service and source only (%d streams)" % len(streams))
 
         rules = os.path.join(work, "rules")

@@ -173,7 +173,7 @@ tests:
       - eval_time: 2m
         alertname: JournalSuppressed
         exp_alerts:
-          - exp_labels: {severity: warning, instance: n}
+          - exp_labels: {severity: critical, instance: n}
             exp_annotations:
               summary: "journald suppressed log lines in the last 15 minutes (rate limit)"
 

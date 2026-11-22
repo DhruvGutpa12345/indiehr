@@ -36,6 +36,17 @@ DEPLOY_SH = (ROOT / "scripts" / "deploy.sh").read_text()
 SHA = "a919b17b7755e7389f31e5a59c9cb689f6410a5a"
 
 
+# The operator record's wrappers (P1-T27a), as plain compose and docker calls, for the tests
+# that run single functions with compose and docker faked (their own tests:
+# scripts/test_staging_operator.py)
+WRAPPER_STUBS = (
+    'admin_run() { compose --profile admin run --rm --no-deps -T "$@"; }\n'
+    'audit_supersede_run() { compose --profile admin run --rm --no-deps -T "$@"; }\n'
+    'migrate_run() { compose run --rm --no-deps -T "$@"; }\n'
+    'app_exec() { compose exec -T "$@"; }\n'
+)
+
+
 def func(name):
     m = re.search(r"^%s\(\) \{(.*?)^\}" % re.escape(name), STAGING_SH, re.S | re.M)
     assert m, name
@@ -359,7 +370,7 @@ class ReleaseScript(unittest.TestCase):
             "REL_STAGE=2\n",
             'release_note --release via=release migrations=started "${carry[@]}"',
             "migrate_schemas --shared",
-            "run --rm --no-deps -T migrate python manage.py ihr_fleet_run migrate check roles root packs",
+            "migrate_run migrate python manage.py ihr_fleet_run migrate check roles root packs",
             "\n  up\n",
             "rel_workers_marker clear",
             "smoke || smoke_rc=$?",
@@ -402,17 +413,17 @@ class ReleaseScript(unittest.TestCase):
         # image in the owner's migrate container, P1-T19b)
         dispatch = STAGING_SH[STAGING_SH.index("  fleet)\n"):STAGING_SH.index("  release) release")]
         self.assertIn('"${2:-}" == window', dispatch)
-        self.assertIn('old_manage ihr_fleet_run "${@:2}"', dispatch)
+        self.assertIn('old_manage ihr_fleet_run "${fleet_args[@]}"', dispatch)
         old = func("old_manage")
         self.assertIn('docker tag "$(running_backend_id)" "$repo"', old)
-        self.assertIn("compose exec -T backend python manage.py", old)
+        self.assertIn("app_exec backend python manage.py", old)
 
     def test_seal_only_inside_the_window(self):
         """O7: inside the window only a seal and one fingerprint (capped), by the outgoing build
         with the worker's add-only key; the full check (every chain and fingerprint) runs before
         the hold, in the running backend, capped too."""
         seal = func("rel_seal")
-        self.assertIn('IHR_BACKEND_IMAGE="$repo" compose run --rm --no-deps -T', seal)
+        self.assertIn('IHR_BACKEND_IMAGE="$repo" migrate_run', seal)
         self.assertIn("celery-worker", seal)  # the add-only key lives there (compose.yaml)
         self.assertIn('timeout "$REL_SEAL_SECONDS" python manage.py shell -c "$REL_SEAL_PY"', seal)
         self.assertNotIn("ihr_audit_verify", seal)
@@ -425,7 +436,7 @@ class ReleaseScript(unittest.TestCase):
         self.assertNotIn("load_all", py)
         compile(py, "REL_SEAL_PY", "exec")
         check = func("rel_audit_check")
-        self.assertIn('compose exec -T -e IHR_DB_LIMITS=worker backend timeout "$REL_AUDIT_SECONDS" python manage.py ihr_audit_verify --all', check)
+        self.assertIn('app_exec -e IHR_DB_LIMITS=worker backend timeout "$REL_AUDIT_SECONDS" python manage.py ihr_audit_verify --all', check)
         self.assertNotIn("--seal", check)
 
     def test_workers_stopped_by_the_window_are_not_paged(self):
@@ -667,7 +678,7 @@ class DisasterScript(unittest.TestCase):
         stub = func("supersede_stub")
         # state at the stub step (readiness C2-5), the stub with no database, events key only
         self.assertLess(stub.index('> "$dir/state"'), stub.index("ihr_audit_supersede stub"))
-        self.assertIn("compose run --rm --no-deps -T", stub)
+        self.assertIn("migrate_run", stub)
         self.assertIn("supersede_keys --events-only", stub)
         self.assertIn('rm -rf "$dir"; die "the stub plan could not be written', stub)
         self.assertIn("sup_repo_pick", stub)
@@ -737,7 +748,7 @@ class DisasterScript(unittest.TestCase):
             'die() { echo "DIE: $*" >&2; exit 1; }\n'
             "docker() { echo CALLED-docker; }\ncompose() { echo CALLED-compose; }\n"
             "env_get() { :; }\nimage_id() { echo img; }\nrepo_of() { echo repo; }\n"
-            "supersede_keys() { sup_envs=(); }\n"
+            "supersede_keys() { sup_envs=(); }\n" + WRAPPER_STUBS
         )
         return subprocess.run(["bash", "-c", prelude + defs + "\n" + script], capture_output=True, text=True,
                               check=False)
@@ -824,7 +835,7 @@ class DisasterScript(unittest.TestCase):
         """Live proof: status ran the export's build after a load with a fixed --image."""
         cmd = func("audit_supersede_cmd")
         self.assertLess(cmd.index('image="$(sup_get "$id" load_image)"'), cmd.index('docker tag "$image"'))
-        self.assertIn("audit-supersede export $pend", STAGING_SH)
+        self.assertIn('audit-supersede --operator <you> --reason \\"<ticket>\\" export $pend', STAGING_SH)
 
     def test_the_local_tar_goes_after_a_verified_load_unless_it_holds_more(self):
         load = func("supersede_load")
@@ -877,7 +888,7 @@ class DisasterReviewScript(unittest.TestCase):
         pre = (
             "set -u\n"
             'die() { echo "DIE: $*" >&2; exit 1; }\n'
-            + prelude
+            + WRAPPER_STUBS + prelude
         )
         return subprocess.run(["bash", "-c", pre + defs + "\n" + script], capture_output=True, text=True, check=False)
 
@@ -906,7 +917,8 @@ class DisasterReviewScript(unittest.TestCase):
         self.assertIn('rel_level_guard "$(image_id "$new_ref")"', rel)
         self.assertLess(rel.index("rel_level_guard"), rel.index("ihr_fleet_run hold"))
         self.assertIn("level-guard) rel_level_guard", STAGING_SH)
-        self.assertLess(DEPLOY_SH.index("scripts/staging.sh level-guard"), DEPLOY_SH.index("scripts/staging.sh release-note >/dev/null && scripts/staging.sh up"))
+        self.assertLess(DEPLOY_SH.index("scripts/staging.sh level-guard"),
+                        DEPLOY_SH.index("scripts/staging.sh release-note >/dev/null \\\n    && IHR_OPERATOR=$OPERATOR scripts/staging.sh up"))
         guard = func("rel_level_guard")
         self.assertIn('tool="$(rel_level_tool)"', guard)
         self.assertNotIn("running_backend_id", guard)  # it no longer skips for an older running build
@@ -1085,7 +1097,7 @@ class DeployScript(unittest.TestCase):
         """O2: decided before anything is sent; a plain start only without migrations."""
         self.assertLess(DEPLOY_SH.index("needs-release"), DEPLOY_SH.index('ship_image "$BACKEND"'))
         self.assertIn("deploy with --release", DEPLOY_SH)
-        self.assertIn("scripts/staging.sh release --operator", DEPLOY_SH)
+        self.assertIn("IHR_OPERATOR=$OPERATOR scripts/staging.sh release", DEPLOY_SH)
 
     def test_stack_archive_kept_and_clean(self):
         self.assertIn("stack-$TAG.tgz", DEPLOY_SH)
@@ -1114,27 +1126,24 @@ class DeployScript(unittest.TestCase):
             self.assertEqual(stat.S_IMODE(kept.parent.stat().st_mode), 0o700)
 
     def test_operator_name(self):
-        """O1: the name deploy.sh sends is never empty (the hyphen last in tr's set)."""
-        m = re.search(r'^  op="(\$\(id -un \| tr .*?\))"$', DEPLOY_SH, re.M)
-        self.assertTrue(m)
-        for user, want in (("ihr", "ihr"), ("dhruv.g-1@x", "dhruv.g-1@x"), ("we!rd user", "we-rd-user")):
-            out = subprocess.run(["bash", "-c", f"set -euo pipefail\nid() {{ echo '{user}'; }}\nop=\"{m.group(1)}\"\necho \"$op\""],
-                                 capture_output=True, text=True)
-            self.assertEqual((out.returncode, out.stdout.strip()), (0, want), out.stderr)
-        self.assertIn('[[ "$op" =~ ^[A-Za-z0-9._@-]{1,64}$ ]] || die', DEPLOY_SH)
+        """O1, then P1-T27a (Q-K134): the name deploy.sh sends is a person's, given (--operator or
+        IHR_OPERATOR), never a default from the login and never a shared account; staging.sh's rule."""
+        self.assertNotIn("id -un", DEPLOY_SH)
+        self.assertIn('[[ "$OPERATOR" =~ ^[a-z][a-z0-9.-]{1,31}$ ]]', DEPLOY_SH)
+        self.assertIn("case \"$OPERATOR\" in ihr|root|admin|postgres)", DEPLOY_SH)
 
     def test_release_detached_on_the_server(self):
         """O1: a dropped SSH connection never stops a release half-way: setsid nohup, output
         and exit status kept, followed until it ends; the release itself not under umask 077."""
         part = DEPLOY_SH[DEPLOY_SH.index("elif ((RELEASE)); then"):]
         part = part[:part.index("\nelse\n")]
-        self.assertIn("setsid nohup sh -c 'scripts/staging.sh release --operator $op", part)
+        self.assertIn("setsid nohup sh -c 'IHR_OPERATOR=$OPERATOR scripts/staging.sh release", part)
         self.assertIn("< /dev/null &", part)
         self.assertIn("exit \\$(cat $rel_out.rc)", part)
         self.assertNotIn("&& umask 077 &&", part)
 
     def test_logged_after_smoke_and_no_blind_prune(self):
-        self.assertIn("scripts/staging.sh smoke && scripts/staging.sh release-record", DEPLOY_SH)
+        self.assertIn("IHR_OPERATOR=$OPERATOR scripts/staging.sh smoke && IHR_OPERATOR=$OPERATOR scripts/staging.sh release-record", DEPLOY_SH)
         self.assertNotIn('remote "docker image prune', DEPLOY_SH)
         self.assertIn("--build-arg \"APP_VERSION=", DEPLOY_SH)
 
@@ -1169,7 +1178,12 @@ FAKE_DOCKER = textwrap.dedent("""\
         if ref.startswith("sha256:"):
             return ref if ref in images or ref == staging else None
         return staging
+    if a[:1] == ["compose"] and env("FAKE_COMPOSE_OK") and "ihr_operator_open" not in a:
+        sys.exit(0)  # every compose call succeeds: a rollback runs on into its nested steps
     if a[:1] == ["compose"]:
+        if "ihr_operator_open" in a:  # the operator session's hospital entries (P1-T27b's command)
+            print("opened=- skipped=-")
+            sys.exit(0)
         if "ps" in a:
             if env("FAKE_PS_FAILS"):
                 sys.stderr.write("cannot connect to the Docker daemon\\n")
@@ -1294,7 +1308,13 @@ class EndToEnd(unittest.TestCase):
             dk = bindir / "docker"
             dk.write_text(FAKE_DOCKER)
             dk.chmod(dk.stat().st_mode | stat.S_IXUSR)
+            # The operator record (P1-T27a): a session needs an operator; its lines go to a file here
+            lg = bindir / "logger"
+            lg.write_text('#!/bin/sh\n[ -z "$FAKE_LOGGER_FAIL" ] || exit 1\n'
+                          'for a; do last="$a"; done; echo "$last" >> "$FAKE_JOURNAL"\n')
+            lg.chmod(0o755)
             env = {**os.environ, "PATH": f"{bindir}:{os.environ['PATH']}", "IHR_STAGING_DIR": str(d),
+                   "IHR_OPERATOR": "tester", "FAKE_JOURNAL": str(d / "journal"),
                    "FAKE_LOG": str(d / "calls"), "FAKE_SHA": SHA, "FAKE_STAGING_ID": CURRENT,
                    "FAKE_RUNNING": running, "FAKE_RUNNING_IMAGE": OLD, "FAKE_FPS": f"{fp(1)} {fp(2)}",
                    "FAKE_ATTEMPT": str(d / "releases" / "attempt"), "FAKE_STARTED": str(d / "started"),
@@ -1302,12 +1322,22 @@ class EndToEnd(unittest.TestCase):
             out = subprocess.run(["bash", str(ROOT / "scripts" / "staging.sh"), *args], env=env,
                                  capture_output=True, text=True, timeout=60, stdin=subprocess.DEVNULL)
             calls = (d / "calls").read_text() if (d / "calls").exists() else ""
+            # The operator session's values on every one-off and exec (P1-T27a; checked in
+            # scripts/test_staging_operator.py) are left out of the calls compared here
+            calls = re.sub(r" -e (?:IHR_OPERATOR[A-Z_]*|PGAPPNAME)=\S+", "", calls)
+            self.operator_open = [ln for ln in calls.splitlines() if " ihr_operator_open " in ln]
+            calls = "".join(ln + "\n" for ln in calls.splitlines() if " ihr_operator_open " not in ln)
+            journal, pending = d / "journal", d / "operator-pending.log"
+            self.journal = journal.read_text().splitlines() if journal.exists() else []
+            self.pending = pending.read_text().splitlines() if pending.exists() else []
             att = d / "releases" / "attempt"
             self.after = {"attempt": att.read_text() if att.exists() else None,
                           "log": (d / "releases" / "releases.log").read_text()}
             return out, calls
 
     def assertNothingChanged(self, calls):
+        # (the operator session's hospital entries are written by their own one-off, P1-T27a:
+        # not a change to the stack; left out of `calls` by run_staging)
         self.assertNotRegex(calls, r"(^|\n)tag ")
         self.assertNotRegex(calls, r"compose .* (up|down|run|stop) ")
 
@@ -1361,6 +1391,48 @@ class EndToEnd(unittest.TestCase):
         self.assertTrue(ups and max(tags) < min(ups), calls)
         # (the fake docker stops `up`: the trap says the images moved and the database did not)
         self.assertIn(f"this stack's images point at {RUNNING}; the database was not touched", out.stderr)
+
+    def rollback_into_its_steps(self, **fake):
+        """A no-restore rollback whose compose calls all succeed: it runs on into its nested
+        staging.sh steps (up, fleet release/roles/window, smoke)."""
+        stopped = {**attempt(B, backend=50, postgres=77, keycloak=78, tenant=9), "via": "release",
+                   "migrations": "none"}
+        return self.run_staging([release(A), release(RUNNING)], "rollback", "--operator", "tester",
+                                attempt_line=stopped,
+                                fake={"IHR_OPERATOR": "", "FAKE_COMPOSE_OK": "1",
+                                      "FAKE_IMAGES": " ".join(img(n) for n in (10, 11, 20, 30)), **fake})
+
+    def test_a_rollback_given_only_its_own_operator_carries_it_into_its_steps(self):
+        """Review O2: `rollback --operator NAME` with IHR_OPERATOR unset: its nested steps join
+        its session (one start line, no refusal) instead of being refused with no-operator after
+        the tags moved."""
+        out, calls = self.rollback_into_its_steps()
+        self.assertNotIn("why=no-operator", out.stderr)
+        self.assertNotIn("event=refused", "\n".join(self.journal))
+        starts = [ln for ln in self.journal if " event=start " in ln]
+        self.assertEqual(len(starts), 1, self.journal)
+        self.assertIn("command=rollback", starts[0])
+        self.assertStepRanAWrapper(calls)
+
+    def assertStepRanAWrapper(self, calls):
+        """The nested `up` got past its first privileged call (a refused step makes none)."""
+        lines = calls.splitlines()
+        up = next(i for i, ln in enumerate(lines) if re.match(r"compose .* up -d --wait db redis$", ln))
+        self.assertTrue(any(re.match(r"compose .* (exec|run) ", ln) for ln in lines[up + 1:]), lines[up:])
+
+    def test_a_break_glass_rollback_carries_glass_into_its_steps(self):
+        """Review O3: the journal is down and IHR_BREAK_GLASS is given: the nested steps run in
+        the rollback's glass session, never refused journal-unwritable; every line is pending."""
+        out, calls = self.rollback_into_its_steps(IHR_OPERATOR="tester", FAKE_LOGGER_FAIL="1",
+                                                  IHR_BREAK_GLASS="INC-7 journald down")
+        self.assertNotIn("journal-unwritable", out.stderr)
+        self.assertNotIn("event=refused", out.stderr)
+        self.assertIn("BREAK-GLASS", out.stderr)
+        self.assertEqual(self.journal, [])
+        self.assertEqual(len([ln for ln in self.pending if " event=start " in ln]), 1, self.pending)
+        self.assertIn('reason="break-glass: INC-7 journald down"', self.pending[0])
+        self.assertTrue(any(" event=end " in ln for ln in self.pending), self.pending)
+        self.assertStepRanAWrapper(calls)
 
     def test_a_failed_hold_claims_no_hold(self):
         """D2/O3: the stage moves to "held" only once the hold succeeded. A hold that failed and

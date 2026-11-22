@@ -56,6 +56,11 @@ class IhrAuditConfig(AppConfig):
         connection_created.connect(
             context.reapply, weak=False, dispatch_uid="ihr_audit_reapply"
         )
+        # A one-off of a recorded operator session names the operator on its writes
+        # (P1-T27b; nothing outside one; a bad value stops it before the database)
+        from ihr_audit import operator
+
+        operator.install()
 
 
 def _install(using="default", **kwargs):

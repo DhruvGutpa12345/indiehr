@@ -4,11 +4,16 @@
 # (mode 600, git-ignored) and handed to each container only as far as it needs them.
 #
 # Usage:
+#   scripts/staging.sh <command> [--operator NAME] [--reason "TEXT"] [--hospital SLUG|all] <its arguments>
+#     Every privileged run is an operator session (P1-T27a; deploy/staging/README.md, Operator access
+#     record): your name (or IHR_OPERATOR) always; --reason and --hospital as well for manage, logs,
+#     logs-archive-get, dumps-get, hospital-root, restore-drill --keep, restore-drill-psql and
+#     audit-supersede export.
 #   scripts/staging.sh init <suffix> [--local|--vm]  write .env and secrets (once; no overwrite)
 #   scripts/staging.sh up [--new-database]       start everything, then the Keycloak realm + workers
 #                                                (--new-database: an empty database where backups exist)
 #   scripts/staging.sh smoke                     check every public address through Traefik
-#   scripts/staging.sh manage <args>             one-off manage.py command (no admin credentials)
+#   scripts/staging.sh manage --operator <you> --reason "<ticket>" --hospital <slug>|all <args>   one-off manage.py command (data tier)
 #   scripts/staging.sh fleet <args>              ihr_fleet_run (P1-T18a), logged for its alert
 #   scripts/staging.sh release [--now [--minutes N] [--note T]] [--operator NAME] | --finish
 #                                                the new images in the announced window (P1-T18b):
@@ -97,7 +102,7 @@
 #                     [--existing-key] | --local nightly per-hospital dumps (P1-T22a); the bucket
 #                                                key (and, rebuilding, the dump key) on stdin
 #   scripts/staging.sh dumps-now [--slug S]... | dumps-check [--deep [--all]] | dumps-role
-#   scripts/staging.sh dumps-get <hospital uuid> <YYYY-MM-DD|latest> <dump|public> > file
+#   scripts/staging.sh dumps-get --operator <you> --reason "<ticket>" <hospital uuid> <YYYY-MM-DD|latest> <dump|public> > file
 #   scripts/staging.sh dumps-probe               the bucket's lock and what the dumper key may do
 #   scripts/staging.sh dumps-expire [--dry-run] [--erase-suspect]  erasure past 14 nights / 4 Sundays, from the
 #                                                owner's machine with the bucket's admin key (stdin)
@@ -108,7 +113,7 @@
 #   scripts/staging.sh hospital-restore-drill [--slug S]   monthly, on the restore-drill copy only
 #   scripts/staging.sh hospital-restore-status | hospital-restore-expire [--dry-run]
 #                                                restores and parked schemas | parked ones past 7 days dropped
-#   scripts/staging.sh hospital-root --slug S show | place <username> | remove-state <username>
+#   scripts/staging.sh hospital-root --operator <you> --reason "<ticket>" --slug S show | place <username> | remove-state <username>
 #                     [--operator <you> --reason "<ticket>"]   the hospital root (P1-T25): who is
 #                                                hospital-wide; the recovery when nobody is
 #
@@ -298,6 +303,439 @@ EOF
   echo "Wrote $OUT/.env and secrets/ (mode 600)."
 }
 
+# ---- Operator access record (P1-T27a) -----------------------------------------------------------
+# docs/reviews/p1-t27/design.md and, binding where they differ, the "Orchestrator decision" of
+# docs/reviews/p1-t27/attack.md (Q-K134..Q-K139); runbook: deploy/staging/README.md, "Operator access
+# record (P1-T27)". Every run that reaches a privileged call is an operator session: an admin,
+# migrate or audit-supersede one-off, an exec in an app, worker, database, backup, dumper or archive
+# container, psql or pg_dump. Those calls go through five wrappers only (admin_run, migrate_run,
+# app_exec, pg_su, audit_supersede_run; scripts/test_staging_operator.py keeps it so), and each first
+# needs the session (op_need). The session writes, to this server's journal (logger -t ihr-operator;
+# Fluent Bit ships it to the log store, 180 days, and the daily archive, 400 days):
+#   ihr-operator: session=<s> event=start tier=<data|job> operator=<name> command=<cmd> args=<shape> hospital=<scope> ses=<n|none> from=<addr> reason="<text>"
+#   ihr-operator: session=<s> event=scope hospital=<scope> hospital_entry=<opened:<slug>|skipped:<slug>:<why>,...|->
+#   ihr-operator: session=<s> event=end outcome=<ok|failed|interrupted> rc=<n> seconds=<n>
+#   ihr-operator: event=refused why=<why> command=<cmd> operator=<name|<v>|none>
+#   ihr-operator: event=late at=<time> session=<s> was=<start|scope|end> ...   (break-glass lines, shipped later)
+# Grammar: scripts/staging.sh <cmd> [--operator NAME] [--reason TEXT] [--hospital SLUG|all] <cmd args>:
+# the three come right after the subcommand, are consumed here and never passed on; IHR_OPERATOR is
+# the fallback for --operator. The data tier (op_tier: logs, raw dumps, Django shells) needs all
+# three and opens before anything runs; every other command opens a job session at its first
+# privileged call, reason "job:<cmd>"; a command that reaches no wrapper writes nothing.
+# What this is: attribution and bounds for an honest or careless operator, by convention (the name
+# is declared, not authenticated). Against a deliberate insider with the deploy account (the docker
+# group is root) it is evidence, not a barrier: ADR-010's P1-T27 amendment.
+OP_NAME_RE='^[a-z][a-z0-9.-]{1,31}$'
+OP_SLUG_RE='^[a-z][a-z0-9-]{2,30}$'
+OP_UUID_RE='^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$'
+OP_REASON_RE='^[A-Za-z0-9 ._:/#-]{3,120}$'
+OP_SHARED_NAMES=(ihr root admin postgres)   # and the bootstrap's admin user (/etc/indiehr/admin-user)
+OP_BREAK_GLASS_CMDS=(rollback restore hospital-restore)
+OP_PENDING="$OUT/operator-pending.log"     # lines written under break-glass, shipped by the next session
+# deploy/host/bootstrap.sh's marker: a server, whatever the environment says (review S4: no
+# IHR_OPERATOR_LOCAL=stderr there; never taken from the environment)
+OP_HOST_MARKER="/etc/indiehr/installed-at"
+# logger cuts a message at 1 KiB by default and still exits 0 (review A1: an `all` session's scope
+# line at 200 hospitals is several KiB): op_write passes --size, and refuses a longer line, never cuts it
+OP_LINE_MAX=60000
+OP_CMD="" OP_ARGV=() OP_GIVEN_OPERATOR="" OP_GIVEN_REASON="" OP_GIVEN_HOSPITAL="" OP_STATE="" OP_ENDED=0
+OP_SESSION="" OP_NAME="" OP_REASON="" OP_SCOPE="" OP_TIER="" OP_DEST="" OP_T0="" OP_GLASS=0 OP_SCOPED=0 OP_REFUSED=0
+OP_ENV=() OP_OWNER_PID="" OP_JOINED=0
+
+op_word() {  # op_word <cmd> [manage word]: the command= value (never a value of the command line)
+  local w="<v>"
+  [[ "${1:-}" =~ ^[a-z][a-z0-9-]{0,40}$ ]] && w="$1"
+  if [[ "$w" == manage && $# -ge 2 ]]; then
+    if [[ "${2:-}" =~ ^[a-z_][a-z0-9_]{0,63}$ ]]; then w="manage:$2"; else w="manage:<v>"; fi
+  fi
+  echo "$w"
+}
+op_shape() {  # op_shape <args>: option names kept, every value <v>, comma-joined, at most 200 characters (Q-K135)
+  local out=() a s
+  for a in "$@"; do
+    # A short option keeps its letter only (-pSECRET, -Uname, -dpatientdb: the rest is a value)
+    if [[ "$a" =~ ^-[A-Za-z]$ || "$a" =~ ^--[A-Za-z][A-Za-z0-9-]{0,40}$ ]]; then out+=("$a")
+    elif [[ "$a" =~ ^(--[A-Za-z][A-Za-z0-9-]{0,40}|-[A-Za-z])= ]]; then out+=("${BASH_REMATCH[1]}=<v>")
+    elif [[ "$a" =~ ^(-[A-Za-z])[A-Za-z0-9=] ]]; then out+=("${BASH_REMATCH[1]}<v>")
+    else out+=("<v>"); fi
+  done
+  ((${#out[@]})) || { echo -; return 0; }
+  s="$(IFS=,; echo "${out[*]}")"
+  ((${#s} <= 200)) || s="${s:0:200}..."
+  echo "$s"
+}
+op_new_session() {  # 12 hex characters, never all digits (the log masks would read a phone or an Aadhaar number)
+  local s=""
+  until [[ "$s" =~ ^[0-9a-f]{12}$ && "$s" =~ [a-f] ]]; do
+    s="$(od -An -N6 -tx1 /dev/urandom | tr -d ' \n')"
+  done
+  echo "$s"
+}
+op_arg() {  # op_arg <--name> <args>: the value of a subcommand's own option, if given
+  local name="$1"; shift
+  while (($#)); do
+    case "$1" in
+      "$name") echo "${2:-}"; return 0 ;;
+      "$name"=*) echo "${1#*=}"; return 0 ;;
+    esac
+    shift
+  done
+}
+op_parse() {  # op_parse <cmd> [--operator N] [--reason T] [--hospital S] <args>: OP_CMD and OP_ARGV (without the three)
+  OP_CMD="${1:-}" OP_ARGV=() OP_GIVEN_OPERATOR="" OP_GIVEN_REASON="" OP_GIVEN_HOSPITAL=""
+  (($#)) || return 0
+  shift
+  local seen=" " k v
+  while (($#)); do
+    case "$1" in
+      --operator|--reason|--hospital) k="${1#--}"; v="${2-}"; (($# >= 2)) || op_refuse bad-option "$1 needs a value"; shift 2 ;;
+      --operator=*|--reason=*|--hospital=*) k="${1%%=*}"; k="${k#--}"; v="${1#*=}"; shift ;;
+      *) break ;;
+    esac
+    [[ "$seen" != *" $k "* ]] || op_refuse bad-option "--$k was given twice"
+    seen+="$k "
+    case "$k" in operator) OP_GIVEN_OPERATOR="$v" ;; reason) OP_GIVEN_REASON="$v" ;; hospital) OP_GIVEN_HOSPITAL="$v" ;; esac
+  done
+  OP_ARGV=("$OP_CMD" "$@")
+}
+op_tier() {  # op_tier <cmd> <args>: data (operator, --reason and --hospital before anything runs), else job
+  case "${1:-}" in
+    manage|logs|logs-archive-get|dumps-get|hospital-root|restore-drill-psql) echo data ;;
+    restore-drill) if [[ " ${*:2} " == *" --keep "* ]]; then echo data; else echo job; fi ;;
+    audit-supersede) if [[ "${2:-}" == export ]]; then echo data; else echo job; fi ;;
+    *) echo job ;;
+  esac
+}
+op_job_scope() {  # op_job_scope <cmd> <args>: all for the jobs that open every hospital's schema; the
+  # restored hospital for hospital-restore; else none
+  case "${1:-}" in
+    release|restore-drill|dumps-now|hospital-restore-drill) echo all ;;
+    hospital-restore) if [[ "${2:-}" =~ $OP_SLUG_RE ]]; then echo "$2"; else echo none; fi ;;
+    *) echo none ;;
+  esac
+}
+op_dest() {  # where the lines go: the journal; stderr only in a local proof or CI that asks for it,
+  # never on a host bootstrap.sh set up
+  if [[ "${IHR_OPERATOR_LOCAL:-}" == stderr ]]; then
+    if [[ -e "$OP_HOST_MARKER" ]]; then
+      echo "warning: IHR_OPERATOR_LOCAL=stderr is refused on a bootstrapped host ($OP_HOST_MARKER): the lines go to the journal" >&2
+    elif [[ -f "$DIR/.local" || "${GITHUB_ACTIONS:-}" == true ]]; then echo stderr; return 0
+    else echo "warning: IHR_OPERATOR_LOCAL=stderr is for a local proof or CI only: the lines go to the journal" >&2; fi
+  fi
+  echo journal
+}
+op_write() {  # op_write <line>: to the journal (fails when logger does, or the line is too long to
+  # go whole), and always to stderr
+  echo "$1" >&2
+  [[ "${OP_DEST:-$(op_dest)}" == stderr ]] && return 0
+  ((${#1} <= OP_LINE_MAX)) || { echo "the operator line is ${#1} characters, over $OP_LINE_MAX: not written" >&2; return 1; }
+  logger --size 65536 -t ihr-operator -p user.notice -- "$1" 2>/dev/null
+}
+op_pend() {  # op_pend <line>: kept for the next recorded session (break-glass, or an end line that failed)
+  (umask 077; printf '%s\t%s\n' "$(date -Iseconds)" "$1" >> "$OP_PENDING") || echo "warning: $OP_PENDING could not be written either" >&2
+}
+op_ship_pending() {  # the kept lines first, as event=late; the file goes once every one is written
+  local at line body
+  [[ -s "$OP_PENDING" ]] || return 0
+  while IFS=$'\t' read -r at line; do
+    body="${line#ihr-operator: }"
+    body="${body/ event=/ was=}"
+    op_write "ihr-operator: event=late at=$at $body" || return 1
+  done < "$OP_PENDING"
+  rm -f "$OP_PENDING"
+}
+op_refuse() {  # op_refuse <why> <message>: the refused line (best effort), then stop
+  local who="${OP_REFUSE_NAME:-${OP_GIVEN_OPERATOR:-${IHR_OPERATOR:-}}}"
+  if [[ -z "$who" ]]; then who=none; elif [[ ! "$who" =~ $OP_NAME_RE ]]; then who="<v>"; fi
+  OP_DEST="${OP_DEST:-$(op_dest)}"
+  op_write "ihr-operator: event=refused why=$1 command=$(op_word "${OP_CMD:-}") operator=$who" || true
+  die "operator access record (P1-T27): $2. Refused (deploy/staging/README.md, Operator access record)."
+}
+op_shared_name() {  # op_shared_name <name>: true for an account, not a person
+  local n admin=""
+  for n in "${OP_SHARED_NAMES[@]}"; do [[ "$1" != "$n" ]] || return 0; done
+  admin="$(cat /etc/indiehr/admin-user 2>/dev/null || true)"
+  [[ -n "$admin" && "$1" == "$admin" ]]
+}
+op_operator() {  # op_operator [a subcommand's own --operator]: the session's operator, checked (Q-K134)
+  local own="${1:-}" name
+  name="${OP_GIVEN_OPERATOR:-${IHR_OPERATOR:-}}"
+  OP_REFUSE_NAME="${name:-$own}"
+  if [[ -n "$own" ]]; then
+    [[ -z "$name" || "$name" == "$own" ]] || op_refuse conflict-operator "--operator $own is not the session's operator"
+    name="$own"
+  fi
+  [[ -n "$name" ]] || op_refuse no-operator "no operator: give --operator <your name> right after the subcommand, or set IHR_OPERATOR"
+  [[ "$name" =~ $OP_NAME_RE ]] || op_refuse bad-operator "an operator name is 2-32 of a-z, 0-9, . and -, starting with a letter"
+  ! op_shared_name "$name" || op_refuse shared-operator "$name is an account, not a person: give your own name"
+  echo "$name"
+}
+op_reason() {  # op_reason <text>: the reason, checked (3-120 of A-Z a-z 0-9 space . _ : / # -, no 6 digits in a row)
+  [[ "$1" =~ $OP_REASON_RE && ! "$1" =~ [0-9]{6} ]] \
+    || op_refuse bad-reason "a reason is 3-120 characters of letters, digits, space and . _ : / # -, with no number of 6 or more digits (a ticket and a few words; never a patient's name or number)"
+}
+op_data_scope() {  # the data tier's hospital: --hospital, or what the command itself names
+  local given="$OP_GIVEN_HOSPITAL" slug
+  case "$OP_CMD" in
+    logs|logs-archive-get|restore-drill|restore-drill-psql|audit-supersede)
+      [[ -z "$given" || "$given" == all ]] || op_refuse bad-hospital "$OP_CMD reaches every hospital: --hospital all or nothing"
+      echo all ;;
+    hospital-root)
+      slug="$(op_arg --slug "${OP_ARGV[@]:1}")"
+      [[ "$slug" =~ $OP_SLUG_RE ]] || op_refuse no-hospital "hospital-root needs --slug <hospital>"
+      [[ -z "$given" || "$given" == "$slug" ]] || op_refuse bad-hospital "--hospital $given is not --slug $slug"
+      echo "$slug" ;;
+    dumps-get)
+      # The dump's bucket path names its hospital (dumps/<kind>/<uuid>/...): the start line names it
+      [[ "${OP_ARGV[1]:-}" =~ $OP_UUID_RE ]] || op_refuse bad-hospital "dumps-get takes a hospital uuid"
+      [[ -z "$given" || "$given" =~ $OP_SLUG_RE ]] || op_refuse bad-hospital "--hospital is a hospital's slug"
+      echo "${OP_ARGV[1]}" ;;
+    *)
+      [[ -n "$given" ]] || op_refuse no-hospital "$OP_CMD needs --hospital <slug> or --hospital all (right after the subcommand)"
+      [[ "$given" == all || "$given" =~ $OP_SLUG_RE ]] || op_refuse bad-hospital "--hospital is a hospital's slug or all"
+      echo "$given" ;;
+  esac
+}
+op_state_save() {  # (pid: the top-level staging.sh that owns the session; its nested steps join it)
+  printf 'session=%s\nname=%s\nreason=%s\nscope=%s\ntier=%s\ndest=%s\nt0=%s\nscoped=%s\nrefused=%s\npid=%s\n' "$OP_SESSION" \
+    "$OP_NAME" "$OP_REASON" "$OP_SCOPE" "$OP_TIER" "$OP_DEST" "$OP_T0" "$OP_SCOPED" "$OP_REFUSED" "$OP_OWNER_PID" > "$OP_STATE"
+}
+op_load() {  # the session this run opened, from the state file every subshell shares
+  local line
+  if [[ -n "$OP_STATE" && -s "$OP_STATE" ]]; then
+    while IFS= read -r line; do
+      case "${line%%=*}" in
+        session) OP_SESSION="${line#*=}" ;; name) OP_NAME="${line#*=}" ;; reason) OP_REASON="${line#*=}" ;;
+        scope) OP_SCOPE="${line#*=}" ;; tier) OP_TIER="${line#*=}" ;; dest) OP_DEST="${line#*=}" ;; t0) OP_T0="${line#*=}" ;;
+        scoped) OP_SCOPED="${line#*=}" ;; refused) OP_REFUSED="${line#*=}" ;; pid) OP_OWNER_PID="${line#*=}" ;;
+      esac
+    done < "$OP_STATE"
+  fi
+  [[ -n "$OP_SESSION" ]] || return 0
+  export IHR_OPERATOR="$OP_NAME" IHR_OPERATOR_SESSION="$OP_SESSION" IHR_OPERATOR_SCOPE="$OP_SCOPE" \
+    IHR_OPERATOR_REASON="$OP_REASON" IHR_OPERATOR_TIER="$OP_TIER"
+}
+op_begin() {  # op_begin <data|job>: checks, the start line (fail closed), the shared state; data and
+  # the jobs of every hospital then record which hospitals the session opened (op_scope_open)
+  local tier="$1" name reason scope ses="none" from="local" s line own=""
+  op_load
+  [[ -z "$OP_SESSION" ]] || return 0
+  [[ -n "$OP_STATE" ]] || die "this needs an operator session (P1-T27): run it through scripts/staging.sh"
+  case "$OP_CMD" in hospital-root|audit-supersede) own="$(op_arg --operator "${OP_ARGV[@]:1}")" || exit 1 ;; esac
+  # (each check exits by itself: errexit is off inside a command substitution)
+  name="$(op_operator "$own")" || exit 1
+  OP_REFUSE_NAME="$name"
+  reason="$OP_GIVEN_REASON"
+  [[ -n "$reason" || "$OP_CMD" != hospital-root ]] || reason="$(op_arg --reason "${OP_ARGV[@]:1}")"
+  if [[ "$tier" == data ]]; then
+    [[ -n "$reason" ]] || op_refuse no-reason "$OP_CMD reaches patient data: give --reason \"<ticket and a few words>\" right after the subcommand"
+    op_reason "$reason" || exit 1
+    scope="$(op_data_scope)" || exit 1
+  else
+    [[ -z "$reason" ]] || op_reason "$reason" || exit 1
+    reason="${reason:-job:$OP_CMD}"
+    scope="$(op_job_scope "${OP_ARGV[@]}")" || exit 1
+    [[ -z "$OP_GIVEN_HOSPITAL" || "$OP_GIVEN_HOSPITAL" == "$scope" ]] \
+      || op_refuse bad-hospital "$OP_CMD names its hospitals itself (${scope}): leave --hospital out"
+  fi
+  OP_DEST="$(op_dest)"
+  # Break-glass (Q-K138): a rollback, restore or hospital restore when the journal cannot be written
+  local glass=0 c
+  if [[ -n "${IHR_BREAK_GLASS:-}" && "$tier" == job ]]; then
+    for c in "${OP_BREAK_GLASS_CMDS[@]}"; do [[ "$OP_CMD" != "$c" ]] || glass=1; done
+  fi
+  if [[ "$OP_DEST" == journal ]] && ! op_ship_pending; then
+    ((glass)) || op_refuse journal-unwritable "the operator record could not be written to the journal (logger): nothing was run"
+  fi
+  ses=""; { read -r ses < /proc/self/sessionid; } 2>/dev/null || true   # (no newline at its end: read says 1)
+  [[ "$ses" =~ ^[0-9]+$ && "$ses" != 4294967295 ]] || ses=none
+  s="${SSH_CONNECTION:-}"; s="${s%% *}"
+  [[ "$s" =~ ^[0-9A-Fa-f.:]{2,45}$ && "$s" =~ [.:] ]] && from="$s"
+  OP_SESSION="$(op_new_session)" OP_NAME="$name" OP_SCOPE="$scope" OP_TIER="$tier" OP_T0="$(date +%s)"
+  local word="${OP_CMD}" rest=("${OP_ARGV[@]:1}")
+  if [[ "$OP_CMD" == manage ]]; then word="$(op_word manage "${rest[0]:-}")"; rest=("${rest[@]:1}"); else word="$(op_word "$OP_CMD")"; fi
+  if ((glass)); then
+    reason="break-glass: $IHR_BREAK_GLASS"
+    op_reason "$reason" || exit 1
+  fi
+  OP_REASON="$reason"
+  line="ihr-operator: session=$OP_SESSION event=start tier=$tier operator=$name command=$word args=$(op_shape "${rest[@]}") hospital=$scope ses=$ses from=$from reason=\"$reason\""
+  if ! op_write "$line"; then
+    ((glass)) || { OP_SESSION=""; op_refuse journal-unwritable "the operator record could not be written to the journal (logger): nothing was run"; }
+    OP_GLASS=1
+  fi
+  if ((glass)) && { ((OP_GLASS)) || [[ -s "$OP_PENDING" ]]; }; then
+    OP_GLASS=1
+    op_pend "$line"
+    echo "BREAK-GLASS (IHR_BREAK_GLASS): the journal cannot be written; this session's lines are kept in $OP_PENDING and the next recorded session ships them (event=late)" >&2
+    OP_DEST=glass
+  fi
+  # The hospital entries: the data tier's now; a job of every hospital's at its first one-off or
+  # exec (op_scope_due), after the job's own refusals and never for its fixed SQL alone
+  OP_SCOPED=0
+  [[ "$tier" == data ]] && OP_SCOPED=1
+  op_state_save
+  op_load
+  if [[ "$tier" == data ]]; then op_scope_open; fi
+}
+op_scope_due() {  # a job of every hospital: its hospital entries before its first one-off or exec
+  [[ "$OP_TIER" == job && "$OP_SCOPE" == all && "$OP_SCOPED" == 0 ]] || return 0
+  OP_SCOPED=1
+  op_state_save   # first: the entries' own one-off comes back here
+  op_scope_open
+  op_need "$1"
+}
+op_scope_open() {  # the hospital entries (P1-T27b's ihr_operator_open, in the admin one-off; Q-K136)
+  local scope="$OP_SCOPE" out err rc=0 entry="" item opened skipped slug n
+  case "$OP_CMD" in logs|logs-archive-get) return 0 ;; esac   # no hospital entry: the lines are the record
+  if [[ "$OP_CMD" == dumps-get ]]; then
+    if [[ -z "$(compose ps -q db 2>/dev/null || true)" ]]; then
+      op_scope_line "skipped:$scope:no-database"; return 0
+    fi
+    slug="$(pg_su -d ihr -Atc "SELECT slug FROM ihr_platform_hospital WHERE uuid = '$scope'")" \
+      || op_scope_refuse "the hospital of $scope could not be read"
+    slug="$(tr -d '[:space:]' <<< "$slug")"
+    if [[ -z "$slug" ]]; then op_scope_line "skipped:$scope:absent"; return 0; fi
+    [[ "$slug" =~ $OP_SLUG_RE ]] || op_scope_refuse "the hospital of $scope has no slug"
+    [[ -z "$OP_GIVEN_HOSPITAL" || "$OP_GIVEN_HOSPITAL" == "$slug" ]] || op_scope_refuse "--hospital $OP_GIVEN_HOSPITAL is not this dump's hospital ($slug)"
+    scope="$slug"
+  fi
+  err="$(mktemp)"
+  out="$(admin_run admin python manage.py ihr_operator_open --session "$OP_SESSION" --operator "$OP_NAME" \
+    --scope "$scope" --reason "$OP_REASON" --tier "$OP_TIER" 2>"$err")" || rc=$?
+  if ((rc)); then
+    if grep -q "Unknown command: 'ihr_operator_open'" "$err"; then
+      rm -f "$err"; op_scope_line "skipped:all:old-build"; return 0
+    fi
+    cat "$err" >&2; rm -f "$err"
+    # 3: an entry failed in some hospital; the answer still names every one (entries already
+    # written stay): recorded in the scope line below, then refused (review A7)
+    ((rc == 3)) || op_scope_refuse "the hospital entries could not be written (ihr_operator_open, exit $rc)"
+  fi
+  rm -f "$err"
+  n="$(grep -c '^opened=' <<< "$out" || true)"
+  out="$(grep '^opened=' <<< "$out" || true)"
+  [[ "$n" == 1 && "$out" =~ ^opened=(-|[a-z][a-z0-9,-]*)\ skipped=(-|[a-z][a-z0-9:,-]*)$ ]] \
+    || op_scope_refuse "ihr_operator_open did not answer opened=... skipped=..."
+  opened="${BASH_REMATCH[1]}" skipped="${BASH_REMATCH[2]}"
+  if [[ "$opened" != - ]]; then
+    for item in ${opened//,/ }; do
+      [[ "$item" =~ $OP_SLUG_RE ]] || op_scope_refuse "ihr_operator_open named a hospital that is not a slug"
+      entry+="${entry:+,}opened:$item"
+    done
+  fi
+  if [[ "$skipped" != - ]]; then
+    for item in ${skipped//,/ }; do
+      [[ "$item" =~ ^[a-z][a-z0-9-]{2,30}:[a-z][a-z0-9-]{0,30}$ ]] || op_scope_refuse "ihr_operator_open named a skipped hospital oddly"
+      entry+="${entry:+,}skipped:$item"
+    done
+  fi
+  op_scope_line "${entry:--}"
+  ((rc == 0)) || op_scope_refuse "the hospital entries could not all be written (ihr_operator_open, exit $rc: the scope line names the hospitals that failed)"
+}
+op_scope_line() {
+  local line="ihr-operator: session=$OP_SESSION event=scope hospital=$OP_SCOPE hospital_entry=$1"
+  if [[ "$OP_DEST" == glass ]]; then echo "$line" >&2; op_pend "$line"; return 0; fi
+  op_write "$line" || op_scope_refuse "the operator record could not be written to the journal (logger)"
+}
+op_scope_refuse() {  # the session stays refused: no later wrapper of this run may go on (a refusal in a
+  # command substitution would otherwise not stop it)
+  OP_REFUSED=1; op_state_save
+  OP_REFUSE_NAME="$OP_NAME"; op_refuse scope-failed "$1"
+}
+op_need() {  # op_need <what>: the open session (a job one is opened at the first privileged call);
+  # OP_ENV: its values for the one-off or exec, and PGAPPNAME=op:<session>:<what>
+  op_load
+  [[ -n "$OP_SESSION" ]] || op_begin job || exit 1
+  [[ -n "$OP_SESSION" ]] || exit 1
+  [[ "$OP_REFUSED" == 0 ]] || die "operator access record (P1-T27): this session was refused (above): nothing more runs"
+  export PGAPPNAME="op:$OP_SESSION:${1:-run}"
+  OP_ENV=(-e "IHR_OPERATOR=$OP_NAME" -e "IHR_OPERATOR_SESSION=$OP_SESSION" -e "IHR_OPERATOR_SCOPE=$OP_SCOPE"
+          -e "IHR_OPERATOR_REASON=$OP_REASON" -e "IHR_OPERATOR_TIER=$OP_TIER" -e "PGAPPNAME=$PGAPPNAME")
+}
+op_end() {  # op_end <rc>: the end line, once, when this run opened a session (the top level only;
+  # a nested step that joined its parent's session leaves it to the parent)
+  local rc="$1" outcome line
+  ((OP_ENDED == 0 && OP_JOINED == 0)) || return 0
+  OP_ENDED=1
+  op_load
+  [[ -n "$OP_SESSION" ]] || return 0
+  case "$rc" in 0) outcome=ok ;; 129|130|143) outcome=interrupted ;; *) outcome=failed ;; esac
+  line="ihr-operator: session=$OP_SESSION event=end outcome=$outcome rc=$rc seconds=$(( $(date +%s) - ${OP_T0:-0} ))"
+  if [[ "$OP_DEST" == glass ]]; then echo "$line" >&2; op_pend "$line"; return 0; fi
+  op_write "$line" || { echo "warning: the end line could not be written to the journal: kept in $OP_PENDING (the next session ships it)" >&2; op_pend "$line"; }
+}
+op_parent_ok() {  # op_parent_ok <file>: the session file of a running staging.sh that is an
+  # ancestor of this process, ours, with a session (never a file the caller made up)
+  local f="$1" pid p="$PPID" n=0 st
+  [[ -f "$f" && ! -L "$f" && -O "$f" ]] || return 1
+  grep -qE '^session=[0-9a-f]{12}$' "$f" || return 1
+  pid="$(sed -n 's/^pid=//p' "$f")"
+  [[ "$pid" =~ ^[1-9][0-9]*$ && "$pid" != 1 ]] || return 1
+  tr '\0' ' ' < "/proc/$pid/cmdline" 2>/dev/null | grep -q 'staging\.sh' || return 1
+  while ((p > 1 && n < 64)); do
+    [[ "$p" != "$pid" ]] || return 0
+    st="$(cat "/proc/$p/stat" 2>/dev/null)" || return 1
+    st="${st##*) }"          # after "pid (name) ": state, then the parent's pid
+    read -r _ p _ <<< "$st"
+    [[ "$p" =~ ^[0-9]+$ ]] || return 1
+    n=$((n + 1))
+  done
+  return 1
+}
+op_child() {  # op_child "$ROOT/scripts/staging.sh" <args>: a step of this run as a nested staging.sh,
+  # inside this run's session (its operator, and break-glass; reviews O2/O3), not a session of its own
+  # (a job step only: a joined run skips op_begin, so a data-tier step would ride a job's session)
+  [[ "$(op_tier "${@:2}")" == job ]] || die "op_child: ${2:-?} is data tier: it opens its own session"
+  op_load
+  if [[ -n "$OP_SESSION" ]]; then IHR_OPERATOR_PARENT_STATE="$OP_STATE" "$@"; else "$@"; fi
+}
+op_prepare() {  # the top level, before main: a fresh state (or the session of the staging.sh this
+  # run is a step of: op_child), the options read, the signals
+  local parent="${IHR_OPERATOR_PARENT_STATE:-}"
+  unset IHR_OPERATOR_SESSION IHR_OPERATOR_SCOPE IHR_OPERATOR_REASON IHR_OPERATOR_TIER PGAPPNAME IHR_OPERATOR_PARENT_STATE
+  if [[ -n "$parent" ]] && [[ "$(op_tier "$@")" == job ]] && op_parent_ok "$parent"; then
+    OP_STATE="$parent" OP_JOINED=1
+  else
+    [[ -z "$parent" ]] || echo "warning: IHR_OPERATOR_PARENT_STATE is no running staging.sh's job session above this job step: not joined (this run opens its own)" >&2
+    OP_STATE="$(mktemp "${TMPDIR:-/tmp}/ihr-operator.XXXXXX")" OP_OWNER_PID="$$"
+  fi
+  trap 'op_end 130; op_tidy; exit 130' INT
+  trap 'op_end 143; op_tidy; exit 143' TERM
+  trap 'op_end 129; op_tidy; exit 129' HUP
+  op_parse "$@"
+}
+op_open_eager() {  # the data tier: before anything runs. A job (the ones of every hospital too, with
+  # their hospital entries) opens at its first privileged call, after its own cheap refusals
+  if [[ "$(op_tier "${OP_ARGV[@]}")" == data ]]; then op_begin data; fi
+}
+op_tidy() { [[ -z "$OP_STATE" ]] || ((OP_JOINED)) || rm -f "$OP_STATE"; }
+
+# The five wrappers: every privileged call of this script goes through one of them
+admin_run() {  # admin_run [run options] <service> <command>: an admin-profile one-off (as the owner,
+  # unlogged: its start and end are the session's lines)
+  op_need admin
+  op_scope_due admin
+  compose --profile admin run --rm --no-deps -T "${OP_ENV[@]}" "$@"
+}
+audit_supersede_run() {  # audit_supersede_run [run options] audit-supersede <args>: the audit tool one-off (P1-T22c)
+  op_need audit-supersede
+  op_scope_due audit-supersede
+  compose --profile admin run --rm --no-deps -T "${OP_ENV[@]}" "$@"
+}
+migrate_run() {  # migrate_run [run options] <migrate|celery-worker> <command>: a logged one-off of the app image
+  op_need migrate
+  op_scope_due migrate
+  compose run --rm --no-deps -T "${OP_ENV[@]}" "$@"
+}
+app_exec() {  # app_exec [exec options] <service> <command>: a command in a running app, worker,
+  # database, backup, dumper or archive container
+  op_need exec
+  op_scope_due exec
+  compose exec -T "${OP_ENV[@]}" "$@"
+}
+# ---- end of the operator access record ---------------------------------------------------------
+
 admin_manage() {  # a one-off manage.py run holding the Keycloak bootstrap client (P1-T5f)
   local id secret mail_pw="" extra=()
   id="$(sed -n 's/^KC_BOOTSTRAP_ADMIN_CLIENT_ID=//p' "$SECRETS/keycloak.env")"
@@ -307,7 +745,7 @@ admin_manage() {  # a one-off manage.py run holding the Keycloak bootstrap clien
   [[ -f "$SECRETS/mail.env" ]] && mail_pw="$(sed -n 's/^IHR_KEYCLOAK_SMTP_PASSWORD=//p' "$SECRETS/mail.env")"
   [[ -n "$mail_pw" ]] && extra=(-e IHR_KEYCLOAK_SMTP_PASSWORD)
   IHR_KEYCLOAK_ADMIN_CLIENT_ID="$id" IHR_KEYCLOAK_ADMIN_CLIENT_SECRET="$secret" IHR_KEYCLOAK_SMTP_PASSWORD="$mail_pw" \
-    compose --profile admin run --rm --no-deps -T -e IHR_KEYCLOAK_ADMIN_CLIENT_ID \
+    admin_run -e IHR_KEYCLOAK_ADMIN_CLIENT_ID \
     -e IHR_KEYCLOAK_ADMIN_CLIENT_SECRET "${extra[@]}" admin python manage.py "$@"
 }
 
@@ -319,10 +757,13 @@ KEY_JWKS_DIR="$GEN/client-keys"
 kt() {  # kt <purpose> <command> [args]: the key tool, offline, unlogged, as the app user
   compose --profile keys run --rm --no-deps -T keytool "$2" --purpose "$1" --dir "/run/ihr-keytool/$1" "${@:3}"
 }
+# shellcheck disable=SC2329 # called by client-keys.sh (sourced above)
 key_publish_sync() { admin_manage ihr_keycloak_sync --realm --all; }
 key_check_sync() { admin_manage ihr_keycloak_sync --all --check; }
-key_probe_in() { compose exec -T "$1" python manage.py ihr_client_keys probe "${@:2}"; }
+key_probe_in() { app_exec "$1" python manage.py ihr_client_keys probe "${@:2}"; }
+# shellcheck disable=SC2329 # called by client-keys.sh (sourced above)
 key_revoke_sessions() { admin_manage ihr_client_keys revoke-sessions; }
+# shellcheck disable=SC2329 # called by client-keys.sh (sourced above)
 key_log() {  # kid and time only; kept in the log store 180 days and the archive 400 (CERT-In). A local proof keeps this
   # machine's journal clean (compose.local.yaml)
   echo "$*"
@@ -399,12 +840,21 @@ server = hmac.new(salted, b"Server Key", "sha256").digest()
 b64 = lambda b: base64.b64encode(b).decode()
 print(f"SCRAM-SHA-256${rounds}:{b64(salt)}${b64(hashlib.sha256(client).digest())}:{b64(server)}")'
 }
-pg_su() {  # pg_su <psql args>: psql as postgres in this stack's database container, or in the
-  # container PG_TARGET names (the restore drill's copy); SQL on stdin, never a command line
+pg_su() {  # pg_su [--dump] <psql args | pg_dump args>: psql (pg_dump with --dump) as postgres in this
+  # stack's database container, or in the container PG_TARGET names (the restore drill's copy, a
+  # restore's recovery server). One of the operator record's wrappers (P1-T27a): the session's
+  # values, and PGAPPNAME=op:<session>:psql|pg_dump on the connection Postgres logs
+  local tool=psql
+  if [[ "${1:-}" == --dump ]]; then tool=pg_dump; shift; fi
+  op_need "$tool"
+  local cmd=("$tool" -U postgres)
+  [[ "$tool" == pg_dump ]] || cmd+=(-v ON_ERROR_STOP=1)
   if [[ -n "${PG_TARGET:-}" ]]; then
-    docker exec -i "$PG_TARGET" psql -U postgres -v ON_ERROR_STOP=1 "$@"
+    local tty=()
+    [[ -t 0 && -t 1 ]] && tty=(-t)   # an interactive psql in the kept drill copy needs one
+    docker exec -i ${tty[@]+"${tty[@]}"} "${OP_ENV[@]}" "$PG_TARGET" "${cmd[@]}" "$@"
   else
-    compose exec -T db psql -U postgres -v ON_ERROR_STOP=1 "$@"
+    compose exec -T "${OP_ENV[@]}" db "${cmd[@]}" "$@"
   fi
 }
 DB_STATE_SQL="SELECT CASE WHEN EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'ihr_owner') THEN 'split' WHEN EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'ihr') THEN 'single' ELSE 'none' END"
@@ -563,7 +1013,7 @@ db_server_check() {
   stored="$(sed -n 's/^stored_database_settings=//p' <<< "$out")"
   [[ "$stored" == 0 ]] || problems+=("${stored:-unreadable} setting(s) are stored for the whole database or cluster (pg_db_role_setting, no role): ALTER DATABASE ihr RESET ALL, as postgres")
   want_kb="$(to_kb "$(env_get IHR_PG_SHM || true)" 2>/dev/null || true)"; want_kb="${want_kb:-262144}"
-  have_kb="$(compose exec -T db df -Pk /dev/shm 2>/dev/null | awk 'NR == 2 { print $2 }')" || have_kb=""
+  have_kb="$(app_exec db df -Pk /dev/shm 2>/dev/null | awk 'NR == 2 { print $2 }')" || have_kb=""
   if [[ ! "$have_kb" =~ ^[0-9]+$ ]]; then
     problems+=("could not read /dev/shm in the database container")
   elif ((have_kb * 100 < want_kb * 95)); then
@@ -648,7 +1098,7 @@ db_split_secrets() {  # db-split-secrets: the split roles' secrets (P1-T19b), on
   fi
   echo "Wrote ${changed[*]} in $OUT (mode 600)."
   echo "Put the owner's password into your password manager: it is the password in secrets/db-owner.env's DATABASE_URL (not printed here)."
-  echo "Next: scripts/deploy.sh --host ... --release (the release moves the roles under a full stop)."
+  echo "Next: scripts/deploy.sh --host ... --operator <you> --release (the release moves the roles under a full stop)."
 }
 outgoing_database_url() {  # the running backend's own database address (its container's settings)
   local cid
@@ -679,6 +1129,7 @@ db_roles_move_stopped() {  # the move with every app container stopped (release,
 # The EXIT trap of db-roles --migrate (globals). It runs only on a stopped stack (review C2):
 # nothing is held by it, so before the move nothing is to undo; the move is one transaction
 DB_MOVE_STAGE="" DB_MOVE_OP=""
+# shellcheck disable=SC2329 # called from an EXIT trap
 db_move_exit() {
   local rc="$1"
   ((rc != 0)) || return 0
@@ -850,10 +1301,10 @@ db_roles_cmd() {  # db-roles --migrate [--operator NAME] | --serve-previous [--o
       # The grants, by the owner: the check of the roles first (C6), the platform's schema (its
       # post_migrate converges public and the database), then every hospital schema
       echo "== [$((SECONDS - t0)) s] Converging the grants (migrate one-shot, as ihr_owner)"
-      compose run --rm --no-deps -T migrate python manage.py ihr_db_role_check --for migrate
-      compose run --rm --no-deps -T migrate python manage.py migrate_schemas --shared --noinput
+      migrate_run migrate python manage.py ihr_db_role_check --for migrate
+      migrate_run migrate python manage.py migrate_schemas --shared --noinput
       t=$SECONDS
-      compose run --rm --no-deps -T migrate python manage.py ihr_fleet_run migrate --operator "$op"
+      migrate_run migrate python manage.py ihr_fleet_run migrate --operator "$op"
       echo "grants of every hospital schema converged in $((SECONDS - t)) s"
       echo "== [$((SECONDS - t0)) s] Starting"
       up
@@ -892,7 +1343,7 @@ up() {  # up [--new-database]: the flag only where an empty database is really m
   local pend
   for pend in $(sup_pending); do
     if [[ "$(sup_get "$pend" flow)" == disaster && ! -f "$SUPERSEDE_DIR/$pend/exported" ]]; then
-      echo "WARNING: disaster restore $pend has no result yet: after this start, scripts/staging.sh audit-supersede export $pend --operator <you>, then load $pend (or close $pend --reason)" >&2
+      echo "WARNING: disaster restore $pend has no result yet: after this start, scripts/staging.sh audit-supersede --operator <you> --reason \"<ticket>\" export $pend, then load $pend --operator <you> (or close $pend --reason \"<why>\" --operator <you>)" >&2
     else
       echo "WARNING: whole-database restore $pend has no result yet: run scripts/staging.sh audit-supersede load $pend --operator <you> (before this start, if you can)" >&2
     fi
@@ -925,11 +1376,11 @@ up() {  # up [--new-database]: the flag only where an empty database is really m
   [[ -z "$(env_get IHR_DUMPS)" ]] || compose stop dumper
   # Schema changes to the end first: the sync reads the hospitals from the database. Run here,
   # once; the services below start without their dependency chain, so it does not run again.
-  compose run --rm --no-deps -T migrate
+  migrate_run migrate
   # Terminology content that ships with the code (P1-T10a1, ADR-016): loaded once per version,
   # a no-op when nothing changed
   # (admin keeps no logs: what was newly loaded goes to the host's journal, hence the log store)
-  compose --profile admin run --rm --no-deps -T admin python manage.py ihr_terminology_load --bundled \
+  admin_run admin python manage.py ihr_terminology_load --bundled \
     --operator "staging.sh up ($(id -un)@$(hostname -s))" | { grep '^loaded ' || true; } \
     | while IFS= read -r line; do echo "terminology $line"; logger -t ihr-terminology "$line" 2>/dev/null || true; done
   # The new backend first: on a server from before P1-T8d2 its clients are still public and
@@ -1018,7 +1469,8 @@ smoke() {  # every public address through Traefik, as a browser would reach it
   [[ -z "$resolve" && "$bind" == "127.0.0.1" ]] && resolve=127.0.0.1
   local curl_args=(-sk --max-time 20) slugs=() slug
   # Every active hospital (P1-T18b, O1): each must be served, never "503 upgrading"
-  mapfile -t slugs < <(compose exec -T db psql -U postgres -d ihr -Atc \
+  op_need psql  # the session first: a refusal inside the process substitution below would not stop this run
+  mapfile -t slugs < <(pg_su -d ihr -Atc \
     "SELECT slug FROM ihr_platform_hospital WHERE schema_name <> 'public' AND status = 'active' ORDER BY slug" 2>/dev/null \
     | grep -E '^[a-z][a-z0-9-]{2,30}$' || true)
   if [[ -n "$resolve" ]]; then
@@ -1081,8 +1533,8 @@ smoke() {  # every public address through Traefik, as a browser would reach it
   [[ -z "$(env_get IHR_MONITORING)" ]] || monitoring_smoke
   # Terminology answered here, from the content that ships with the code (P1-T10a1)
   check "terminology: bundled code systems active" \
-    "$(compose exec -T backend python -c 'import importlib.util, json, pathlib; d = pathlib.Path(importlib.util.find_spec("ihr_terminology").origin).parent; print(len(json.loads((d / "content" / "MANIFEST.json").read_text())["files"]))' 2>/dev/null || echo unreadable)" \
-    "$(compose exec -T backend python manage.py ihr_terminology_load --status 2>/dev/null | grep -c '^active ' || true)"
+    "$(app_exec backend python -c 'import importlib.util, json, pathlib; d = pathlib.Path(importlib.util.find_spec("ihr_terminology").origin).parent; print(len(json.loads((d / "content" / "MANIFEST.json").read_text())["files"]))' 2>/dev/null || echo unreadable)" \
+    "$(app_exec backend python manage.py ihr_terminology_load --status 2>/dev/null | grep -c '^active ' || true)"
   check "unknown hospital address: no branding" 404 "$(code "https://nope.$suffix:$port/api/ihr/bootstrap/")"
   if ((${#slugs[@]} == 0)); then echo "skip  every hospital served: no active hospital yet"; fi
   for slug in ${slugs[@]+"${slugs[@]}"}; do
@@ -1105,7 +1557,7 @@ smoke() {  # every public address through Traefik, as a browser would reach it
     sleep 2
     check "no query strings in the logs" 0 "$(compose logs --no-color traefik frontend backend 2>/dev/null | grep -c "$probe" || true)"
   else
-    echo "skip  hospital checks: no hospital 'alpha' yet (scripts/staging.sh manage ihr_create_tenant ...)"
+    echo "skip  hospital checks: no hospital 'alpha' yet (scripts/staging.sh manage --operator <you> --reason \"<ticket>\" --hospital all ihr_create_tenant ...)"
   fi
   return "$fail"
 }
@@ -1222,11 +1674,11 @@ EOF
 }
 
 backup_status() {
-  compose exec -T backup pgbackrest --stanza=main info
+  app_exec backup pgbackrest --stanza=main info
   echo "--- the backup service's own record (/var/lib/pgbackrest/status):"
-  compose exec -T backup cat /var/lib/pgbackrest/status 2>/dev/null || echo "(none yet)"
-  echo "--- WAL files waiting in the spool: $(compose exec -T backup sh -c 'ls /var/spool/ihr-wal | grep -vc "^\." || true')"
-  compose exec -T backup sh -c 'ls /var/lib/pgbackrest/rejected-wal 2>/dev/null | sed "s/^/--- set aside by a restore (another database; remove once checked): /"' || true
+  app_exec backup cat /var/lib/pgbackrest/status 2>/dev/null || echo "(none yet)"
+  echo "--- WAL files waiting in the spool: $(app_exec backup sh -c 'ls /var/spool/ihr-wal | grep -vc "^\." || true')"
+  app_exec backup sh -c 'ls /var/lib/pgbackrest/rejected-wal 2>/dev/null | sed "s/^/--- set aside by a restore (another database; remove once checked): /"' || true
 }
 
 DRILL="ihr-restore-drill"
@@ -1255,7 +1707,7 @@ pg_container() {  # pg_container <name> <volume:path,...> <command...>: our imag
 wait_promoted() {  # wait_promoted <container>: until recovery has ended (or fail)
   local out="" i
   for i in $(seq 1 450); do
-    out="$(docker exec "$1" psql -U postgres -Atc "SELECT pg_is_in_recovery()" 2>/dev/null || true)"
+    out="$(PG_TARGET="$1" pg_su -Atc "SELECT pg_is_in_recovery()" 2>/dev/null || true)"
     [[ "$out" == f ]] && return 0
     docker inspect -f '{{.State.Running}}' "$1" 2>/dev/null | grep -q true || break
     sleep 2
@@ -1289,6 +1741,12 @@ repo_copy() {  # repo_copy <name> <pgbackrest restore options...>: a copy of the
   if [[ "$COPY_AS_OF" =~ [+-][0-9]{2}$ ]]; then COPY_AS_OF="$COPY_AS_OF:00"; fi
 }
 
+restore_drill_psql() {  # restore_drill_psql [psql args]: psql as postgres in the kept restore-drill copy
+  # (a full copy of every hospital's data). The data tier (op_tier): the session is recorded like
+  # `manage`; never a raw `docker exec` into the copy (PrivilegedLoginUnrecorded)
+  docker inspect "$DRILL" >/dev/null 2>&1 || die "no kept restore-drill copy here (scripts/staging.sh restore-drill --keep makes one)"
+  PG_TARGET="$DRILL" pg_su -d ihr "$@"
+}
 restore_drill() {  # a copy of the database from the backups, checked, then removed
   local target="" keep=0 pw dburl i free need as_of
   while (($#)); do
@@ -1304,7 +1762,7 @@ restore_drill() {  # a copy of the database from the backups, checked, then remo
   [[ -z "$target" ]] || check_target "$target"
   backup_config
   # Room for a second copy beside the live database (the same disk): twice its size
-  need="$(compose exec -T db psql -U postgres -Atc "SELECT (sum(pg_database_size(datname)) / 1048576)::bigint FROM pg_database" | tr -d '[:space:]')"
+  need="$(pg_su -Atc "SELECT (sum(pg_database_size(datname)) / 1048576)::bigint FROM pg_database" | tr -d '[:space:]')"
   free="$(df -Pm "$(docker info --format '{{.DockerRootDir}}')" 2>/dev/null | awk 'NR==2 {print $4}')"
   if [[ -n "$need" && -n "$free" ]] && ((free < 2 * need + 1024)); then
     die "not enough disk for a copy: ${free} MB free, about $((2 * need + 1024)) MB needed"
@@ -1318,8 +1776,8 @@ restore_drill() {  # a copy of the database from the backups, checked, then remo
   repo_copy "$DRILL" ${target:+--type=time "--target=$target" --target-action=promote}
   as_of="$COPY_AS_OF"
   echo "== The restored copy (its last transaction: ${as_of:-not found in its log})"
-  docker exec "$DRILL" psql -U postgres -Atc "SELECT 'databases: ' || string_agg(datname || ' ' || pg_size_pretty(pg_database_size(datname)), ', ' ORDER BY datname) FROM pg_database WHERE NOT datistemplate"
-  docker exec "$DRILL" psql -U postgres -d ihr -Atc "SELECT 'hospital schemas: ' || count(*) FROM pg_namespace WHERE nspname ~ '^h_[a-z0-9]{10}\$'"
+  PG_TARGET="$DRILL" pg_su -Atc "SELECT 'databases: ' || string_agg(datname || ' ' || pg_size_pretty(pg_database_size(datname)), ', ' ORDER BY datname) FROM pg_database WHERE NOT datistemplate"
+  PG_TARGET="$DRILL" pg_su -d ihr -Atc "SELECT 'hospital schemas: ' || count(*) FROM pg_namespace WHERE nspname ~ '^h_[a-z0-9]{10}\$'"
   # The audit trail of every hospital, checked in the copy against the outside fingerprints
   # the storage had received by the copy's moment: a backup that restores a rewritten
   # history fails here
@@ -1339,9 +1797,9 @@ restore_drill() {  # a copy of the database from the backups, checked, then remo
   while IFS='=' read -r k v; do
     if [[ "$k" =~ ^IHR_AUDIT_ANCHOR_[A-Z_]+$ ]]; then export "$k=$v"; envs+=(-e "$k"); fi
   done < "$SECRETS/anchor-read.env"
-  if DATABASE_URL="$dburl" compose --profile admin run --rm --no-deps -T "${envs[@]}" admin \
+  if DATABASE_URL="$dburl" admin_run "${envs[@]}" admin \
     python manage.py ihr_audit_verify --all ${as_of:+--as-of "$as_of"}; then i=0; else i=$?; fi
-  ((keep)) && echo "Kept: container $DRILL (psql: docker exec -it $DRILL psql -U postgres). Remove: scripts/staging.sh restore-drill --clean"
+  ((keep)) && echo "Kept: container $DRILL (psql: scripts/staging.sh restore-drill-psql --operator <you> --reason \"<ticket>\", recorded as a data-tier session). Remove: scripts/staging.sh restore-drill --clean"
   ((i == 0)) || die "the restored copy failed the audit check"
   echo "Restore drill passed."
 }
@@ -1411,7 +1869,7 @@ restore_live() {  # restore [--target T | --target-name NAME [--set LABEL]]: a l
   docker start ihr-restore-recovery >/dev/null
   wait_promoted ihr-restore-recovery
   [[ -z "${SUP_DISASTER:-}" ]] || supersede_parent ihr-restore-recovery
-  docker exec ihr-restore-recovery psql -U postgres -Atc "CHECKPOINT" >/dev/null
+  PG_TARGET=ihr-restore-recovery pg_su -Atc "CHECKPOINT" >/dev/null
   docker stop -t 60 ihr-restore-recovery >/dev/null
   docker run --rm --user 70:70 --network none -v "$vol:/var/lib/postgresql" --entrypoint sh \
     "$(env_get IHR_POSTGRES_IMAGE)" -c 'rm -f /var/lib/postgresql/.ihr-restore-incomplete'
@@ -1441,7 +1899,7 @@ REL_AUDIT_SECONDS="${IHR_RELEASE_AUDIT_SECONDS:-1800}"
 REL_SEAL_SECONDS="${IHR_RELEASE_SEAL_SECONDS:-300}"
 
 rlog() { python3 "$ROOT/scripts/release_log.py" "$@"; }
-rel_sql() { compose exec -T db psql -U postgres -d ihr -v ON_ERROR_STOP=1 -Atc "$1"; }
+rel_sql() { pg_su -d ihr -Atc "$1"; }
 rel_held_count() {  # rel_held_count: how many hospitals are held for a window; nothing if unreadable
   local n
   n="$(rel_sql "SELECT count(*) FROM ihr_platform_hospitalschemastate WHERE hold_reason = 'window' AND upgrading_since IS NOT NULL" 2>/dev/null || true)"
@@ -1459,10 +1917,23 @@ rel_lock() {  # one release or rollback at a time (fd 9 stays open until the scr
   exec 9>"$REL_DIR/.lock"
   flock -n 9 || die "another release or rollback is running here"
 }
-rel_operator() {  # who runs it, as ihr_fleet_run records it (1-64 of letters, digits, . _ @ -)
-  local who="${1:-$(id -un)}"
-  [[ "$who" =~ ^[A-Za-z0-9._@-]{1,64}$ ]] || die "--operator: 1-64 letters, digits or . _ @ -"
-  echo "$who"
+rel_operator() {  # rel_operator [a subcommand's own --operator]: the operator session's name (P1-T27a,
+  # Q-K134: required, no default), as ihr_fleet_run records it. A subcommand's own --operator must
+  # name the same person; given alone it names the session's operator. The session opens here
+  # (before anything else of release, rollback, restore, db-roles or hospital-restore runs).
+  local own="${1:-}"
+  op_load
+  if [[ -n "$OP_SESSION" ]]; then
+    [[ -z "$own" || "$own" == "$OP_NAME" ]] || { OP_REFUSE_NAME="$OP_NAME"; op_refuse conflict-operator "--operator $own is not the session's operator ($OP_NAME)"; }
+  else
+    if [[ -n "$own" ]]; then
+      [[ -z "${OP_GIVEN_OPERATOR:-${IHR_OPERATOR:-}}" || "${OP_GIVEN_OPERATOR:-${IHR_OPERATOR:-}}" == "$own" ]] \
+        || op_refuse conflict-operator "--operator $own is not the session's operator (${OP_GIVEN_OPERATOR:-${IHR_OPERATOR:-}})"
+      OP_GIVEN_OPERATOR="$own"
+    fi
+    op_need run >/dev/null || exit 1
+  fi
+  echo "$OP_NAME"
 }
 rel_images() {  # "<name> <image>" for each of our images in this stack
   local g
@@ -1547,11 +2018,11 @@ old_manage() {  # a manage.py command of the running (outgoing) build, never the
   if backend_runs_as_app; then
     repo="$(repo_of "$(env_get IHR_BACKEND_IMAGE)"):ihr-outgoing"
     docker tag "$(running_backend_id)" "$repo"
-    IHR_BACKEND_IMAGE="$repo" compose run --rm --no-deps -T migrate python manage.py "$@" || rc=$?
+    IHR_BACKEND_IMAGE="$repo" migrate_run migrate python manage.py "$@" || rc=$?
     docker rmi "$repo" >/dev/null 2>&1 || true
     return "$rc"
   fi
-  compose exec -T backend python manage.py "$@"
+  app_exec backend python manage.py "$@"
 }
 window_open_now() {  # window_open_now "<ihr_fleet_run window's line>": the window holds this minute
   python3 -c '
@@ -1608,7 +2079,7 @@ rel_audit_check() {  # rel_audit_check: the whole audit check (triggers, hash ch
     echo "audit: skipped, no fingerprint storage set up here (secrets/anchor-write.env)" >&2
     echo skipped; return 0
   fi
-  compose exec -T -e IHR_DB_LIMITS=worker backend timeout "$REL_AUDIT_SECONDS" python manage.py ihr_audit_verify --all >&2 || rc=$?
+  app_exec -e IHR_DB_LIMITS=worker backend timeout "$REL_AUDIT_SECONDS" python manage.py ihr_audit_verify --all >&2 || rc=$?
   case "$rc" in
     0) echo ok ;;
     124) echo "WARNING: the audit check did not end within $REL_AUDIT_SECONDS s (IHR_RELEASE_AUDIT_SECONDS); going on" >&2; echo timeout ;;
@@ -1644,7 +2115,7 @@ rel_seal() {  # rel_seal <outgoing backend image id>: seal and fingerprint the a
   repo="$(repo_of "$(env_get IHR_BACKEND_IMAGE)"):ihr-outgoing"
   docker tag "$1" "$repo"
   DATABASE_URL="$url" IHR_DB_ROLES=off IHR_DB_ROLE="" \
-    IHR_BACKEND_IMAGE="$repo" compose run --rm --no-deps -T ${envs[@]+"${envs[@]}"} celery-worker \
+    IHR_BACKEND_IMAGE="$repo" migrate_run ${envs[@]+"${envs[@]}"} celery-worker \
     timeout "$REL_SEAL_SECONDS" python manage.py shell -c "$REL_SEAL_PY" >&2 || rc=$?
   docker rmi "$repo" >/dev/null 2>&1 || true
   case "$rc" in
@@ -1661,7 +2132,7 @@ rel_seal_new() {  # rel_seal_new: the same seal and one fingerprint with THIS bu
     echo "audit: skipped, no fingerprint storage set up here (secrets/anchor-write.env)" >&2
     echo skipped; return 0
   fi
-  compose run --rm --no-deps -T celery-worker \
+  migrate_run celery-worker \
     timeout "$REL_SEAL_SECONDS" python manage.py shell -c "$REL_SEAL_PY" >&2 || rc=$?
   case "$rc" in
     0) echo ok ;;
@@ -1674,7 +2145,7 @@ rel_repo_info() {  # the repository's info as JSON: through the running backup s
   # whose image tag deploy.sh moved, and the gateway with the split keys mid-release, which kills
   # the outgoing backend's storage key before `up`)
   if [[ -n "$(compose ps -q backup 2>/dev/null || true)" ]]; then
-    compose exec -T backup pgbackrest --stanza=main --output=json --log-level-console=error info
+    app_exec backup pgbackrest --stanza=main --output=json --log-level-console=error info
   else
     repo_info --keep-running
   fi
@@ -1692,7 +2163,7 @@ rel_restore_point() {  # rel_restore_point <tag>: "<name> <lsn> <epoch>", or "- 
   # A restore point needs a backup from before it
   if ! rel_repo_info | grep -q '"label"'; then
     echo "no backup in the repository yet: a full one first" >&2
-    compose exec -T backup pgbackrest --stanza=main --type=full backup >&2
+    app_exec backup pgbackrest --stanza=main --type=full backup >&2
   fi
   # Its WAL file is closed at once, so the spool pushes it within seconds
   point="$(rel_sql "SELECT pg_create_restore_point('$name')::text || ' ' || extract(epoch FROM now())::bigint")"
@@ -1847,7 +2318,7 @@ rel_level_guard() {  # rel_level_guard <target backend image>: a build that cann
   ((have < 2)) || return 0
   tool="$(rel_level_tool)"
   [[ -n "$tool" ]] || return 0
-  want="$(IHR_BACKEND_IMAGE="$tool" compose --profile admin run --rm --no-deps -T audit-supersede level 2>/dev/null | sed -n 's/.*bucket=\([0-9]\).*/\1/p')"
+  want="$(IHR_BACKEND_IMAGE="$tool" audit_supersede_run audit-supersede level 2>/dev/null | sed -n 's/.*bucket=\([0-9]\).*/\1/p')"
   [[ "$want" =~ ^[0-9]$ ]] || die "could not read the restore objects' level in the fingerprint bucket (audit-supersede level): nothing changed"
   ((have >= want)) || die "the fingerprint bucket holds level-$want restore objects (a disaster restore's, P1-T22c2a) that the target build (level $have) cannot read: refused, fix forward (Q-K101); nothing changed"
 }
@@ -2132,10 +2603,10 @@ release() {  # release [--now [--minutes N] [--note T]] [--operator NAME] | --fi
   # 7. The new build: the roles checked (C6), the platform's schema, then each hospital (2 at a
   # time, logged for its alerts; the grants of every hospital schema converged as the owner)
   echo "== [$((SECONDS - t0)) s] Platform (public) migrations"
-  compose run --rm --no-deps -T migrate python manage.py ihr_db_role_check --for migrate
-  compose run --rm --no-deps -T migrate python manage.py migrate_schemas --shared --noinput
+  migrate_run migrate python manage.py ihr_db_role_check --for migrate
+  migrate_run migrate python manage.py migrate_schemas --shared --noinput
   echo "== [$((SECONDS - t0)) s] Hospital migrations (ihr_fleet_run, as scripts/staging.sh fleet)"
-  compose run --rm --no-deps -T migrate python manage.py ihr_fleet_run migrate check roles root packs --operator "$op" || fleet_rc=$?
+  migrate_run migrate python manage.py ihr_fleet_run migrate check roles root packs --operator "$op" || fleet_rc=$?
   # 7a. What the migrations, roles and packs wrote into the trails (suspended and offboarding
   # hospitals too) sealed and fingerprinted by the new build before anything starts: the audit
   # watch, recreated by up, never finds it waiting for seal_inactive's next run (P1-T21 C3)
@@ -2179,7 +2650,7 @@ release_finish() {  # release_finish <operator> [--checked]: close the window an
     smoke || die "release $tag: the smoke checks fail (above): not finished"
   fi
   release_record
-  compose run --rm --no-deps -T migrate python manage.py ihr_fleet_run window --clear --operator "$op"
+  migrate_run migrate python manage.py ihr_fleet_run window --clear --operator "$op"
 }
 
 # ---- A whole-database restore and the audit chain (P1-T22c1; docs/reviews/p1-t22c/design.md) --
@@ -2295,7 +2766,7 @@ supersede_export() {  # supersede_export <restore point> <its epoch> <operator>:
   docker tag "$img" "$repo"
   (umask 077; printf 'id=%s\nimage=%s\npoint=%s\npoint_time=%s\noperator=%s\n' "$id" "$img" "$point" "$at" "$op" > "$dir/state")
   echo "== Exporting every hospital's audit tail after $point (restore $id; the audit watch's read-only role)"
-  (umask 077; IHR_BACKEND_IMAGE="$repo" compose --profile admin run --rm --no-deps -T audit-supersede \
+  (umask 077; IHR_BACKEND_IMAGE="$repo" audit_supersede_run audit-supersede \
     export --restore-id "$id" --point "$point" --point-time "$at" --image "$img" --operator "$op" > "$dir/export.tar") \
     || die "the audit export failed (above): nothing was restored"
   SUP_ID="$id"
@@ -2309,7 +2780,7 @@ supersede_plan() {  # supersede_plan <id> <operator>: the plan, written once to 
   echo "== The plan (the fingerprint bucket, write-once)"
   # (a subshell: the events key is exported for this one-off only, never kept in this shell)
   ( supersede_keys
-    IHR_BACKEND_IMAGE="$repo" compose run --rm --no-deps -T ${sup_envs[@]+"${sup_envs[@]}"} migrate \
+    IHR_BACKEND_IMAGE="$repo" migrate_run ${sup_envs[@]+"${sup_envs[@]}"} migrate \
       python manage.py ihr_audit_supersede plan "$id" --operator "$op" < "$dir/export.tar" ) \
     || die "the restore's plan could not be written (above): nothing was restored"
   (umask 077; date -Iseconds > "$dir/planned")
@@ -2333,7 +2804,7 @@ supersede_load() {  # supersede_load <id> <operator> [image]: the restored datab
   echo "== Loading the audit tails back (restore $id)"
   # A disaster restore's events and result: the events key only, never the writer's (audit S5)
   ( if [[ "$(sup_get "$id" flow)" == disaster ]]; then supersede_keys --events-only; else supersede_keys; fi
-    IHR_BACKEND_IMAGE="$repo" compose run --rm --no-deps -T ${sup_envs[@]+"${sup_envs[@]}"} migrate \
+    IHR_BACKEND_IMAGE="$repo" migrate_run ${sup_envs[@]+"${sup_envs[@]}"} migrate \
       python manage.py ihr_audit_supersede load "$id" --operator "$op" < "$dir/export.tar" ) || return 1
   (umask 077; date -Iseconds > "$dir/loaded")
   # The load verified every event it wrote (its last step): the local tar (personal data) goes,
@@ -2415,13 +2886,14 @@ supersede_stub() {  # supersede_stub <T>: the stub plan of restore $SUP_DISASTER
     "$id" "$img" "$when" "${max:0:8}" "$max" "$set" "$SUP_OP" "$SUP_NOSUP" > "$dir/state")
   echo "== The stub plan of restore $id (the fingerprint bucket, write-once; the events key)"
   ( supersede_keys --events-only
-    IHR_BACKEND_IMAGE="$repo" compose run --rm --no-deps -T ${sup_envs[@]+"${sup_envs[@]}"} migrate \
+    IHR_BACKEND_IMAGE="$repo" migrate_run ${sup_envs[@]+"${sup_envs[@]}"} migrate \
       python manage.py ihr_audit_supersede stub "$id" --target-time "$when" --old-timeline "${max:0:8}" \
       --archive-max "$max" --backup-set "$set" --image "$img" --operator "$SUP_OP" \
       ${SUP_REASON:+--no-supersede "$SUP_REASON"} ) \
     || { rm -rf "$dir"; die "the stub plan could not be written (above): nothing was restored"; }
   (umask 077; date -Iseconds > "$dir/stubbed")
 }
+# shellcheck disable=SC2329 # called from an EXIT trap
 sup_abandon_failed() {  # sup_abandon_failed <rc>: restore_live's exit trap (review E3). An attempt
   # that failed after its stub and before the restore finished is marked abandoned: up stops
   # naming it and close refuses it (its stub stays in the bucket, write-once; the attempt that
@@ -2435,7 +2907,7 @@ supersede_parent() {  # supersede_parent <container>: the new timeline and its p
   # timeline cannot be loaded (its export refuses: close it)
   local dir="$SUPERSEDE_DIR/$SUP_DISASTER" tl parent old hist stop times="" rstop="" rrep=""
   local fmt='YYYY-MM-DD"T"HH24:MI:SS.US"+00:00"'
-  tl="$(docker exec "$1" psql -U postgres -Atc "SELECT substr(pg_walfile_name(pg_current_wal_lsn()), 1, 8)")"
+  tl="$(PG_TARGET="$1" pg_su -Atc "SELECT substr(pg_walfile_name(pg_current_wal_lsn()), 1, 8)")"
   hist="$(docker exec "$1" cat "/var/lib/postgresql/18/docker/pg_wal/$tl.history")"
   # (the file ends with an empty line: the last line with fields; live proof P1-T22c2a)
   parent="$(printf '%s\n' "$hist" | awk 'NF {p = $1} END {print p}')"
@@ -2446,7 +2918,7 @@ supersede_parent() {  # supersede_parent <container>: the new timeline and its p
   # refuses unless the stub's T lies between them (the restored database is the state at T)
   stop="$(printf '%s\n' "$hist" | awk -F '\t' 'NF >= 3 {r = $3} END {print r}')"
   if [[ "$stop" =~ ^before\ ([0-9]{4}-[0-9]{2}-[0-9]{2}\ [0-9]{2}:[0-9]{2}:[0-9]{2}(\.[0-9]{1,6})?[+-][0-9]{2}(:[0-9]{2})?)$ ]]; then
-    times="$(docker exec "$1" psql -U postgres -At -F ' ' -c "SELECT to_char('${BASH_REMATCH[1]}'::timestamptz AT TIME ZONE 'UTC', '$fmt'), coalesce(to_char(pg_last_xact_replay_timestamp() AT TIME ZONE 'UTC', '$fmt'), '')")" || times=""
+    times="$(PG_TARGET="$1" pg_su -At -F ' ' -c "SELECT to_char('${BASH_REMATCH[1]}'::timestamptz AT TIME ZONE 'UTC', '$fmt'), coalesce(to_char(pg_last_xact_replay_timestamp() AT TIME ZONE 'UTC', '$fmt'), '')")" || times=""
   fi
   read -r rstop rrep <<<"$times" || true
   (umask 077; printf 'new_timeline=%s\nparent=%s\nrecovery_stop=%s\nrecovery_replayed=%s\n' "$tl" "$parent" "${rstop:-unknown}" "$rrep" >> "$dir/state")
@@ -2499,12 +2971,12 @@ restore_cmd() {  # restore [--target T --operator NAME [--no-supersede --reason 
     return 0
   fi
   echo "Restore id: $SUP_DISASTER. Next: scripts/staging.sh up, smoke, backup-now full; then"
-  echo "  scripts/staging.sh audit-supersede export $SUP_DISASTER --operator $SUP_OP, then audit-supersede load $SUP_DISASTER"
+  echo "  scripts/staging.sh audit-supersede --operator $SUP_OP --reason \"<ticket>\" export $SUP_DISASTER, then audit-supersede load $SUP_DISASTER --operator $SUP_OP"
   echo "  (until the load, every hospital sealed after T reads as cut: AuditChainBroken; AuditWholeRestorePending)"
 }
 sup_has_export_doc() {  # sup_has_export_doc <id> <image>: the export doc is in the bucket already
   # (the reader key only; `status` names it). Exit 0 if it is
-  IHR_BACKEND_IMAGE="$2" compose --profile admin run --rm --no-deps -T audit-supersede status "$1" --json 2>/dev/null \
+  IHR_BACKEND_IMAGE="$2" audit_supersede_run audit-supersede status "$1" --json 2>/dev/null \
     | python3 -c 'import json, sys; sys.exit(0 if json.load(sys.stdin).get("exported") else 1)'
 }
 supersede_export_copy() {  # supersede_export_copy <id> <operator> [<accept-unreadable reason>]:
@@ -2536,7 +3008,7 @@ supersede_export_copy() {  # supersede_export_copy <id> <operator> [<accept-unre
   pw="$(db_password watch)"
   [[ -n "$pw" ]] || db_need_split_secrets
   # Disk: the set's database size from the repository (never the live database) + 3 GB (WAL replay, work)
-  size="$(compose exec -T backup pgbackrest --stanza=main --output=json info | sup_set_size "$set")" || die "cannot read backup set $set in the repository"
+  size="$(app_exec backup pgbackrest --stanza=main --output=json info | sup_set_size "$set")" || die "cannot read backup set $set in the repository"
   need=$(( size / 1048576 + 3072 ))
   free="$(df -Pm "$(docker info --format '{{.DockerRootDir}}')" | awk 'NR==2 {print $4}')"
   if [[ ! "$free" =~ ^[0-9]+$ ]] || ((free < need)); then
@@ -2557,14 +3029,14 @@ supersede_export_copy() {  # supersede_export_copy <id> <operator> [<accept-unre
   esac
   echo "== Exporting every hospital's audit tail from the copy (restore $id; the audit watch's read-only role)"
   (umask 077; DATABASE_URL="postgres://ihr_audit_watch:$pw@$SUP_COPY:5432/ihr" IHR_BACKEND_IMAGE="$repo" \
-    compose --profile admin run --rm --no-deps -T -e DATABASE_URL audit-supersede \
+    audit_supersede_run -e DATABASE_URL audit-supersede \
     export-copy "$id" --image "$img" --operator "$op" --source-end "${COPY_AS_OF:-}" \
     ${accept:+--accept-unreadable "$accept"} > "$dir/export.tar.part") \
     || { rm -f "$dir/export.tar.part"; die "the export from the copy failed (above): the hospitals are served as they are; run it again"; }
   mv "$dir/export.tar.part" "$dir/export.tar"
   echo "== The export doc (the fingerprint bucket, write-once; the events key)"
   ( supersede_keys --events-only
-    IHR_BACKEND_IMAGE="$repo" compose run --rm --no-deps -T ${sup_envs[@]+"${sup_envs[@]}"} migrate \
+    IHR_BACKEND_IMAGE="$repo" migrate_run ${sup_envs[@]+"${sup_envs[@]}"} migrate \
       python manage.py ihr_audit_supersede export-doc "$id" --operator "$op" \
       --recovery-stop "$rstop" --recovery-replayed "$rrep" < "$dir/export.tar" ) \
     || die "the export doc could not be written (above); run the export again (the tar is kept, mode 600)"
@@ -2584,7 +3056,7 @@ supersede_close() {  # supersede_close <id> <reason> <operator> [--no-supersede]
   repo="$(repo_of "$(env_get IHR_BACKEND_IMAGE)"):$SUP_TAG"
   docker tag "$img" "$repo"
   ( if [[ "$(sup_get "$id" flow)" == disaster ]]; then supersede_keys --events-only; else supersede_keys; fi
-    IHR_BACKEND_IMAGE="$repo" compose run --rm --no-deps -T ${sup_envs[@]+"${sup_envs[@]}"} migrate \
+    IHR_BACKEND_IMAGE="$repo" migrate_run ${sup_envs[@]+"${sup_envs[@]}"} migrate \
       python manage.py ihr_audit_supersede close "$id" --reason "$reason" --operator "$op" ${4:+"$4"} ) || return 1
   [[ ! -d "$SUPERSEDE_DIR/$id" ]] || (umask 077; date -Iseconds > "$SUPERSEDE_DIR/$id/loaded"; date -Iseconds > "$SUPERSEDE_DIR/$id/closed")
 }
@@ -2631,7 +3103,8 @@ audit_supersede_cmd() {  # audit-supersede load <id> [--operator NAME] [--image 
   if [[ "$action" == export ]]; then
     ((accept == 0)) || [[ -n "$reason" ]] || die "--accept-unreadable needs --reason \"<why>\""
     rel_lock
-    supersede_export_copy "$id" "$(rel_operator "$op")" "$( ((accept)) && echo "$reason" )"
+    op="$(rel_operator "$op")"   # an assignment: a refusal stops the run (in an argument list it would not)
+    supersede_export_copy "$id" "$op" "$( ((accept)) && echo "$reason" )"
     return 0
   fi
   if [[ "$action" == abandon ]]; then
@@ -2642,14 +3115,16 @@ audit_supersede_cmd() {  # audit-supersede load <id> [--operator NAME] [--image 
   if [[ "$action" == close ]]; then
     [[ -n "$reason" ]] || die "close needs --reason \"<why it cannot be loaded>\""
     rel_lock
+    op="$(rel_operator "$op")"
     sup_db_up
-    supersede_close "$id" "$reason" "$(rel_operator "$op")" || die "the result could not be written (above)"
+    supersede_close "$id" "$reason" "$op" || die "the result could not be written (above)"
     return 0
   fi
   if [[ "$action" == load ]]; then
     rel_lock
+    op="$(rel_operator "$op")"
     sup_db_up
-    supersede_load "$id" "$(rel_operator "$op")" "$image" || die "the load did not finish (above): fix the cause and run it again (each step is checked before it is done)"
+    supersede_load "$id" "$op" "$image" || die "the load did not finish (above): fix the cause and run it again (each step is checked before it is done)"
     return 0
   fi
   repo="$(repo_of "$(env_get IHR_BACKEND_IMAGE)")"
@@ -2663,7 +3138,7 @@ audit_supersede_cmd() {  # audit-supersede load <id> [--operator NAME] [--image 
   if [[ -f "$SUPERSEDE_DIR/$id/closed" && -f "$SUPERSEDE_DIR/$id/export.tar" ]]; then
     echo "NOTE: this restore was closed and keeps $SUPERSEDE_DIR/$id/export.tar (audit entries, mode 600): the only copy of the old tail (expiry: P1-T22c2b, with Q-K90)" >&2
   fi
-  IHR_BACKEND_IMAGE="$repo" compose --profile admin run --rm --no-deps -T audit-supersede status "$id" ${json[@]+"${json[@]}"}
+  IHR_BACKEND_IMAGE="$repo" audit_supersede_run audit-supersede status "$id" ${json[@]+"${json[@]}"}
 }
 s3_events_key() {  # s3-events-key: the events key (P1-T22c, Q-K91) for a stand-in set up before
   # it, in this folder only (a proof; a server's key is made on the owner's machine and kept in the
@@ -2688,6 +3163,7 @@ s3_events_key() {  # s3-events-key: the events key (P1-T22c, Q-K91) for a stand-
 REL_RB_STAGE="" REL_RB_PLAN="" REL_RB_TARGET="" REL_RB_RP="" REL_RB_SET="" REL_RB_ASIDE="" REL_RB_SUP=""
 REL_RB_HELD=""  # stage 5: held (every hospital held), failed (the hold failed), none (no backend ran)
 REL_ROLLBACK_HOLD="$DIR/releases/rollback-hold"
+# shellcheck disable=SC2329 # called from an EXIT trap
 rel_rollback_exit() {  # rel_rollback_exit <exit status>: where a rollback stopped, and the way on
   local rc="$1" load="" held="" plan=""
   [[ -z "$REL_RB_PLAN" ]] || rm -f "$REL_RB_PLAN"
@@ -2826,13 +3302,13 @@ rollback() {  # rollback [--restore] [--operator NAME]: back to the release befo
     REL_RB_STAGE=1
     rel_point_images "$names" "$plan"
     rel_unpack_stack "$target"
-    "$ROOT/scripts/staging.sh" up
+    op_child "$ROOT/scripts/staging.sh" up
     # The window's holds lifted (the schemas are the target's), any hospital whose role sync this
     # build refuses held again, and the window cleared (D7)
-    "$ROOT/scripts/staging.sh" fleet release --operator "$op"
-    "$ROOT/scripts/staging.sh" fleet roles --operator "$op" || true
-    "$ROOT/scripts/staging.sh" fleet window --clear --operator "$op"
-    "$ROOT/scripts/staging.sh" smoke || die "rolled back to $target, but the smoke checks fail (above)"
+    op_child "$ROOT/scripts/staging.sh" fleet release --operator "$op"
+    op_child "$ROOT/scripts/staging.sh" fleet roles --operator "$op" || true
+    op_child "$ROOT/scripts/staging.sh" fleet window --clear --operator "$op"
+    op_child "$ROOT/scripts/staging.sh" smoke || die "rolled back to $target, but the smoke checks fail (above)"
     (umask 077; rlog line kind=rollback "tag=$target" "from=$leave" restored=no "time=$(date -Iseconds)" >> "$REL_LOG")
     rm -f "$REL_ATTEMPT"
     echo "== Rolled back to $target in $((SECONDS - t0)) s (nothing lost)"
@@ -2959,19 +3435,19 @@ rollback() {  # rollback [--restore] [--operator NAME]: back to the release befo
     supersede_load "$sup" "$op" || die "the audit load did not finish (above)"
   fi
   echo "== [$((SECONDS - t0)) s] Starting $target"
-  "$ROOT/scripts/staging.sh" up
+  op_child "$ROOT/scripts/staging.sh" up
   # The restore point was taken with every hospital held for the window: serve them again, then
   # hold again any whose role sync this build refuses
-  "$ROOT/scripts/staging.sh" fleet release --operator "$op"
-  "$ROOT/scripts/staging.sh" fleet roles --operator "$op" || true
-  "$ROOT/scripts/staging.sh" fleet window --clear --operator "$op"
-  "$ROOT/scripts/staging.sh" smoke || die "restored and started $target, but the smoke checks fail (above)"
+  op_child "$ROOT/scripts/staging.sh" fleet release --operator "$op"
+  op_child "$ROOT/scripts/staging.sh" fleet roles --operator "$op" || true
+  op_child "$ROOT/scripts/staging.sh" fleet window --clear --operator "$op"
+  op_child "$ROOT/scripts/staging.sh" smoke || die "restored and started $target, but the smoke checks fail (above)"
   rm -f "$REL_ROLLBACK_HOLD"
   echo "== Rolled back to $target with a restore in $((SECONDS - t0)) s${sup:+ (audit: restore $sup)}"
   # A full backup of the new timeline at once: a later restore never has to reach back past this
   # one, or past an older point (D4/O9)
   echo "== Full backup of the restored database"
-  "$ROOT/scripts/staging.sh" backup-now full || echo "WARNING: the full backup failed (above): run scripts/staging.sh backup-now full" >&2
+  op_child "$ROOT/scripts/staging.sh" backup-now full || echo "WARNING: the full backup failed (above): run scripts/staging.sh backup-now full" >&2
   [[ -z "$aside" ]] || echo "The database as it was is in volume $aside: once you are sure, docker volume rm $aside"
 }
 
@@ -3071,7 +3547,7 @@ mail_test_files() {  # the stand-in's throwaway CA, certificate and password fil
 mail_check() {  # mail_check <to>: Django sends a test e-mail; with the stand-in, read it back
   local to="${1:?usage: scripts/staging.sh mail-check <to-address>}"
   [[ "$to" =~ $EMAIL_RE ]] || die "not an e-mail address: $to"
-  compose --profile admin run --rm --no-deps -T admin python manage.py sendtestemail "$to"
+  admin_run admin python manage.py sendtestemail "$to"
   if [[ "$(env_get IHR_MAIL)" == test ]]; then
     compose exec -T smtp-test wget -q -O - "http://127.0.0.1:8025/api/v1/search?query=to:$to" \
       | python3 -c 'import json,sys; n=json.load(sys.stdin)["messages_count"]; print("stand-in received", n, "message(s) to that address"); sys.exit(0 if n else 1)'
@@ -3163,7 +3639,7 @@ s3_tool() {  # s3_tool <script> <args>: a deploy/s3 script with the S3_* keys th
       envs+=(-e "S3_RETIRED_CARE_${v}")
     done
   fi
-  compose --profile admin run --rm --no-deps -T "${envs[@]}" s3-tool "/ihr-s3/$script" \
+  admin_run "${envs[@]}" s3-tool "/ihr-s3/$script" \
     --endpoint http://s3:8333 --patient "$(env_get IHR_S3_PATIENT_BUCKET)" \
     --facility "$(env_get IHR_S3_FACILITY_BUCKET)" --anchor "$(env_get IHR_S3_ANCHOR_BUCKET)" "$@"
 }
@@ -3292,7 +3768,7 @@ s3_split_keys_cmd() {  # s3-split-keys [--check]: CARE's split storage keys (P1-
   if [[ "$before" == "$after" ]]; then
     echo "CARE's storage keys are split already: nothing changed."
   else
-    echo "Next: scripts/deploy.sh --host ... (it sends them; the server's gateway forgets the old key when s3 is recreated, and scripts/staging.sh s3-check proves it dead)."
+    echo "Next: scripts/deploy.sh --host ... --operator <you> (it sends them; the server's gateway forgets the old key when s3 is recreated, and scripts/staging.sh s3-check proves it dead)."
   fi
 }
 
@@ -3647,7 +4123,7 @@ cert() {  # cert [--wait SECONDS]: the certificate Traefik now serves for alpha.
   done
   echo "${out:-no answer on $addr:$port}"
   if [[ "$out" == *"TRAEFIK DEFAULT CERT"* || -z "$out" ]]; then
-    echo "Not a certificate from the CA yet (Traefik's placeholder). See: scripts/staging.sh logs traefik" >&2
+    echo "Not a certificate from the CA yet (Traefik's placeholder). See: scripts/staging.sh logs --operator <you> --reason \"<ticket>\" traefik" >&2
   else
     echo "Served by '$issuer', but .env says $(env_get IHR_ACME). After changing the CA: scripts/staging.sh acme-new-cert" >&2
   fi
@@ -4122,7 +4598,7 @@ monitoring_db_role() {  # the exporter's login role: pg_monitor only, its passwo
   pw="$(sed -n 's/^DATA_SOURCE_PASS=//p' "$SECRETS/postgres-exporter.env")"
   [[ "$pw" =~ ^[A-Za-z0-9_-]{20,}$ ]] || die "secrets/postgres-exporter.env has no usable DATA_SOURCE_PASS"
   # On stdin, never a command line; the server never logs the statement (compose.yaml)
-  compose exec -T db psql -U postgres -d postgres -v ON_ERROR_STOP=1 -q >/dev/null <<SQL
+  pg_su -d postgres -q >/dev/null <<SQL
 SELECT 'CREATE ROLE ihr_monitor' WHERE NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'ihr_monitor')\gexec
 ALTER ROLE ihr_monitor WITH LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS CONNECTION LIMIT 3 PASSWORD '$pw';
 GRANT pg_monitor TO ihr_monitor;
@@ -4348,7 +4824,7 @@ print(" ".join(sorted(x["value"][1] for x in r)) or "absent")' 2>/dev/null || ec
   # Traefik's metrics answer Prometheus's address only: the web app, on the same network as
   # Traefik, is refused
   check "Traefik metrics refused to other containers" 403 \
-    "$(compose exec -T backend python -c 'import urllib.request, urllib.error
+    "$(app_exec backend python -c 'import urllib.request, urllib.error
 try:
     print(urllib.request.urlopen("http://traefik:8083/metrics", timeout=5).status)
 except urllib.error.HTTPError as e:
@@ -4383,7 +4859,7 @@ print(int(float(r[0]["value"][1])) if r else 0)' 2>/dev/null || echo 0)"
   check "grafana: every live check above" ok "$out"
   # The containers that take traffic from the internet cannot reach Grafana at all
   check "grafana: the web app cannot reach it" unreachable \
-    "$(compose exec -T backend python -c 'import socket, sys
+    "$(app_exec backend python -c 'import socket, sys
 try:
     socket.create_connection((sys.argv[1], 3000), timeout=5); print("reachable")
 except OSError:
@@ -4493,7 +4969,7 @@ print(r[0]["value"][1] if r else "absent")' 2>/dev/null || echo unreadable)"
     fi
   fi
   check "logs: the web app cannot reach the log store" unreachable \
-    "$(compose exec -T backend python -c 'import sys, urllib.request
+    "$(app_exec backend python -c 'import sys, urllib.request
 try:
     urllib.request.urlopen(sys.argv[1] + "/health", timeout=5); print("reachable")
 except Exception:
@@ -4526,7 +5002,7 @@ alert_test() {  # alert-test: one synthetic alert, mailed now; it resolves itsel
       ((n > 0)) && break
       sleep 10
     done
-    ((n > 0)) || die "the stand-in received no alert mail within 2 minutes (scripts/staging.sh logs alertmanager)"
+    ((n > 0)) || die "the stand-in received no alert mail within 2 minutes (scripts/staging.sh logs --operator <you> --reason \"<ticket>\" alertmanager)"
     echo "Stand-in received $n alert mail(s) for IhrAlertTest."
   fi
 }
@@ -4652,7 +5128,7 @@ archive_exec() {  # archive_exec <archive.py args>: in the running archiver (its
   arc="$(env_get IHR_LOGS_ARCHIVE)"
   [[ -n "$arc" ]] || die "no log archive here (logs-archive-init)"
   if [[ -n "$(compose ps -q logs-archive 2>/dev/null)" ]]; then
-    compose exec -T logs-archive python3 -I /opt/ihr-archive/archive.py "$@"
+    app_exec logs-archive python3 -I /opt/ihr-archive/archive.py "$@"
     return
   fi
   case "$1" in check|get|probe) ;; *) die "the archiver is not running here (scripts/staging.sh up)" ;; esac
@@ -4875,7 +5351,7 @@ dumps_exec() {  # dumps_exec <dumper.py args>: in the running dumper (its keys, 
   d="$(env_get IHR_DUMPS)"
   [[ -n "$d" ]] || die "no nightly dumps here (dumps-init)"
   if [[ -n "$(compose ps -q dumper 2>/dev/null)" ]]; then
-    compose exec -T dumper python3 -I /opt/ihr-dumps/dumper.py "$@"
+    app_exec dumper python3 -I /opt/ihr-dumps/dumper.py "$@"
     return
   fi
   case "$1" in check|get|manifest|probe) ;; *) die "the dumper is not running here (scripts/staging.sh up)" ;; esac
@@ -5018,7 +5494,7 @@ restore_manage() {  # restore_manage <ihr_hospital_restore args>: in a logged mi
   if [[ -n "$RESTORE_VOL" ]] && docker volume inspect "$RESTORE_VOL" >/dev/null 2>&1; then
     mount=(-v "$RESTORE_VOL:/restore:ro")
   fi
-  compose run --rm --no-deps -T ${mount[@]+"${mount[@]}"} ${restore_envs[@]+"${restore_envs[@]}"} \
+  migrate_run ${mount[@]+"${mount[@]}"} ${restore_envs[@]+"${restore_envs[@]}"} \
     migrate python manage.py ihr_hospital_restore "$@"
 }
 restore_admin() {  # restore_admin <args>: the Keycloak step, with the operator's bootstrap credential
@@ -5030,7 +5506,7 @@ restore_admin() {  # restore_admin <args>: the Keycloak step, with the operator'
     mount=(-v "$RESTORE_VOL:/restore:ro")
   fi
   IHR_KEYCLOAK_ADMIN_CLIENT_ID="$id" IHR_KEYCLOAK_ADMIN_CLIENT_SECRET="$secret" \
-    compose --profile admin run --rm --no-deps -T ${mount[@]+"${mount[@]}"} \
+    admin_run ${mount[@]+"${mount[@]}"} \
     -e IHR_KEYCLOAK_ADMIN_CLIENT_ID -e IHR_KEYCLOAK_ADMIN_CLIENT_SECRET \
     ${restore_envs[@]+"${restore_envs[@]}"} admin python manage.py ihr_hospital_restore "$@" --unlogged
 }
@@ -5127,7 +5603,7 @@ hospital_restore() {  # hospital_restore <slug> (--dump <date>|latest | --from-p
     shift
   done
   if [[ "$action" == drill ]]; then hospital_restore_drill --slug "$slug"; return; fi
-  operator="${operator:-$(rel_operator)}"
+  operator="$(rel_operator "$operator")"  # the session's operator; its own --operator must be the same (P1-T27a)
   restore_keys files
   RESTORE_VOL="$(restore_volume "$slug")"
   RESTORE_SLUG="$slug"
@@ -5175,11 +5651,11 @@ hospital_restore() {  # hospital_restore <slug> (--dump <date>|latest | --from-p
     ( restore_drill --keep --target "$pitr" >/dev/null ) \
       || { restore_drill --clean >/dev/null; restore_done "$slug"; die "the copy at $pitr could not be made (a time after the last transaction the backups hold is never reached)"; }
     # The schema's size in the copy, before pg_dump writes anything here (a dump is smaller)
-    bytes="$(docker exec "$DRILL" psql -U postgres -d ihr -Atc "SELECT coalesce(sum(pg_total_relation_size(c.oid)), 0)
+    bytes="$(PG_TARGET="$DRILL" pg_su -d ihr -Atc "SELECT coalesce(sum(pg_total_relation_size(c.oid)), 0)
       FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace WHERE n.nspname = '$(plan_get "$plan" schema)' AND c.relkind = 'r'" | tr -d '[:space:]')"
     need=$(( ${bytes:-0} * 3 / 1048576 + 1024 ))
     [[ -z "$free" ]] || ((free >= need)) || { restore_drill --clean >/dev/null; restore_done "$slug"; die "not enough disk: ${free} MB free, about ${need} MB needed (nothing dumped)"; }
-    docker exec "$DRILL" pg_dump -U postgres -Fc -n "$(plan_get "$plan" schema)" --no-owner --no-acl ihr \
+    PG_TARGET="$DRILL" pg_su --dump -Fc -n "$(plan_get "$plan" schema)" --no-owner --no-acl ihr \
       > "$work/in/dump" || { restore_drill --clean; restore_done "$slug"; die "pg_dump of the copy failed"; }
     restore_drill --clean >/dev/null
     echo "dumped from the copy: $(stat -c %s "$work/in/dump") bytes in $((SECONDS - t0)) s"
@@ -5231,7 +5707,8 @@ hospital_restore_drill() {  # hospital_restore_drill [--slug S]: the monthly dri
     shift
   done
   if [[ -z "$slug" ]]; then
-    mapfile -t slugs < <(compose exec -T db psql -U postgres -d ihr -Atc \
+    op_need psql  # the session first: a refusal inside the process substitution would not stop this run
+    mapfile -t slugs < <(pg_su -d ihr -Atc \
       "SELECT slug FROM ihr_platform_hospital WHERE schema_name <> 'public' AND status = 'active' ORDER BY slug" \
       | grep -E '^[a-z][a-z0-9-]{2,30}$' || true)
     ((${#slugs[@]})) || die "no active hospital to drill"
@@ -5266,13 +5743,16 @@ hospital_restore_drill() {  # hospital_restore_drill [--slug S]: the monthly dri
   docker network connect "$net" "$DRILL"
   pw="$(db_password owner)"; [[ -n "$pw" ]] || db_need_split_secrets
   t0=$SECONDS
-  # The owner's address only in this one command's environment, never in a file (review S9)
+  # The owner's address only in this one command's environment, never in a file (review S9).
+  # Inside the session (P1-T27a): its values and application name go into the container, and the
+  # restore's own record names the session's operator
+  op_need restore-drill
   DATABASE_URL="postgres://ihr_owner:$pw@$DRILL:5432/ihr" \
   docker run --rm --network "$net" --read-only --tmpfs /tmp --cap-drop ALL --security-opt no-new-privileges:true \
-    -e DATABASE_URL -e DJANGO_SETTINGS_MODULE=ihr_platform.settings.drill -e IHR_DB_ROLES=required -e IHR_DB_ROLE=owner \
+    "${OP_ENV[@]}" -e DATABASE_URL -e DJANGO_SETTINGS_MODULE=ihr_platform.settings.drill -e IHR_DB_ROLES=required -e IHR_DB_ROLE=owner \
     -e IHR_TENANT_DOMAIN_SUFFIX="$(env_get IHR_TENANT_DOMAIN_SUFFIX)" -v "$(restore_volume "drill-$slug"):/restore:ro" \
     --entrypoint python "$(env_get IHR_BACKEND_IMAGE)" manage.py ihr_hospital_restore --slug "$slug" --package /restore/package \
-    --package-sha256 "$RESTORE_PKG_SHA" --reason "monthly restore drill on the drill copy" --operator restore-drill --drill || rc=$?
+    --package-sha256 "$RESTORE_PKG_SHA" --reason "monthly restore drill on the drill copy" --operator "$OP_NAME" --drill || rc=$?
   echo "time: the restore in the copy $((SECONDS - t0)) s"
   docker network disconnect "$net" "$DRILL" >/dev/null 2>&1 || true
   docker network rm "$net" >/dev/null 2>&1 || true
@@ -5287,13 +5767,21 @@ hospital_restore_drill() {  # hospital_restore_drill [--slug S]: the monthly dri
   fi
 }
 
-case "${1:-}" in
+# The dispatcher (P1-T27a): main runs in a subshell, under errexit, so its exit, die and traps can
+# never skip the end line; never inside an or-list (`|| rc=$?`), which would switch errexit off inside it
+main() {
+  case "${1:-}" in
   init) init "${@:2}" ;;
   up) up "${@:2}" ;;
   smoke) smoke ;;
-  manage) compose --profile admin run --rm --no-deps -T admin python manage.py "${@:2}" ;;
+  manage) admin_run admin python manage.py "${@:2}" ;;
   # The hospital root (P1-T25): writes run as the owner, in the admin one-off
-  hospital-root) compose --profile admin run --rm --no-deps -T admin python manage.py ihr_hospital_root "${@:2}" ;;
+  # (the session's operator and reason, unless the command line gives its own: op_begin checked them)
+  hospital-root)
+    local root_args=("${@:2}")
+    [[ -n "$(op_arg --operator "${@:2}")" ]] || root_args+=(--operator "$OP_NAME")
+    [[ -n "$(op_arg --reason "${@:2}")" ]] || root_args+=(--reason "$OP_REASON")
+    admin_run admin python manage.py ihr_hospital_root "${root_args[@]}" ;;
   # The fleet runner in the one-shot's (logged) container, never the unlogged admin one: its
   # "ihr-fleet:" lines must reach the HospitalNotServed alert (deploy/logs/alerts/fleet.yml, S3).
   # `fleet window` runs as the running backend's build when one runs: the build the database's
@@ -5303,19 +5791,25 @@ case "${1:-}" in
   # Before the move of the roles (P1-T19b) the owner's one-off cannot log in (ihr_owner does not
   # exist yet): release and hold then run in the running backend too, as ihr (review C1)
   fleet)
+    # The fleet runner's own --operator is the session's operator (the same person: refused
+    # otherwise); without one the session's is passed on (P1-T27 review O4)
+    fleet_args=("${@:2}")   # (plain variables: main runs in its own subshell)
+    fleet_own="$(op_arg --operator "${@:2}")"
+    fleet_op="$(rel_operator "$fleet_own")"
+    [[ -n "$fleet_own" ]] || fleet_args+=(--operator "$fleet_op")
     # Serving the hospitals again ends a stopped rollback --restore's claim on the holds (its
     # marker): a later rollback then judges any hold anew (D2; P1-T22c1 review Q4)
     [[ "${2:-}" != release ]] || rm -f "$REL_ROLLBACK_HOLD"
     if [[ -n "$(compose ps -q backend 2>/dev/null || true)" ]] \
       && { [[ "${2:-}" == window ]] || { [[ "${2:-}" =~ ^(release|hold)$ ]] && { rel_db_single || rel_outgoing_unmigrated; }; }; }; then
-      old_manage ihr_fleet_run "${@:2}"
+      old_manage ihr_fleet_run "${fleet_args[@]}"
     elif rel_db_single; then
       die "the database still has its single role ihr (the move has not run): only fleet window, release and hold run before it, in the running backend ($([[ -n "$(compose ps -q backend 2>/dev/null || true)" ]] && echo "it runs" || echo "none runs: $REL_SERVE_PREVIOUS <you> starts the build that ran"))"
     else
       # A run that takes hospitals' locks with the nightly dumper paused around it
-      fleet_pause_dumper "${@:2}"
+      fleet_pause_dumper "${fleet_args[@]}"
       rc=0
-      compose run --rm --no-deps -T migrate python manage.py ihr_fleet_run "${@:2}" || rc=$?
+      migrate_run migrate python manage.py ihr_fleet_run "${fleet_args[@]}" || rc=$?
       if ((FLEET_PAUSED)); then start_existing dumper || rc=$((rc ? rc : 1)); fi
       exit "$rc"
     fi ;;
@@ -5355,8 +5849,9 @@ case "${1:-}" in
   s3-split-keys) s3_split_keys_cmd "${@:2}" ;;
   backup-init) backup_init "${@:2}" ;;
   backup-status) backup_status ;;
-  backup-now) compose exec -T backup pgbackrest --stanza=main --type="${2:-diff}" backup ;;
+  backup-now) app_exec backup pgbackrest --stanza=main --type="${2:-diff}" backup ;;
   restore-drill) restore_drill "${@:2}" ;;
+  restore-drill-psql) restore_drill_psql "${@:2}" ;;
   restore) restore_cmd "${@:2}" ;;
   mail-init) mail_init "${@:2}" ;;
   mail-check) mail_check "${@:2}" ;;
@@ -5395,6 +5890,8 @@ case "${1:-}" in
   local-proof)
     [[ -f "$DIR/.env" ]] || IHR_FRONTEND_IMAGE="${IHR_FRONTEND_IMAGE:-indiehr-frontend:local}" \
       init "$LOCAL_SUFFIX" --local
+    # The operator lines of a proof stay off this machine's journal unless it logs there (P1-T27a)
+    [[ "$(env_get IHR_LOG_DRIVER)" == journald ]] || export IHR_OPERATOR_LOCAL=stderr
     # A proof keeps its files on SeaweedFS too (P1-T8b3)
     grep -q '^IHR_S3=' "$DIR/.env" || s3_init
     # ...and a stand-in for the mail service (P1-T8b4)
@@ -5410,11 +5907,17 @@ case "${1:-}" in
     up
     # A synthetic hospital for the address checks, then its Keycloak organisation and client
     # (smoke checks every hospital's client holds the web app's current key)
-    compose --profile admin run --rm --no-deps -T admin python manage.py ihr_create_tenant \
+    admin_run admin python manage.py ihr_create_tenant \
       --slug alpha --name "Alpha Proof Hospital" --domain "alpha.$(env_get IHR_TENANT_DOMAIN_SUFFIX)" \
       >/dev/null 2>&1 || true
     admin_manage ihr_keycloak_sync --all >/dev/null
     smoke
     ;;
-  *) sed -n '5,101p' "$0"; exit 1 ;;
-esac
+  *) sed -n '5,105p' "$0"; exit 1 ;;
+  esac
+}
+
+op_prepare "$@"
+set +e; ( set -e; op_open_eager; main "${OP_ARGV[@]}" ); rc=$?; set -e
+op_end "$rc"; op_tidy
+exit "$rc"

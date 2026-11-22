@@ -5,6 +5,10 @@
 #
 #   scripts/deploy.sh --host ihr@<address> [--port 22] [--env-dir deploy/staging] [--allow-dirty]
 #                     [--identity <key>] [--no-build | --build-only] [--no-start] [--release [--now]]
+#                     --operator <your name>   (or IHR_OPERATOR; required unless --build-only or --no-start)
+#   --operator: who deploys (P1-T27a, Q-K134): every staging.sh call on the server runs as that
+#               operator's session (deploy/staging/README.md, Operator access record); never a
+#               shared account (ihr, root, admin, postgres)
 #   --no-start: everything but starting the stack (a new server that is to be restored first:
 #               scripts/staging.sh restore, then up; deploy/staging/README.md)
 #   --release:  start through scripts/staging.sh release (the announced window; --now: open one
@@ -36,8 +40,8 @@ VM_CACHE="${IHR_VM_CACHE:-$HOME/.cache/indiehr/vm}"
 PROOF_SUFFIX="app.ihr-proof.in"
 
 HOST="" PORT=22 ENV_DIR="" ALLOW_DIRTY=0 IDENTITY="" BUILD=1 BUILD_ONLY=0 LOCAL_PROOF=0 NO_START=0 KNOWN_HOSTS=""
-RELEASE=0 RELEASE_NOW=0
-usage() { sed -n '2,29p' "$0" | sed 's/^# \{0,1\}//'; }
+RELEASE=0 RELEASE_NOW=0 OPERATOR=""
+usage() { sed -n '2,34p' "$0" | sed 's/^# \{0,1\}//'; }
 while (($#)); do
   case "$1" in
     --host) HOST="${2:?--host user@address}"; shift ;;
@@ -51,6 +55,7 @@ while (($#)); do
     --no-start) NO_START=1 ;;
     --release) RELEASE=1 ;;
     --now) RELEASE_NOW=1 ;;
+    --operator) OPERATOR="${2:?--operator NAME}"; shift ;;
     -h|--help) usage; exit 0 ;;
     *) echo "unknown option: $1" >&2; usage >&2; exit 2 ;;
   esac
@@ -68,6 +73,14 @@ ENV_DIR="${ENV_DIR:-deploy/staging}"
 [[ "$PORT" =~ ^[0-9]+$ ]] || { echo "--port must be a number" >&2; exit 2; }
 ((RELEASE_NOW == 0 || RELEASE)) || { echo "--now goes with --release" >&2; exit 2; }
 ((RELEASE == 0 || (NO_START == 0 && LOCAL_PROOF == 0))) || { echo "--release starts the stack: not with --no-start or --local-proof" >&2; exit 2; }
+# Who deploys (P1-T27a): checked here, before anything is built or sent, by the rule staging.sh
+# applies on the server; passed to every staging.sh call there as IHR_OPERATOR
+OPERATOR="${OPERATOR:-${IHR_OPERATOR:-}}"
+if ((BUILD_ONLY == 0 && NO_START == 0)); then
+  [[ -n "$OPERATOR" ]] || { echo "deploy.sh starts the stack through staging.sh on the server: give --operator <your name> (or IHR_OPERATOR)" >&2; exit 2; }
+  [[ "$OPERATOR" =~ ^[a-z][a-z0-9.-]{1,31}$ ]] || { echo "--operator: 2-32 of a-z, 0-9, . and -, starting with a letter" >&2; exit 2; }
+  case "$OPERATOR" in ihr|root|admin|postgres) echo "--operator $OPERATOR is an account, not a person: give your own name" >&2; exit 2 ;; esac
+fi
 
 log() { printf '==> %s\n' "$*"; }
 die() { printf 'ERROR: %s\n' "$*" >&2; exit 1; }
@@ -375,18 +388,15 @@ if ((NO_START)); then
   log "Not starting the stack (--no-start): on the server, scripts/staging.sh restore, then up and smoke"
 elif ((LOCAL_PROOF)); then
   log "Starting the stack on the VM, a synthetic hospital 'alpha', then the smoke checks"
-  remote "cd $REMOTE_ROOT && scripts/staging.sh local-proof && scripts/staging.sh release-note >/dev/null \
-    && scripts/staging.sh release-record"
+  remote "cd $REMOTE_ROOT && IHR_OPERATOR=$OPERATOR scripts/staging.sh local-proof && IHR_OPERATOR=$OPERATOR scripts/staging.sh release-note >/dev/null \
+    && IHR_OPERATOR=$OPERATOR scripts/staging.sh release-record"
 elif ((RELEASE)); then
-  # Who releases, as staging.sh accepts it (letters, digits, . _ @ -; the hyphen last in the set)
-  op="$(id -un | tr -c 'A-Za-z0-9._@\n-' '-')"
-  [[ "$op" =~ ^[A-Za-z0-9._@-]{1,64}$ ]] || die "your user name ($op) cannot be an operator name"
   # Detached on the server (setsid, nohup): a dropped SSH connection never stops it half-way;
   # its output and exit status are kept, and followed here until it ends
   rel_out="$REL_REMOTE/release-$TAG-$(date +%Y%m%d%H%M%S).out"
   log "Releasing in the window: scripts/staging.sh release (hold, restore point, migrations, start, smoke); on the server, detached: $rel_out"
   # (only its output file is mode 600: the release itself runs under the server's umask, 022)
-  remote "cd $REMOTE_ROOT && (umask 077 && : > $rel_out) && setsid nohup sh -c 'scripts/staging.sh release --operator $op$( ((RELEASE_NOW)) && echo ' --now'); echo \$? > $rel_out.rc.tmp && mv $rel_out.rc.tmp $rel_out.rc' \
+  remote "cd $REMOTE_ROOT && (umask 077 && : > $rel_out) && setsid nohup sh -c 'IHR_OPERATOR=$OPERATOR scripts/staging.sh release$( ((RELEASE_NOW)) && echo ' --now'); echo \$? > $rel_out.rc.tmp && mv $rel_out.rc.tmp $rel_out.rc' \
       >> $rel_out 2>&1 < /dev/null &"
   remote "tail -n +1 -f $rel_out & t=\$!; while [ ! -f $rel_out.rc ]; do sleep 2; done; sleep 1; kill \$t 2>/dev/null; exit \$(cat $rel_out.rc)" \
     || die "the release did not finish, or the connection dropped while it ran: on the server, its output is $rel_out and its exit status $rel_out.rc once it ends (deploy/staging/README.md, Releases)"
@@ -395,8 +405,8 @@ else
   # logging it also removes release images beyond the last 3 and untagged ones (the disk the
   # journal, a 14-day buffer, and the log store share).
   log "Starting the stack, then the smoke checks"
-  remote "cd $REMOTE_ROOT && scripts/staging.sh level-guard && scripts/staging.sh release-note >/dev/null && scripts/staging.sh up \
-    && scripts/staging.sh smoke && scripts/staging.sh release-record"
+  remote "cd $REMOTE_ROOT && IHR_OPERATOR=$OPERATOR scripts/staging.sh level-guard && IHR_OPERATOR=$OPERATOR scripts/staging.sh release-note >/dev/null \
+    && IHR_OPERATOR=$OPERATOR scripts/staging.sh up && IHR_OPERATOR=$OPERATOR scripts/staging.sh smoke && IHR_OPERATOR=$OPERATOR scripts/staging.sh release-record"
 fi
 
 # ---- 6. Record what is deployed (the commit as labelled on the images, not this tree's HEAD) ----

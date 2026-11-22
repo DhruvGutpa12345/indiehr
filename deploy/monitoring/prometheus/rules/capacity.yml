@@ -113,11 +113,13 @@ groups:
         annotations:
           summary: "The journal uses more than 90% of its cap: the oldest logs are about to go"
 
-      # journald dropped lines (rate limit): log lines are missing
+      # journald dropped lines (rate limit): log lines are missing. Critical (P1-T27a, Q-K137, S6):
+      # a flood from any container can push Postgres's connection lines and the operator record out
+      # of the journal, which PrivilegedLoginUnrecorded then cannot see
       - alert: JournalSuppressed
         expr: ihr_journal_suppressed_lines > 0
         labels:
-          severity: warning
+          severity: critical
         annotations:
           summary: "journald suppressed log lines in the last 15 minutes (rate limit)"
 

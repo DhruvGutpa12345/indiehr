@@ -406,7 +406,7 @@ class Wiring(unittest.TestCase):
 
     def test_smoke_checks_reach(self):
         body = func("dashboards_smoke")
-        self.assertIn("compose exec -T backend", body)
+        self.assertIn("app_exec backend", body)
         self.assertIn("check-dashboards.py", body)
         self.assertIn("insert/jsonline", body)
 

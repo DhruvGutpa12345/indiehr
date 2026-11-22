@@ -19,7 +19,7 @@
 # The hospital stays served either way; only its admin screens are closed until fixed.
 # HospitalRootProblem: one such line in 24 hours. It sees a root only when the fleet step, a
 # release or a restore checks it (no run-time check, review A2: only a superuser can break one). What to do: as the operator, run
-#   `scripts/staging.sh hospital-root --slug <it> show` (who is on the root, who holds admin roles
+#   `scripts/staging.sh hospital-root --operator <you> --reason "<ticket>" --slug <it> show` (who is on the root, who holds admin roles
 #   elsewhere), then `... place <username> --operator <you> --reason "<ticket>"` once you have
 #   checked who the hospital's admin is (in person or by a known phone number). An invalid root
 #   needs a person to look at the organisation; never mark a second one.
@@ -41,4 +41,4 @@ groups:
           service: root
         annotations:
           summary: 'Hospital {{ $labels.hospital }} has no hospital-wide admin: its root is missing an admin or is invalid ({{ $value }} times in 24 hours); its admin screens are closed'
-          action: 'Run scripts/staging.sh hospital-root --slug <the hospital named above> show, check who the hospital''s admin is (in person or by a known phone number), then place them: scripts/staging.sh hospital-root --slug <it> place <username> --operator <you> --reason "<ticket>"; an invalid root needs a person to look at it (deploy/staging/README.md, Hospital root)'
+          action: 'Run scripts/staging.sh hospital-root --operator <you> --reason "<ticket>" --slug <the hospital named above> show, check who the hospital''s admin is (in person or by a known phone number), then place them: scripts/staging.sh hospital-root --slug <it> place <username> --operator <you> --reason "<ticket>"; an invalid root needs a person to look at it (deploy/staging/README.md, Hospital root)'

@@ -1,0 +1,93 @@
+# promtool unit tests for ../rules/host-audit.yml (scripts/check-monitoring.sh).
+rule_files:
+  - ../rules/host-audit.yml
+evaluation_interval: 30s
+
+tests:
+  - name: all rules loaded, then one removed
+    interval: 1m
+    input_series:
+      - series: 'ihr_host_audit_rule_keys{instance="n"}'
+        values: '10 10 10 9 9 9 9'
+      - series: 'ihr_host_audit_enabled{instance="n"}'
+        values: '1x6'
+      - series: 'ihr_host_audit_reading_ok{instance="n"}'
+        values: '1x6'
+    alert_rule_test:
+      - eval_time: 2m
+        alertname: HostAuditRulesMissing
+        exp_alerts: []
+      # removed at 3m: pending for 2 minutes, firing from 5m
+      - eval_time: 4m
+        alertname: HostAuditRulesMissing
+        exp_alerts: []
+      - eval_time: 5m
+        alertname: HostAuditRulesMissing
+        exp_alerts:
+          - exp_labels: {severity: critical, instance: n}
+            exp_annotations:
+              summary: "The host's audit rules for docker, ctr, runc, nsenter and psql are not all loaded, auditing is off, or they cannot be read: who ran those tools is not being recorded"
+              action: "sudo auditctl -s; sudo auditctl -l | grep -c 'key=ihr-' (want 10); sudo /usr/local/sbin/ihr-bootstrap --no-upgrade reloads them. Find who changed them (journalctl -t sudo, the ihr-operator lines, /var/log/audit/audit.log) and treat an unexplained change as an incident (deploy/host/README.md, Host audit)"
+
+  - name: a reload by bootstrap (one short reading) does not fire
+    interval: 1m
+    input_series:
+      - series: 'ihr_host_audit_rule_keys{instance="n"}'
+        values: '10 0 10 10 10 10'
+      - series: 'ihr_host_audit_enabled{instance="n"}'
+        values: '1x5'
+      - series: 'ihr_host_audit_reading_ok{instance="n"}'
+        values: '1x5'
+    alert_rule_test:
+      - eval_time: 5m
+        alertname: HostAuditRulesMissing
+        exp_alerts: []
+
+  - name: auditing switched off with every rule still listed
+    interval: 1m
+    input_series:
+      - series: 'ihr_host_audit_rule_keys{instance="n"}'
+        values: '10x6'
+      - series: 'ihr_host_audit_enabled{instance="n"}'
+        values: '1 0 0 0 0 0 0'
+      - series: 'ihr_host_audit_reading_ok{instance="n"}'
+        values: '1x6'
+    alert_rule_test:
+      - eval_time: 4m
+        alertname: HostAuditRulesMissing
+        exp_alerts:
+          - exp_labels: {severity: critical, instance: n}
+            exp_annotations:
+              summary: "The host's audit rules for docker, ctr, runc, nsenter and psql are not all loaded, auditing is off, or they cannot be read: who ran those tools is not being recorded"
+              action: "sudo auditctl -s; sudo auditctl -l | grep -c 'key=ihr-' (want 10); sudo /usr/local/sbin/ihr-bootstrap --no-upgrade reloads them. Find who changed them (journalctl -t sudo, the ihr-operator lines, /var/log/audit/audit.log) and treat an unexplained change as an incident (deploy/host/README.md, Host audit)"
+
+  - name: "auditctl gone (auditd removed): not read, the counts disappear"
+    interval: 1m
+    input_series:
+      - series: 'ihr_host_audit_rule_keys{instance="n"}'
+        values: '10 10 _ _ _ _ _'
+      - series: 'ihr_host_audit_enabled{instance="n"}'
+        values: '1 1 _ _ _ _ _'
+      - series: 'ihr_host_audit_reading_ok{instance="n"}'
+        values: '1 1 0 0 0 0 0'
+    alert_rule_test:
+      - eval_time: 3m
+        alertname: HostAuditRulesMissing
+        exp_alerts: []
+      - eval_time: 5m
+        alertname: HostAuditRulesMissing
+        exp_alerts:
+          - exp_labels: {severity: critical, instance: n}
+            exp_annotations:
+              summary: "The host's audit rules for docker, ctr, runc, nsenter and psql are not all loaded, auditing is off, or they cannot be read: who ran those tools is not being recorded"
+              action: "sudo auditctl -s; sudo auditctl -l | grep -c 'key=ihr-' (want 10); sudo /usr/local/sbin/ihr-bootstrap --no-upgrade reloads them. Find who changed them (journalctl -t sudo, the ihr-operator lines, /var/log/audit/audit.log) and treat an unexplained change as an incident (deploy/host/README.md, Host audit)"
+
+  - name: "a host without the audit reading (a proof on a workstation) stays silent"
+    interval: 1m
+    input_series:
+      - series: 'ihr_host_metrics_last_run_timestamp_seconds{instance="n"}'
+        values: '0x10'
+    alert_rule_test:
+      - eval_time: 10m
+        alertname: HostAuditRulesMissing
+        exp_alerts: []

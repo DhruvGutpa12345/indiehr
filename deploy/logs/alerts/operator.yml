@@ -1,0 +1,87 @@
+# The operator access record (P1-T27a; docs/reviews/p1-t27/design.md §5 and, binding where they
+# differ, the "Orchestrator decision" of docs/reviews/p1-t27/attack.md, Q-K134..Q-K139). What the
+# lines are: scripts/staging.sh "Operator access record" (start, scope, end, refused and late lines
+# of every session that reaches a privileged call, written by logger on the host:
+# source=host service=ihr-operator) and Postgres's own "connection authorized" lines
+# (log_connections=authorization, deploy/postgres/server-settings.txt: source=container, the db
+# service or a restored copy's container).
+#
+# PrivilegedLoginUnrecorded (critical): a database session that is neither a reviewed service
+# login (deploy/postgres/service-logins.txt: service, role and application name, exactly; the test
+# scripts/test_staging_operator.py keeps the two the same) nor an operator session's own: an
+# application name op:<session>:... counts only while that session is open, i.e. it has a start
+# line in the last 24 hours and no end line older than this rule's 10-minute window (an end line
+# inside the window may follow a login of the same session; the log alerts cannot compare two
+# lines' times, so that is the tolerance). A line that does not parse (another message shape)
+# fires with empty labels: fail closed. It catches mistakes and the careless path (a hand-typed
+# `docker exec db psql`, a `docker compose run admin` shell): the application name and the start
+# line are chosen by whoever runs the client, so a deliberate insider with the deploy account (the
+# docker group is root) can stay out of it. JournalSuppressed (critical) says when journald
+# dropped lines; Postgres's lines can then be missing. Until P1-T27b names the one-offs
+# op:<session>:..., a one-off's own Django session (manage:<command>) is not an op: name and fires.
+# Sources (LogsQL, VictoriaLogs v1.53.0, docs/VERSIONS.md; the subquery filter field:in(<query> |
+# fields f), the `offset` of a _time filter, `extract_regexp ... from <field>`):
+# https://docs.victoriametrics.com/victorialogs/logsql/ ; scripts/check-logs.py runs the rules on
+# the pinned image.
+#
+# A line staging.sh could not write at the time is shipped by the next session as
+# `ihr-operator: event=late at=<time> session=<s> was=start|end ...` (op_ship_pending): the start and
+# end subqueries read both shapes, so a late end line still closes its session (review S9).
+#
+# OperatorSessionRefused (warning): staging.sh refused a session (no or a shared operator name, no
+# or a bad reason, a bad hospital, the journal or the hospital entries not written).
+#
+# OperatorSessionNoEnd (warning): a session that started 12 to 24 hours ago and has no end line
+# (a killed run, a lost SSH connection: normal then, but someone should know it; a session still
+# running after 12 hours is worth a look too). Not testable with fixtures of "now" (check-logs.py):
+# its query runs there without error and stays silent for a session started now.
+#
+# KeycloakAdminCredentialChange (critical): a Keycloak admin event that removes or resets a user's
+# credential (credentials, reset-password, reset-password-email, execute-actions-email,
+# remove-totp, disable-credential-types) made by any client other than the two worker accounts that
+# run our own onboarding and staff-reset flows (ihr-onboarding, ihr-staff-worker; keycloak/accounts.py).
+# The admin console (over ops-tunnel, tier none) can otherwise reset a doctor's sign-in and act as
+# them, and the hospital's audit trail would name the doctor. The event line's shape is the one the
+# redaction keeps (deploy/logs/fluent-bit/redact.lua, admin events).
+#
+# Forgery: the operator lines are host lines any host process can write (logger); the Postgres and
+# Keycloak lines are container lines (journald's own fields, shape() in redact.lua). Labels are never
+# put into an action's command. Tests: scripts/check-logs.py (cases in
+# deploy/logs/tests/alert-cases.json) and scripts/test_staging_operator.py.
+groups:
+  - name: operator
+    type: vlogs
+    interval: 1m
+    rules:
+      - alert: PrivilegedLoginUnrecorded
+        expr: '_time:10m source:=container service:in(db, ihr-restore-drill, ihr-restore-recovery) "connection authorized:" | extract_regexp "connection authorized: user=(?P<user>[a-z_][a-z0-9_]{0,62}) database=(?P<database>[a-z_][a-z0-9_]{0,62})(?: application_name=(?P<app>[ -~]{0,63}?))?(?: (?:SSL|GSS) [ -~]*)?$" | extract_regexp "^op:(?P<session>[0-9a-f]{12}):" from app | filter not (session:in(_time:24h source:=host service:="ihr-operator" ("event=start" or "was=start") | extract_regexp "^ihr-operator: (?:event=late at=[0-9T:+-]+ )?session=(?P<session>[0-9a-f]{12}) (?:event|was)=start " | fields session) and not session:in(_time:24h offset 10m source:=host service:="ihr-operator" ("event=end" or "was=end") | extract_regexp "^ihr-operator: (?:event=late at=[0-9T:+-]+ )?session=(?P<session>[0-9a-f]{12}) (?:event|was)=end " | fields session)) | filter not ((service:="db" user:="ihr_app" app:="gunicorn") or (service:="db" user:="ihr_app" app:="celery") or (service:="db" user:="ihr_app" app:="manage:ihr_db_role_check") or (service:="db" user:="ihr_app" app:="manage:ihr_provision_worker") or (service:="db" user:="ihr_owner" app:="manage:ihr_db_role_check") or (service:="db" user:="ihr_owner" app:="manage:migrate_schemas") or (service:="db" user:="ihr_owner" app:="manage:ihr_create_tenant") or (service:="db" user:="ihr_owner" app:="manage:ihr_fleet_run") or (service:="db" user:="ihr_owner" app:="manage:ihr_provision_worker") or (service:="db" user:="ihr_audit_watch" app:="ihr-audit-watch") or (service:="db" user:="ihr_dump" app:="ihr-dumper") or (service:="db" user:="ihr_monitor" app:="") or (service:="db" user:="keycloak" app:="PostgreSQL JDBC Driver") or (service:="db" user:="postgres" app:="ihr-health") or (service:="db" user:="postgres" app:="pgBackRest [backup]") or (service:="db" user:="postgres" app:="pgBackRest [check]") or (service:="db" user:="postgres" app:="pgBackRest [stanza-create]") or (service:="ihr-restore-drill" user:="ihr_owner" app:="ihr-restore-drill")) | stats by (service, user, app) count() as logins'
+        labels:
+          severity: critical
+          service: operator
+        annotations:
+          summary: 'A database session as {{ $labels.user }} ({{ $labels.app }}, in {{ $labels.service }}) was opened outside a recorded operator session or a reviewed service login ({{ $value }} in 10 minutes). This catches mistakes, not a deliberate insider'
+          action: 'Find who ran it: the ihr-operator lines and sshd logins of the last hour in the log store; a session run by hand is a mistake to record (run it again through scripts/staging.sh). If no operator owns it, treat it as an incident (deploy/staging/README.md, Operator access record). A new service login is added to deploy/postgres/service-logins.txt only after review. Check JournalSuppressed too: dropped journal lines hide sessions'
+      - alert: OperatorSessionRefused
+        expr: '_time:1h source:=host service:="ihr-operator" "event=refused" | extract_regexp "^ihr-operator: event=refused why=(?P<why>[a-z-]{2,30}) command=(?P<command>[a-z<>:-]{1,60}) operator=" | stats by (why, command) count() as refusals'
+        labels:
+          severity: warning
+          service: operator
+        annotations:
+          summary: 'scripts/staging.sh refused {{ $value }} operator session(s) in the last hour: {{ $labels.why }} ({{ $labels.command }})'
+          action: 'Usually a typo or a missing --reason. Repeated refusals for a shared name (shared-operator) or from someone you do not expect: ask who ran it (deploy/staging/README.md, Operator access record)'
+      - alert: OperatorSessionNoEnd
+        expr: '_time:12h offset 12h source:=host service:="ihr-operator" ("event=start" or "was=start") | extract_regexp "^ihr-operator: (?:event=late at=[0-9T:+-]+ )?session=(?P<session>[0-9a-f]{12}) (?:event|was)=start tier=(?P<tier>data|job) operator=(?P<operator>[a-z][a-z0-9.-]{1,31}) command=(?P<command>[a-z<>:_-]{1,70}) " | filter session:~"^[0-9a-f]{12}$" | filter not session:in(_time:36h source:=host service:="ihr-operator" ("event=end" or "was=end") | extract_regexp "^ihr-operator: (?:event=late at=[0-9T:+-]+ )?session=(?P<session>[0-9a-f]{12}) (?:event|was)=end " | fields session) | stats by (session, operator, command) count() as starts'
+        labels:
+          severity: warning
+          service: operator
+        annotations:
+          summary: 'Operator session {{ $labels.session }} ({{ $labels.operator }}, {{ $labels.command }}) started 12 or more hours ago and has no end line'
+          action: 'A killed run or a dropped SSH connection leaves no end line: check with the operator named and note it; a run still going after 12 hours is worth a look (deploy/staging/README.md, Operator access record)'
+      - alert: KeycloakAdminCredentialChange
+        expr: '_time:10m source:=container service:="keycloak" "operationType=" "resourceType=" "resourcePath=" "users/" | extract_regexp "operationType=.(?P<op>[A-Z_]{2,20}).,.*clientId=.(?P<client>[A-Za-z0-9_.-]{1,64}).,.*resourceType=.USER., resourcePath=.users/[0-9a-f-]{36}/(?P<what>credentials|reset-password|reset-password-email|execute-actions-email|remove-totp|disable-credential-types)(?:[/\"]|$)" | filter what:~"^[a-z-]+$" | filter not client:in("ihr-onboarding", "ihr-staff-worker") | stats by (client, what, client_ip) count() as changes'
+        labels:
+          severity: critical
+          service: keycloak
+        annotations:
+          summary: 'A staff member''s sign-in credential was changed in Keycloak by {{ $labels.client }} ({{ $labels.what }}, from {{ $labels.client_ip }}), outside our onboarding and staff-reset flows'
+          action: 'Ask who did it in the admin console and why; whoever resets a credential can sign in as that person, and the hospital''s audit trail would name them. Unowned: treat as an incident and reset the person''s sign-in through the staff-reset flow (deploy/staging/README.md, Operator access record)'

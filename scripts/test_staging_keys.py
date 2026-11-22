@@ -174,7 +174,7 @@ class Up(unittest.TestCase):
             "compose up -d --wait db redis",
             "keys_ensure",
             "traefik keycloak",
-            "compose run --rm --no-deps -T migrate",
+            "migrate_run migrate",
             # the new backend before the sync (public clients ignore its assertions), the
             # old workers stopped across it (their secrets die there)
             "compose up -d --wait --no-deps backend",
@@ -188,8 +188,12 @@ class Up(unittest.TestCase):
         self.assertEqual(at, sorted(at))
         # backend, celery and the workers start without re-running migrate; so does the one-off
         # terminology load (P1-T10a1)
-        self.assertEqual(up.count("--no-deps"), 5)
-        self.assertIn("run --rm --no-deps -T admin python manage.py ihr_terminology_load --bundled", up)
+        # (two of them through the operator record's wrappers, which pass --no-deps: P1-T27a)
+        self.assertEqual(up.count("--no-deps"), 3)
+        self.assertEqual(up.count("migrate_run migrate\n") + up.count("admin_run admin python manage.py ihr_terminology_load"), 2)
+        for wrapper in ("migrate_run", "admin_run"):
+            self.assertIn("--rm --no-deps -T", function(STAGING_SH, wrapper))
+        self.assertIn("admin_run admin python manage.py ihr_terminology_load --bundled", up)
 
     def test_dev_order(self):
         kc_up = CARE_DEV.split("    up)\n", 1)[1].split(";;", 1)[0]

@@ -31,7 +31,7 @@ tests:
         exp_alerts:
           - exp_labels: {severity: critical, service: dumper, job: dumps}
             exp_annotations:
-              summary: "The nightly dumper has not finished a run for more than 26 hours (scripts/staging.sh logs dumper)"
+              summary: "The nightly dumper has not finished a run for more than 26 hours (scripts/staging.sh logs --operator <you> --reason \"<ticket>\" dumper)"
       # the series are there: the absent() rule stays silent
       - eval_time: 27h
         alertname: DumpsNotReporting

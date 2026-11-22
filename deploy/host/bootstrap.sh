@@ -57,6 +57,15 @@ METRICS_UNIT="ihr-host-metrics"
 # root), and host-metrics.sh parses the files. The deploy user never joins _chrony (that socket
 # takes every control command).
 CHRONY_READ_DIR="/run/indiehr-chrony"
+# Host audit (P1-T27c, Q-K139): auditd from the Ubuntu archive, at least this version per release
+# (launchpad.net/ubuntu/+source/audit, checked 2026-11-22; docs/VERSIONS.md). Installed at exactly
+# this version when missing or older, never held: Ubuntu's security updates still apply. When the
+# archive no longer offers it (a newer update replaced it), raise the pin.
+declare -A AUDITD_PINS=([26.04]="1:4.1.2-1ubuntu0.1" [24.04]="1:3.1.2-2.1ubuntu0.1")
+AUDIT_RULES_FILE="/etc/audit/rules.d/60-indiehr.rules"
+AUDIT_RULE_COUNT="10"   # rule lines in audit_rules; the alert HostAuditRulesMissing uses the same number
+# The kernel's audit state and loaded rules, read each minute by the timer's root step (like chrony)
+AUDIT_READ_DIR="/run/indiehr-audit"
 STATE_DIR="/etc/indiehr"
 ADMIN_FILE="$STATE_DIR/admin-user"        # the admin chosen on the first run (kept)
 INSTALLED_FILE="$STATE_DIR/installed-at"  # first run's date: --check compares log age with it
@@ -107,6 +116,7 @@ for r in "${SUPPORTED_RELEASES[@]}"; do [[ "${VERSION_ID:-}" == "$r" ]] && suppo
 ((supported)) || die "Ubuntu ${SUPPORTED_RELEASES[*]} only (found ${VERSION_ID:-unknown})"
 CODENAME="${VERSION_CODENAME:?}"
 PKG_SUFFIX="~ubuntu.${VERSION_ID}~${CODENAME}"
+AUDITD_PIN="${AUDITD_PINS[$VERSION_ID]:?no auditd version pinned for Ubuntu $VERSION_ID}"
 declare -A DOCKER_PINS=(
   [docker-ce]="${DOCKER_CE_VERSION}${PKG_SUFFIX}"
   [docker-ce-cli]="${DOCKER_CE_VERSION}${PKG_SUFFIX}"
@@ -259,6 +269,40 @@ DNSStubListener=no
 EOF
 }
 
+# An executable's real path, symlinks resolved: an audit path rule binds to one inode, and execve
+# records the target (on Debian and Ubuntu /usr/bin/psql is a link to postgresql-common's pg_wrapper),
+# so a rule on the link would load, be counted and never match (P1-T27 review S3). The path itself
+# when it does not resolve (the tool is not installed yet).
+audit_path() {
+  local resolved
+  resolved="$(readlink -f "$1" 2>/dev/null || true)"
+  echo "${resolved:-$1}"
+}
+audit_rules() {
+  local docker ctr runc nsenter psql
+  docker="$(audit_path /usr/bin/docker)"; ctr="$(audit_path /usr/bin/ctr)"; runc="$(audit_path /usr/bin/runc)"
+  nsenter="$(audit_path /usr/bin/nsenter)"; psql="$(audit_path /usr/bin/psql)"
+  cat <<EOF
+## Managed by deploy/host/bootstrap.sh (P1-T27c, Q-K139); deploy/host/README.md "Host audit".
+## Who ran a root-equivalent tool from a login session: execve(at) of docker, ctr, runc, nsenter
+## and psql. auid is the login uid that pam_loginuid sets at SSH login; it survives sudo and is
+## unset for everything Docker and systemd start, so the stack's own processes are not recorded.
+## b64 and b32: a 32-bit call would otherwise go past the 64-bit rule. Keys ihr-*: Fluent Bit
+## ships only these events (SYSCALL and EXECVE records, arguments shaped). No "-e 2": a removed
+## rule is alerted (HostAuditRulesMissing) instead of locking the rules until a reboot.
+-a always,exit -F arch=b64 -S execve,execveat -F path=$docker -F auid>=1000 -F auid!=unset -k ihr-docker
+-a always,exit -F arch=b32 -S execve,execveat -F path=$docker -F auid>=1000 -F auid!=unset -k ihr-docker
+-a always,exit -F arch=b64 -S execve,execveat -F path=$ctr -F auid>=1000 -F auid!=unset -k ihr-docker
+-a always,exit -F arch=b32 -S execve,execveat -F path=$ctr -F auid>=1000 -F auid!=unset -k ihr-docker
+-a always,exit -F arch=b64 -S execve,execveat -F path=$runc -F auid>=1000 -F auid!=unset -k ihr-docker
+-a always,exit -F arch=b32 -S execve,execveat -F path=$runc -F auid>=1000 -F auid!=unset -k ihr-docker
+-a always,exit -F arch=b64 -S execve,execveat -F path=$nsenter -F auid>=1000 -F auid!=unset -k ihr-nsenter
+-a always,exit -F arch=b32 -S execve,execveat -F path=$nsenter -F auid>=1000 -F auid!=unset -k ihr-nsenter
+-a always,exit -F arch=b64 -S execve,execveat -F path=$psql -F auid>=1000 -F auid!=unset -k ihr-psql
+-a always,exit -F arch=b32 -S execve,execveat -F path=$psql -F auid>=1000 -F auid!=unset -k ihr-psql
+EOF
+}
+
 metrics_service() {
   cat <<EOF
 # Managed by deploy/host/bootstrap.sh (P1-T9a). Writes $TEXTFILE_DIR/*.prom for node_exporter:
@@ -282,6 +326,10 @@ ExecCondition=/usr/bin/test -x $SRV_DIR/scripts/staging.sh
 # and tracking as CSV into $CHRONY_READ_DIR; when chronyc fails both files go, so the metrics
 # show "unknown" (ihr_ntp_reading_ok 0) instead of a false "not an Indian source".
 ExecStartPre=+/bin/sh -c 'install -d -m 755 -o root -g root $CHRONY_READ_DIR && cd $CHRONY_READ_DIR && if /usr/bin/chronyc -N -c sources > sources.new 2>/dev/null && /usr/bin/chronyc -c tracking > tracking.new 2>/dev/null; then chmod 644 sources.new tracking.new && mv -f sources.new sources.csv && mv -f tracking.new tracking.csv; else rm -f sources.new tracking.new sources.csv tracking.csv; fi'
+# The same for the host audit rules (P1-T27c): the kernel's audit state and its loaded rules into
+# $AUDIT_READ_DIR; host-metrics.sh counts the ihr-* rules (alert HostAuditRulesMissing). When
+# auditctl fails (auditd removed) both files go, and the metrics say "not read".
+ExecStartPre=+/bin/sh -c 'install -d -m 755 -o root -g root $AUDIT_READ_DIR && cd $AUDIT_READ_DIR && if /usr/sbin/auditctl -s > status.new 2>/dev/null && /usr/sbin/auditctl -l > rules.new 2>/dev/null; then chmod 644 status.new rules.new && mv -f status.new status.txt && mv -f rules.new rules.txt; else rm -f status.new rules.new status.txt rules.txt; fi'
 ExecStart=$SRV_DIR/scripts/staging.sh monitoring-textfile
 NoNewPrivileges=yes
 PrivateTmp=yes
@@ -345,6 +393,9 @@ in_group() { [[ " $(id -nG "$1" 2>/dev/null) " == *" $2 "* ]]; }
 not_in_group() { ! in_group "$@"; }
 not_active() { ! systemctl is-active --quiet "$1"; }
 contains() { [[ "$1" == *"$2"* ]]; }
+version_ge() { [[ -n "$1" ]] && dpkg --compare-versions "$1" ge "$2"; }
+# ihr-* rules the kernel holds now (auditctl -l prints "-F key=ihr-…" or, for a watch, "-k ihr-…")
+audit_loaded() { auditctl -l 2>/dev/null | grep -cE -- '(-k |-F key=)ihr-[a-z0-9-]+$' || true; }
 apport_off() { [[ -z "$1" || "$1" == "masked" || "$1" == "not-found" ]]; }
 valid_keys() {  # valid_keys [quiet]: print the usable public-key lines of stdin
   # A line with options (command=, restrict, from=, no-pty...) is skipped, never copied or
@@ -546,6 +597,24 @@ run_check() {
   info "journal: $(journalctl --disk-usage 2>/dev/null | sed 's/^Archived and active journals take up //')"
   check_log_retention
 
+  # host audit (P1-T27c): auditd's rules for root-equivalent tools, collected by journald
+  v="$(dpkg-query -W -f='${Version}' auditd 2>/dev/null || true)"
+  expect "auditd $AUDITD_PIN or later (found ${v:-none})" version_ge "$v" "$AUDITD_PIN"
+  expect "auditd running" systemctl is-active --quiet auditd
+  expect "audit rules as managed ($AUDIT_RULES_FILE)" same_content "$AUDIT_RULES_FILE" "$(audit_rules)"
+  v="$(audit_loaded)"
+  expect "kernel holds the $AUDIT_RULE_COUNT ihr-* audit rules (auditctl -l; found ${v:-0})" [ "${v:-0}" == "$AUDIT_RULE_COUNT" ]
+  v="$(auditctl -s 2>/dev/null | awk '$1 == "enabled" {print $2}')"
+  expect "kernel auditing on and not locked (auditctl -s: enabled 1; found ${v:-unknown})" [ "$v" == 1 ]
+  expect "journald collects audit records (systemd-journald-audit.socket active)" \
+    systemctl is-active --quiet systemd-journald-audit.socket
+  # A canary through the whole local path: a user audit message must show in the journal
+  v="ihr-audit-canary-$(od -An -N6 -tx1 /dev/urandom | tr -d ' \n')"
+  auditctl -m "$v" >/dev/null 2>&1 || true
+  sleep 1
+  expect "an audit message reaches the journal (_TRANSPORT=audit)" \
+    grep -q -- "$v" <<< "$(journalctl -q --no-pager _TRANSPORT=audit --since -2min -o cat 2>/dev/null || true)"
+
   # updates, swap, kernel settings, directories
   out="$(apt-config dump 2>/dev/null)"
   expect "unattended security updates on" grep -q '^APT::Periodic::Unattended-Upgrade "1";' <<< "$out"
@@ -586,6 +655,11 @@ run_check() {
     expect "chrony read for the metrics in the last 5 minutes ($CHRONY_READ_DIR)" [ "$v" -eq 2 ]
     expect "the timer reports chrony's state (ihr_ntp_reading_ok 1)" grep -qx 'ihr_ntp_reading_ok 1' "$TEXTFILE_DIR/ihr_host.prom"
     expect "$CHRONY_READ_DIR owned by root, mode 755" [ "$(stat -c '%U %a' "$CHRONY_READ_DIR" 2>/dev/null)" == "root 755" ]
+    # ...and the audit rules (P1-T27c, HostAuditRulesMissing)
+    v="$(find "$AUDIT_READ_DIR/status.txt" "$AUDIT_READ_DIR/rules.txt" -mmin -5 2>/dev/null | grep -c . || true)"
+    expect "audit rules read for the metrics in the last 5 minutes ($AUDIT_READ_DIR)" [ "$v" -eq 2 ]
+    expect "the timer reports the audit rules (ihr_host_audit_rule_keys $AUDIT_RULE_COUNT)" \
+      grep -qx "ihr_host_audit_rule_keys $AUDIT_RULE_COUNT" "$TEXTFILE_DIR/ihr_host.prom"
   else
     info "monitoring not set up in $SRV_DIR/deploy/staging/.env yet: the timer writes nothing"
   fi
@@ -757,6 +831,41 @@ if ((WROTE)) && ! ((DRY_RUN)); then
   # Lines older than 15 days are expected to be in the log store already (Fluent Bit reads the
   # whole journal on its first start): deploy the log stack before shortening an old journal.
   journalctl --rotate >/dev/null 2>&1 || true
+fi
+
+# ---- 3b. Host audit: auditd rules, collected by journald (P1-T27c, Q-K139) ---------------------
+log "Host audit (auditd $AUDITD_PIN or later; $AUDIT_RULE_COUNT rules in $AUDIT_RULES_FILE; journald collects)"
+v="$(dpkg-query -W -f='${Version}' auditd 2>/dev/null || true)"
+if ! installed auditd || ! version_ge "$v" "$AUDITD_PIN"; then
+  apt_update
+  act "installed auditd=$AUDITD_PIN" "${APT[@]}" install --no-install-recommends "auditd=$AUDITD_PIN"
+fi
+write_file "$AUDIT_RULES_FILE" 640 < <(audit_rules); audit_changed=$WROTE
+if ! systemctl is-enabled --quiet auditd 2>/dev/null || ! systemctl is-active --quiet auditd; then
+  act "auditd enabled and started" systemctl enable --now auditd
+fi
+# Loaded when the file changed or the kernel lacks one of ours (auditd's own start loads them
+# too, at every boot). The marker line says a reload was ours (root, uid 0).
+loaded="$(audit_loaded)"
+if ((audit_changed)) || [[ "$loaded" != "$AUDIT_RULE_COUNT" ]]; then
+  if ((DRY_RUN)); then
+    CHANGES+=("load the audit rules"); echo "    would: augenrules --load"
+  else
+    augenrules --load >/dev/null || die "augenrules --load failed: the audit rules are not loaded"
+    loaded="$(audit_loaded)"
+    [[ "$loaded" == "$AUDIT_RULE_COUNT" ]] \
+      || die "the kernel holds $loaded ihr-* audit rules after augenrules --load, not $AUDIT_RULE_COUNT (auditctl -l; another rules file with -e 2?)"
+    logger -t ihr-bootstrap "audit-rules=loaded keys=$loaded"
+    changed "audit rules loaded ($loaded ihr-* rules)"
+  fi
+fi
+# journald reads the kernel's audit records only through this socket, which Ubuntu 26.04
+# (systemd 259) ships disabled. journald takes a new socket only when it starts: restart it.
+if ! systemctl is-enabled --quiet systemd-journald-audit.socket 2>/dev/null \
+   || ! systemctl is-active --quiet systemd-journald-audit.socket; then
+  act "journald collects audit records (systemd-journald-audit.socket)" \
+    systemctl enable --now systemd-journald-audit.socket
+  ((DRY_RUN)) || systemctl restart systemd-journald
 fi
 
 # ---- 4. Automatic security updates ---------------------------------------------------------

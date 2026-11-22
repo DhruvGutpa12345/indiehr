@@ -149,6 +149,8 @@ Measured locally with the CARE stack running: Keycloak uses about 540 MB (limit 
 | docker-buildx-plugin | 0.38.1-1~ubuntu.26.04~resolute | same | 2026-11-09 |
 | docker-compose-plugin | 5.7.0-1~ubuntu.26.04~resolute | same | 2026-11-09 |
 | chrony, fail2ban, ufw, unattended-upgrades | Ubuntu archive version of the release (security updates via unattended-upgrades) | Ubuntu | 2026-11-09 |
+| auditd (host audit, P1-T27c) | at least **1:4.1.2-1ubuntu0.1** on 26.04 (resolute-updates; release pocket 1:4.1.2-1build1), at least **1:3.1.2-2.1ubuntu0.1** on 24.04 (noble-updates); installed at exactly this version when missing or older, **not held** (security updates apply); raise the pin when the archive replaces it | launchpad.net/ubuntu/+source/audit; `apt-cache policy auditd` on 26.04 | 2026-11-22 |
+| systemd-journald audit collection | systemd 259 on 26.04 (259.9-0ubuntu0.1): `systemd-journald-audit.socket` ships **disabled**, bootstrap enables it; `journald.conf` `Audit=` defaults to yes in the default namespace (added in v246) and only switches kernel auditing on, it does not collect | freedesktop.org/software/systemd/man/latest/journald.conf.html; launchpad.net/ubuntu/+source/systemd | 2026-11-22 |
 | Time servers | samay1.nic.in, samay2.nic.in (NIC, stratum 2), time.nplindia.org (NPL, stratum 1); no NTS | CERT-In FAQ Q43; live NTP query | 2026-11-09 |
 
 The workstation now runs the same Docker packages (29.9.3; the P0-T2 row above shows 29.9.2 as first installed).
