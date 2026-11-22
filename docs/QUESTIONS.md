@@ -1030,7 +1030,7 @@ A sign-out holds a backend thread while Keycloak posts the logout back into the 
 - **A ⭐ (taken).** 20 active staff per hospital, one request per 15 s each; levels 25, 50, 100 hospitals; pass: no OOM kill and no swap-in; p95 < 1 s and p99 < 3 s; errors < 0.5 % (none from timeouts on the request mix); every back-channel token delivered within 2 s; Celery queue drained within 60 s of each burst; the dump finishes in its window; db memory below its limit with 15 % margin. The cell cap becomes the lower of 100 and the passing level. **The 8 GB run is blocked on the owner** (no server); `docs/reviews/p1-t23/build.md` holds the plan.
 - B. The owner's own numbers per hospital size.
 
-### Q-K99 — How far below T may a disaster restore's fork point go? (P1-T22c2a, audit S2; auto-accepted by Claude, 2026-11-21, awaiting owner confirmation)
+### Q-K99 — How far below T may a disaster restore's fork point go? (P1-T22c2a, audit S2; auto-accepted by Claude, 2026-11-21, confirmed by you 2026-11-22)
 
 After a disaster restore to T the load computes the fork point F (the restored head). The database owner could rewrite restored seals to push F lower and have older trail excused.
 
@@ -1042,7 +1042,7 @@ After a disaster restore to T the load computes the fork point F (the restored h
 
 *Known limit (review T4):* the idle-in-transaction limit bounds only the idle gaps of a transaction, not its total time (the worker profile's statement limit is 300 s, the owner profile has none, and no `transaction_timeout` is set: Q-K96). A transaction held open longer than the margin that commits just after T makes the first seal after T hold only older entries: a false refusal that fails closed (availability only: `close` it, the cuts stay). Setting `transaction_timeout` at or below the margin in the profiles that write audited rows would remove it; that reopens Q-K96, so it waits for the 8 GB test.
 
-### Q-K100 — What happens to a whole-database restore that can never be loaded? (P1-T22c2a, design-c2 Q-K104; auto-accepted by Claude, 2026-11-21, awaiting owner confirmation)
+### Q-K100 — What happens to a whole-database restore that can never be loaded? (P1-T22c2a, design-c2 Q-K104; auto-accepted by Claude, 2026-11-21, confirmed by you 2026-11-22)
 
 A pending load blocks every later whole-database restore and every single-hospital restore.
 
@@ -1051,7 +1051,7 @@ A pending load blocks every later whole-database restore and every single-hospit
 
 *Recommendation A:* B blocks restores for good. Reverse: drop `supersede.close`.
 
-### Q-K101 — Builds older than P1-T22c2a (P1-T22c2a, design-c2 Q-K101; auto-accepted by Claude, 2026-11-21, awaiting owner confirmation)
+### Q-K101 — Builds older than P1-T22c2a (P1-T22c2a, design-c2 Q-K101; auto-accepted by Claude, 2026-11-21, confirmed by you 2026-11-22)
 
 Older builds read a disaster restore's export doc as a bad object, and its events excuse nothing there.
 
@@ -1060,7 +1060,7 @@ Older builds read a disaster restore's export doc as a bad object, and its event
 
 *Recommendation A,* as Q-K86. Reverse: drop `rel_level_guard`.
 
-### Q-K102 — A restore without a time target (P1-T22c2a; auto-accepted by Claude, 2026-11-21, awaiting owner confirmation)
+### Q-K102 — A restore without a time target (P1-T22c2a; auto-accepted by Claude, 2026-11-21, confirmed by you 2026-11-22)
 
 `staging.sh restore` to the newest moment or to a release's restore point has no time T to write in a stub.
 
@@ -1069,14 +1069,14 @@ Older builds read a disaster restore's export doc as a bad object, and its event
 
 *Recommendation A:* B needs the lost-tail rules first. Reverse: give `restore_cmd` a T for them.
 
-### Q-K103 — Where does a disaster restore's copy run? (P1-T22c2a, design-c2 Q-K103; auto-accepted by Claude, 2026-11-21, awaiting owner confirmation)
+### Q-K103 — Where does a disaster restore's copy run? (P1-T22c2a, design-c2 Q-K103; auto-accepted by Claude, 2026-11-21, confirmed by you 2026-11-22)
 
 - **A ⭐ (taken).** On the server, beside the serving stack: memory 768 MB, `--oom-score-adj 900` (killed first), the nightly dumper stopped meanwhile, the copy removed on every exit.
 - B. On the owner's machine (personal data on a laptop).
 
 *Recommendation A.* Reverse: run `audit-supersede export` elsewhere with the repository's keys.
 
-### Q-K104 — How is a disaster stub's T bound to the real restore? (P1-T22c2a review T3; auto-accepted by Claude, 2026-11-21, awaiting owner confirmation)
+### Q-K104 — How is a disaster stub's T bound to the real restore? (P1-T22c2a review T3; auto-accepted by Claude, 2026-11-21, confirmed by you 2026-11-22)
 
 The stub's T was never checked against the target pgBackRest really used, so a hand-run stub with an earlier T could widen what the floor excuses.
 
@@ -1085,7 +1085,7 @@ The stub's T was never checked against the target pgBackRest really used, so a h
 
 *Recommendation A.* Reverse: change `events.recovery_problem`. The c2b ceiling (S6) completes it.
 
-### Q-K105 — How is a restore closed without its load kept visible? (P1-T22c2a review T2; auto-accepted by Claude, 2026-11-21, awaiting owner confirmation)
+### Q-K105 — How is a restore closed without its load kept visible? (P1-T22c2a review T2; auto-accepted by Claude, 2026-11-21, confirmed by you 2026-11-22)
 
 Q-K100 lets `close` and `restore --target --no-supersede` explain the timeline change without loading any tail. The cuts stay, but data written after the last fingerprint and before the restore leaves no claim, so its loss shows nowhere (audit S4's hole, reached through a path c2a adds).
 
@@ -1094,7 +1094,7 @@ Q-K100 lets `close` and `restore --target --no-supersede` explain the timeline c
 
 *Recommendation A:* B blocks the recovery it is for. Reverse: drop the gauge, the alert and the verify line.
 
-### Q-K106 — A second disaster while a restore is not loaded (P1-T22c2a review E1/E4; auto-accepted by Claude, 2026-11-21, awaiting owner confirmation)
+### Q-K106 — A second disaster while a restore is not loaded (P1-T22c2a review E1/E4; auto-accepted by Claude, 2026-11-21, confirmed by you 2026-11-22)
 
 Restore A (tl1 to tl2) is served and not loaded; the server is lost again. The repository's newest timeline is tl2, A's old timeline is tl1. A lost server can neither load A (its folder and database are gone) nor close it (`close` needs a database on another timeline).
 
@@ -1103,48 +1103,48 @@ Restore A (tl1 to tl2) is served and not loaded; the server is lost again. The r
 
 *Recommendation A.* Reverse: drop `ancestors_pass` in `supersede._refuse_pending`.
 
-### Q-K110 — Where do the admin pages live? (P1-T24 design; auto-accepted by Claude, 2026-11-21, awaiting owner confirmation)
+### Q-K110 — Where do the admin pages live? (P1-T24 design; auto-accepted by Claude, 2026-11-21, confirmed by you 2026-11-22)
 
 - **A ⭐ (taken).** Under the facility: `/facility/:id/ihr/audit` (T24a), `/ihr/packs` (T24c), menu items in the facility sidebar, last, in care mode only (the pattern of records and totals). The page title says "whole hospital".
 - B. Top-level `/ihr/audit`, `/ihr/packs`, from the user menu. C. Both.
 
 *Limit:* an admin with no facility cannot reach them from a menu (none seeded; revisit with the hospital-root gate, Q-K76 B). *Reverse:* move the keys in `IhrRoutes.tsx` and the paths in `menu.ts`.
 
-### Q-K111 — How does the web app know who is an admin? (P1-T24 design, attack decision; auto-accepted by Claude, 2026-11-21, awaiting owner confirmation)
+### Q-K111 — How does the web app know who is an admin? (P1-T24 design, attack decision; auto-accepted by Claude, 2026-11-21, confirmed by you 2026-11-22)
 
 - **A ⭐ (taken, narrowed).** One new my-access field, `hospital_admin` (the audit trail's own gate `IsHospitalAdmin`; false for a superuser). The design's second flag `manage_staff` is dropped (zoom-out F2): the T24b staff card relies on the access GET instead. Cost: one `EXISTS`, pinned by `test_my_access` (10 to 11 statements without `?facility=`, 12 to 13 with).
 - B. Probe the admin APIs and hide on 403: every page load would write an audit entry and a refusal.
 
 *Reverse:* remove the field, `hospitalAdmin` in `access.ts` and the `audit` menu key.
 
-### Q-K112 — A list of open invitations? (P1-T24 design; auto-accepted by Claude, 2026-11-21, awaiting owner confirmation)
+### Q-K112 — A list of open invitations? (P1-T24 design; auto-accepted by Claude, 2026-11-21, confirmed by you 2026-11-22)
 
 - **A ⭐ (taken).** Only per person, on the user page (T24b). B. `GET /api/ihr/staff/invitations/` and an "Open invitations" tab, only if CARE's lists hide inactive users (checked in T24b).
 
-### Q-K113 — Confirming "Reset sign-in" (P1-T24 attack decision; auto-accepted by Claude, 2026-11-21, awaiting owner confirmation)
+### Q-K113 — Confirming "Reset sign-in" (P1-T24 attack decision; auto-accepted by Claude, 2026-11-21, confirmed by you 2026-11-22)
 
 - A. Type the username, with the "check who is asking" text.
 - **B ⭐ (taken, changed from the design's A).** A plain confirm dialog with the warning text (zoom-out F8). Built in T24b.
 
 *Reverse:* add the typed confirmation to the dialog.
 
-### Q-K114 — The audit list's default range (P1-T24a; auto-accepted by Claude, 2026-11-21, awaiting owner confirmation)
+### Q-K114 — The audit list's default range (P1-T24a; auto-accepted by Claude, 2026-11-21, confirmed by you 2026-11-22)
 
 - **A ⭐ (taken).** Today in IST, From and To both. Fewer patient names are shown, and each name shown is recorded as viewed. B. The last 7 days.
 
-### Q-K115 — Export default format (P1-T24c; auto-accepted by Claude, 2026-11-21, awaiting owner confirmation)
+### Q-K115 — Export default format (P1-T24c; auto-accepted by Claude, 2026-11-21, confirmed by you 2026-11-22)
 
 - **A ⭐ (taken).** CSV first, JSON with proof as the second choice. B. JSON only. The export and verifier links move to T24c (zoom-out F4).
 
-### Q-K116 — The audit API's date format (P1-T24a; auto-accepted by Claude, 2026-11-21, awaiting owner confirmation)
+### Q-K116 — The audit API's date format (P1-T24a; auto-accepted by Claude, 2026-11-21, confirmed by you 2026-11-22)
 
 - **A ⭐ (taken).** Keep YYYY-MM-DD in the API; the page shows and keeps DD-MM-YYYY and converts (`Utils/ihr/audit.ts`, `toApiDay`). B. Change the API to DD-MM-YYYY like owner totals.
 
-### Q-K117 — A seeded hospital-wide admin login (P1-T24a; auto-accepted by Claude, 2026-11-21, awaiting owner confirmation)
+### Q-K117 — A seeded hospital-wide admin login (P1-T24a; auto-accepted by Claude, 2026-11-21, confirmed by you 2026-11-22)
 
 - **A ⭐ (taken).** `admin.priya` on alpha (`care-admin`, an authenticator pre-set), made hospital-wide by `seeding.make_hospital_admin`. B. Give `admin.bhavesh` a top-level role on beta (unneeded, see Q-K118).
 
-### Q-K118 — A facility-only admin login for T24b (P1-T24a backend builder; proposed; auto-accepted by Claude, 2026-11-21, awaiting owner confirmation)
+### Q-K118 — A facility-only admin login for T24b (P1-T24a backend builder; proposed; auto-accepted by Claude, 2026-11-21, confirmed by you 2026-11-22)
 
 In the dev seed `admin.bhavesh` (beta, `care-fac-admin`) already holds "Facility Admin" on a top-level organisation, so he is a hospital-wide admin and sees the audit trail. The design's reason for Q-K117 ("bhavesh must be refused on admins") does not hold on the demo.
 
@@ -1153,7 +1153,7 @@ In the dev seed `admin.bhavesh` (beta, `care-fac-admin`) already holds "Facility
 
 *Built in P1-T24b:* `admin.anil` (alpha) signs in as `care-facility-admin`, "Facility Admin" at the demo facility's root only (`seeding.make_facility_admin`).
 
-### Q-K119 — How is the audit page's patient and person filter set? (P1-T24a web builder; auto-accepted by Claude, 2026-11-21, awaiting owner confirmation)
+### Q-K119 — How is the audit page's patient and person filter set? (P1-T24a web builder; auto-accepted by Claude, 2026-11-21, confirmed by you 2026-11-22)
 
 The design listed a patient search box and a typed "Who" box; the attack decision dropped "Who" (the actor is `user:<pk>:<username>`).
 
@@ -1161,7 +1161,7 @@ The design listed a patient search box and a typed "Who" box; the attack decisio
 
 *Reverse:* add the box in `IhrAuditTrail.tsx`; the address and the API already carry the filter.
 
-### Q-K120 — Should an admin of a state organisation pass the hospital-admin gate? (P1-T24a review A1; auto-accepted by Claude, 2026-11-21, awaiting owner confirmation)
+### Q-K120 — Should an admin of a state organisation pass the hospital-admin gate? (P1-T24a review A1; auto-accepted by Claude, 2026-11-21, confirmed by you 2026-11-22)
 
 Review A1 found that `hospital_wide_admin` (the gate of the audit trail, the pack decisions and, since T24a, the `hospital_admin` flag and the Audit trail menu item) accepts an admin role on any active top-level organisation, government states included. Q-K76 A already names this limit. The reviewer suggested adding `org_type="role"`. That would not help: provisioning (`provisioning/steps.py`, `first_admin`) makes every hospital's first admin an **Administrator of its state organisation**, a top-level `govt` one. Pack tests also use `team` and untyped top-level organisations. Leaving out `govt`, or keeping only `role`, would lock every real hospital's first admin out of the audit trail and the pack decisions.
 
@@ -1172,7 +1172,7 @@ Review A1 found that `hospital_wide_admin` (the gate of the audit trail, the pac
 *Limit, unchanged:* anyone given an admin role on any state organisation passes. Only someone who may create users can do that, and our code does it only for the first admin. *Reverse:* none needed. Q-K76 B replaces this.
 
 
-### Q-K121 — How is "a hospital-wide admin at any hospital" protected from a reset? (P1-T24b backend builder, attack A1; auto-accepted by Claude, 2026-11-21, awaiting owner confirmation)
+### Q-K121 — How is "a hospital-wide admin at any hospital" protected from a reset? (P1-T24b backend builder, attack A1; auto-accepted by Claude, 2026-11-21, confirmed by you 2026-11-22)
 
 A reset wipes a person's password and authenticator at every hospital, so attack A1 asked that someone who is a hospital-wide admin anywhere is never reset from one hospital's staff screen. Nothing in `public` or Keycloak holds roles today, and a hospital's web request must not read another hospital's schema.
 
@@ -1181,7 +1181,7 @@ A reset wipes a person's password and authenticator at every hospital, so attack
 
 *Limits:* the GET cannot know about other hospitals, so "Reset sign-in" can show for such a person; the request then ends `protected` and the card says so. **Fleet-wide try-later (review K1, kept on purpose):** the check fails closed on the first hospital it cannot read, so while any one hospital is held (a release window, a failed migration left held, a single-hospital restore, a db_roles gate), every reset at every hospital ends `try-later` and the admin asks again once that hospital is served; each reset also reads all N schemas (a shared job lock, a few queries each). Scoping the scan to the hospitals whose Keycloak organisation holds the `sub` was considered and not taken: it would make the boundary rest on Keycloak's organisation membership matching the CARE `StaffIdentity` links (they are written by different steps and can drift, e.g. after a restore), and Keycloak could not then be the fail-closed fallback for a missing link. `try-later` is a final answer for that request (it is not re-queued like a held hospital's own job): the admin asks again by hand, and this is by design (review A5). Resets are rare, owner-visible and retryable; a bounded automatic re-queue can come later if this bites. **Known one-bit limits (review A6, K10):** the one-reset-a-day check counts requests from every hospital (`StaffAccessRequest` is in `public`), so a second hospital's admin who asks within the day is told only "reset in the last day" (no hospital named, since review K10); that still shows that a reset happened for the person recently, which the person's own e-mail already says. *Reverse:* drop the provisioner check (one function).
 
-### Q-K122 — May one hospital-wide admin reset another at the same hospital? (P1-T24b backend builder; auto-accepted by Claude, 2026-11-21, awaiting owner confirmation)
+### Q-K122 — May one hospital-wide admin reset another at the same hospital? (P1-T24b backend builder; auto-accepted by Claude, 2026-11-21, confirmed by you 2026-11-22)
 
 The attack's decision says a target who is a hospital-wide admin at *any* hospital is protected; the module's old docstring allowed "another hospital-wide admin".
 
@@ -1190,7 +1190,7 @@ The attack's decision says a target who is a hospital-wide admin at *any* hospit
 
 *Limit:* a hospital whose only admin loses their authenticator needs the operator. *Reverse:* in `staff_access.reset_allowed` and `invitations._admin_anywhere`, skip the asking hospital.
 
-### Q-K123 — Does a refused (`protected`) reset count toward the one-a-day limit, and what does the card say in Hindi? (P1-T24b review A4, W3; auto-accepted by Claude, 2026-11-21, awaiting owner confirmation)
+### Q-K123 — Does a refused (`protected`) reset count toward the one-a-day limit, and what does the card say in Hindi? (P1-T24b review A4, W3; auto-accepted by Claude, 2026-11-21, confirmed by you 2026-11-22)
 
 Before the review a failed reset never counted toward the daily limit, so a `protected` refusal could be asked again and again (one open request at a time; each one reads every hospital's schema), and every 400 showed the backend's English sentence on the Hindi card.
 
@@ -1199,7 +1199,7 @@ Before the review a failed reset never counted toward the daily limit, so a `pro
 
 *Limit:* a person whose admin role is removed within the day cannot be reset from another hospital until the day passes. *Reverse:* drop the `protected-recent` query in `staff_access.StaffAccessView.post`.
 
-### Q-K124 — How does the pack API name a facility, and how does a refusal name its kind? (P1-T24c backend builder, G6; auto-accepted by Claude, 2026-11-21, awaiting owner confirmation)
+### Q-K124 — How does the pack API name a facility, and how does a refusal name its kind? (P1-T24c backend builder, G6; auto-accepted by Claude, 2026-11-21, confirmed by you 2026-11-22)
 
 The pack updates screen shows "Facility (name or Whole hospital)" and must map every refusal of a decision to a fixed phrase (readiness M3). The list gave only the facility's external id, and refusals gave an English `detail`, with `stale`/`blocked`/`busy` flags on some.
 
@@ -1208,7 +1208,7 @@ The pack updates screen shows "Facility (name or Whole hospital)" and must map e
 
 *Limit:* an old client reading only `detail` is unaffected. *Reverse:* drop `facility_name` in `api._summary` and the `code` argument of `api._refused`.
 
-### Q-K125 — Which pack item does the dev seed leave waiting, and how? (P1-T24c backend builder, G5; auto-accepted by Claude, 2026-11-21, awaiting owner confirmation)
+### Q-K125 — Which pack item does the dev seed leave waiting, and how? (P1-T24c backend builder, G5; auto-accepted by Claude, 2026-11-21, confirmed by you 2026-11-22)
 
 The dev stack has one pack release, so nothing waits for a decision and the screen is empty in a click-through. The engine skips an apply of a release it already applied, and treats an edit the pack has no newer content for as the hospital's own.
 
