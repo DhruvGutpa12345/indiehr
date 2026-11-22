@@ -554,7 +554,7 @@ function PackSheet({
   return (
     <Sheet open={id !== null} onOpenChange={(open) => !open && onClose()}>
       <SheetContent
-        className="w-full overflow-y-auto sm:max-w-2xl"
+        className="flex w-full flex-col gap-0 overflow-y-auto sm:max-w-2xl"
         data-ihr="packs-sheet"
       >
         <SheetHeader>
@@ -659,79 +659,93 @@ function SheetBody({
   }
 
   return (
-    <div className="mt-4 space-y-5" data-ihr="packs-detail">
-      <ItemFacts item={item} />
-      <Why item={item} />
-      <FieldDifference item={item} />
-
-      <div className="space-y-2">
-        <label
-          htmlFor="ihr-packs-reason"
-          className="block text-sm font-medium text-gray-700"
-        >
-          {t("ihr_packs_reason_label")}
-        </label>
-        <Textarea
-          id="ihr-packs-reason"
-          rows={3}
-          value={reason}
-          maxLength={MAX_REASON * 2}
-          aria-invalid={reasonError}
-          onChange={(e) => {
-            setReason(e.target.value);
-            setReasonError(false);
-          }}
-          data-ihr="packs-reason"
-        />
-        <p className="text-xs text-gray-600">
-          {t("ihr_packs_reason_hint", { max: MAX_REASON })}
-        </p>
-        {reasonError && (
-          <p
-            className="text-sm text-red-700"
-            role="alert"
-            data-ihr="packs-reason-error"
-          >
-            {t("ihr_packs_error_reason", { max: MAX_REASON })}
-          </p>
-        )}
+    <div className="mt-4 flex flex-1 flex-col" data-ihr="packs-detail">
+      {/* the differences scroll here; the reason box and the buttons below stay in view (P1-T24d) */}
+      <div
+        className="min-h-24 flex-1 space-y-5 overflow-y-auto pb-4 pr-1"
+        data-ihr="packs-detail-scroll"
+        role="region"
+        aria-label={t("ihr_packs_sheet_title")}
+        tabIndex={0}
+      >
+        <ItemFacts item={item} />
+        <Why item={item} />
+        <FieldDifference item={item} />
       </div>
 
-      {answer && (
-        <p
-          role={answer.ok ? "status" : "alert"}
-          className={answer.ok ? "text-green-800" : "text-red-700"}
-          data-ihr="packs-answer"
-        >
-          {t(answer.key, { max: MAX_REASON })}
-        </p>
-      )}
+      <div
+        className="space-y-3 border-t border-gray-200 pt-4"
+        data-ihr="packs-footer"
+      >
+        <div className="space-y-2">
+          <label
+            htmlFor="ihr-packs-reason"
+            className="block text-sm font-medium text-gray-700"
+          >
+            {t("ihr_packs_reason_label")}
+          </label>
+          <Textarea
+            id="ihr-packs-reason"
+            rows={3}
+            value={reason}
+            maxLength={MAX_REASON * 2}
+            aria-invalid={reasonError}
+            onChange={(e) => {
+              setReason(e.target.value);
+              setReasonError(false);
+            }}
+            data-ihr="packs-reason"
+          />
+          <p className="text-xs text-gray-600">
+            {t("ihr_packs_reason_hint", { max: MAX_REASON })}
+          </p>
+          {reasonError && (
+            <p
+              className="text-sm text-red-700"
+              role="alert"
+              data-ihr="packs-reason-error"
+            >
+              {t("ihr_packs_error_reason", { max: MAX_REASON })}
+            </p>
+          )}
+        </div>
 
-      <div className="flex flex-wrap gap-3">
-        <Button
-          disabled={busy || !canAccept(item)}
-          onClick={() => submit("accept")}
-          data-ihr="packs-accept"
-        >
-          {t("ihr_packs_accept")}
-        </Button>
-        {canKeep(item) ? (
-          <Button
-            variant="outline"
-            disabled={busy}
-            onClick={() => submit("keep")}
-            data-ihr="packs-keep"
-          >
-            {t("ihr_packs_keep")}
-          </Button>
-        ) : (
+        {answer && (
           <p
-            className="self-center text-sm text-gray-600"
-            data-ihr="packs-kept"
+            role={answer.ok ? "status" : "alert"}
+            className={answer.ok ? "text-green-800" : "text-red-700"}
+            data-ihr="packs-answer"
           >
-            {t("ihr_packs_kept_note")}
+            {t(answer.key, { max: MAX_REASON })}
           </p>
         )}
+
+        <div className="flex flex-wrap gap-3">
+          <Button
+            disabled={busy || !canAccept(item)}
+            onClick={() => submit("accept")}
+            data-ihr="packs-accept"
+          >
+            {t("ihr_packs_accept")}
+          </Button>
+          {canKeep(item) ? (
+            <Button
+              variant="outline"
+              disabled={busy}
+              onClick={() => submit("keep")}
+              data-ihr="packs-keep"
+            >
+              {t("ihr_packs_keep")}
+            </Button>
+          ) : (
+            <p
+              className="self-center text-sm text-gray-600"
+              data-ihr="packs-kept"
+            >
+              {t("ihr_packs_kept_note")}
+            </p>
+          )}
+        </div>
       </div>
     </div>
   );

@@ -15,6 +15,7 @@
 //   so a waitForResponse registered before the click always sees a request.
 // - Waits are for the API answer (waitForResponse), never network idle.
 // - Who may NOT see the page: roles-menus.spec.ts (menus and typed addresses of every login).
+import type { Page } from "@playwright/test";
 import { watchDeadEnds } from "./lib/deadEnds";
 import { facilityIdOf, openSidebarByDefault } from "./lib/desk";
 import { HOSPITALS, expect, signIn, test, user } from "./lib/fixtures";
@@ -23,6 +24,66 @@ const LIST_API = "/api/ihr/packs/updates/";
 const HISTORY_API = "/api/ihr/packs/history/";
 // deploy/locale/en.json ihr_packs_done_accept
 const ACCEPTED_NOTICE = "Accepted: the pack's version is now in place.";
+
+// P1-T24d: the reason box and the decision buttons stay in view at the bottom of the sheet, with the
+// differences scrolling above them, however long the item is (the owner's click-through, 2026-11-22:
+// at 1280x800 the buttons were below the fold). The sheet is scrolled to its top first, so only a
+// pinned footer passes. Sizes: a desktop window and a 360 px phone (pinned), and a short 640x300
+// window (landscape phone, big zoom) where the pinned layout cannot fit and the sheet itself scrolls:
+// there the buttons must be reachable by scrolling. toBeInViewport retries, so the slide-in of the
+// sheet (about 500 ms) cannot fail the check.
+const PINNED_SIZES = [
+  { width: 1280, height: 800 },
+  { width: 360, height: 740 },
+];
+const SHORT_SIZE = { width: 640, height: 300 };
+
+async function sheetToTop(page: Page) {
+  await page.locator('[data-ihr="packs-sheet"]').evaluate((sheet) => {
+    sheet.scrollTop = 0;
+    sheet
+      .querySelectorAll("*")
+      .forEach((el) => ((el as HTMLElement).scrollTop = 0));
+  });
+}
+
+async function expectDecisionsInView(
+  page: Page,
+  testIds: string[],
+  where: string,
+) {
+  const original = page.viewportSize();
+  const ids = ["packs-reason", ...testIds];
+  try {
+    for (const size of PINNED_SIZES) {
+      await page.setViewportSize(size);
+      await sheetToTop(page);
+      await expect(
+        page.locator('[data-ihr="packs-footer"]'),
+        `${where}: the pinned footer at ${size.width}x${size.height}`,
+      ).toBeVisible();
+      for (const id of ids) {
+        await expect(
+          page.locator(`[data-ihr="${id}"]`),
+          `${where}: ${id} is fully in the ${size.width}x${size.height} window without scrolling`,
+        ).toBeInViewport({ ratio: 1 });
+      }
+    }
+    // too short to pin everything: the sheet scrolls, and every control is reachable
+    await page.setViewportSize(SHORT_SIZE);
+    await sheetToTop(page);
+    for (const id of ids) {
+      const control = page.locator(`[data-ihr="${id}"]`);
+      await control.scrollIntoViewIfNeeded();
+      await expect(
+        control,
+        `${where}: ${id} is reachable by scrolling at ${SHORT_SIZE.width}x${SHORT_SIZE.height}`,
+      ).toBeInViewport({ ratio: 1 });
+    }
+  } finally {
+    if (original) await page.setViewportSize(original);
+  }
+}
 
 function isList(state: string) {
   return (response: { url(): string; request(): { method(): string } }) => {
@@ -106,6 +167,12 @@ test("the reference list updates (admin.priya, alpha)", async ({
     // a waiting item offers both decisions
     await expect(page.locator('[data-ihr="packs-keep"]')).toBeVisible();
     await expect(page.locator('[data-ihr="packs-accept"]')).toBeVisible();
+    // T24d: the reason box and both buttons stay in view, at desktop and phone width
+    await expectDecisionsInView(
+      page,
+      ["packs-accept", "packs-keep"],
+      "a waiting item",
+    );
     dead.expectNone("opening an item");
   });
 
@@ -148,6 +215,11 @@ test("the reference list updates (admin.priya, alpha)", async ({
     // "Keep ours" is for waiting items only
     await expect(page.locator('[data-ihr="packs-keep"]')).toHaveCount(0);
     await expect(page.locator('[data-ihr="packs-kept"]')).toBeVisible();
+    await expectDecisionsInView(
+      page,
+      ["packs-accept", "packs-kept"],
+      "a kept item",
+    );
     dead.expectNone("the kept tab");
   });
 
