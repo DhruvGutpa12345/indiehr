@@ -1287,6 +1287,52 @@ CLAUDE.md says "No real patient data outside production", but everything built s
 
 *Why A:* it costs nothing until a pilot needs a public demo or training URL, and releases and drills are already rehearsed in the local proof. *Rule in every case:* synthetic staging never receives real data, including production-1's backups, dumps, log archive or exports, and never holds a production-1 key. *To reverse:* choose B, then run `staging.sh init stg.amhcloud.in` on a new VM with its own buckets and acme zone.
 
+### Q-K134 — Who is the operator in the record? (P1-T27; auto-accepted by Claude, 2026-11-22, awaiting owner confirmation)
+
+Every privileged `staging.sh` command now writes an `ihr-operator:` line naming who ran it (docs/reviews/p1-t27/attack.md, "Orchestrator decision").
+
+- **A ⭐ (taken).** `--operator NAME` or `IHR_OPERATOR`, required, no default; refused if empty, a shared or system name (`ihr`, `root`, `admin`, `postgres`, the bootstrap admin user) or not `^[a-z][a-z0-9.-]{1,31}$`. `from=` (the SSH client address) plus sshd's own login line give the join. Attribution by convention, not authentication.
+- B. A personal Unix account per operator (real authentication). Right when a second operator joins (ADR-020's production-1).
+- C. A reviewed allow-list `IHR_OPERATORS` plus the SSH key fingerprint (the first design): ceremony for one operator, and the fingerprint comes from a variable the operator controls.
+
+*Reverse:* B is a bootstrap change plus a check in `op_need`.
+
+### Q-K135 — What does the record keep of the command? (P1-T27; auto-accepted by Claude, 2026-11-22, awaiting owner confirmation)
+
+- **A ⭐ (taken).** Option names only, every value replaced by `<v>` (`command=` too); a reason of 3–120 characters from `[A-Za-z0-9 ._:/#-]`, refused if it has a run of 6 or more digits. `manage shell`/`dbshell`, `logs`, `logs-archive-get` and journalctl through staging.sh are recorded as data access (reason and hospital required).
+- B. A plus a hash of the full command: a short command can be recovered by guessing.
+- C. The full command, redacted: SQL and `-c` bodies carry names.
+
+*Reverse:* change `op_shape` in `scripts/staging.sh`.
+
+### Q-K136 — What does each hospital's own audit trail get? (P1-T27; auto-accepted by Claude, 2026-11-22, awaiting owner confirmation)
+
+- **A ⭐ (taken).** One `operator` entry per hospital in scope at the start of a data session (and of a job that opens hospital schemas: release, restore drill, dumps). `all` writes into every live hospital; a held or absent schema is skipped and the line says so. For `all` the entry carries a fixed reason (`operator access (all hospitals), session <id>`); the full reason stays in the log store. The hospital's audit page shows the new kind later, with the DPA work (P4-T6). No guard that refuses opening another hospital inside a shell (it is bypassable by raw SQL).
+- B. A plus the audit-page view and Hindi strings now.
+- C. Entries only for schemas actually opened: misses raw SQL and dbshell.
+
+*Limit:* `session_user` is not yet in the trigger context, so a shell can still put its writes on another actor; the journal line is the primary evidence. *Reverse:* migration 0007 adds the kind only; drop the hook in `ihr_audit/operator.py`.
+
+### Q-K137 — How does Postgres log privileged logins? (P1-T27; auto-accepted by Claude, 2026-11-22, awaiting owner confirmation)
+
+PG 18's `log_connections` cannot be set per role.
+- **A ⭐ (taken).** `log_connections=authorization` and `log_disconnections=on` server-wide, with `log_min_messages=warning` and `log_destination=stderr` pinned on the command line so one superuser session cannot switch logging off; a minute check that `postgresql.auto.conf` holds nothing (critical alert `PostgresSettingOverridden`). Every line kept; the local proof measures the volume against the logs budget.
+- B. Drop the app's own service lines in Fluent Bit: hides a deliberately renamed shell.
+- C. A login event trigger: a superuser can switch it off.
+
+*Reverse:* `deploy/postgres/server-settings.txt` and the db command.
+
+### Q-K138 — What if the record cannot be written? (P1-T27; auto-accepted by Claude, 2026-11-22, awaiting owner confirmation)
+
+- **A ⭐ (taken).** Refuse the command. Break-glass for emergencies only: `IHR_BREAK_GLASS="<reason>"` lets `rollback`, `restore` or `hospital-restore` run; the line goes to stderr and a pending file, shipped as `event=late` by the next recorded session. Data access commands never break glass. Local proofs and CI write the lines to stderr (`IHR_OPERATOR_LOCAL=stderr`).
+- B. Warn and run: the record would be optional.
+
+### Q-K139 — How much host auditing (auditd)? (P1-T27; auto-accepted by Claude, 2026-11-22, awaiting owner confirmation)
+
+- **A ⭐ (taken).** `execve` of docker, ctr, runc, nsenter and psql by logged-in users (b64 and b32), SYSCALL and EXECVE records only with arguments shaped like the operator line; no immutable `-e 2` (tampering is alerted: a minute metric counts the loaded rules); no rule for every root command. Live proof needs sudo on a real host, so it waits for P1-T26.
+- B. Also every root command by a logged-in user (more volume, more redaction).
+- C. Immutable rules (`-e 2`): bootstrap could no longer be re-run without a reboot.
+
 **Still open:** Q-B4 (final MVP module list: assumed as in PLAN.md Phase 2) and Q-B6/B7 (pricing, timeline). Q-F2 is moot while AI is deferred.
 
 ---
