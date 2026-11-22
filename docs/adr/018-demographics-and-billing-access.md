@@ -1,8 +1,8 @@
 # ADR-018: Demographics-and-billing access for the non-clinical roles
 
-- **Status:** Proposed (written by Claude at the end of P1-T11b4, 2026-11-15; for the owner's
-  review with Q-K34 to Q-K45, which are auto-accepted and await confirmation, and Q-K37a, which
-  the owner answered B, built 2026-11-15)
+- **Status:** **Accepted.** Its decisions Q-K34 to Q-K46 were confirmed by the owner on 2026-11-15
+  (Q-K37a answered B). Status updated in P1-T29, 2026-11-22. Written by Claude at the end of
+  P1-T11b4, 2026-11-15.
 - **Date:** 2026-11-15
 - **Decided by:** Claude, from the owner's answer to Q-K21 (2026-11-14). Evidence: CARE's
   authorization code at the pinned upstream (docs/reviews/p1-t11/design-b.md §2), a design attack

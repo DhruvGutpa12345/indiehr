@@ -1,7 +1,7 @@
 # ADR-015: The operator's dashboards and how they are reached
 
-- **Status:** Proposed (auto-accepted by Claude in an unattended run, 2026-11-12; awaiting
-  owner confirmation: Q-O13, Q-O14)
+- **Status:** **Accepted (owner, 2026-11-22)**: Q-O13 and Q-O14 confirmed. (Auto-accepted by
+  Claude in an unattended run, 2026-11-12.)
 - **Date:** 2026-11-12
 - **Decided by:** Claude. The evidence: the §5 rubric scorecard (docs/reviews/p1-t9d/scorecard.md),
   a design attack by security and feasibility reviewers (17 findings confirmed, folded in

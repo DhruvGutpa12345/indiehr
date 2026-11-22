@@ -1,7 +1,8 @@
 # ADR-016: Terminology answered in-process from shared, read-only tables
 
-- **Status:** Proposed (auto-accepted by Claude in an unattended run, 2026-11-12; awaiting
-  owner confirmation: Q-F6, Q-F7, Q-F8, Q-F9)
+- **Status:** **Accepted (owner, 2026-11-22)**: Q-F6, Q-F7, Q-F8 and Q-F9 confirmed. Q-F6's
+  benchmark condition stays: one clean SNOMED load on an 8 GB VM in P1-T26, before P1-T10b's
+  first real load. (Auto-accepted by Claude in an unattended run, 2026-11-12.)
 - **Date:** 2026-11-12
 - **Decided by:** Claude. The evidence: the §5 rubric scorecard (docs/reviews/p1-t10a/scorecard.md),
   a design attack by two reviewers (security and tenancy; correctness against CARE's code), with
@@ -88,7 +89,7 @@ Rejected:
 
 Snowstorm Lite is the runner-up for SNOMED.
 
-## Amendment for P1-T10a2 (2026-11-12, Proposed, awaiting owner confirmation)
+## Amendment for P1-T10a2 (2026-11-12; confirmed by the owner 2026-11-22)
 
 Added by the unattended run that built the SNOMED-ready loader and the scale benchmark
 (docs/reviews/p1-t10a2/).

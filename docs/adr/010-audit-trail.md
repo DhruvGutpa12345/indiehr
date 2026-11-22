@@ -5,6 +5,8 @@
 - **Task:** P1-T6a (recording, hash chain, verify); P1-T6b (viewer, export, outside fingerprints; §7–§9, owner's answers of 2026-11-08).
 - **Builds on:** ADR-002 (schema per hospital), ADR-009 (staff sessions). Replaces CARE's own audit log, which stays off (TENANCY_DESIGN §6.12).
 
+> **Amendment (P1-T25, 2026-11-22):** the rule for who may use the audit viewer (§7) changed; see the last section, "Amendment (P1-T25, 2026-11-22): the hospital-root gate".
+
 ## Context
 
 NABH, DPDP ("who looked at my record") and medico-legal work need to answer, per hospital: who created, changed, deleted or viewed which patient's data, when, from where and why. The trail must be complete and hard to alter quietly.
@@ -101,7 +103,7 @@ The trail stays in the hospital's schema, so it never mixes hospitals. It is bac
 - `export/` and `verifier.py` are covered in §8.
 
 Who may use them:
-- Only staff with an admin role on one of the hospital's **top-level, active** organisations. A team's or facility's admin may not.
+- Only staff with an admin role on the hospital's **valid root organisation** (P1-T25; see the amendment at the top). A team's, facility's or other top-level organisation's admin may not.
 - The same check now guards the staff-access actions (P1-T5e2).
 
 What is recorded:
@@ -215,3 +217,10 @@ What is recorded:
 - **A restored trail never takes a dump's functions or triggers:** the append-only guard, the row triggers, the sealing functions and the stamp trigger come from this build's code inside the restore's own transaction (the quarantine refuses any other function or trigger; ours are compared with this build's by definition hash and re-installed either way).
 - **Ids are never re-used:** the entry id sequence is advanced past the parked copy's, like every other sequence; the restored chain continues from the dump's head and the archived tail keeps the replaced seals.
 - **Not changed:** sealing, the fingerprints, the event format (P1-T21), the exports.
+
+## Amendment (P1-T25, 2026-11-22): the hospital-root gate
+
+- **Status:** Accepted (Q-K126 to Q-K131, confirmed by the owner 2026-11-22). It changes who may use the audit viewer and the staff-access actions (§7), not how the trail is written or what it guarantees.
+- **Who is hospital-wide:** a hospital-wide admin is an admin role on the hospital's valid root organisation only. `ihr_identity/roots.py` `valid_root()` looks at the organisations marked by our own code (`system_generated` set and `metadata.ihr="hospital-root"`; deleted rows count, so a deleted marked organisation is still "a marked organisation"). It returns the root only when exactly one is marked and that one is a top-level `role` organisation, active, not deleted, parentless and with no managing organisations. A marked organisation made or edited through CARE's API has no `system_generated` and is ignored.
+- **Fail closed:** with no valid root (none marked, more than one, or the marked one failing a check) nobody is hospital-wide and the screens refuse.
+- **What keeps the wider rule:** protection from a sign-in reset uses `top_level_admin` (`ihr_identity/staff_access.py`): an admin role on any active, undeleted top-level organisation (the root, a state, a fixture role organisation). It does not narrow while admins move (Q-K130).
