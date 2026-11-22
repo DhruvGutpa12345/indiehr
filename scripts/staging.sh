@@ -108,6 +108,9 @@
 #   scripts/staging.sh hospital-restore-drill [--slug S]   monthly, on the restore-drill copy only
 #   scripts/staging.sh hospital-restore-status | hospital-restore-expire [--dry-run]
 #                                                restores and parked schemas | parked ones past 7 days dropped
+#   scripts/staging.sh hospital-root --slug S show | place <username> | remove-state <username>
+#                     [--operator <you> --reason "<ticket>"]   the hospital root (P1-T25): who is
+#                                                hospital-wide; the recovery when nobody is
 #
 # <suffix> is where hospitals live: <slug>.<suffix>, e.g. app.example.in (Q-T11).
 # --vm: a proof on a throwaway local VM (scripts/local-vm.sh): small memory, all addresses,
@@ -2132,7 +2135,7 @@ release() {  # release [--now [--minutes N] [--note T]] [--operator NAME] | --fi
   compose run --rm --no-deps -T migrate python manage.py ihr_db_role_check --for migrate
   compose run --rm --no-deps -T migrate python manage.py migrate_schemas --shared --noinput
   echo "== [$((SECONDS - t0)) s] Hospital migrations (ihr_fleet_run, as scripts/staging.sh fleet)"
-  compose run --rm --no-deps -T migrate python manage.py ihr_fleet_run migrate check roles packs --operator "$op" || fleet_rc=$?
+  compose run --rm --no-deps -T migrate python manage.py ihr_fleet_run migrate check roles root packs --operator "$op" || fleet_rc=$?
   # 7a. What the migrations, roles and packs wrote into the trails (suspended and offboarding
   # hospitals too) sealed and fingerprinted by the new build before anything starts: the audit
   # watch, recreated by up, never finds it waiting for seal_inactive's next run (P1-T21 C3)
@@ -5289,6 +5292,8 @@ case "${1:-}" in
   up) up "${@:2}" ;;
   smoke) smoke ;;
   manage) compose --profile admin run --rm --no-deps -T admin python manage.py "${@:2}" ;;
+  # The hospital root (P1-T25): writes run as the owner, in the admin one-off
+  hospital-root) compose --profile admin run --rm --no-deps -T admin python manage.py ihr_hospital_root "${@:2}" ;;
   # The fleet runner in the one-shot's (logged) container, never the unlogged admin one: its
   # "ihr-fleet:" lines must reach the HospitalNotServed alert (deploy/logs/alerts/fleet.yml, S3).
   # `fleet window` runs as the running backend's build when one runs: the build the database's

@@ -32,6 +32,11 @@ Steps, always run in this order whatever order they are named in:
   or suspended hospital, then the sync for those that passed. A refusing hospital is held
   (reason "roles") and reported (design item 6); a later run whose roles pass releases that
   hold, never a window's (C4/S2).
+- ``root``: each active or suspended hospital's root (P1-T25, ``ihr_identity.roots.converge``),
+  under its lock: the root is made if none is marked, and a root with no admin gets the
+  provisioning record's first admin when still entitled (that person's state row is then
+  dropped). Never a hold: a hospital whose root is invalid or has no admin stays served, only
+  its admin screens are closed, and its ``ihr-root:`` line raises ``HospitalRootProblem``.
 - ``packs``: the reference packs, exactly as ``ihr_pack_apply`` applies them (live hospitals
   only; its records and its ``ihr-packs:`` lines).
 - ``release``: clear the hold of the selected hospitals.
@@ -79,10 +84,11 @@ from ihr_platform import release
 from ihr_platform.models import FleetRun, Hospital, TenantOperation
 from ihr_platform.provisioning import runner
 
-STEPS = ("hold", "migrate", "check", "roles", "packs", "release")
+STEPS = ("hold", "migrate", "check", "roles", "root", "packs", "release")
 S = Hospital.Status
 MIGRATE_STATUSES = (S.PROVISIONING, S.ACTIVE, S.SUSPENDED, S.OFFBOARDING)
 ROLES_STATUSES = (S.ACTIVE, S.SUSPENDED)
+ROOT_STATUSES = (S.ACTIVE, S.SUSPENDED)  # never PROVISIONING: first_admin does it (S8)
 PACKS_STATUSES = (S.ACTIVE,)
 LIVE_STATUSES = (
     S.ACTIVE,
@@ -540,7 +546,7 @@ class _Entry:
                 return worst
         return "done"
 
-    def finished(self, steps, ignore=("packs", "release")):
+    def finished(self, steps, ignore=("root", "packs", "release")):
         """Every step of the run (but ``ignore``) recorded for it, and none went wrong."""
         complete = all(s in self.steps for s in steps if s not in ignore)
         return complete and self.outcome(ignore=ignore) == "done"
@@ -1119,7 +1125,7 @@ class Fleet:
                 f"{len(mismatched)} live hospital(s) are not on this build's schema "
                 f"({', '.join(mismatched[:10])}). The start migrates no hospital: run the "
                 "release (scripts/staging.sh release; until P1-T18b: scripts/staging.sh "
-                "fleet migrate check roles packs --operator <you>; dev: "
+                "fleet migrate check roles root packs --operator <you>; dev: "
                 "scripts/care-dev.sh migrate-hospitals)"
             )
             raise FleetFault(msg)
@@ -1172,6 +1178,79 @@ class Fleet:
         else:
             seconds = round(time.monotonic() - began, 1)
             self._note(entry, "roles", "done", seconds=seconds)
+        finally:
+            connection.set_schema_to_public()
+        return False
+
+    def _root(self):
+        """Never a hold (design item 5): a step record of its own, not ``_note``, so a later
+        step still runs for the hospital and its holds are released as before."""
+        self._skip_others("root", ROOT_STATUSES)
+        waiting = self._ready(self._alive(ROOT_STATUSES), "root")
+        for delay in (*RETRY_DELAYS, None):
+            busy = [entry for entry in waiting if self._root_one(entry)]
+            if not busy:
+                return
+            if delay is None:
+                from ihr_identity import roots
+
+                for entry in busy:
+                    entry.steps["root"] = {
+                        "name": "root",
+                        "status": "deferred",
+                        "error": "another job held it",
+                    }
+                    # Review T3/Q9: a root left unchecked is seen by the alert, as a failed one
+                    roots.say(
+                        "ensure",
+                        "failed",
+                        self._root_operator(),
+                        slug=entry.hospital.slug,
+                    )
+                return
+            time.sleep(delay)
+            waiting = busy
+
+    def _root_operator(self):
+        return f"fleet-{'startup' if self.startup else self.operator}"
+
+    def _root_one(self, entry):
+        """One hospital's root, under its lock. True if another job held the lock."""
+        from ihr_identity import roots
+
+        began = time.monotonic()
+        operator = self._root_operator()
+        try:
+            with (
+                runner.exclusive(entry.hospital.slug),
+                schema_context(entry.hospital.schema_name),
+            ):
+                report = roots.converge(entry.hospital, operator)
+        except runner.ProvisioningError:
+            return True
+        except Exception as exc:
+            entry.steps["root"] = {
+                "name": "root",
+                "status": "failed",
+                "error": release.safe_error(exc),
+            }
+            # Review T3/Q9: the hospital stays served, so no ihr-fleet line is written; this
+            # one is what the alert reads (no root made, or none checked: screens closed)
+            roots.say("ensure", "failed", operator, slug=entry.hospital.slug)
+            self.out(f"{entry.hospital.slug}: root failed ({release.safe_error(exc)})")
+        else:
+            entry.steps["root"] = {
+                "name": "root",
+                "status": "done",
+                "root": report["outcome"],
+                "seconds": round(time.monotonic() - began, 1),
+            }
+            if report["outcome"] in ("no-admin", "invalid"):
+                self.out(
+                    f"{entry.hospital.slug}: root {report['outcome']}: its admin screens "
+                    "are closed (manage.py ihr_hospital_root --slug "
+                    f"{entry.hospital.slug} show)"
+                )
         finally:
             connection.set_schema_to_public()
         return False

@@ -359,7 +359,7 @@ class ReleaseScript(unittest.TestCase):
             "REL_STAGE=2\n",
             'release_note --release via=release migrations=started "${carry[@]}"',
             "migrate_schemas --shared",
-            "run --rm --no-deps -T migrate python manage.py ihr_fleet_run migrate check roles packs",
+            "run --rm --no-deps -T migrate python manage.py ihr_fleet_run migrate check roles root packs",
             "\n  up\n",
             "rel_workers_marker clear",
             "smoke || smoke_rc=$?",

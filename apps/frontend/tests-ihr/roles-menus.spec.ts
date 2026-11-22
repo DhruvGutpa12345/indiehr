@@ -163,14 +163,12 @@ const LOGINS: Login[] = [
   { username: "radiology.sunita", hospital: "alpha", menu: CARE_RADIOLOGIST },
   { username: "dr.meera", hospital: "alpha", menu: CARE_FULL },
   { username: "nurse.asha", hospital: "alpha", menu: CARE_FULL },
-  // Hospital-wide admins (an admin role on a top-level organisation) also get the audit trail,
-  // then the reference list updates as the last item (P1-T24a, P1-T24c, Q-K110 A, Q-K111 A). admin.bhavesh is one in the dev seed too
-  // (CARE's fixture gives him that role); admin.priya is the seeded one on alpha (Q-K117).
-  {
-    username: "admin.bhavesh",
-    hospital: "beta",
-    menu: [...CARE_FULL, AUDIT, PACKS],
-  },
+  // Hospital-wide admins (an admin role on the hospital's root, P1-T25) also get the audit trail,
+  // then the reference list updates as the last item (P1-T24a, P1-T24c, Q-K110 A, Q-K111 A).
+  // admin.priya is the seeded one on alpha (Q-K117). admin.bhavesh (beta) is not since P1-T25:
+  // CARE's fixture role "Facility Admin" on a top-level organisation of its own no longer counts
+  // (Q-K118's intent), so he gets CARE's full menu only.
+  { username: "admin.bhavesh", hospital: "beta", menu: CARE_FULL },
   {
     username: "admin.priya",
     hospital: "alpha",
@@ -181,7 +179,7 @@ const LOGINS: Login[] = [
   { username: "admin.anil", hospital: "alpha", menu: CARE_FULL },
 ];
 
-const HOSPITAL_ADMINS = new Set(["admin.bhavesh", "admin.priya"]);
+const HOSPITAL_ADMINS = new Set(["admin.priya"]);
 
 /** Location menus after "My places" (design §13.5) */
 const PLACES: Record<string, { place: string; menu: string[] }> = {

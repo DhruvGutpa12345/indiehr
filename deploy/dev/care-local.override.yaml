@@ -52,7 +52,7 @@ services:
     # (P1-T15a). Hospitals are never migrated here: after pulling new migrations, run
     # `scripts/care-dev.sh migrate-hospitals` (docs/LOCAL_DEV.md); until then this worker stops
     # (except for a hospital that run already tried and left held: it stays at 503).
-    entrypoint: ["bash", "-c", "printf celery > /tmp/container-role && ./scripts/wait_for_db.sh && ./scripts/wait_for_redis.sh && python manage.py migrate_schemas --shared --noinput && python manage.py ihr_create_tenant --public --domain localhost --domain console.localhost --domain backend && python manage.py compilemessages -v 0 && python manage.py ihr_fleet_run check roles packs --record --startup && exec celery --workdir=/app -A config.celery_app worker -B --pool=solo --concurrency=1 --loglevel=INFO"]
+    entrypoint: ["bash", "-c", "printf celery > /tmp/container-role && ./scripts/wait_for_db.sh && ./scripts/wait_for_redis.sh && python manage.py migrate_schemas --shared --noinput && python manage.py ihr_create_tenant --public --domain localhost --domain console.localhost --domain backend && python manage.py compilemessages -v 0 && python manage.py ihr_fleet_run check roles root packs --record --startup && exec celery --workdir=/app -A config.celery_app worker -B --pool=solo --concurrency=1 --loglevel=INFO"]
     mem_limit: 700m
     restart: "no"
 

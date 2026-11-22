@@ -438,7 +438,10 @@ class NewVersionTests(FormCase):
     def test_the_detail_names_what_a_new_version_strands(self):
         """Item 12 in the item detail: an edited v1 waits; the detail counts its drafts and
         templates. Accepting makes v2 and moves the target in the same transaction."""
-        top = Organization.objects.create(name=f"Adm {self.key}", org_type="team")
+        from ihr_identity import roots
+
+        # the pack decisions need an admin on the hospital's root (P1-T25)
+        top, _ = roots.ensure_root("test")
         admin = admin_of(top, f"fadm-{self.key}")
         self.add(1, form(self.key, 1))
         self.apply()

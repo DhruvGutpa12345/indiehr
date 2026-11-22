@@ -1088,6 +1088,101 @@ class FleetTests(SimpleTestCase):
             ops = ops.filter(fleet_run=run)
         return ops.order_by("-created_at").first()
 
+    def test_the_root_step_makes_a_root_never_replaces_one_and_never_holds(self):
+        """P1-T25 decision item 5: ``root`` makes the test hospital's root (no onboarding
+        record: ``no-admin``), finds it again on the next run, and leaves an invalid one alone;
+        each time the hospital stays served and the run is done."""
+        from care.emr.models.organization import Organization
+        from ihr_identity import roots
+
+        lines = []
+        patch = mock.patch.object(roots, "_write", side_effect=lines.append)
+        patch.start()
+        self.addCleanup(patch.stop)
+
+        def remove_roots():
+            with schema_context(TEST_SCHEMA):
+                roots.marked().delete()
+
+        self.addCleanup(remove_roots)
+        hospital = testhosp()
+        outcomes = []
+        for _ in range(2):
+            run, out, _err, _fake = self._run(["root"], slugs=["testhosp"])
+            op = self._op("testhosp", run)
+            [step] = op.steps
+            outcomes.append((step["status"], step["root"], op.result["outcome"]))
+            self.assertTrue(release.schema_ready(hospital))
+            self.assertIn("testhosp: root no-admin", "\n".join(out))
+        self.assertEqual(outcomes, [("done", "no-admin", "done")] * 2)
+        with schema_context(TEST_SCHEMA):
+            self.assertEqual(roots.marked().count(), 1)
+            Organization._base_manager.filter(pk=roots.marked().get().pk).update(
+                active=False
+            )
+        run, _out, _err, _fake = self._run(["root"], slugs=["testhosp"])
+        [step] = self._op("testhosp", run).steps
+        self.assertEqual((step["status"], step["root"]), ("done", "invalid"))
+        self.assertEqual(run.status, "finished")
+        self.assertTrue(release.schema_ready(hospital))
+        with schema_context(TEST_SCHEMA):
+            self.assertEqual(roots.marked().count(), 1)  # never a second
+        self.assertEqual(
+            [line for line in lines if "outcome=done" in line],
+            ["ihr-root: hospital=testhosp action=ensure outcome=done by=fleet-tester"],
+        )
+        self.assertIn(
+            "ihr-root: hospital=testhosp action=ensure outcome=invalid by=fleet-tester",
+            lines,
+        )
+
+    def test_a_failed_or_deferred_root_step_writes_its_line_and_never_holds(self):
+        """Review T3/Q9: a root step that raises, or that another job's lock defers, left no
+        ``ihr-root`` line: no root made (or none checked), the admin screens closed and nothing
+        for the alert to read. Each now writes ``action=ensure outcome=failed``; the hospital
+        stays served either way (never a hold)."""
+        from ihr_identity import roots
+
+        lines = []
+        patch = mock.patch.object(roots, "_write", side_effect=lines.append)
+        patch.start()
+        self.addCleanup(patch.stop)
+        hospital = testhosp()
+        want = (
+            "ihr-root: hospital=testhosp action=ensure outcome=failed by=fleet-tester"
+        )
+        with mock.patch.object(
+            roots, "converge", side_effect=roots.RootError("the role is missing")
+        ):
+            run, _out, _err, _fake = self._run(["root"], slugs=["testhosp"])
+        [step] = self._op("testhosp", run).steps
+        self.assertEqual(step["status"], "failed")
+        self.assertIn(want, lines)
+        self.assertTrue(release.schema_ready(hospital))  # never a hold
+        del lines[:]
+        with (
+            mock.patch.object(fleet, "RETRY_DELAYS", (0, 0)),
+            mock.patch.object(
+                fleet.runner,
+                "exclusive",
+                side_effect=fleet.runner.ProvisioningError("another job held it"),
+            ),
+        ):
+            run, _out, _err, _fake = self._run(["root"], slugs=["testhosp"])
+        [step] = self._op("testhosp", run).steps
+        self.assertEqual(step["status"], "deferred")
+        self.assertEqual(lines, [want])
+        self.assertTrue(release.schema_ready(hospital))
+
+    def test_the_root_step_skips_provisioning_hospitals(self):
+        """Review S8: a hospital being provisioned gets its root from ``first_admin``."""
+        a = self._hospital("fleet-prov", status=Hospital.Status.PROVISIONING)
+        with mock.patch("ihr_identity.roots.converge") as converge:
+            run, _out, _err, _fake = self._run(["root"], slugs=[a.slug])
+        converge.assert_not_called()
+        [step] = self._op(a.slug, run).steps
+        self.assertEqual(step["status"], "skipped")
+
     def test_a_fleet_wide_fault_stops_the_run_before_any_hospital_is_held(self):
         """C1/S5: the public schema behind, or a bad pack, is found before any hospital is
         held or migrated."""

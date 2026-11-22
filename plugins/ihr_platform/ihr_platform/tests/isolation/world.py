@@ -68,6 +68,7 @@ class Tenant:
     pack_item_id: str = ""
     # detail routes of rows seeded for the crawl (P1-T16b), each checked to answer its owner
     seeded_routes: list = field(default_factory=list)
+    root_id: str = ""  # the external id of this tenant's hospital root (P1-T25)
 
     @property
     def schema(self):
@@ -142,34 +143,28 @@ def _add_geography(tenant):
 
 
 def _make_admin_hospital_wide(tenant):
-    """The crawl's admin (a CARE superuser) also needs an admin role on a top-level
-    organisation: the audit viewer has no superuser bypass (ihr_identity IsHospitalAdmin)."""
-    from care.emr.models.organization import Organization, OrganizationUser
-    from care.security.models import RolePermission
-    from care.security.permissions.user import UserPermissions
+    """The crawl's admin (a CARE superuser) also needs an admin role on the hospital's root
+    (P1-T25, ``ihr_identity.roots``): the audit viewer has no superuser bypass (ihr_identity
+    IsHospitalAdmin). Each tenant gets its own root; tenant A's root grants nothing in B
+    (test_isolation)."""
+    from care.emr.models.organization import OrganizationUser
     from care.users.models import User
+    from ihr_identity import roots
     from ihr_identity.staff_access import hospital_wide_admin
 
     with schema_context(tenant.schema):
         admin = User.objects.get(username="admin")
+        slug = tenant.hospital.slug
+        root, outcome = roots.ensure_root("isolation-world", slug=slug)
+        if root is None:
+            msg = f"{slug}: the root is {outcome}"
+            raise RuntimeError(msg)
+        tenant.root_id = str(root.external_id)
         if hospital_wide_admin(admin):
             return
-        role_id = (
-            RolePermission.objects.filter(
-                permission__slug=UserPermissions.can_create_user.name
-            )
-            .order_by("role_id")
-            .values_list("role_id", flat=True)
-            .first()
-        )
-        organization = (
-            Organization.objects.filter(parent__isnull=True, active=True, deleted=False)
-            .order_by("id")
-            .first()
-        )
-        OrganizationUser.objects.create(
-            organization=organization, user=admin, role_id=role_id
-        )
+        role_id = roots.admin_role_ids().order_by("role_id").first()
+        # place() refuses superusers (no in-hospital superuser sign-in): set directly here
+        OrganizationUser.objects.create(organization=root, user=admin, role_id=role_id)
 
 
 def _collect_ids(tenant):

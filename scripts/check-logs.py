@@ -51,7 +51,7 @@ KEY_LABEL = {"PackApplyFailed": "hospital", "PackFacilityDeferred": "hospital", 
              "DumpHospitalFailed": "hospital", "DumpHospitalHeld": "hospital",
              "HospitalRestoreFailed": "hospital", "ParkedSchemaOverdue": "schema",
              "MrdRecordsRefused": "hospital", "MrdRecordsVolume": "hospital", "MrdRecordsOffHours": "hospital",
-             "StaffResetRefused": "hospital"}
+             "StaffResetRefused": "hospital", "HospitalRootProblem": "hospital"}
 
 
 def check(ok, what):

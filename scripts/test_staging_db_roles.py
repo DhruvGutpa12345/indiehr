@@ -449,7 +449,7 @@ class Roles(unittest.TestCase):
                  'compose stop "${REL_WORKERS[@]}"', 'seal="$(rel_seal "$old_id")"', 'rel_restore_point "$tag"',
                  "if ((REL_MOVE)); then", "db_roles_move_stopped", "  else\n    # The roles as the model has them", "    db_roles_apply\n",
                  "ihr_db_role_check --for migrate",
-                 "migrate_schemas --shared", "ihr_fleet_run migrate check roles packs", "\n  up\n"]
+                 "migrate_schemas --shared", "ihr_fleet_run migrate check roles root packs", "\n  up\n"]
         at = [body.index(st) for st in steps]
         self.assertEqual(at, sorted(at), steps)
         # the stack not serving: the database starts, then the same question

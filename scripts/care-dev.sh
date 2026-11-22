@@ -349,7 +349,7 @@ case "${1:-}" in
     # shellcheck disable=SC2016 # $@ is expanded by the container's shell
     "${COMPOSE[@]}" run --rm --no-deps -T --entrypoint bash celery -c \
       'python manage.py migrate_schemas --shared --noinput -v 0 &&
-       python manage.py ihr_fleet_run migrate check roles packs --operator care-dev "$@"' \
+       python manage.py ihr_fleet_run migrate check roles root packs --operator care-dev "$@"' \
       bash "${@:2}"
     "${COMPOSE[@]}" up -d --wait
     ;;

@@ -8,9 +8,11 @@
 Reading, resending and cancelling: whoever may add staff at this hospital (CARE's
 ``can_create_user``), never on oneself, never on a superuser, and on an organisation admin only
 by another organisation admin. Resetting sign-in (P1-T24b, attack A1): only a hospital-wide
-admin (``hospital_wide_admin``) may ask, and never for someone who is a hospital-wide admin at
-any hospital: this hospital is checked here, every other one by the provisioner before it acts
-(``ihr_platform.invitations``), so a facility's admin cannot wipe the sign-in of the people
+admin (``hospital_wide_admin``, an admin role on the hospital's root) may ask, and never for
+someone who holds an admin role on any top-level organisation at any hospital
+(``top_level_admin``, the wider rule kept by Q-K130 A, so a state's admin from before P1-T25 is
+still protected): this hospital is checked here, every other one by the provisioner before it
+acts (``ihr_platform.invitations``), so a facility's admin cannot wipe the sign-in of the people
 above them, here or elsewhere. One reset per person per day across all their hospitals: a
 reset wipes their sign-in everywhere. Requests are queued for the provisioner, the only holder
 of the Keycloak admin credential, and kept as this hospital's record of who asked for what. A
@@ -29,8 +31,6 @@ from datetime import timedelta
 
 from care.emr.models.organization import OrganizationUser
 from care.security.authorization import AuthorizationController
-from care.security.models import RolePermission
-from care.security.permissions.user import UserPermissions
 from care.users.models import User
 from django.conf import settings
 from django.contrib.auth import get_user_model
@@ -44,6 +44,7 @@ from rest_framework.permissions import BasePermission, IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
+from ihr_identity import roots
 from ihr_identity.models import StaffIdentity
 
 ACTIONS = {
@@ -60,10 +61,9 @@ RESENDABLE = CANCELLABLE | {
 
 
 def _admin_memberships(user):
-    roles = RolePermission.objects.filter(
-        permission__slug=UserPermissions.can_create_user.name
-    ).values_list("role_id", flat=True)
-    return OrganizationUser.objects.filter(user=user, role_id__in=roles, deleted=False)
+    return OrganizationUser.objects.filter(
+        user=user, role_id__in=roots.admin_role_ids(), deleted=False
+    )
 
 
 def organisation_admin(user):
@@ -72,12 +72,21 @@ def organisation_admin(user):
 
 
 def hospital_wide_admin(user):
-    """An admin role on one of the hospital's top-level organisations, active and not deleted
-    (not a team's or a district's inside it): who may read the audit trail (P1-T6b) and decide
-    pack updates. A government state organisation counts on purpose (Q-K120 A, review A1):
-    provisioning (``provisioning.steps.first_admin``) makes each hospital's first admin an
-    Administrator there, so excluding ``govt`` would lock every real hospital's first admin out.
-    Narrowing it is Q-K76 B (a recorded hospital root), with that admin moved onto the root."""
+    """An admin role (a role holding CARE's ``can_create_user``) on the hospital's root (P1-T25,
+    Q-K76 B; ``roots.valid_root``): who may read the audit trail (P1-T6b), decide pack updates,
+    end a records grant and ask for a sign-in reset. With no valid root nobody is (fail closed).
+    A superuser is not, unless they hold such a role there too. An admin role on any other
+    organisation, a government state included, no longer counts (Q-K120 superseded)."""
+    root = roots.valid_root()
+    return (
+        root is not None and _admin_memberships(user).filter(organization=root).exists()
+    )
+
+
+def top_level_admin(user):
+    """The rule before P1-T25, kept for the person protected from a reset (Q-K130 A): an admin
+    role on any active, undeleted top-level organisation of the hospital (the root, a state, a
+    fixture role organisation), so protection never narrowed with the gate."""
     return (
         _admin_memberships(user)
         .filter(
@@ -137,6 +146,8 @@ OFFERS = {
     StaffInvitation.Status.EXPIRED: [RESEND],
 }
 RESET_REFUSED = "Only a hospital-wide admin can reset someone's sign-in."
+# Fixed text the web app shows: "hospital-wide" here means any admin at the top of the hospital
+# (``top_level_admin``), the root's admins and a state's admin alike
 ADMIN_TARGET = (
     "A hospital-wide admin's sign-in is not reset from here: they can use "
     '"Forgot password", or ask IndieHR support.'
@@ -167,9 +178,10 @@ def access_state(user, invitation, identity):
 
 
 def reset_allowed(asker, target):
-    """Attack A1, this hospital's part: a hospital-wide admin asks, about someone who is not
-    one. (Other hospitals: ``invitations._admin_anywhere``, in the provisioner.)"""
-    return hospital_wide_admin(asker) and not hospital_wide_admin(target)
+    """Attack A1, this hospital's part: a hospital-wide admin asks, about someone who is not a
+    top-level admin here (the wider rule, Q-K130 A). (Other hospitals:
+    ``invitations._admin_anywhere``, in the provisioner.)"""
+    return hospital_wide_admin(asker) and not top_level_admin(target)
 
 
 def offers_for(asker, target, state):
@@ -248,7 +260,7 @@ class StaffAccessView(APIView):
         if not hospital_wide_admin(request.user):
             log_outcome(connection.tenant, None, kind, "reset-refused")
             raise PermissionDenied(RESET_REFUSED)
-        if hospital_wide_admin(user):
+        if top_level_admin(user):  # the wider rule (Q-K130 A)
             log_outcome(connection.tenant, None, kind, "admin-target")
             raise PermissionDenied(ADMIN_TARGET)
         identity = StaffIdentity.objects.filter(user=user).first()

@@ -248,6 +248,21 @@ class CrossTenantIsolationTests(SimpleTestCase):
                 )
                 if stale := sorted(_reviewed_list(CRAWL_SKIPS) - skipped):
                     print(f"\n[isolation] crawl_skips.txt entries now crawled: {stale}")
+        # P1-T25: the other tenant's root id is unknown here, its organisation route answers
+        # 404, and each admin's own root opens their own audit trail. Last on purpose (review
+        # Q3): these requests are recorded in the audit trail, so no crawl may follow them.
+        for tenant, other in ((self.a, self.b), (self.b, self.a)):
+            with self.subTest(root_probe=tenant.hospital.slug):
+                client = self._staff_client(tenant)
+                self.assertEqual(
+                    client.get(f"/api/v1/organization/{other.root_id}/").status_code,
+                    404,
+                )
+                self.assertEqual(
+                    client.get(f"/api/v1/organization/{tenant.root_id}/").status_code,
+                    200,
+                )
+                self.assertEqual(client.get("/api/ihr/audit/status/").status_code, 200)
 
     def test_other_tenants_record_ids_are_not_reachable(self):
         """B's host, with A's ids: for the record only, and for every id in the path."""
@@ -430,6 +445,27 @@ class CrossTenantIsolationTests(SimpleTestCase):
             care = APIClient(HTTP_HOST=tenant.domain)
             care.credentials(HTTP_AUTHORIZATION=f"Bearer {token}")
             self.assertEqual(care.get(me).status_code, 403, tenant.hospital.slug)
+
+    def test_roots_grant_nothing_across_tenants(self):
+        """P1-T25: each hospital has a root of its own (``ihr_identity.roots``), and A's root id
+        is unknown at B. Schema-level only: the requests that probe the other tenant's root id
+        are made at the end of the crawl test (review Q3), because each is itself recorded in
+        this tenant's audit trail, and a crawl that ran after one would report it as a leak."""
+        from care.emr.models.organization import Organization
+        from ihr_identity import roots
+
+        self.assertNotEqual(self.a.root_id, self.b.root_id)
+        for tenant, other in ((self.a, self.b), (self.b, self.a)):
+            with (
+                self.subTest(viewer=tenant.hospital.slug),
+                schema_context(tenant.schema),
+            ):
+                self.assertEqual(str(roots.valid_root().external_id), tenant.root_id)
+                self.assertFalse(
+                    Organization._base_manager.filter(
+                        external_id=other.root_id
+                    ).exists()
+                )
 
     def test_patient_otp_token_from_a_is_rejected_on_b(self):
         """Same phone number in both tenants: A's patient-login token must not open B."""

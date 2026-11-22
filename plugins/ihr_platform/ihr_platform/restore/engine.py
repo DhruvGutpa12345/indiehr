@@ -1151,7 +1151,25 @@ class Restore:
         finally:
             connection.set_schema_to_public()
         packs = self._packs()
-        return {"migrate": result, "packs": packs}
+        return {"migrate": result, "packs": packs, "root": self._root()}
+
+    def _root(self):
+        """The fleet runner's root step for this hospital (P1-T25, review S2), after the merge
+        and the migrations: a dump from before P1-T25 comes back with a root, and with the
+        provisioning record's first admin on it when that person is still entitled. Root
+        memberships the dump holds went through the strict merge like any other."""
+        from ihr_identity import roots
+
+        try:
+            with schema_context(self.schema):
+                report = roots.converge(
+                    self.hospital, f"restore-{self.options.operator}"
+                )
+        finally:
+            connection.set_schema_to_public()
+        self._result(root=report["outcome"])
+        self.say(f"{self.hospital.slug}: root {report['outcome']}")
+        return report
 
     def _packs(self):
         from ihr_audit import context as audit

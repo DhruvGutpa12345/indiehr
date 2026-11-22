@@ -250,3 +250,31 @@ def staff_client(hospital, domain, user, sid="sid-test", **claim_overrides):
     )
     client.cookies[settings.IHR_SESSION_COOKIE] = session.cookie
     return client
+
+
+def make_root_admin(testcase, user, role=None):
+    """Give ``user`` an admin role on this hospital's root (P1-T25, ``ihr_identity.roots``): a
+    hospital-wide admin. ``role`` (default CARE's "Administrator") must hold ``can_create_user``.
+    The root is made if the test schema has none, and then removed at the test's end with
+    everything on it; the membership is removed in any case. Returns the membership."""
+    from care.emr.models.organization import Organization, OrganizationUser
+    from care.security.models import RoleModel
+
+    from ihr_identity import roots
+
+    root = roots.valid_root()
+    if root is None:
+        root, outcome = roots.ensure_root("test")
+        if root is None:
+            msg = f"the test schema's root is {outcome}"
+            raise AssertionError(msg)
+        testcase.addCleanup(
+            Organization._base_manager.filter(pk=root.pk).delete  # noqa: SLF001
+        )
+    if role is None:
+        role = RoleModel.objects.get(name=roots.ADMIN_ROLE, is_system=True)
+    membership = OrganizationUser.objects.create(
+        organization=root, user=user, role=role
+    )
+    testcase.addCleanup(OrganizationUser.objects.filter(pk=membership.pk).delete)
+    return membership

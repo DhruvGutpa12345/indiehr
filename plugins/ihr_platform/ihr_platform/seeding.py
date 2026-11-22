@@ -169,48 +169,35 @@ def complete_demo_contacts():
 # The demo hospitals' hospital-wide admin (P1-T24a, Q-K117 A): CARE's fixture user, signed in
 # to through the Keycloak demo login admin.priya on alpha (ihr_keycloak_demo_users.DEMO_STAFF).
 HOSPITAL_ADMIN = "care-admin"
-HOSPITAL_ADMIN_ORGANISATION = "Hospital administration"
 ADMIN_ROLE_NAME = "Administrator"  # CARE's system role for a hospital's first admin
 
 
-def make_hospital_admin(user, facility):
+def make_hospital_admin(user, facility, operator="demo-seed"):
     """Make ``user`` a hospital-wide admin who reaches ``facility``'s menu. Synthetic data only.
 
-    - Hospital-wide (``IsHospitalAdmin``: the audit trail and pack decisions): an admin role
-      (a system role holding ``can_create_user``) on an active top-level organisation. CARE's
-      fixtures already give care-admin one ("Administrator"); it is kept. Otherwise one is
-      added on the first active top-level organisation of type "role" (created as
-      "Hospital administration" if the hospital has none). Never a government organisation.
+    - Hospital-wide (``IsHospitalAdmin``: the audit trail and pack decisions): "Administrator"
+      on the hospital's root (P1-T25, ``ihr_identity.roots``), made first if it does not exist.
+      Never anything else: an admin role on a fixture or government organisation does not count.
     - The facility: "Facility Admin" at its root organisation, so the facility is in her list;
       the admin pages live under /facility/:id/ (Q-K110 A).
 
     Safe to run again; returns True when anything was added. Run inside a hospital's schema.
     """
-    from care.emr.models.organization import (
-        FacilityOrganizationUser,
-        Organization,
-        OrganizationUser,
-    )
+    from care.emr.models.organization import FacilityOrganizationUser
     from care.security.models import RoleModel
+    from ihr_identity import roots
     from ihr_identity.staff_access import hospital_wide_admin
 
     added = False
     if not hospital_wide_admin(user):
-        role = RoleModel.objects.filter(name=ADMIN_ROLE_NAME, is_system=True).first()
-        if role is None:
+        if not RoleModel.objects.filter(name=ADMIN_ROLE_NAME, is_system=True).exists():
             message = f"The system role {ADMIN_ROLE_NAME!r} is missing: run sync_permissions_roles."
             raise RuntimeError(message)
-        organization = (
-            Organization.objects.filter(
-                parent__isnull=True, active=True, deleted=False, org_type="role"
-            )
-            .order_by("id")
-            .first()
-        ) or Organization.objects.create(
-            name=HOSPITAL_ADMIN_ORGANISATION, org_type="role"
-        )
-        OrganizationUser.objects.create(organization=organization, user=user, role=role)
-        added = True
+        root, outcome = roots.ensure_root(operator)
+        if root is None:
+            message = f"This hospital's root is {outcome}: see ihr_hospital_root show."
+            raise RuntimeError(message)
+        added = roots.place(user, operator)
     _, created = FacilityOrganizationUser.objects.get_or_create(
         organization=facility.default_internal_organization,
         user=user,

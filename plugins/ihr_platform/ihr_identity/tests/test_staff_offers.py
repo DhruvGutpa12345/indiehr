@@ -36,8 +36,13 @@ from ihr_platform.testing import as_owner
 from rest_framework.test import APIClient
 
 from ihr_identity.models import StaffIdentity
-from ihr_identity.staff_access import hospital_wide_admin
-from ihr_identity.tests.test_invitations import HOST, RecoveryCase, make_hospital_wide
+from ihr_identity.staff_access import hospital_wide_admin, top_level_admin
+from ihr_identity.tests.test_invitations import (
+    HOST,
+    RecoveryCase,
+    admin_role,
+    make_hospital_wide,
+)
 
 ACTIONS = ("reset-sign-in", "resend-invitation", "cancel-invitation")
 
@@ -156,6 +161,27 @@ class TargetRule(OffersCase):
         target, _ = self.active_staff()
         make_hospital_wide(self, target)
         page = self.access(target)  # a hospital-wide admin asks
+        self.assertEqual((page["state"], page["offers"]), ("active", []))
+        refused = self.act(target, "reset-sign-in")
+        self.assertEqual(refused.status_code, 403, refused.content)
+        self.assertEqual(self.requests(target), [])
+
+    def test_a_state_only_administrator_here_stays_protected(self):
+        """Q-K130 A (P1-T25): the gate narrowed to the root, protection did not. An admin role
+        on a top-level government organisation (where provisioning put the first admin before
+        P1-T25) is not hospital-wide any more, and still never reset from here."""
+        target, _ = self.active_staff()
+        state = Organization.objects.create(
+            name=f"st-{target.username}", org_type="govt"
+        )
+        self.addCleanup(Organization.objects.filter(pk=state.pk).delete)
+        OrganizationUser.objects.create(
+            organization=state, user=target, role=admin_role(self)
+        )
+        self.addCleanup(OrganizationUser.objects.filter(user=target).delete)
+        self.assertFalse(hospital_wide_admin(target))
+        self.assertTrue(top_level_admin(target))
+        page = self.access(target)
         self.assertEqual((page["state"], page["offers"]), ("active", []))
         refused = self.act(target, "reset-sign-in")
         self.assertEqual(refused.status_code, 403, refused.content)
@@ -488,7 +514,7 @@ class ProtectedElsewhere(OffersCase):
             Hospital.objects.filter(pk=cls.other.pk).delete()
             cursor.execute(f'DROP SCHEMA IF EXISTS "{cls.other.schema_name}" CASCADE')
 
-    def there(self, sub, *, admin, superuser=False):
+    def there(self, sub, *, admin, superuser=False, org_type=""):
         """The same person (Keycloak ``sub``) as a CARE user of the other hospital."""
         with as_owner(), schema_context(self.other.schema_name):
             user = User.objects.create_user(
@@ -502,7 +528,9 @@ class ProtectedElsewhere(OffersCase):
                 )
                 RolePermission.objects.create(role=role, permission=permission)
                 OrganizationUser.objects.create(
-                    organization=Organization.objects.create(name=f"o-{user.username}"),
+                    organization=Organization.objects.create(
+                        name=f"o-{user.username}", org_type=org_type
+                    ),
                     user=user,
                     role=role,
                 )
@@ -524,6 +552,20 @@ class ProtectedElsewhere(OffersCase):
         self.assertEqual(response.json()["requests"][0]["problem"], "protected")
         for leak in (self.other.slug, self.other.name, self.other.schema_name):
             self.assertNotIn(leak, response.content.decode())
+
+    def test_a_state_administrator_elsewhere_stays_protected(self):
+        """Q-K130 A (P1-T25): the provisioner's check of the other hospitals keeps the wider
+        rule too (``top_level_admin``): an admin of a state organisation there, not
+        hospital-wide since P1-T25, is still never reset from here."""
+        target, sub = self.active_staff()
+        self.there(sub, admin=True, org_type="govt")
+        self.assertEqual(self.act(target, "reset-sign-in").status_code, 202)
+        self.deliver()
+        self.assertEqual(self.kc.resets, [])
+        req = self.last_request(target)
+        self.assertEqual(
+            (req.status, invitations.problem_code(req.error)), ("failed", "protected")
+        )
 
     def other_as(self, status, *, recorded=True):
         """The other hospital in ``status`` for this test; without its HospitalSchemaState row

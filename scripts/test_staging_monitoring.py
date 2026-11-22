@@ -444,7 +444,7 @@ class AuditWatchOperations(unittest.TestCase):
         """C3: the new build seals and fingerprints after the fleet run, before up recreates
         the watch, so a long release never reads as seal lag."""
         release = func("release")
-        fleet = release.index("ihr_fleet_run migrate check roles packs")
+        fleet = release.index("ihr_fleet_run migrate check roles root packs")
         self.assertLess(fleet, release.index("rel_seal_new"))
         self.assertLess(release.index("rel_seal_new"), release.index("\n  up\n"))
         new = func("rel_seal_new")

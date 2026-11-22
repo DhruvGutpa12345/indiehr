@@ -1592,7 +1592,7 @@ migrates. Design: `docs/reviews/p1-t18/design.md`.
 |---|---|
 | `scripts/staging.sh fleet window --start "DD-MM-YYYY HH:MM" --minutes 90 --note "…" --operator <you>` | Announce the window ahead (IST; public: `/api/ihr/bootstrap/` carries it for the web app's notice). Runs in the running backend when one runs (after deploy.sh has loaded a new build too: never the new build on the old schema). E-mailing hospital admins is yours: it is not built |
 | `scripts/deploy.sh --host … --release [--now]` | Build, send, then `staging.sh release` on the server, **detached there** (`setsid nohup`: a dropped SSH connection never stops it half-way); deploy.sh follows its output (`deploy/staging/releases/release-<tag>-<time>.out`, its exit status in `….out.rc`) until it ends. A build that changes the hospitals' or the platform's schema (its migration fingerprints differ from the release logged on the server; the first P1-T18 release on a server with a database), and any build while a release is unfinished on the server (`releases/attempt`), is **refused without `--release`, before anything is sent**. A build without migrations deploys with a plain start as before |
-| `scripts/staging.sh release [--now [--minutes N] [--note T]] [--operator <you>]` | On the server, with the new images already loaded (deploy.sh did it), the old ones still running. Refused if the backend is not running while another app service (a worker, the web app) is: stop the stack first (`down`) or start the old backend again (`scripts/staging.sh start-existing backend`); refused too if `docker compose ps` cannot say which run. First it writes the release's record (`releases/attempt`), before any change. In order: **(1)** refuses unless an announced window is open now (`--now`: announce one from this minute); **(2a)** the full audit check (`ihr_audit_verify --all`: every hash chain and stored fingerprint) by the outgoing build while it still serves, capped (`IHR_RELEASE_AUDIT_SECONDS`, 1800 s; its result is the release's `audit=`); **(2)** holds every hospital in one transaction (`ihr_fleet_run hold`, by the outgoing build); **(3)** stops `celery-worker`, `celery-beat`, `provisioner`, `staff-worker` (not paged as down until the window's end, below); **(4)** waits until no transaction that began before the hold is open (60 s cap, `IHR_RELEASE_DRAIN_SECONDS`); **(5)** seals the audit trail and writes one fingerprint, with the outgoing build and the worker's add-only key: no chain recomputed, no fingerprint read (capped: `IHR_RELEASE_SEAL_SECONDS`, 300 s; `seal=` and `seal_s=` in the log; skipped, and said, without the fingerprint bucket); **(6)** `pg_create_restore_point('release-<tag>-<epoch>')`, a name never used before, its LSN and time recorded (a full backup first if the repository has none); **(7)** the platform's migrations, then `ihr_fleet_run migrate check roles packs` (2 hospitals at a time, in the logged `migrate` container); **(8)** `up` with the new images; **(9)** smoke, which checks every active hospital. Logged in `releases/releases.log` only when every live hospital is served and smoke passes; then the window is cleared. The same build deployed again (a plain start for a changed setting) is logged once |
+| `scripts/staging.sh release [--now [--minutes N] [--note T]] [--operator <you>]` | On the server, with the new images already loaded (deploy.sh did it), the old ones still running. Refused if the backend is not running while another app service (a worker, the web app) is: stop the stack first (`down`) or start the old backend again (`scripts/staging.sh start-existing backend`); refused too if `docker compose ps` cannot say which run. First it writes the release's record (`releases/attempt`), before any change. In order: **(1)** refuses unless an announced window is open now (`--now`: announce one from this minute); **(2a)** the full audit check (`ihr_audit_verify --all`: every hash chain and stored fingerprint) by the outgoing build while it still serves, capped (`IHR_RELEASE_AUDIT_SECONDS`, 1800 s; its result is the release's `audit=`); **(2)** holds every hospital in one transaction (`ihr_fleet_run hold`, by the outgoing build); **(3)** stops `celery-worker`, `celery-beat`, `provisioner`, `staff-worker` (not paged as down until the window's end, below); **(4)** waits until no transaction that began before the hold is open (60 s cap, `IHR_RELEASE_DRAIN_SECONDS`); **(5)** seals the audit trail and writes one fingerprint, with the outgoing build and the worker's add-only key: no chain recomputed, no fingerprint read (capped: `IHR_RELEASE_SEAL_SECONDS`, 300 s; `seal=` and `seal_s=` in the log; skipped, and said, without the fingerprint bucket); **(6)** `pg_create_restore_point('release-<tag>-<epoch>')`, a name never used before, its LSN and time recorded (a full backup first if the repository has none); **(7)** the platform's migrations, then `ihr_fleet_run migrate check roles root packs` (2 hospitals at a time, in the logged `migrate` container); **(8)** `up` with the new images; **(9)** smoke, which checks every active hospital. Logged in `releases/releases.log` only when every live hospital is served and smoke passes; then the window is cleared. The same build deployed again (a plain start for a changed setting) is logged once |
 | `scripts/staging.sh release --finish` | After a failed hospital was fixed and resumed: checks again (every hospital served, smoke), logs the release, clears the window |
 | `scripts/staging.sh rollback [--operator <you>]` | Back to the release before the running one, or, while a release is unfinished, back to the release logged last (whether the unfinished one had started or still stopped before its start), **only when nothing changed in the database or Keycloak**: the hospitals' and the platform's fingerprints equal, and the same Keycloak and Postgres images; or the unfinished release stopped before its restore point (nothing migrated). Checks first that every image of the target is still here (nothing changes otherwise), and refuses while hospitals are held for a window with no release in progress (nothing says what held them). Then it re-points the backend and web app images, restores that release's stack files (server), runs `up`, lifts the window's holds, syncs the roles again (holding any hospital whose sync this build refuses), clears the window and runs smoke; the rollback is logged after smoke (a rollback that stopped is run again as it was). Otherwise it refuses and says why |
 | `scripts/staging.sh rollback --restore [--operator <you>]` | Back across migrations. Before anything changes: every image of the target is here, a backup from before the restore point exists, the repository holds the WAL up to the point (else, with no room for a copy, refused), and the disk has room for a copy of the whole database volume (`pg_wal` included) plus the 20 GB floor (`IHR_DEPLOY_MIN_FREE_GB`). Asks you to type the target release's tag, stops the stack (`down`, **never `down -v`**: that also deletes the log store, the signing keys and the WAL spool), keeps the current database in a new volume `indiehr-staging_pgdata-pre-rollback-<tag>-<time>` when the disk has room (marked `.ihr-rollback-copy-complete` when whole; a copy that fails is removed and nothing is restored; else the database is replaced: the prompt says which), points Postgres at the target's image, restores with pgBackRest to the window's restore point (`restore --target-name release-<tag>-<epoch> --set <the backup before it>`), logs the rollback, starts the previous release's images, serves the hospitals again, runs smoke and then a full backup of the new timeline |
@@ -1735,3 +1735,62 @@ again): once its roles pass, the hold the refusal set is released.
 
 **Never roll back past P1-T11a** once hospitals hold any of our roles. Older images run CARE's
 unguarded sync, which would delete those memberships in every hospital.
+
+## Hospital root (P1-T25, Q-K76 B)
+
+Each hospital has one **root**: a top-level CARE organisation of type `role` named "Hospital
+administration", marked `metadata.ihr = "hospital-root"` (`plugins/ihr_platform/ihr_identity/roots.py`).
+Only an admin role on it (Administrator, Admin or Facility Admin there) opens the hospital's audit
+trail, reference pack decisions, records-grant ends and sign-in resets. An admin role on a state, a
+district or any other top-level organisation does not (Q-K120 superseded). With no valid root (none
+marked, more than one, or the marked one inactive, deleted, under a parent, of another type or with a
+managing organisation) **nobody** has those screens: the hospital is still served. CARE itself refuses
+non-superusers who try to edit, deactivate, retype or delete a role organisation or add a child to it;
+`ihr_identity.tests.test_root` pins those rules at every upstream sync. The person protected from a
+sign-in reset keeps the wider rule (an admin role on any top-level organisation, Q-K130 A).
+
+- **New hospitals:** provisioning's `first_admin` step makes the root and makes the first admin its
+  Administrator (no state membership any more, Q-K128 A); `activate` refuses a hospital whose root
+  has no admin. `ihr_create_tenant` makes a root with nobody on it.
+- **Existing hospitals:** the fleet step `root` (in the start-up one-shot `check roles root packs` and
+  in every release) makes a missing root and, when the root has no admin, places the provisioning
+  record's first admin **only if** that person still exists, is active or awaiting setup, and is an
+  admin on some top-level organisation today; their own Administrator row on the state is then
+  soft-deleted (audited). Nobody else is moved. A single-hospital restore runs the same step after its
+  migrations, so a dump from before P1-T25 comes back with a root.
+- **A provisioning operation in flight across the upgrade** (past `first_admin` before this build, not
+  yet live, for example failed later at Keycloak): the fleet step skips hospitals still being
+  provisioned, and the runner never re-runs a succeeded `first_admin`. Resume the operation: `activate`
+  makes the root and places the operation's own first admin there (and drops their state row) before it
+  checks, so the hospital goes live with them as its admin (review T1).
+- **An old unmarked "Hospital administration" organisation** (made by the earlier dev seed on some dev
+  hospitals) is never adopted by name: it stays beside the marked root as an ordinary top-level role
+  organisation, and `hospital-root show` lists it under "other top-level organisations". It opens
+  nothing any more; remove it with a superuser's care when nobody needs it.
+- **Log line** (`ihr_identity.roots`): `ihr-root: hospital=<slug> action=<ensure|place|remove-state>
+  outcome=<done|exists|no-admin|invalid|failed|state-admins>[ n=<k>] by=<operator>`. `failed` is the
+  fleet step raising or deferring (the root was not made or not checked; review T3). `state-admins n=<k>`
+  counts admin rows still on government organisations (they list every patient with an address in that
+  state): remove them with `remove-state` once the hospital confirms. The fleet step, a restore and
+  provisioning write their lines from logged containers (`migrate`, `celery`). **`hospital-root place`
+  and `remove-state` run in the admin one-off, which is not logged**: an operator's own write is
+  recorded in the hospital's audit trail (`root:<operator>`, with the reason), not in the log store
+  (review T5). An operator name that an automatic source writes (`fleet-*`, `restore-*`,
+  `provisioning-*`, `demo-seed`, `ihr_create_tenant`, `test`, `startup`) is refused, so a manual write
+  cannot pose as one (review T4).
+- **HospitalRootProblem** (`deploy/logs/alerts/root.yml`, warning): a `no-admin`, `invalid` or `failed`
+  line in 24 hours from the start-up, a fleet run or a restore. The hospital is served; its admin
+  screens are closed. **Known limit (review A2):** the root is checked only at start-up, a release and a
+  restore, so one made invalid while the hospital runs (only a superuser can do that, Q-K131) stays
+  silent until the next of those; `hospital-root show` checks it at any time.
+
+| Command | What it does |
+|---|---|
+| `scripts/staging.sh hospital-root --slug S show` | The root, its admins, and every admin role on other top-level organisations (who lost the admin screens with P1-T25). Usernames only. |
+| `scripts/staging.sh hospital-root --slug S place <username> --operator <you> --reason "<ticket>"` | The recovery when nobody is hospital-wide (Q-K122): makes that person Administrator on the root. Check first who the hospital's admin is (in person or a known phone number). Refuses superusers and service accounts. |
+| `scripts/staging.sh hospital-root --slug S remove-state <username> --operator <you> --reason "<ticket>"` | Soft-deletes that person's Administrator rows on top-level government organisations (review S5). |
+
+An **invalid** root is never replaced automatically and never "fixed" by marking a second
+organisation: look at what changed (the audit trail records every write to `emr_organization`), then
+put the organisation right with a superuser's care, or ask for a decision. A root admin can remove
+every other root admin, themselves included (CARE's member removal): `place` is the way back.

@@ -1,5 +1,5 @@
-"""Create a tenant: schema + every migration + CARE's roles + the reference packs, CARE's
-system value sets first (TENANCY_DESIGN.md §7.1, P1-T15a).
+"""Create a tenant: schema + every migration + CARE's roles + its root organisation (P1-T25) +
+the reference packs, CARE's system value sets first (TENANCY_DESIGN.md §7.1, P1-T15a).
 
 v1 provisioning never clones a template schema. Must run as the database owner role.
 """
@@ -9,6 +9,7 @@ from django.core.management import call_command
 from django.core.management.base import BaseCommand, CommandError
 from django.utils import timezone
 from django_tenants.utils import schema_context
+from ihr_identity import roots
 from ihr_refdata import engine
 from ihr_tenant_settings.models import HospitalProfile
 
@@ -59,6 +60,9 @@ class Command(BaseCommand):
 
         with schema_context(hospital.schema_name):
             call_command("sync_permissions_roles", verbosity=0)
+            # The hospital root (P1-T25): made now, with no admin on it; the seed or
+            # ``ihr_hospital_root place`` adds one
+            roots.ensure_root("ihr_create_tenant", slug=hospital.slug)
         # Nobody else can reach this hospital yet (no lock needed); never CARE's sync_valueset
         engine.apply_packs(hospital, operator="ihr_create_tenant")
         with schema_context(hospital.schema_name):

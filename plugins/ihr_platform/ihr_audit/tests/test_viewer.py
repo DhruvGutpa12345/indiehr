@@ -25,13 +25,21 @@ from .test_audit_trail import AuditCase, entries_since, mark
 CLINICAL_VALUE = "Zebra-Diagnosis-4471"
 
 
-def hospital_admin(name, **organization):
+def hospital_admin(name, testcase=None, **organization):
+    """A user with an admin role (``can_create_user``): with ``testcase``, on the hospital's
+    root (P1-T25, a hospital-wide admin); otherwise on a new organisation of ``organization``'s
+    shape (top-level by default, which no longer makes anyone hospital-wide)."""
+    from ihr_identity.testing import make_root_admin
+
     user = baker.make(User, username=name, is_superuser=False)
     role = baker.make(RoleModel, name=f"role-{name}")
     permission, _ = PermissionModel.objects.get_or_create(
         slug="can_create_user", defaults={"name": "can_create_user"}
     )
     RolePermission.objects.create(role=role, permission=permission)
+    if testcase is not None:
+        make_root_admin(testcase, user, role=role)
+        return user
     OrganizationUser.objects.create(
         organization=baker.make(Organization, **organization), user=user, role=role
     )
@@ -45,7 +53,7 @@ def today():
 class ViewerCase(AuditCase):
     def setUp(self):
         super().setUp()
-        self.boss = hospital_admin(self.admin.username + "-b")
+        self.boss = hospital_admin(self.admin.username + "-b", self)
         self.api.force_authenticate(self.boss)
         self.patient = baker.make(Patient, name="Asha Viewer")
         self.patient.address = CLINICAL_VALUE

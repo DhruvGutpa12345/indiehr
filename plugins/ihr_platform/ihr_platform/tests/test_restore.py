@@ -177,6 +177,23 @@ class RestoreEndToEnd(SimpleTestCase):
         load_demo_data(cls.a.schema_name, A_DOMAIN)
         connection.set_schema_to_public()
         with schema_context(cls.a.schema_name):
+            # P1-T25: a dump from before the root. A's provisioning record names CARE's
+            # fixture "care-admin" (an Administrator on a top-level role organisation, still
+            # entitled) as its first admin; the restore's root step must place them.
+            cls.first_admin = User.objects.get(username="care-admin").pk
+            # review Q4: nothing here makes a root, so "a dump from before the root" holds
+            from ihr_identity import roots
+
+            cls.marked_before_dump = roots.marked().count()
+        TenantOperation.objects.create(
+            kind=TenantOperation.Kind.PROVISION,
+            hospital=cls.a,
+            slug=A_SLUG,
+            status=TenantOperation.Status.SUCCEEDED,
+            requested_by="test",
+            result={"admin_user_id": cls.first_admin},
+        )
+        with schema_context(cls.a.schema_name):
             users = list(User.objects.order_by("pk")[:4])
             cls.kept, cls.revoked, cls.unlinked, cls.not_member = users
             cls.identities = {}
@@ -433,6 +450,25 @@ class RestoreEndToEnd(SimpleTestCase):
         # Served again without restarting any app container (review C5)
         restart = next(s for s in op.steps if s["name"] == "restart")
         self.assertEqual(restart["note"], "nothing to restart")
+
+    def test_a_dump_from_before_the_root_comes_back_with_one(self):
+        """P1-T25 decision item 7 (review S2): the dump has no root; the restore's root step
+        makes one and places the provisioning record's first admin, still entitled."""
+        from care.users.models import User
+        from ihr_identity import roots
+        from ihr_identity.staff_access import hospital_wide_admin
+
+        op = TenantOperation.objects.get(pk=self.op.pk)
+        self.assertEqual(op.result["root"], "done")
+        migrate = next(s for s in op.steps if s["name"] == "migrate")
+        self.assertEqual(self.marked_before_dump, 0)  # the dump had no root
+        self.assertTrue(migrate["root"]["created"])  # the restore made it
+        self.assertEqual(migrate["root"]["placed"], self.first_admin)
+        with schema_context(self.a.schema_name):
+            self.assertIsNotNone(roots.valid_root())
+            self.assertEqual(roots.marked().count(), 1)
+            self.assertTrue(hospital_wide_admin(User.objects.get(pk=self.first_admin)))
+        self.assertIn(f"{A_SLUG}: root done", self.out)
 
     def test_the_restored_hospital_is_back_as_dumped(self):
         from care.users.models import User

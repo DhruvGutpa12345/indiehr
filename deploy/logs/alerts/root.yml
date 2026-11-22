@@ -1,0 +1,44 @@
+# The hospital root (P1-T25, Q-K76 B; plugins/ihr_platform/ihr_identity/roots.py; decision in
+# docs/reviews/p1-t25/attack.md). Only an admin role on a hospital's root organisation opens its
+# audit trail, reference pack decisions and sign-in resets; with no valid root nobody has them
+# (fail closed). Every root write and check made by the fleet step, a restore or provisioning
+# writes one fixed line (an operator's own `hospital-root place` runs in the unlogged admin one-off:
+# its record is the hospital's audit trail only):
+#   "ihr-root: hospital=<slug> action=<ensure|place|remove-state> outcome=<o>[ n=<k>] by=<operator>"
+# The fleet step "root" (the start-up one-shot, service "migrate"; `scripts/staging.sh fleet` and
+# releases, also "migrate"; in dev the worker, "celery") and the restore (its one-off, "migrate")
+# write the three outcomes this rule reads:
+# - no-admin: the root has no admin and the provisioning record's first admin is not entitled
+#   (gone, deactivated, or no longer an admin anywhere at the top), or the hospital has no such
+#   record (made by ihr_create_tenant);
+# - invalid: an organisation carries the root's marker but is not a valid root (inactive,
+#   deleted, under a parent, of another type, with a managing organisation, or more than one).
+#   It is never replaced automatically;
+# - failed: the fleet step raised (the role is missing, a database error) or another job held the
+#   hospital's lock on every try, so no root was made or checked (review T3/Q9).
+# The hospital stays served either way; only its admin screens are closed until fixed.
+# HospitalRootProblem: one such line in 24 hours. It sees a root only when the fleet step, a
+# release or a restore checks it (no run-time check, review A2: only a superuser can break one). What to do: as the operator, run
+#   `scripts/staging.sh hospital-root --slug <it> show` (who is on the root, who holds admin roles
+#   elsewhere), then `... place <username> --operator <you> --reason "<ticket>"` once you have
+#   checked who the hospital's admin is (in person or by a known phone number). An invalid root
+#   needs a person to look at the organisation; never mark a second one.
+# Forgery (as packs.yml, S1): only container lines (source:=container) of the services that run
+# the fleet runner or the restore (never the web backend, whose access log prints request paths
+# anyone can choose), and only a whole line that is exactly ours with a slug-shaped hospital. A
+# forged line can at most raise a false alert naming a slug: the label is never put into the
+# action's command. Tests: scripts/check-logs.py (cases in deploy/logs/tests/alert-cases.json)
+# and scripts/test_staging_logs.py.
+groups:
+  - name: hospital-root
+    type: vlogs
+    interval: 1m
+    rules:
+      - alert: HospitalRootProblem
+        expr: '_time:24h source:=container service:in(migrate, celery) "ihr-root: hospital=" | extract_regexp "^ihr-root: hospital=(?P<hospital>[a-z][a-z0-9-]{2,30}) action=(?:ensure|place) outcome=(?:no-admin|invalid|failed) by=[A-Za-z0-9_.-]{1,64}$" | filter hospital:~"^[a-z][a-z0-9-]{2,30}$" | stats by (hospital) count() as problems'
+        labels:
+          severity: warning
+          service: root
+        annotations:
+          summary: 'Hospital {{ $labels.hospital }} has no hospital-wide admin: its root is missing an admin or is invalid ({{ $value }} times in 24 hours); its admin screens are closed'
+          action: 'Run scripts/staging.sh hospital-root --slug <the hospital named above> show, check who the hospital''s admin is (in person or by a known phone number), then place them: scripts/staging.sh hospital-root --slug <it> place <username> --operator <you> --reason "<ticket>"; an invalid root needs a person to look at it (deploy/staging/README.md, Hospital root)'

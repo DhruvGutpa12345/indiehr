@@ -48,18 +48,22 @@ REFDATA_TABLES = {"ihr_refdata_packitem", "ihr_refdata_packapply"}
 
 
 def hospital_admin(name, **organization):
-    """A user with an admin role (can_create_user) on a top-level organisation."""
+    """A user with an admin role (can_create_user): on the hospital's root (P1-T25, made if the
+    test schema has none; the test's transaction removes it), or with ``organization`` on a new
+    organisation of that shape, which does not make anyone hospital-wide."""
+    from ihr_identity import roots
+
     user = User.objects.create_user(username=name, password="x-Unused-1")
     role = RoleModel.objects.create(name=f"role-{name}")
     permission, _ = PermissionModel.objects.get_or_create(
         slug="can_create_user", defaults={"name": "can_create_user"}
     )
     RolePermission.objects.create(role=role, permission=permission)
-    OrganizationUser.objects.create(
-        organization=Organization.objects.create(name=f"org-{name}", **organization),
-        user=user,
-        role=role,
-    )
+    if organization:
+        place = Organization.objects.create(name=f"org-{name}", **organization)
+    else:
+        place = roots.valid_root() or roots.ensure_root("test")[0]
+    OrganizationUser.objects.create(organization=place, user=user, role=role)
     return user
 
 
@@ -193,15 +197,20 @@ class GateTests(ApiCase):
             response.json()["detail"], "Only a hospital-wide admin can do this."
         )
 
-    def test_the_provisioned_first_admin_decides_pack_updates(self):
-        """Review A1 (Q-K120 A): provisioning makes a hospital's first admin an admin of its
-        state, a top-level government organisation; that admin must keep the pack decisions
-        (a gate that left out ``govt`` would lock every real hospital's first admin out)."""
-        state_admin = hospital_admin(f"pk-state-{_tag()}", org_type="govt")
-        client = self.client_for(state_admin)
-        for path in ("updates/", "history/"):
-            with self.subTest(path=path):
-                self.assertEqual(client.get(URL + path).status_code, 200)
+    def test_a_state_or_other_top_level_admin_does_not_decide(self):
+        """Q-K76 B (P1-T25; Q-K120 superseded): an admin role on a state organisation (where
+        provisioning put the first admin before P1-T25) or on any other top-level organisation
+        than the root no longer opens the pack decisions."""
+        for label, shape in (
+            ("state", {"org_type": "govt"}),
+            ("other top-level", {"org_type": "role"}),
+        ):
+            client = self.client_for(
+                hospital_admin(f"pk-{label[:5]}-{_tag()}", **shape)
+            )
+            for path in ("updates/", "history/"):
+                with self.subTest(admin=label, path=path):
+                    self.assertEqual(client.get(URL + path).status_code, 403)
 
     def test_reads_write_no_audit_entry(self):
         mark = audit_mark()

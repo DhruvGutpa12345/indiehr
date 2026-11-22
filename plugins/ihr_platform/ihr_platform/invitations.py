@@ -562,17 +562,18 @@ def _asker_may_reset(req, hospital):
 
 
 def _admin_anywhere(sub):
-    """True if the person (Keycloak ``sub``) is a hospital-wide admin, or a superuser, at any
-    hospital whose schema is kept (fleet.MIGRATE_STATUSES: provisioning, active, suspended,
-    offboarding; not archived), this one included (P1-T24b, attack A1; review A1/A2). Run by
-    the provisioner only, which reads every hospital's schema anyway; the web process never
-    reads another hospital's. Each schema is read under its job lock, so a restore never races
+    """True if the person (Keycloak ``sub``) is a top-level admin (``top_level_admin``: the root
+    or any other top-level organisation, the wider rule kept for targets, Q-K130 A), or a
+    superuser, at any hospital whose schema is kept (fleet.MIGRATE_STATUSES: provisioning,
+    active, suspended, offboarding; not archived), this one included (P1-T24b, attack A1;
+    review A1/A2). Run by the provisioner only, which reads every hospital's schema anyway; the
+    web process never reads another hospital's. Each schema is read under its job lock, so a restore never races
     the read. Fails closed: a hospital that is held, restoring, on another build or gated
     raises RequestError(UNCHECKED), so one such hospital makes every reset in the fleet ask
     again later (a known limit, Q-K121). Skipped: a provisioning hospital not yet past its
     schema step (no recorded state), which holds no StaffIdentity yet."""
     from ihr_identity.models import StaffIdentity
-    from ihr_identity.staff_access import hospital_wide_admin
+    from ihr_identity.staff_access import top_level_admin
 
     from ihr_platform.fleet import MIGRATE_STATUSES
 
@@ -597,7 +598,7 @@ def _admin_anywhere(sub):
                     .first()
                 )
                 if there is not None and (
-                    there.user.is_superuser or hospital_wide_admin(there.user)
+                    there.user.is_superuser or top_level_admin(there.user)
                 ):
                     return True
     return False

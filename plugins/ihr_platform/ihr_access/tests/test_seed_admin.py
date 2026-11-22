@@ -1,10 +1,10 @@
 """The demo seed's hospital-wide admin (P1-T24a, G4, Q-K117 A).
 
 ``admin.priya`` signs in to alpha as CARE's fixture user ``care-admin``. The seed step
-``make_hospital_admin`` makes sure that user holds an admin role on an active top-level
-organisation (``IsHospitalAdmin``: the audit trail and pack updates) and a place at the demo
-facility's root, because the admin pages live under /facility/:id/ (Q-K110 A). Synthetic data
-only; it must be safe to run again.
+``make_hospital_admin`` makes sure that user is Administrator on the hospital's root (P1-T25,
+``IsHospitalAdmin``: the audit trail and pack updates) and holds a place at the demo facility's
+root, because the admin pages live under /facility/:id/ (Q-K110 A). Synthetic data only; it
+must be safe to run again.
 """
 
 from unittest.mock import patch
@@ -16,7 +16,9 @@ from care.emr.models.organization import (
 )
 from care.security.authorization import AuthorizationController
 from django.contrib.auth import get_user_model
-from ihr_identity.staff_access import hospital_wide_admin
+from django.test import override_settings
+from ihr_identity import roots
+from ihr_identity.staff_access import hospital_wide_admin, top_level_admin
 from ihr_platform import seeding
 from ihr_platform.management.commands import ihr_keycloak_demo_users, ihr_seed_demo
 from ihr_platform.seeding import (
@@ -51,9 +53,10 @@ class SeedHospitalAdmin(SwapCase):
         self.assertFalse(hospital_wide_admin(user))
         self.assertTrue(make_hospital_admin(user, w.facility))
         self.assertTrue(hospital_wide_admin(user))
-        # the top-level membership holds the "Administrator" system role, chosen by name
+        # "Administrator" (the system role, chosen by name) on the hospital's root, made here
         (top,) = OrganizationUser.objects.filter(user=user)
-        self.assertIsNone(top.organization.parent_id)
+        self.assertEqual(top.organization, roots.valid_root())
+        self.assertEqual(top.organization.metadata, {"ihr": "hospital-root"})
         self.assertEqual(top.role.name, "Administrator")
         place = FacilityOrganizationUser.objects.get(user=user)
         self.assertEqual(place.organization, w.root)
@@ -94,26 +97,109 @@ class SeedHospitalAdmin(SwapCase):
             ),
         )
 
-    def test_keeps_the_fixtures_own_top_level_role(self):
-        """CARE's fixtures give care-admin an admin role on a top-level organisation already:
-        that one is kept and no second one is added."""
+    def test_a_fixture_top_level_role_is_no_longer_the_way_in(self):
+        """P1-T25 (Q-K118's intent): CARE's fixtures give some users an admin role on a top-level
+        role organisation of their own ("Facility Admin" for care-fac-admin, beta's
+        admin.bhavesh). That no longer makes them hospital-wide; the seed adds the root (and
+        keeps the fixture's row: still protected from a reset, Q-K130 A)."""
         w = self.world
         user = self.fresh("seed-admin-fixture")
         top = Organization.objects.create(name="Seed Administrator", org_type="role")
         OrganizationUser.objects.create(
             organization=top, user=user, role=w.role("Facility Admin")
         )
-        self.assertTrue(
-            make_hospital_admin(user, w.facility)
-        )  # the facility place only
+        self.assertFalse(hospital_wide_admin(user))
+        self.assertTrue(top_level_admin(user))
+        self.assertTrue(make_hospital_admin(user, w.facility))
+        self.assertTrue(hospital_wide_admin(user))
         self.assertEqual(
-            list(
+            set(
                 OrganizationUser.objects.filter(user=user).values_list(
                     "organization", flat=True
                 )
             ),
-            [top.pk],
+            {top.pk, roots.valid_root().pk},
         )
+
+    def test_refuses_when_the_root_is_invalid(self):
+        """Never a second root: a marked organisation that fails a check stops the seed."""
+        w = self.world
+        roots.ensure_root("test")
+        roots.marked().update(active=False)
+        user = self.fresh("seed-admin-badroot")
+        with self.assertRaisesMessage(RuntimeError, "invalid"):
+            make_hospital_admin(user, w.facility)
+        self.assertEqual(roots.marked().count(), 1)
+        self.assertFalse(OrganizationUser.objects.filter(user=user).exists())
+
+
+class DemoGreeting(SwapCase):
+    """Review Q5: its own class on ``SwapCase`` (it used to subclass ``SeedHospitalAdmin`` and
+    re-ran its six tests), and ``handle`` itself is run, with Keycloak mocked, so dropping the
+    names from its ``_link`` call fails here."""
+
+    def fresh(self, name):
+        return get_user_model().objects.create_user(
+            username=name, password="x-Unused-1"
+        )
+
+    def test_handle_passes_each_logins_names_to_link(self):
+        import io
+        from types import SimpleNamespace
+
+        hospitals = [
+            SimpleNamespace(slug=slug, keycloak_org_id=f"org-{slug}")
+            for slug in ("alpha", "beta")
+        ]
+        module = ihr_keycloak_demo_users
+        linked = []
+        with (
+            override_settings(DEBUG=True, IHR_CONSOLE_URL=""),
+            patch.object(module, "keycloak_admin"),
+            patch.object(module, "hospital_ids", return_value={}),
+            patch.object(module, "ensure_member"),
+            patch.object(
+                module,
+                "create_user_with_new_password",
+                return_value=("kc-user-id", "x"),
+            ),
+            patch.object(module.Hospital.objects, "filter", return_value=hospitals),
+            patch.object(
+                module, "_link", side_effect=lambda *args: linked.append(args)
+            ),
+        ):
+            module.Command(stdout=io.StringIO()).handle()
+        (priya,) = [row for row in linked if row[1] == HOSPITAL_ADMIN]
+        self.assertEqual(
+            (priya[0].slug, priya[2], priya[3], priya[4]),
+            ("alpha", "kc-user-id", "Priya", "Deshpande"),
+        )
+        for hospital, username, _sub, first, last in linked:
+            # every link carries a first and a last name (the login's synthetic ones)
+            self.assertTrue(first and last, (hospital.slug, username))
+        self.assertEqual(
+            len(linked), sum(len(row[3]) for row in ihr_keycloak_demo_users.DEMO_STAFF)
+        )
+
+    def test_the_demo_login_names_its_care_user(self):
+        """P1-T25 greeting: ``keycloak seed`` gives each linked CARE user its login's synthetic
+        name (the web app greeted admin.priya with the fixture's random name)."""
+        import uuid
+
+        from ihr_identity.models import StaffIdentity
+        from ihr_platform.models import Hospital
+        from ihr_platform.test_runner import TEST_SCHEMA
+
+        hospital = Hospital.objects.get(schema_name=TEST_SCHEMA)
+        user = self.fresh("seed-greeting")
+        get_user_model().objects.filter(pk=user.pk).update(first_name="Sachi")
+        sub = uuid.uuid4()
+        ihr_keycloak_demo_users._link(
+            hospital, user.username, sub, "Priya", "Deshpande"
+        )
+        user.refresh_from_db()
+        self.assertEqual((user.first_name, user.last_name), ("Priya", "Deshpande"))
+        self.assertEqual(StaffIdentity.objects.get(user=user).keycloak_sub, sub)
 
 
 class SeedFacilityAdmin(SwapCase):

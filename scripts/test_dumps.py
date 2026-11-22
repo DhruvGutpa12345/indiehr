@@ -1348,7 +1348,7 @@ class StagingScript(unittest.TestCase):
         rel = self.func("release")
         at = rel.index('compose stop "${REL_WORKERS[@]}"')
         self.assertLess(at, rel.index(stop, at))
-        self.assertLess(rel.index(stop, at), rel.index("ihr_fleet_run migrate check roles packs"))
+        self.assertLess(rel.index(stop, at), rel.index("ihr_fleet_run migrate check roles root packs"))
 
     def test_one_off_commands_keep_their_copies_on_disk(self):
         """Review C8: get and check --deep copy a whole sealed dump; never into a tmpfs (RAM)."""

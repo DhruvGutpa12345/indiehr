@@ -342,11 +342,26 @@ class ProvisioningTests(SimpleTestCase):
                 str(identity.keycloak_sub), op.result["admin_keycloak_sub"]
             )
             self.assertTrue(identity.awaiting_setup)  # active after their first sign-in
-            self.assertTrue(
-                OrganizationUser.objects.filter(
-                    user=admin, organization=state, role__name="Administrator"
-                ).exists()
+            # Administrator on the hospital's root, never on its state (P1-T25, Q-K128 A):
+            # hospital-wide, and that alone
+            from ihr_identity import roots
+            from ihr_identity.staff_access import hospital_wide_admin
+
+            root_org = roots.valid_root()
+            self.assertIsNotNone(root_org)
+            self.assertEqual(roots.marked().count(), 1)
+            self.assertEqual(
+                list(
+                    OrganizationUser.objects.filter(user=admin).values_list(
+                        "organization", "role__name"
+                    )
+                ),
+                [(root_org.pk, "Administrator")],
             )
+            self.assertFalse(
+                OrganizationUser.objects.filter(organization=state).exists()
+            )
+            self.assertTrue(hospital_wide_admin(admin))
             facility = Facility.objects.get(pk=op.result["facility_id"])
             root = facility.default_internal_organization
             self.assertTrue(
@@ -446,6 +461,97 @@ class ProvisioningTests(SimpleTestCase):
         op.save()
         runner.rollback(op, "test")
         self.assertEqual(self.kc.removed_accounts, [(sub, op.result["hospital_uuid"])])
+
+    def test_activate_refuses_a_hospital_without_a_root_admin(self):
+        """P1-T25 (review S8): never live without a hospital-wide admin. A root with no admin
+        who can still act (review A3: a deactivated one does not count) is given this
+        operation's own first admin (review T1); when that admin cannot be placed (here a
+        deleted account) the activate step stops, and a resumed run goes live once it can."""
+        from care.emr.models.organization import OrganizationUser
+        from care.security.models import RoleModel
+        from care.users.models import User
+        from ihr_identity import roots
+
+        self.addCleanup(self._drop, "prov-eight")
+        op = runner.start(form("prov-eight"), "test")
+        runner.run(op, stop_after="keycloak")
+        op.refresh_from_db()
+        hospital = Hospital.objects.get(slug="prov-eight")
+        first = op.result["admin_user_id"]
+        with schema_context(hospital.schema_name):
+            root = roots.valid_root()
+            OrganizationUser.objects.filter(organization=root).delete()
+            User._base_manager.filter(pk=first).update(deleted=True)
+            gone = User.objects.create_user(
+                username="prov.gone", password="x-Unused-1", is_active=False
+            )
+            OrganizationUser.objects.create(
+                organization=root,
+                user=gone,
+                role=RoleModel.objects.get(name="Administrator", is_system=True),
+            )
+        with self.assertRaisesMessage(steps.StepError, "no valid root with an admin"):
+            runner.run(op)
+        op.refresh_from_db()
+        failed = [s["name"] for s in op.steps if s["status"] == "failed"]
+        self.assertEqual(failed, ["activate"])
+        self.assertEqual(
+            Hospital.objects.get(pk=hospital.pk).status, Hospital.Status.PROVISIONING
+        )
+        with schema_context(hospital.schema_name):
+            User._base_manager.filter(pk=first).update(deleted=False)
+        runner.run(op)
+        op.refresh_from_db()
+        self.assertEqual(op.status, "succeeded")
+        with schema_context(hospital.schema_name):
+            self.assertTrue(
+                roots.admins(roots.valid_root()).filter(user_id=first).exists()
+            )
+
+    def test_an_operation_past_first_admin_before_the_root_goes_live_with_one(self):
+        """Review T1: an operation that finished ``first_admin`` before P1-T25 (the admin on the
+        state organisation, no root) and resumes afterwards never re-runs that step; the
+        activate step makes the root, places the admin there and drops the state row."""
+        from care.emr.models.organization import Organization, OrganizationUser
+        from care.security.models import RoleModel
+        from ihr_identity import roots
+
+        self.addCleanup(self._drop, "prov-nine")
+        op = runner.start(form("prov-nine"), "test")
+        runner.run(op, stop_after="keycloak")
+        op.refresh_from_db()
+        hospital = Hospital.objects.get(slug="prov-nine")
+        first = op.result["admin_user_id"]
+        with schema_context(hospital.schema_name):
+            # as before P1-T25: no root, the first admin Administrator on the state
+            OrganizationUser.objects.filter(organization__in=roots.marked()).delete()
+            Organization._base_manager.filter(
+                pk__in=roots.marked().values("pk")
+            ).delete()
+            OrganizationUser.objects.create(
+                organization_id=op.result["state_org_id"],
+                user_id=first,
+                role=RoleModel.objects.get(name="Administrator", is_system=True),
+            )
+            self.assertIsNone(roots.valid_root())
+        try:
+            runner.run(op)
+        except steps.StepError as exc:
+            # An assertion FAIL, not an ERROR (row root-activate-heals expects FAIL; verifier
+            # late fix): the stuck operation is the defect this test guards
+            self.fail(f"the resumed operation did not go live: {exc}")
+        op.refresh_from_db()
+        self.assertEqual(op.status, "succeeded")
+        self.assertEqual(
+            Hospital.objects.get(pk=hospital.pk).status, Hospital.Status.ACTIVE
+        )
+        with schema_context(hospital.schema_name):
+            root = roots.valid_root()
+            self.assertIsNotNone(root)
+            self.assertEqual(
+                list(roots.admins(root).values_list("user_id", flat=True)), [first]
+            )
+            self.assertFalse(roots.state_admins().filter(user_id=first).exists())
 
     def test_operations_recorded_before_a_step_was_added_get_it(self):
         self.addCleanup(self._drop, "prov-six")

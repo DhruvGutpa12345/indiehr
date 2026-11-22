@@ -266,7 +266,7 @@ services:
         && python manage.py migrate_schemas --shared --noinput
         && python manage.py ihr_create_tenant --public --domain localhost
         --domain console.${IHR_TENANT_DOMAIN_SUFFIX} --domain backend --domain backchannel
-        && python manage.py ihr_fleet_run check roles packs --record --startup
+        && python manage.py ihr_fleet_run check roles root packs --record --startup
     depends_on:
       db:
         condition: service_healthy

@@ -61,13 +61,19 @@ def new_password():
     return f"Ihr-{secrets.token_urlsafe(12)}-7"
 
 
-def _link(hospital, username, sub):
-    """The Keycloak person signs in to this hospital as its CARE user ``username``."""
+def _link(hospital, username, sub, first="", last=""):
+    """The Keycloak person signs in to this hospital as its CARE user ``username``, which takes
+    the login's synthetic name (P1-T25 greeting: the web app greets "Priya", not the fixture's
+    random name). Each CARE user is one login's per hospital (``DEMO_STAFF``); the trail names
+    users as ``user:<pk>:<username>``, never by name. Development only."""
     from care.users.models import User
     from ihr_identity.models import StaffIdentity
 
     with schema_context(hospital.schema_name):
         user = User.objects.get(username=username)
+        if first and (user.first_name, user.last_name) != (first, last):
+            user.first_name, user.last_name = first, last
+            user.save(update_fields=["first_name", "last_name"])
         StaffIdentity.objects.filter(user=user).delete()
         StaffIdentity.objects.create(user=user, keycloak_sub=sub)
 
@@ -127,7 +133,7 @@ class Command(BaseCommand):
                 )
                 for slug, care_user in member_of.items():
                     ensure_member(admin, ids[slug], user_id)
-                    _link(hospitals[slug], care_user, user_id)
+                    _link(hospitals[slug], care_user, user_id, first, last)
                 users.append(
                     {
                         "username": username,

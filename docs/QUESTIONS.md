@@ -847,6 +847,8 @@ The gate (`ihr_identity.staff_access.IsHospitalAdmin`, shared by the audit viewe
 
 *Recommendation A now, B before go-live:* B needs the provisioning flow and the seed to change together, and P1-T15b2a item 1 needs the same answer, so it is best built once as its own small task after you confirm. Nobody is given an admin role on a state organisation by our code today. Reverse: build B (a field plus a check in `hospital_wide_admin`).
 
+*Built (P1-T25, 2026-11-22):* B, as a marked root organisation rather than a profile field (Q-K126…Q-K131). Only an admin role on the hospital's root is hospital-wide now.
+
 ### Q-K77 — Should a deleted identifier config still answer lookups? (P1-T15b2a; auto-accepted by Claude, 2026-11-16, confirmed by you 2026-11-21)
 
 Our replacement for CARE's identifier-config lookup (`ihr_platform/identifier_cache.py`, so every web process sees a changed config at once) reads through CARE's own Redis-backed cache, and that cache reads soft-deleted rows too. CARE's original raised "does not exist" for a deleted config.
@@ -1171,6 +1173,8 @@ Review A1 found that `hospital_wide_admin` (the gate of the audit trail, the pac
 
 *Limit, unchanged:* anyone given an admin role on any state organisation passes. Only someone who may create users can do that, and our code does it only for the first admin. *Reverse:* none needed. Q-K76 B replaces this.
 
+*Superseded (P1-T25, 2026-11-22):* Q-K76 B is built. A state-only Administrator no longer passes the gate (`test_a_state_only_administrator_is_not_a_hospital_admin`); provisioning places the first admin on the root.
+
 
 ### Q-K121 — How is "a hospital-wide admin at any hospital" protected from a reset? (P1-T24b backend builder, attack A1; auto-accepted by Claude, 2026-11-21, confirmed by you 2026-11-22)
 
@@ -1216,6 +1220,53 @@ The dev stack has one pack release, so nothing waits for a decision and the scre
 - B. Ship a second pack release with a changed item. Gives an "edited" item with an earlier version, but a pack version file is immutable and ships to every hospital.
 
 *Limit:* the demo shows "unknown origin", not "edited". *Reverse:* delete the call in `ihr_seed_demo` and `seeding.make_waiting_pack_item`.
+
+### Q-K126 — Where is a hospital's root recorded? (P1-T25 design attack Z1/D3; auto-accepted by Claude, 2026-11-22, awaiting owner confirmation)
+
+Q-K76 B needs one "hospital root" per hospital: the organisation whose admins are hospital-wide (audit trail, pack decisions, records-grant ends, sign-in resets).
+
+- **A ⭐ (taken).** The organisation itself is the record: a top-level CARE organisation carrying `metadata.ihr = "hospital-root"`. One predicate, `ihr_identity.roots.valid_root()`, accepts it only if exactly one is marked and it is active, not deleted, parentless, of type `role` and has no managing organisations; anything else closes the admin screens for everyone. Dumps and restores carry it with no new code.
+- B. A one-row table `ihr_identity.HospitalRoot` (the first design), read-only for the app role.
+- C. A field on the hospital profile (Q-K76 B's wording).
+
+*Why A:* the app role can already write memberships, so a protected pointer protects nothing that matters; A has no table, migration, restore branch or dump change. *Limit:* a superuser can still edit or unmark the root (superusers are trusted everywhere). *Reverse:* add B and make `valid_root` read it.
+
+### Q-K127 — What kind of organisation is the root? (P1-T25; auto-accepted by Claude, 2026-11-22, awaiting owner confirmation)
+
+- **A ⭐ (taken).** A new top-level `role` organisation, `system_generated`, named "Hospital administration" (the name means nothing; `ensure_root` never adopts an organisation by name). CARE refuses non-superusers who try to update, deactivate, retype or delete a role organisation, or add a child to it, and its "Add user" places staff only in role organisations (checked first: `test_r5_a_root_admin_adds_staff_to_the_root_up_to_administrator`).
+- B. A `team` organisation: an "Admin" of it could deactivate, rename or retype it.
+- C. Adopt an existing one (the fixture's "Administrator"): a guess, with members already on it.
+
+*Limit:* an Administrator on the root can add staff to it only with roles whose permissions are a subset of their own (Administrator yes; Admin, Staff no), as CARE rules. *Reverse:* change `roots.ensure_root`.
+
+### Q-K128 — What happens to the first admin's state membership? (P1-T25; auto-accepted by Claude, 2026-11-22, awaiting owner confirmation)
+
+- **A ⭐ (taken).** Removed. New hospitals never get it (`first_admin` places the admin on the root only); for existing ones the fleet step soft-deletes only the moved admin's own Administrator row on a top-level government organisation, audited. Other admin rows on states are counted (`ihr-root: … outcome=state-admins n=<k>`) and removed only by the operator (`ihr_hospital_root remove-state`).
+- B. Keep it, ignored by the gate.
+
+*Why A:* B is not harmless: an Administrator of the state lists every patient of the hospital with an address in that state, visit or not. The admin keeps user and facility creation (as root Administrator) and facility updates (as Facility Admin). *Reverse:* drop the `remove_state` call in `roots.converge`.
+
+### Q-K129 — Which existing admins move onto the root? (P1-T25 attack S1/D2; auto-accepted by Claude, 2026-11-22, awaiting owner confirmation)
+
+- **A ⭐ (taken).** The fleet step `root` (active and suspended hospitals; start-up and releases; also the restore) places only the provisioning record's first admin, and only if that person still exists, is active or awaiting setup, and is an admin on some top-level organisation today. Everyone else goes through `ihr_hospital_root show`, then `place`.
+- B. Also carry over everyone who passes the old gate (carries the hole over).
+- C. The operator only (locks real admins out after a release).
+
+*Limit:* a hospital made by `ihr_create_tenant` (dev, tests) gets a root with nobody on it (`no-admin`, alert `HospitalRootProblem`) until the seed or `place` adds one. *Reverse:* change `roots.converge`.
+
+### Q-K130 — Who is protected from a sign-in reset? (P1-T25; auto-accepted by Claude, 2026-11-22, awaiting owner confirmation)
+
+- **A ⭐ (taken).** The person being reset keeps the old, wider rule (`staff_access.top_level_admin`: an admin role on any top-level organisation, the root included), here (`reset_allowed`, `_reset_sub`) and at every other hospital (`invitations._admin_anywhere`). Only the asker's side narrowed to the root. The refusal keeps the existing `admin-target` code.
+- B. The root only, like the gate.
+
+*Why A:* protection must not narrow while admins move. *Limit:* a state-only admin's lost authenticator goes to the platform operator (Q-K122). *Reverse:* use `hospital_wide_admin` on the target side.
+
+### Q-K131 — Does anything guard the root beyond CARE's own rules? (P1-T25 attack Z2; auto-accepted by Claude, 2026-11-22, awaiting owner confirmation)
+
+- **A ⭐ (taken).** No trigger: CARE's role-organisation rules, pinned by `ihr_identity.tests.test_root.CareRoleOrganisationRules` (update, deactivate, retype, delete and a child refused; a managing organisation makes `valid_root` None, so the screens close and never widen). An upstream sync that changes those rules fails the tests. Pack forms are unchanged (Q-K80 A, Q-K81 A stand: the root is a non-government top-level organisation, so a new form links to it).
+- B. A database trigger refusing changes to the root's row (the first design): its only extra reach is stopping a superuser.
+
+*Reverse:* add B.
 
 **Still open:** Q-B4 (final MVP module list: assumed as in PLAN.md Phase 2) and Q-B6/B7 (pricing, timeline). Q-F2 is moot while AI is deferred.
 

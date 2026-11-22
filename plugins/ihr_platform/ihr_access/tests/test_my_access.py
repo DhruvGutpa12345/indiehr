@@ -6,8 +6,10 @@ the role world, for a Receptionist who also holds a hospital's own role with
 who is a Receptionist in another (permissions add up: not restricted). ``bills_here`` is true
 only for the Cashier and the TPA Desk, and only for a facility where they hold that role
 (Q-K37a B). ``hospital_admin`` is the audit trail's own gate (``IsHospitalAdmin``, P1-T24a,
-Q-K111): an admin role on an active top-level organisation, never a facility's or a district's;
-the state where provisioning puts the first admin counts (Q-K120 A).
+Q-K111): since P1-T25 (Q-K76 B) an admin role on the hospital's root (``ihr_identity.roots``)
+only, never another top-level organisation, a facility's or a district's. The state where
+provisioning put the first admin before P1-T25 no longer counts (Q-K120 superseded); provisioning
+now places that admin on the root.
 A superuser is never in our modes (``hospital_admin`` false too); a malformed facility is 400;
 anonymous callers are refused; no patient data in the body. The query count is pinned.
 """
@@ -24,6 +26,7 @@ from care.security.models import PermissionModel, RoleModel, RolePermission
 from django.contrib.auth import get_user_model
 from django.db import connection
 from django.test.utils import CaptureQueriesContext
+from ihr_identity import roots
 from ihr_identity import testing as identity
 from ihr_identity.staff_access import IsHospitalAdmin
 from ihr_roles import registry
@@ -38,9 +41,10 @@ KEYS = {"restricted", "bills_here", "hospital_admin"}
 # SQL statements one GET makes as a non-superuser, the request's whole path under
 # force_authenticate, not counting django-tenants' "SET search_path" before each (P1-T24a,
 # design.md "T24a as decided"): before T24a 12 with a facility and 10 without; hospital_admin
-# adds one EXISTS. A superuser skips it.
-QUERIES_WITH_FACILITY = 13
-QUERIES_WITHOUT_FACILITY = 11
+# adds one EXISTS, and since P1-T25 one SELECT of the root before it (``roots.valid_root``, never
+# cached across requests: review S10). A superuser skips both.
+QUERIES_WITH_FACILITY = 14
+QUERIES_WITHOUT_FACILITY = 12
 
 
 class MyAccess(SwapCase):
@@ -74,8 +78,10 @@ class MyAccess(SwapCase):
         FacilityOrganizationUser.objects.create(
             organization=w.root, user=cls.super_cashier, role=w.role("Cashier")
         )
-        # Hospital-wide admin (P1-T24a): an admin role (it holds can_create_user) on an active
-        # top-level organisation. The others hold the same role where it does not count.
+        # Hospital-wide admin (P1-T25): an admin role (it holds can_create_user) on the
+        # hospital's root. The others hold the same role where it does not count, an unmarked
+        # top-level organisation included (CARE's fixture role organisations, Q-K118).
+        root, _ = roots.ensure_root("test")
         top = Organization.objects.create(name="Acc Hospital Admins", org_type="role")
         district = Organization.objects.create(
             name="Acc District", org_type="govt", parent=top
@@ -84,30 +90,36 @@ class MyAccess(SwapCase):
             name="Acc Closed Admins", org_type="role", active=False
         )
         # A state, as ihr_load_geography makes it (a top-level government organisation), where
-        # provisioning makes each hospital's first admin an Administrator (Q-K120 A).
+        # provisioning made each hospital's first admin an Administrator before P1-T25.
         state_org = Organization.objects.create(name="Acc State", org_type="govt")
         admin_role = w.role("Facility Admin")
         cls.hospital_admin = w.user("acc-hospital-admin")
         cls.district_admin = w.user("acc-district-admin")
         cls.closed_admin = w.user("acc-closed-admin")
         cls.state_admin = w.user("acc-state-admin")
+        cls.top_admin = w.user("acc-top-admin")
+        cls.provisioned_admin = w.user("acc-root-administrator")
         cls.facility_admin = w.user("acc-facility-admin", ("Facility Admin", w.root))
         cls.super_admin = get_user_model().objects.create_superuser(
             username="acc-super-admin", email="sa@example.test", password="x-Unused-1"
         )
         for user, organization in (
-            (cls.hospital_admin, top),
+            (cls.hospital_admin, root),
+            (cls.top_admin, top),
             (cls.district_admin, district),
             (cls.closed_admin, closed),
-            (cls.super_admin, top),
+            (cls.super_admin, root),
         ):
             OrganizationUser.objects.create(
                 organization=organization, user=user, role=admin_role
             )
+        administrator = RoleModel.objects.get(name="Administrator", is_system=True)
         OrganizationUser.objects.create(
-            organization=state_org,
-            user=cls.state_admin,
-            role=RoleModel.objects.get(name="Administrator", is_system=True),
+            organization=state_org, user=cls.state_admin, role=administrator
+        )
+        # as provisioning makes the first admin now (steps.first_admin, P1-T25)
+        OrganizationUser.objects.create(
+            organization=root, user=cls.provisioned_admin, role=administrator
         )
 
     def ask(self, who, facility=None, client=None):
@@ -135,8 +147,10 @@ class MyAccess(SwapCase):
         people["Hospital-wide admin"] = self.hospital_admin
         people["Admin of a district"] = self.district_admin
         people["Admin of an inactive organisation"] = self.closed_admin
-        people["Provisioned first admin (Administrator of the state)"] = (
-            self.state_admin
+        people["Administrator of the state (pre-P1-T25 first admin)"] = self.state_admin
+        people["Admin of another top-level organisation"] = self.top_admin
+        people["Provisioned first admin (Administrator of the root)"] = (
+            self.provisioned_admin
         )
         people["Facility admin only"] = self.facility_admin
         return people
@@ -218,7 +232,13 @@ class MyAccess(SwapCase):
                     self.access(user, facility)["hospital_admin"], expected
                 )
         self.assertTrue(self.access(self.hospital_admin)["hospital_admin"])
-        for user in (self.district_admin, self.closed_admin, self.facility_admin):
+        for user in (
+            self.district_admin,
+            self.closed_admin,
+            self.facility_admin,
+            self.top_admin,
+            self.state_admin,
+        ):
             with self.subTest(refused=user.username):
                 self.assertFalse(self.access(user)["hospital_admin"])
         for role, user in self.world.users.items():
@@ -228,7 +248,13 @@ class MyAccess(SwapCase):
 
     def test_hospital_admin_agrees_with_the_audit_route(self):
         """The flag never shows a menu item the backend refuses, nor hides one it allows."""
-        for user in (self.hospital_admin, self.facility_admin, self.district_admin):
+        for user in (
+            self.hospital_admin,
+            self.facility_admin,
+            self.district_admin,
+            self.top_admin,
+            self.state_admin,
+        ):
             with self.subTest(user=user.username):
                 flag = self.access(user)["hospital_admin"]
                 status = self.api(user).get("/api/ihr/audit/status/").status_code
@@ -236,17 +262,45 @@ class MyAccess(SwapCase):
                 self.assertEqual(status, 200 if flag else 403)
 
     def test_the_provisioned_first_admin_is_a_hospital_admin(self):
-        """Review A1 (Q-K120 A): provisioning (``steps.first_admin``) makes a hospital's first
-        admin an Administrator of its state, a top-level government organisation. That admin
-        is shown the audit trail and served it: a gate that left out ``govt`` organisations
-        would lock every real hospital's first admin out (narrowing waits for Q-K76 B)."""
-        self.assertTrue(self.access(self.state_admin)["hospital_admin"])
-        status = self.api(self.state_admin).get("/api/ihr/audit/status/").status_code
+        """Provisioning (``steps.first_admin``, P1-T25) makes a hospital's first admin an
+        Administrator of its root: shown the audit trail and served it."""
+        self.assertTrue(self.access(self.provisioned_admin)["hospital_admin"])
+        status = (
+            self.api(self.provisioned_admin).get("/api/ihr/audit/status/").status_code
+        )
         state.end()
         self.assertEqual(status, 200)
 
+    def test_a_state_only_administrator_is_not_a_hospital_admin(self):
+        """Q-K76 B (P1-T25; Q-K120 superseded): an Administrator of a state organisation, where
+        provisioning put the first admin before P1-T25, is no longer hospital-wide: anyone
+        given an admin role on any of the 36 states would otherwise be."""
+        self.assertFalse(self.access(self.state_admin)["hospital_admin"])
+        status = self.api(self.state_admin).get("/api/ihr/audit/status/").status_code
+        state.end()
+        self.assertEqual(status, 403)
+
+    def test_nobody_is_a_hospital_admin_without_a_valid_root(self):
+        """Fail closed: the root unmarked (or a second one marked) closes the screens for
+        everyone, the root's own admins included."""
+        root = roots.valid_root()
+        Organization.objects.filter(pk=root.pk).update(metadata={})
+        self.assertFalse(self.access(self.hospital_admin)["hospital_admin"])
+        Organization.objects.filter(pk=root.pk).update(metadata=dict(root.metadata))
+        self.assertTrue(self.access(self.hospital_admin)["hospital_admin"])
+        # system-made, as only owner code can make one (review A1: a marked organisation
+        # from CARE's API is ignored)
+        Organization.objects.create(
+            name="Second root",
+            org_type="role",
+            system_generated=True,
+            metadata=dict(root.metadata),
+        )
+        self.assertFalse(self.access(self.hospital_admin)["hospital_admin"])
+
     def test_query_count_is_pinned(self):
-        """One EXISTS more than before T24a; a superuser makes none for it."""
+        """Two statements more than before T24a (the root, then one EXISTS); a superuser makes
+        none for them."""
         facility = self.world.facility.external_id
         for user in (self.world.users["Doctor"], self.hospital_admin):
             for value, expected in (

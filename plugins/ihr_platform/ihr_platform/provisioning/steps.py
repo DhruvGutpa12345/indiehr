@@ -266,9 +266,9 @@ def geography(op, form):
 def first_admin(op, form):
     """The hospital's first administrator as an *inactive* CARE user with no usable
     password: they become active only by accepting their invitation (P1-T5c). Created
-    directly, so CARE's own "set your password" e-mail is never sent."""
-    from care.emr.models.organization import Organization, OrganizationUser
-    from care.security.models import RoleModel
+    directly, so CARE's own "set your password" e-mail is never sent. They are made
+    Administrator on the hospital's root (P1-T25, Q-K76 B; ``ihr_identity.roots``), created
+    here if it does not exist yet, and never on the state organisation (Q-K128 A)."""
     from care.users.models import User
     from care.utils.models.validators import UsernameValidator
     from django.core.validators import validate_email
@@ -292,12 +292,38 @@ def first_admin(op, form):
             user.save()
             op.result["admin_user_id"] = user.id
             op.save(update_fields=["result"])  # committed together with the user
-        state = Organization.objects.get(pk=op.result["state_org_id"])
-        OrganizationUser.objects.get_or_create(
-            organization=state,
-            user=user,
-            defaults={"role": RoleModel.objects.get(name="Administrator")},
-        )
+        _root_for(op, user)
+
+
+def _root_for(op, user=None):
+    """Ensure the hospital's root and make this operation's first admin Administrator on it,
+    dropping any Administrator row of theirs on a state organisation (Q-K128 A; one made by
+    ``first_admin`` before P1-T25) in the same transaction. Run inside the hospital's schema.
+    Called by ``first_admin``, and by ``activate`` when the root is missing or has no admin
+    who can act: an operation that passed ``first_admin`` before P1-T25 never re-runs that
+    step, and the fleet step skips hospitals still being provisioned (review T1)."""
+    from care.users.models import User
+    from ihr_identity import roots
+
+    slug, operator = _hospital(op).slug, _root_operator(op)
+    if user is None:
+        user = User._base_manager.filter(pk=op.result.get("admin_user_id")).first()  # noqa: SLF001
+        if user is None:
+            raise StepError("the first admin's account is missing")
+    root, outcome = roots.ensure_root(operator, slug=slug)
+    if root is None:
+        msg = f"the hospital's root is {outcome}: see ihr_hospital_root show"
+        raise StepError(msg)
+    try:
+        with transaction.atomic():
+            roots.place(user, operator, slug=slug)
+            roots.remove_state(user, operator, slug=slug)
+    except roots.RootError as exc:
+        raise StepError(str(exc)) from None
+
+
+def _root_operator(op):
+    return f"provisioning-{op.pk}"
 
 
 def _free_username(user_model, email):
@@ -362,6 +388,7 @@ def keycloak(op, form):
 
 def activate(op, form):
     """Live: the sign-in client turned on, then status ACTIVE and the go-live time (once)."""
+    from ihr_identity import roots
     from ihr_refdata import engine
     from ihr_tenant_settings import geography as geo
 
@@ -376,6 +403,27 @@ def activate(op, form):
     # geography step (a resumed run skips that step) is picked up here, before going live.
     with schema_context(hospital.schema_name):
         geo.load_all()
+        # Never live without a hospital-wide admin (P1-T25, review S8): a valid root with at
+        # least one admin who can act (review A3). Missing (an operation that passed
+        # first_admin before P1-T25, review T1) or with none, this operation's own first
+        # admin is placed there first.
+        pending = op.result.get("admin_user_id")
+
+        def has_admin():
+            root = roots.valid_root()
+            return (
+                root is not None and roots.live_admins(root, pending=pending).exists()
+            )
+
+        if not has_admin():
+            try:
+                _root_for(op)
+            except StepError as exc:
+                msg = f"the hospital has no valid root with an admin ({exc})"
+                raise StepError(msg) from None
+        if not has_admin():
+            msg = "the hospital has no valid root with an admin: see ihr_hospital_root show"
+            raise StepError(msg)
     # Likewise ihr_pack_apply --all: a run resumed under a newer release must not go live
     # with an older pack (P1-T15a)
     engine.apply_packs(hospital, operator=_pack_operator(op))

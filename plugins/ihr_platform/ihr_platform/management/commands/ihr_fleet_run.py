@@ -1,17 +1,17 @@
 """Run release steps across the fleet of hospitals (P1-T18a; ihr_platform/fleet.py).
 
-    manage.py ihr_fleet_run check roles packs --record --startup       (the start-up one-shot)
+    manage.py ihr_fleet_run check roles root packs --record --startup  (the start-up one-shot)
     manage.py ihr_fleet_run hold --operator <you> [--slug x ...]       (open a release window)
-    manage.py ihr_fleet_run migrate check roles packs --operator <you> [--parallel 2]
+    manage.py ihr_fleet_run migrate check roles root packs --operator <you> [--parallel 2]
     manage.py ihr_fleet_run --resume <run id> --operator <you>         (after a fix)
     manage.py ihr_fleet_run release --operator <you> [--slug x ...]    (clear holds)
     manage.py ihr_fleet_run window --start "DD-MM-YYYY HH:MM" --minutes 90 [--note ...] --operator <you>
     manage.py ihr_fleet_run window [--clear --operator <you>]          (show, or remove)
 
-Steps run in the order hold, migrate, check, roles, packs, release, whatever order they are
-named in. Which hospitals: every one with a schema that is provisioning, active, suspended or
-offboarding (never archived), or ``--status`` / ``--slug``; roles take active and suspended
-ones, packs active ones.
+Steps run in the order hold, migrate, check, roles, root, packs, release, whatever order they
+are named in. Which hospitals: every one with a schema that is provisioning, active, suspended
+or offboarding (never archived), or ``--status`` / ``--slug``; roles and root (P1-T25) take
+active and suspended ones, packs active ones.
 
 Exit status: a fault that is the same for every hospital (the public schema behind, live
 hospitals not on this build's schema when the run does not migrate, a bad pack) exits 1.
@@ -49,13 +49,13 @@ def _statuses(text):
 
 
 class Command(BaseCommand):
-    help = (
-        "Release steps across the fleet: hold, migrate, check, roles, packs, release."
-    )
+    help = "Release steps across the fleet: hold, migrate, check, roles, root, packs, release."
 
     def add_arguments(self, parser):
         parser.add_argument(
-            "steps", nargs="*", help="hold migrate check roles packs release, or window"
+            "steps",
+            nargs="*",
+            help="hold migrate check roles root packs release, or window",
         )
         parser.add_argument("--slug", action="append", default=[], help="repeatable")
         parser.add_argument("--status", help="comma-separated hospital statuses")

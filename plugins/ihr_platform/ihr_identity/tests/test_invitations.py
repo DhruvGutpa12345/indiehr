@@ -525,13 +525,18 @@ def admin_role(testcase):
 
 
 def make_hospital_wide(testcase, user, *, parent=None):
-    """Give ``user`` an admin role on a new top-level organisation of this hospital: a
-    hospital-wide admin (``staff_access.hospital_wide_admin``), the only kind who may reset a
-    colleague's sign-in since P1-T24b (attack A1). With ``parent``, the organisation sits inside
-    it instead (an admin who may add staff but is not hospital-wide). Undone at the test's end."""
+    """Give ``user`` an admin role on this hospital's root (P1-T25, ``testing.make_root_admin``):
+    a hospital-wide admin (``staff_access.hospital_wide_admin``), the only kind who may reset a
+    colleague's sign-in since P1-T24b (attack A1). With ``parent``, the role is on a new
+    organisation inside it instead (an admin who may add staff but is not hospital-wide).
+    Undone at the test's end."""
     from care.emr.models.organization import Organization, OrganizationUser
 
     role = admin_role(testcase)
+    if parent is None:
+        membership = testing.make_root_admin(testcase, user, role=role)
+        testcase.addCleanup(OrganizationUser.objects.filter(user=user).delete)
+        return membership
     organization = Organization.objects.create(
         name=f"hw-{user.username}-{time.time_ns()}"[:60], org_type="role", parent=parent
     )

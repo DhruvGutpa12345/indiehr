@@ -622,8 +622,11 @@ class DecideTests(FacilityCase):
 
 
 # SQL statements of the list GET through the whole middleware path (as T24a counted my-access),
-# the same with and without facility_name: two facilities in the list, one facility filtered
-QUERIES_TWO, QUERIES_ONE = 24, 22
+# the same with and without facility_name: two facilities in the list, one facility filtered.
+# Counted with django-tenants' "SET search_path" before each statement. P1-T25 added two: the
+# gate's SELECT of the hospital's root (``roots.valid_root``, never cached across requests) and
+# the SET before it; the gate's EXISTS on the membership was already counted.
+QUERIES_TWO, QUERIES_ONE = 26, 24
 
 
 class ApiTests(FacilityCase):
