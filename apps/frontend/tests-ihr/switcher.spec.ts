@@ -36,6 +36,7 @@ import {
   staffSentinels,
 } from "./lib/storage";
 import {
+  FACILITY_SIGN_OUT,
   GROUP,
   type HospitalRow,
   MY_HOSPITALS_API,
@@ -250,6 +251,8 @@ test("a person with one hospital sees no Hospitals group (nurse.asha, alpha only
   expect(listed.hospitals, "one hospital listed").toHaveLength(1);
   // the menu is open and has asked: the group is absent, the rest of the menu is there
   expect(await openUserMenu(page)).toBe(200);
-  await expect(page.getByRole("menuitem", { name: "Sign out" })).toBeVisible();
+  await expect(
+    page.getByRole("menuitem", { name: FACILITY_SIGN_OUT }),
+  ).toBeVisible();
   await expect(page.locator(GROUP)).toHaveCount(0);
 });

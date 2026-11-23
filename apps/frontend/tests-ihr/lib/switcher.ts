@@ -7,6 +7,9 @@ import { KEYCLOAK, expect } from "./fixtures";
 export const MY_HOSPITALS_API = "/api/ihr/my-hospitals/";
 export const GROUP = '[data-testid="ihr-hospitals-menu"]';
 export const NOT_SIGNED_IN = "Authentication credentials were not provided.";
+/** The facility user menu's sign-out item is CARE's `logout` string ("Log Out"); the patient
+ * and home pages say "Sign out" (lib/fixtures.ts). */
+export const FACILITY_SIGN_OUT = "Log Out";
 
 export interface HospitalRow {
   name: string;
@@ -45,7 +48,9 @@ export async function openUserMenu(page: Page): Promise<number> {
     .first()
     .click();
   const answer = await asked;
-  await expect(page.getByRole("menuitem", { name: "Sign out" })).toBeVisible();
+  await expect(
+    page.getByRole("menuitem", { name: FACILITY_SIGN_OUT }),
+  ).toBeVisible();
   return answer.status();
 }
 
