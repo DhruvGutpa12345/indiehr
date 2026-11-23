@@ -59,6 +59,8 @@ aiohttp = "==3.14.5"
 sqlparse = "==0.6.1"
 django-tenants = "==4.0.1"
 tenant-schemas-celery = "==5.0.0"
+prometheus-client = "==0.26.0"
+pycountry = "==26.2.16"
 
 [dev-packages]
 boto3-stubs = { extras = ["s3", "boto3"], version = "==1.43.6" }
