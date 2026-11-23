@@ -180,7 +180,17 @@ Detailed task definitions: [PLAN.md](PLAN.md) §6. Open questions: [QUESTIONS.md
   - Follow-ups: re-measure on staging hardware (P1-T8) and with real data volumes (P4-T7 / pilot); apply the §6.11 operating rules in P1-T8
 - 🟡 P1-T1d Playwright two-subdomain isolation — in CI on every relevant change and weekly; the switcher spec waits for the switcher
 - ⬜ P1-T31 Hospital switcher ("Hospitals" item in the user menu listing a person's hospitals; an `ihr_*` frontend plugin; TENANCY §9, Phase 1 review R1-05) — not built; unblocks P1-T1d's switcher spec (ID given by owner, 2026-11-23)
+  - ⬜ P1-T31a Directory table, per-hospital definer triggers, `ihr_identity` 0004 (install and first fill), E027/W027, db_roles and restore-quarantine allow-lists (split by Claude, 2026-11-23, awaiting owner confirmation)
+  - ⬜ P1-T31b `rebuild` and `ihr_staff_directory --check|--repair`, drift log line and `staging.sh due` entry, restore `_reconcile`/`abort()` hooks, rollback-refused marker (split by Claude, 2026-11-23, awaiting owner confirmation)
+  - ⬜ P1-T31c `GET /api/ihr/my-hospitals/` (staff-only, service-account refusal), `servable_many`, `links.origin_for`, isolation test, role-matrix and mutation rows (split by Claude, 2026-11-23, awaiting owner confirmation)
+  - ⬜ P1-T31d Web: `hospitals.ts` client rule, `IhrHospitalsMenu` in the user menu, nav-user patch and anchors, en/hi strings (split by Claude, 2026-11-23, awaiting owner confirmation)
+  - ⬜ P1-T31e Playwright `switcher.spec.ts` and `roles-menus` row, CI, docs (TENANCY §4.4, CLAUDE.md, P4-T8 row note) (split by Claude, 2026-11-23, awaiting owner confirmation)
 - ⬜ P1-T32 No-real-data checks E1–E5 from ADR-020 §3 (`IHR_ENVIRONMENT` required, proof stand-ins refused on production, deploy folder match, environment in dump manifests, a synthetic banner; about 4–6 h; added by Claude 2026-11-23 from P1-T28, ID given by owner, 2026-11-23)
+  - ⬜ P1-T32a S1+S2a: E1 `IHR_ENVIRONMENT` required (settings, strict `init`, `ensure_environment` in `compose()`) (split by Claude, 2026-11-23, awaiting owner confirmation)
+  - ⬜ P1-T32b S2b: E2 dispatch table of proof stand-ins refused on production, state check on start verbs, `smoke` `bootstrap.js` check (split by Claude, 2026-11-23, awaiting owner confirmation)
+  - ⬜ P1-T32c S5: E5 synthetic banner (own bar, IST bar offset, bootstrap, console, Playwright spec) (split by Claude, 2026-11-23, awaiting owner confirmation)
+  - ⬜ P1-T32d S3: E3 deploy folder match (`bootstrap.sh --instance`, `instance_check.py`, `deploy.sh`) (split by Claude, 2026-11-23, awaiting owner confirmation)
+  - ⬜ P1-T32e S4: E4 environment in dump manifests, bucket marker, restore precheck (Q-K159) (split by Claude, 2026-11-23, awaiting owner confirmation)
 - 🟡 P1-T2a Hospital profile, bootstrap endpoint, subdomain domains (backend) — CI 2,045/2,045 (run 42203433586)
 - 🟡 P1-T2b Runtime branding in the web app; dev stack with two demo hospitals — click-through waiting for you
   - Follow-ups: buttons and links still use CARE's green (a full theme from the brand colour needs the theme tokens, P1-T7 or later); printed QR codes and queue token cards still show CARE's mark (letterhead work); ~~the production backend image does not yet include `plugins/`~~ (done in P1-T8a)

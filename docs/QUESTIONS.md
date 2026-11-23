@@ -1357,6 +1357,102 @@ PG 18's `log_connections` cannot be set per role.
 - B. Keep as built: the digest only, and read the inbox plus `staging.sh alerts` for one-off events.
 - **C ⭐ (taken).** Every log alert (deploy/logs/alerts) carries `notify: anytime` and is mailed at once; the digest keeps the metric warnings, which are states that stay firing until a window. A test fails on a log alert without it. Reverse by removing the label from a rule.
 
+### Q-K144 — Where does the hospital switcher's list come from? (P1-T31; auto-accepted by Claude, 2026-11-23, awaiting owner confirmation)
+
+- **A ⭐ (taken).** A public directory table kept by per-hospital `SECURITY DEFINER` triggers; the first fill is the `ihr_identity` 0004 migration, repair is `ihr_staff_directory --check|--repair`. The raw `keycloak_sub` is kept for now (no new exposure under the shared `ihr_app`); a hospital-bound read or keyed hash is decided in P4-T8.
+- B. Django signals plus a reconcile. C. Scan every hospital schema per request. D. Ask Keycloak. E. A token claim.
+- *Why:* `queryset.update(is_active=…)` in `views.py:269`, `join.py:217` and `invitations.py:68` bypasses signals, and the app gets no write grant. *Reverse:* a later migration drops the table and triggers; the menu then lists one hospital.
+
+### Q-K145 — Which links are listed? (P1-T31; auto-accepted by Claude, 2026-11-23, awaiting owner confirmation)
+
+- **A ⭐ (taken).** Only active, non-deleted, non-superuser, non-service-account links. Superusers are always left out.
+- B. Also list invited or pending links as "Invitation waiting".
+- *Why:* an invitation is accepted by the e-mailed link, not in the menu. *Reverse:* change the trigger's predicate and run `--repair`.
+
+### Q-K146 — Which hospitals appear, and how does a held one look? (P1-T31; auto-accepted by Claude, 2026-11-23, awaiting owner confirmation)
+
+- **A ⭐ (taken).** ACTIVE hospitals with an org id and a primary domain, never `public`. A held one (release or restore hold, gated schema) is shown disabled; the group shows from two entries.
+- B. Hide every non-servable hospital. C. Also list suspended ones as disabled.
+- *Why:* a release window is short and hiding it looks like lost access; a suspended hospital refuses sign-in anyway. *Reverse:* the status filter in the endpoint query.
+
+### Q-K147 — What does the endpoint reveal, and to whom? (P1-T31; auto-accepted by Claude, 2026-11-23, awaiting owner confirmation)
+
+- **A ⭐ (taken).** `GET /api/ihr/my-hospitals/`, staff cookie only (service tokens and users with no identity get 403), `NotCrossSite` first. It returns only name, url, current and available for the caller's own sub. Query parameters are ignored; no cap; no audit entry.
+- B. An audit entry per read.
+- *Why:* no patient data and no change, so it is outside ADR-010's `request` rule. *Reverse:* add the entry to the view.
+
+### Q-K148 — Which name does the switcher show? (P1-T31; follows from an existing pattern; auto-accepted by Claude, 2026-11-23, awaiting owner confirmation)
+
+- **A ⭐ (taken).** `Hospital.name` from `public`.
+- B. Mirror the profile's display name into `public` with another trigger (later, if owners rename hospitals).
+- *Why:* reading another schema's profile at request time breaks at P4-T8. *Reverse:* add the mirror trigger.
+
+### Q-K149 — Is the switcher's answer cached? (P1-T31; follows from an existing pattern; auto-accepted by Claude, 2026-11-23, awaiting owner confirmation)
+
+- **A ⭐ (taken).** No server cache; a constant query count (`servable_many`); the web app caches with a user-scoped TanStack key and no `meta.persist`.
+- B. Redis cache with a 60 s TTL (a deactivated person's hospitals would stay visible).
+- *Why:* one cheap query; nothing to invalidate. *Reverse:* add a tenant-prefixed key.
+
+### Q-K150 — Which environment names exist? (P1-T32; auto-accepted by Claude, 2026-11-23, awaiting owner confirmation)
+
+- **A ⭐ (taken).** `production-<n>` (1–999), `staging`, `proof` on servers; dev and tests leave it unset (reported `dev`).
+- B. Free-form names with a `production-` prefix rule. C. `dev` as a server value too.
+- *Why:* a closed list makes a typo a refusal. *Reverse:* widen the regex in `environment.py` (one canonical copy, equality test).
+
+### Q-K151 — How does `init` learn the environment? (P1-T32; auto-accepted by Claude, 2026-11-23, awaiting owner confirmation)
+
+- **A ⭐ (taken).** `--local` and `--vm` write `proof`; otherwise `--environment production-<n>|staging` is required; production folders get `ihr-prod<n>-*` bucket names.
+- B. Default `staging` when not given.
+- *Why:* a silent default is the bug ADR-020 found. *Reverse:* make `--environment` optional.
+
+### Q-K152 — Folders made before E1 (P1-T32; auto-accepted by Claude, 2026-11-23, awaiting owner confirmation)
+
+- **A ⭐ (taken).** The upgrade runs in `compose()` on every command: `.local` folders become `proof` with a printed line; the VM cache upgrades by exact path and suffix; any other folder is refused with the fix.
+- B. Write `staging` into any folder lacking it.
+- *Why:* B could label a real server synthetic; A touches only throwaways today. *Reverse:* remove `ensure_environment`.
+
+### Q-K153 — How far does E2 reach? (P1-T32; auto-accepted by Claude, 2026-11-23, awaiting owner confirmation)
+
+- **A ⭐ (taken).** One dispatch table of stand-in commands, plus the state check on every Compose start verb, `init --check`, `release` and `deploy.sh`; parsing fails closed (only exact `staging` or `proof` pass).
+- B. Commands only.
+- *Why:* a copied or hand-edited `.env` bypasses B. *Reverse:* drop the state check.
+
+### Q-K154 — What does E3 check before a deploy? (P1-T32; auto-accepted by Claude, 2026-11-23, awaiting owner confirmation)
+
+- **C ⭐ (taken; new).** A plus host identity: `bootstrap.sh --instance` writes a root-owned `INSTANCE`; missing or different refuses before anything is sent; no "new server ok"; no override.
+- A. The §5.2 table alone. B. A plus `--replace-instance`.
+- *Why:* without it, production's secrets could go to a fresh synthetic VM. *Reverse:* relax in `instance_check.py` (owner approval).
+
+### Q-K155 — Dumps and backups older than P1-T32 (P1-T32; auto-accepted by Claude, 2026-11-23, awaiting owner confirmation)
+
+- **A ⭐ (taken).** Accepted, with "environment not recorded" in the report; key and chain checks still apply. Backups drop out of P1-T32 (backup labels cut).
+- B. Refused.
+- *Why:* they exist only in proofs. *Reverse:* require the fields in `valid_manifest`.
+
+### Q-K156 — Another instance's objects in this instance's dump bucket (P1-T32; auto-accepted by Claude, 2026-11-23, awaiting owner confirmation)
+
+- **C ⭐ (taken; new).** Marker-based: an authentic `instance.json` (written by `dumps-init`, sealed with the dump key) decides; a missing or foreign marker refuses `run`; a stray foreign object is a `check` problem and an alert (`reason=foreign-object`), and dumps continue.
+- A. Refuse every dump on any foreign manifest. B. Report only.
+- *Why:* A lets one stray object halt all nightly dumps. *Reverse:* drop the marker check.
+
+### Q-K157 — Where does the synthetic banner show? (P1-T32; auto-accepted by Claude, 2026-11-23, awaiting owner confirmation)
+
+- **A ⭐ (taken).** Every web-app page and the operator console; no stub banner (the overlay covers it); no `__IHR_ENVIRONMENT__` global; the public JSON keeps `synthetic: true|false`, never the instance name; not Keycloak or ops hosts.
+- B. A plus a Keycloak theme. C. The web app only.
+- *Why:* it covers every page where a patient can be typed. *Reverse:* add a theme later.
+
+### Q-K158 — Dev, CI and layout of the banner (P1-T32; auto-accepted by Claude, 2026-11-23, awaiting owner confirmation)
+
+- **C ⭐ (taken; new).** Dev and CI show the banner; no shared top-bar host (its own bar plus a CSS-variable offset for the IST bar); fallback B (servers only) after a 0.5 h layout cap.
+- A. One shared top-bar host. B. Servers only.
+- *Why:* the IST bar is shipped and owner-confirmed; a refactor broke it on production. *Reverse:* drop the script for dev.
+
+### Q-K159 — Restore across suffixes (P1-T32; auto-accepted by Claude, 2026-11-23, awaiting owner confirmation; new)
+
+- **A ⭐ (taken).** The environment must match; a different suffix warns and is recorded in the restore report (disaster recovery to a new domain).
+- B. Refuse any suffix difference.
+- *Why:* a rebuilt production-1 on a new domain must restore its own dumps. *Reverse:* make the suffix strict in `Restore.precheck`.
+
 **Still open:** Q-B4 (final MVP module list: assumed as in PLAN.md Phase 2) and Q-B6/B7 (pricing, timeline). Q-F2 is moot while AI is deferred.
 
 ---
