@@ -2,6 +2,7 @@
 
 from django.conf import settings
 from django.core.checks import Error, register
+from django.core.checks import Warning as CheckWarning
 
 STAFF_CLASSES = [
     "ihr_identity.authentication.StaffSessionAuthentication",
@@ -69,3 +70,30 @@ def staff_sign_in_settings(app_configs, **kwargs):
             )
         ]
     return errors
+
+
+@register()
+def staff_directory(app_configs, **kwargs):
+    """ihr_identity.E027: the staff directory's trigger (P1-T31a, directory.py) is installed on
+    post_migrate, and CARE's user model still has the columns it names. Static only: drift in
+    a hospital schema is reported by ``ihr_staff_directory --check`` and never refuses a
+    process or gates a hospital (docs/reviews/p1-t31/attack.md D1).
+    ihr_identity.W027: its SQL differs from the one the newest ihr_identity migration that
+    states one gives, so existing hospitals would not get it (a warning, so a mutation run still
+    starts; Upkeep.test_w027_wants_a_migration_stating_this_builds_sql fails on it)."""
+    from django.apps import apps
+    from django.db.models.signals import post_migrate
+
+    from ihr_identity import directory
+
+    uid = apps.get_app_config("ihr_identity").DIRECTORY_UID
+    installed = any(receiver[0][0] == uid for receiver in post_migrate.receivers)
+    found = [
+        Error(problem, id="ihr_identity.E027")
+        for problem in directory.static_problems(installed=installed)
+    ]
+    found += [
+        CheckWarning(problem, id="ihr_identity.W027")
+        for problem in directory.code_problems()
+    ]
+    return found

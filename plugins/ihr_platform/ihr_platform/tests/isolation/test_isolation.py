@@ -8,6 +8,7 @@ so they cannot pass just because nothing answered.
 """
 
 import re
+import secrets
 from collections import Counter
 from datetime import datetime, time, timedelta
 from pathlib import Path
@@ -445,6 +446,75 @@ class CrossTenantIsolationTests(SimpleTestCase):
             care = APIClient(HTTP_HOST=tenant.domain)
             care.credentials(HTTP_AUTHORIZATION=f"Bearer {token}")
             self.assertEqual(care.get(me).status_code, 403, tenant.hospital.slug)
+
+    def test_directory_lists_another_hospital_only_to_its_own_member(self):
+        """P1-T31 (attack S11): the hospital switcher at A names B only to a person linked at
+        both; to an A-only person no text of B's (name, slug, address) appears, nor to one
+        whose B link is not active. The rows are written by each hospital's own trigger."""
+        from care.users.models import User
+        from ihr_identity.models import StaffIdentity
+
+        url = "/api/ihr/my-hospitals/"
+        testing.ensure_org_id(self.b.hospital)
+
+        def person(tenant, **fields):
+            with schema_context(tenant.schema):
+                user = User.objects.create_user(
+                    username=f"switch-{secrets.token_hex(5)}",
+                    password="x-Unused-1",
+                    **fields,
+                )
+            self.addCleanup(self._drop_person, tenant, user)
+            return user
+
+        def sub_of(tenant, user):
+            with schema_context(tenant.schema):
+                return StaffIdentity.objects.get(user=user).keycloak_sub
+
+        both, only_a, inactive_at_b = person(self.a), person(self.a), person(self.a)
+        clients = {
+            name: testing.staff_client(
+                self.a.hospital, self.a.domain, user, sid=f"sid-{name}"
+            )
+            for name, user in (
+                ("both", both),
+                ("only_a", only_a),
+                ("inactive_at_b", inactive_at_b),
+            )
+        }
+        with schema_context(self.b.schema):
+            testing.link(person(self.b), sub_of(self.a, both))
+            testing.link(person(self.b, is_active=False), sub_of(self.a, inactive_at_b))
+
+        def answer(name):
+            response = clients[name].get(url)
+            self.assertEqual(response.status_code, 200, response.content[:300])
+            return response
+
+        listed = [h["name"] for h in answer("both").json()["hospitals"]]
+        self.assertEqual(listed, [self.a.hospital.name, self.b.hospital.name])
+        for name in ("only_a", "inactive_at_b"):
+            with self.subTest(person=name):
+                response = answer(name)
+                self.assertEqual(
+                    [h["name"] for h in response.json()["hospitals"]],
+                    [self.a.hospital.name],
+                )
+                text = response.content.decode().lower()
+                for found in (
+                    self.b.hospital.name,
+                    self.b.hospital.slug,
+                    self.b.domain,
+                ):
+                    self.assertNotIn(found.lower(), text)
+
+    def _drop_person(self, tenant, user):
+        from care.users.models import User
+        from ihr_identity.models import StaffIdentity
+
+        with schema_context(tenant.schema):
+            StaffIdentity.objects.filter(user_id=user.pk).delete()
+            User._base_manager.filter(pk=user.pk).delete()
 
     def test_roots_grant_nothing_across_tenants(self):
         """P1-T25: each hospital has a root of its own (``ihr_identity.roots``), and A's root id

@@ -1595,7 +1595,7 @@ class EndToEnd(unittest.TestCase):
                 f'rel_serve_outgoing_advice() {{{func("rel_serve_outgoing_advice")}}}\n'
                 'rel_outgoing_storage() { echo yes; }\n'
                 'rel_workers_marker() { :; }\nrunning_backend_id() { :; }\nrelease_tag_of() { echo R1; }\n'
-                'rel_target_pre_s3split() { return 1; }\n'
+                'rel_target_pre_s3split() { return 1; }\nrel_target_pre_directory() { return 1; }\n'
                 'rlog() { echo target=R0; echo restore_point=release-r0-1763000000; }\n'
                 'compose() { [[ -z "${BACKEND_RUNS:-}" ]] || echo cid-backend; }\n'
                 'REL_WORKERS=(celery-worker celery-beat provisioner staff-worker)\n'
@@ -1960,11 +1960,54 @@ class EndToEnd(unittest.TestCase):
         out, _ = self.run_staging([release(A), release(RUNNING)], "rollback", stacks=old, fake=images)
         self.assertNotIn("predates the split object-storage keys", out.stderr)
 
+    def test_no_rollback_across_the_staff_directory(self):
+        """P1-T31 (attack S4): a target whose kept stack predates the staff directory (its
+        restore allow-list does not know ihr_directory_touch) would report the directory's
+        definer as unknown and refuse every newer dump: refused before anything changes (both
+        kinds); a target that knows it is not refused for it."""
+        compose = "    env_file:\n      - secrets/app.env\n      - secrets/db-owner.env\n"
+        start = (ROOT / "deploy" / "s3" / "start.sh").read_text()
+        pkg = "plugins/ihr_platform/ihr_platform/restore/package.py"
+        old = {A: (compose, {"deploy/s3/start.sh": start,
+                             pkg: 'OUR_FUNCTIONS = frozenset({"ihr_role_placement_guard"})\n'})}
+        new = {A: (compose, {"deploy/s3/start.sh": start, pkg: (ROOT / pkg).read_text()})}
+        split = "FILE_UPLOAD_KEY=f\nFILE_UPLOAD_SECRET=fs\nFACILITY_S3_KEY=p\nFACILITY_S3_SECRET=ps\n"
+        images = {"FAKE_IMAGES": " ".join(img(n) for n in (10, 11, 20, 30))}
+        restorable = release(RUNNING, tenant=7, rp=point(RUNNING), rp_time="1763000000")
+        for extra, running_release in (((), release(RUNNING)), (("--restore",), restorable)):
+            with self.subTest(extra=extra):
+                out, calls = self.run_staging([release(A), running_release], "rollback", *extra, stacks=old,
+                                              app_extra=split, fake=images)
+                self.assertEqual(out.returncode, 1, out.stderr)
+                self.assertIn(f"release {A} predates the staff directory (P1-T31)", out.stderr)
+                self.assertIn("refuse every newer hospital dump", out.stderr)
+                self.assertNothingChanged(calls)
+        out, _ = self.run_staging([release(A), release(RUNNING)], "rollback", stacks=new, app_extra=split, fake=images)
+        self.assertNotIn("predates the staff directory", out.stderr)
+        self.assertNotIn("predates the split", out.stderr)
+
+    def test_rollback_advice_never_names_a_rollback_across_the_staff_directory(self):
+        base = (f'set -euo pipefail\nrel_rollback_advice() {{{func("rel_rollback_advice")}}}\n'
+                f'rel_serve_outgoing_advice() {{{func("rel_serve_outgoing_advice")}}}\n'
+                'db_roles_state() { echo split; }\nrunning_backend_id() { :; }\nrelease_tag_of() { echo R1; }\n'
+                'rlog() { echo target=R0; echo restore_point=release-r0-1763000000; }\n'
+                'rel_target_presplit() { return 1; }\nrel_target_pre_s3split() { return 1; }\n'
+                'REL_STAGE=2 REL_LOG=x REL_ATTEMPT=y\n')
+        out = subprocess.run(["bash", "-c", base + "rel_target_pre_directory() { return 0; }\nrel_rollback_advice\n"],
+                             capture_output=True, text=True)
+        self.assertEqual(out.returncode, 0, out.stderr)
+        self.assertEqual(out.stderr, "")
+        self.assertIn("predates the staff directory (P1-T31). Fix forward", out.stdout)
+        self.assertNotIn("staging.sh rollback", out.stdout)
+        out = subprocess.run(["bash", "-c", base + "rel_target_pre_directory() { return 1; }\nrel_rollback_advice\n"],
+                             capture_output=True, text=True)
+        self.assertIn("scripts/staging.sh rollback (no --restore", out.stdout)
+
     def test_rollback_advice_never_names_a_rollback_across_the_key_split(self):
         base = (f'set -euo pipefail\nrel_rollback_advice() {{{func("rel_rollback_advice")}}}\n'
                 'db_roles_state() { echo split; }\nrunning_backend_id() { :; }\nrelease_tag_of() { echo R1; }\n'
                 'rlog() { echo target=R0; echo restore_point=release-r0-1763000000; }\n'
-                'rel_target_presplit() { return 1; }\nREL_LOG=x REL_ATTEMPT=y\n')
+                'rel_target_presplit() { return 1; }\nrel_target_pre_directory() { return 1; }\nREL_LOG=x REL_ATTEMPT=y\n')
         out = subprocess.run(["bash", "-c", base + "rel_target_pre_s3split() { return 0; }\nrel_rollback_advice\n"],
                              capture_output=True, text=True)
         self.assertEqual(out.returncode, 0, out.stderr)

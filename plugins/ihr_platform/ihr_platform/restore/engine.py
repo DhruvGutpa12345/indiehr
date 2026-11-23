@@ -1199,6 +1199,7 @@ class Restore:
                 result["profile_differs"] = self._profile(cursor)
             result["patients_rebuilt"] = self._patients()
             result["public"] = self._public_rows()
+            result["directory"] = self._directory()
         result["redis"] = self._redis()
         access = dict(self.op.result.get("access", {}))
         access["patients"] = len(access.get("patients", []))
@@ -1218,6 +1219,26 @@ class Restore:
                 f"{', '.join(result['profile_differs'])}: check it with ihr_hospital_profile"
             )
         return {}
+
+    def _directory(self):
+        """The hospital switcher's rows of this hospital made equal to the restored copy's
+        links (P1-T31b, attack D6). Order: load (the directory's triggers are never exported)
+        -> rename -> migrate (``ensure_directory`` installs them) -> here, after the point of
+        no return: never in migrate, which an abort can undo (``abort`` rebuilds too). A failure
+        is logged and never fails the restore: ``ihr_staff_directory --repair`` puts it right."""
+        from ihr_identity import directory
+
+        try:
+            report = directory.rebuild(self.hospital)
+        except Exception as exc:  # logged; the repair command is the way back
+            self.alert(directory.log_line(self.hospital.slug, "failed"))
+            self.say(
+                f"{self.hospital.slug}: the staff directory was not rebuilt "
+                f"({release.safe_error(exc)}): run ihr_staff_directory --repair --slug "
+                f"{self.hospital.slug}"
+            )
+            return {"outcome": "failed"}
+        return {"outcome": "done", **report}
 
     def _sessions(self, cursor):
         """Every staff session ends: kept in Postgres, so no Redis state can undo it (after
@@ -1904,6 +1925,9 @@ class Restore:
             from ihr_platform import db_roles
 
             db_roles.ensure_grants(connection, [schema], database=False)
+            # The directory's triggers in the restored copy (its migrate installed them) may
+            # have written rows from it: rebuilt from the live schema again (P1-T31b, D6)
+            self._directory()
             release.record(self.hospital)
             release.lift_restore_hold(self.hospital, self.op.pk)
         finally:

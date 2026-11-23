@@ -3,6 +3,7 @@
 from config.urls import urlpatterns as care_urlpatterns
 from django.urls import include, path, re_path
 from ihr_identity.blocked import blocked_urlpatterns
+from ihr_identity.directory import MyHospitalsView
 from ihr_identity.invitations import InvitingUserViewSet
 
 from ihr_platform import route_swaps
@@ -22,6 +23,8 @@ urlpatterns = [
     path("api/ihr/audit/", include("ihr_audit.urls")),
     # Hospital-wide admins: reference pack updates, accept or keep, the change list (P1-T15b1)
     path("api/ihr/packs/", include("ihr_refdata.urls")),
+    # The hospital switcher: the signed-in person's other hospitals (P1-T31, Q-K147)
+    path("api/ihr/my-hospitals/", MyHospitalsView.as_view(), name="ihr-my-hospitals"),
     # MRD's records grants and the Owner's totals (P1-T11b4)
     path("api/ihr/", include("ihr_access.urls")),
     path("api/ihr/", include("ihr_tenant_settings.urls")),

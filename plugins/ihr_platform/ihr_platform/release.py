@@ -395,14 +395,24 @@ def schema_ready(hospital):
     row = (
         _state_model()
         .objects.filter(pk=hospital.pk)
-        .values_list("schema_fingerprint", "upgrading_since", "restore_operation")
+        .values_list(*_STATE_FIELDS)
         .first()
     )
+    return _state_ready(row, code_fingerprint())
+
+
+_STATE_FIELDS = ("schema_fingerprint", "upgrading_since", "restore_operation")
+
+
+def _state_ready(row, fingerprint):
+    """A hospital's ``_STATE_FIELDS`` row (or None) as this build may serve it: recorded as
+    ``fingerprint``, and held neither for a release nor for a restore. The one rule of
+    ``schema_ready`` and ``servable_many``."""
     return (
         row is not None
         and row[1] is None
         and row[2] is None  # the restore hold (P1-T22b)
-        and row[0] == code_fingerprint()
+        and row[0] == fingerprint
     )
 
 
@@ -411,6 +421,41 @@ def servable(hospital):
     from ihr_platform.models import Hospital
 
     return hospital.status == Hospital.Status.ACTIVE and schema_ready(hospital)
+
+
+def servable_many(hospitals):
+    """``{hospital pk: servable(hospital)}`` for many hospitals in one state query, whatever
+    their number (the hospital switcher, P1-T31 attack D3): the same rule as ``servable()``
+    (ACTIVE, not held for a release or a restore, its schema recorded as this build's, not
+    gated by this process's role check), read from ``public`` only."""
+    from ihr_platform import db_roles
+    from ihr_platform.models import Hospital
+
+    hospitals = list(hospitals)
+    gated = db_roles.gated_schemas()
+    fingerprint = code_fingerprint()
+    asked = [
+        h.pk
+        for h in hospitals
+        if h.status == Hospital.Status.ACTIVE
+        and h.schema_name != PUBLIC
+        and h.schema_name not in gated
+    ]
+    rows = {
+        pk: row
+        for pk, *row in _state_model()
+        .objects.filter(pk__in=asked)
+        .values_list("pk", *_STATE_FIELDS)
+    }
+
+    def one(hospital):
+        if hospital.status != Hospital.Status.ACTIVE:
+            return False
+        if hospital.schema_name == PUBLIC:
+            return True
+        return _state_ready(rows.get(hospital.pk), fingerprint)
+
+    return {hospital.pk: one(hospital) for hospital in hospitals}
 
 
 def require_ready(hospital):

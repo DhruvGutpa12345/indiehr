@@ -1,0 +1,5 @@
+key,english,hindi,clinical,note,used_in,ok (your mark),your correction
+ihr_hospitals_current,Current,मौजूदा,,"Marks the hospital the person is signed in to, in the Hospitals group of the user menu. Same word as CARE's own `current`.","apps/frontend/src/components/ihr/IhrHospitalsMenu.tsx, P1-T31",,
+ihr_hospitals_menu,Hospitals,अस्पताल,,Heading of the group in the user menu that lists every hospital the person works at. Glossary: hospital = अस्पताल.,"apps/frontend/src/components/ihr/IhrHospitalsMenu.tsx, P1-T31",,
+ihr_hospitals_switch_aria,Switch to {{name}},{{name}} पर जाएँ,,Screen-reader name of a hospital item. Same pattern as ihr_go_to_overview.,"apps/frontend/src/components/ihr/IhrHospitalsMenu.tsx, P1-T31",,
+ihr_hospitals_unavailable,Not available right now,अभी उपलब्ध नहीं,,Shown beside a hospital that is temporarily closed to sign-in (an update or a restore is running).,"apps/frontend/src/components/ihr/IhrHospitalsMenu.tsx, P1-T31",,

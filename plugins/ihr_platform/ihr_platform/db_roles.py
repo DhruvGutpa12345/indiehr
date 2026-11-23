@@ -163,13 +163,18 @@ WATCH_TABLES = {
 # it calls does not, and in required mode the owner's new functions are nobody's
 # (default_findings), so without this a new hospital's helper would refuse every app write of a
 # masked identifier (second review of S3). Any other function that is not a trigger function
-# is a finding until it is listed here.
+# is a finding until it is listed here. The fourth is the staff directory's trigger function
+# (P1-T31a, ihr_identity/directory.py): SECURITY DEFINER, the owner's, so the app's writes of
+# users and links keep a public table the app may only read; a trigger fires it, nobody calls
+# it (no EXECUTE for anyone). Listing it makes this check its owner, security and search_path
+# instead of reporting an unknown definer (attack S1).
 FUNCTIONS = {
     "ihr_audit_seal_next": {APP},
     "ihr_audit_seal_run": set(),
     "ihr_audit_last4": {APP},
+    "ihr_directory_touch": set(),
 }
-SECURITY_DEFINER = {"ihr_audit_seal_next"}
+SECURITY_DEFINER = {"ihr_audit_seal_next", "ihr_directory_touch"}
 # Never the app's on any table (TRIGGER would let it attach a refusing trigger, MAINTAIN lock)
 NEVER = frozenset({"TRUNCATE", "REFERENCES", "TRIGGER", "MAINTAIN"})
 RELKINDS = ("r", "p", "v", "m", "f")

@@ -46,7 +46,7 @@ Two of the three independent designs converged on this.
 
 | Schema | Apps | Contents |
 |---|---|---|
-| `public` (shared) | `django_tenants`, `django.contrib.contenttypes` (also in tenant), **`ihr_platform`**, **`ihr_refdata_registry`**, **`ihr_abdm_router`** | `Hospital` (tenant registry), `Domain`, `Plan`, `StaffDirectoryEntry` (Keycloak `sub` ↔ hospital, no names or contacts), `TenantOperation` (provisioning, migration and export log), `PackRelease` (reference-pack registry), `HfrFacilityRoute`, `AbdmCorrelation`, optional read-only India lookups (PIN directory) that **no CARE table references** |
+| `public` (shared) | `django_tenants`, `django.contrib.contenttypes` (also in tenant), **`ihr_platform`**, **`ihr_refdata_registry`**, **`ihr_abdm_router`** | `Hospital` (tenant registry), `Domain`, `Plan`, `StaffDirectoryEntry` (table `ihr_platform_staffdirectoryentry`; Keycloak `sub` ↔ hospital, no names or contacts; P1-T31), `TenantOperation` (provisioning, migration and export log), `PackRelease` (reference-pack registry), `HfrFacilityRoute`, `AbdmCorrelation`, optional read-only India lookups (PIN directory) that **no CARE table references** |
 | `h_<10 chars>` (one per tenant) | All CARE apps and Django auth/session/admin apps, plus **`ihr_identity`**, **`ihr_tenant_settings`**, **`ihr_refdata`** (applied packs) and every future `ihr_*` domain plugin | Everything clinical, billing, stock, staff, roles, value sets and audit |
 
 **Enforced by tests:**
@@ -74,7 +74,7 @@ Two of the three independent designs converged on this.
    - **Recommended: one Keycloak client per tenant** (Q-T4), so a script on hospital A's page cannot get a token for hospital B.
    - **MFA everywhere for staff:** required at the realm level, and the token's `acr` must show MFA. *(P1-T3: Keycloak enforces `acr=mfa` per hospital client with a two-level login flow; a per-hospital gate flow refuses non-members, including through single sign-on. Details: ADR-008.)* A weak login at one hospital therefore cannot open a doctor's other hospitals through silent single sign-on.
 4. **A doctor at two hospitals:** one Keycloak account and two organisation memberships.
-   - The "Hospitals" switcher in the user menu lists their hospitals from `StaffDirectoryEntry`.
+   - The "Hospitals" switcher in the user menu lists their hospitals from `StaffDirectoryEntry` (table `ihr_platform_staffdirectoryentry`, in `public`, one row per listed link). *(P1-T31, built: each hospital schema's trigger function `ihr_directory_touch()` (owner, SECURITY DEFINER) keeps the table current when a `StaffIdentity` or its user changes; the app only reads it. A link is listed when its user is active, not deleted, not a superuser and not a service account. `GET /api/ihr/my-hospitals/` (staff cookie only) returns only name, sign-in address, `current` and `available`; the menu shows the group from two entries. Design and review: `docs/reviews/p1-t31/`.)*
    - Choosing one goes to that hospital's address, where Keycloak single sign-on logs them in silently.
    - Each origin keeps its own token. Leave, schedules and favourites are per hospital.
 5. **Adding staff** uses Keycloak's **organisation invitation**, so the person must accept. Matching is by **verified email only, never phone**, and the response is always the same "invited", so it can't be used to probe for existing accounts. CARE's own user-create and password endpoints are blocked in production.

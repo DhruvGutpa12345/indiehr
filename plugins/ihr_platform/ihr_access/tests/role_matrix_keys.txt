@@ -25,6 +25,13 @@ bills_here
 hospital_admin
 restricted
 
+[/api/ihr/my-hospitals/] cash,lab,mrd,owner,rad,rec,store,tpa
+hospitals
+hospitals[].available
+hospitals[].current
+hospitals[].name
+hospitals[].url
+
 [/api/ihr/owner/totals/ ?facility=facility&from~01-01-2026&to~31-12-2026] owner
 beds
 beds.occupied

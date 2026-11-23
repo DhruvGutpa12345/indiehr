@@ -23,6 +23,12 @@ import {
   test,
   user,
 } from "./lib/fixtures";
+import {
+  type HospitalRow,
+  MY_HOSPITALS_API,
+  expectGroup,
+  openUserMenu,
+} from "./lib/switcher";
 
 const NOT_FOR_ROLE = "This page is not part of your role";
 const AUDIT = "Audit trail";
@@ -101,6 +107,9 @@ interface Login {
   username: string;
   hospital: Hospital;
   menu: string[];
+  /** P1-T31e: linked to both hospitals, so the user menu shows the Hospitals group (the
+   * switcher is identity, not role: a restricted role sees it too) */
+  switcher?: boolean;
 }
 
 const LOGINS: Login[] = [
@@ -115,6 +124,7 @@ const LOGINS: Login[] = [
       "Users",
       "Billing > Accounts",
     ],
+    switcher: true,
   },
   {
     username: "cashier.kavya",
@@ -307,6 +317,22 @@ for (const login of LOGINS) {
       await expect(servicesShortcut.first()).toBeVisible();
     } else {
       await expect(servicesShortcut).toHaveCount(0);
+    }
+
+    if (login.switcher) {
+      // The user menu lists both hospitals (P1-T31e): the list is the API's own answer, and the
+      // current one is this hospital
+      const listed = await page.evaluate(async (path) => {
+        const res = await fetch(path, {
+          headers: { "X-IHR-CSRF": "1" },
+          credentials: "same-origin",
+        });
+        return (await res.json()) as { hospitals: HospitalRow[] };
+      }, MY_HOSPITALS_API);
+      expect(listed.hospitals, "hospitals listed").toHaveLength(2);
+      expect(await openUserMenu(page)).toBe(200);
+      await expectGroup(page, listed.hospitals);
+      await page.keyboard.press("Escape");
     }
 
     if (!HOSPITAL_ADMINS.has(login.username)) {

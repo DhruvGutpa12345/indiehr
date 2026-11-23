@@ -49,8 +49,16 @@ ROWS = (
          live={"job": "dumps"}, gauge="ihr_dump_oldest_object_timestamp_seconds", label="oldest dump",
          run="scripts/staging.sh dumps-expire --dry-run, then without (your machine)"),
     dict(kind="chore", item="hospital-restore-expire", feature=None, alert="ParkedSchemaOverdue", source="alerts-am",
-         gauge=None, label="parked schema",
+         gauge=None, label="parked schema", fired="a parked schema is over 8 days", quiet="none over 8 days",
          run="scripts/staging.sh hospital-restore-expire --dry-run, then without"),
+    # P1-T31b (attack S9): the weekly backstop of the hospital switcher's directory. It has no gauge and
+    # cannot see the check: that runs by hand in the unlogged admin one-off, so its drift lines never reach
+    # a rule. The row follows the log alert, which only a restore's failed rebuild raises; the quiet text
+    # is a reminder and says so (review C2)
+    dict(kind="chore", item="staff-directory-check", feature=None, alert="StaffDirectoryDrift", source="alerts-am",
+         gauge=None, label="staff directory", fired="a restore's directory rebuild failed in 24 hours (--repair)",
+         quiet="weekly, by hand; this row cannot see whether it was run",
+         run='scripts/staging.sh manage --operator <you> --reason "weekly check" ihr_staff_directory --check'),
     dict(kind="chore", item="logs-archive-expire", feature="logs-archive", alert="LogArchiveErasureOverdue",
          source="alerts-prom", live={"job": "logs-archive"},
          gauge="ihr_logs_archive_oldest_day_timestamp_seconds", label="oldest archived day",
@@ -171,7 +179,7 @@ def evaluate(directory, now, features):
             else:
                 context = f"{row['label']} {stamp(value)}"
         else:
-            context = "a parked schema is over 8 days" if fires else "none over 8 days"
+            context = row["fired"] if fires else row["quiet"]
         state = "OVERDUE" if fires else "ok"
         out.append((row, state, context))
     return out

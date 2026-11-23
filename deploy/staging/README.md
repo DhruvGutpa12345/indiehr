@@ -1801,6 +1801,36 @@ organisation: look at what changed (the audit trail records every write to `emr_
 put the organisation right with a superuser's care, or ask for a decision. A root admin can remove
 every other root admin, themselves included (CARE's member removal): `place` is the way back.
 
+## Staff directory (P1-T31)
+
+The hospital switcher lists a person's other hospitals from `public.ihr_platform_staffdirectoryentry`
+(a Keycloak sub and a hospital, nothing else), kept by a trigger in each hospital schema
+(`ihr_identity/directory.py`). Drift never gates a hospital: at worst a menu lists a hospital too many
+(the click ends at Keycloak's per-hospital gate) or too few.
+
+| Command | What it does |
+|---|---|
+| `scripts/staging.sh manage --operator <you> --reason "<ticket>" ihr_staff_directory --check [--slug S]` | Weekly (a row of `due`): each hospital's rows against its links, and its trigger function and triggers against this build's; rows of hospitals the switcher never lists (archived, `public`) too. Prints counts, never a sub; exit 1 and the line `ihr-directory: hospital=<slug> outcome=drift` for each finding. |
+| `scripts/staging.sh manage --operator <you> --reason "<ticket>" ihr_staff_directory --repair [--slug S]` | As the owner: puts the function and triggers back, rebuilds each hospital's rows under the trigger's per-person locks, deletes the other hospitals' rows, then checks again. A hospital held by a restore is skipped (its reconcile rebuilds it). |
+
+- **Restores:** the directory's triggers are never in a dump; the restore's migrate installs them and its
+  reconcile step rebuilds the hospital's rows from the restored copy (never in migrate, which `--abort` can
+  undo; `--abort` rebuilds them from the live schema). A failed rebuild writes
+  `ihr-directory: hospital=<slug> outcome=failed` and the restore goes on: run `--repair`.
+- **StaffDirectoryDrift** (`deploy/logs/alerts/directory.yml`, warning): a `drift` or `failed` line in 24
+  hours from a logged container (the restore's one-off). The `manage` subcommand runs in the unlogged admin
+  one-off, so the weekly `--check`'s own lines and exit code are read there and its `drift` lines never reach
+  the alert: in staging it fires on a restore's failed rebuild only. The `due` row is a weekly reminder; it
+  cannot tell whether the check was run.
+- **`--repair`** takes each hospital's provisioning lock, skips (and does not check) a hospital held by a
+  restore or a release or on another build's schema, and catches each hospital's failure (a busy lock) with
+  a `failed` line and exit 1 at the end; the rest are still repaired. `--check` skips a hospital held by a
+  restore.
+- **No rollback across P1-T31:** a release whose kept stack predates the directory (its restore allow-list
+  does not know `ihr_directory_touch`) is refused by `rollback`, before anything changes: its database-role
+  check would report the definer function as unknown and its restore would refuse every newer dump. Fix
+  forward.
+
 ## Operator access record (P1-T27)
 
 Design: `docs/reviews/p1-t27/design.md`, and binding where they differ its attack's "Orchestrator
@@ -1981,7 +2011,7 @@ and the owner says so; then delete the header of the list, not the list.
 ### `scripts/staging.sh due`
 
 The operator's due list: the chores (`dumps-expire`, `hospital-restore-expire`, `logs-archive-expire`),
-the restore drill and the key checks (the three client keys, the two public certificates). It writes
+the weekly staff directory check (`ihr_staff_directory --check`, P1-T31), the restore drill and the key checks (the three client keys, the two public certificates). It writes
 nothing, opens **no operator session** (it reaches none of the five wrappers: a static test and a stack
 test prove no `ihr-operator` line) and asks only Prometheus's own container, three questions (the firing
 alerts, the plain gauges the alerts read, Alertmanager's alert list for the log alert), saved in a private
@@ -1989,7 +2019,7 @@ temporary folder removed on the way out; `scripts/ops_due.py` (shipped by `scrip
 
 - A row is `OVERDUE` exactly when the alert it follows is firing now (`DumpErasureOverdue`,
   `ParkedSchemaOverdue`, `LogArchiveErasureOverdue`, `DumpDrillOverdue`, `ClientKeyAge` or `ClientKeyMissing`,
-  `TlsCertExpiry`),
+  `TlsCertExpiry`, `StaffDirectoryDrift`),
   so the list and the inbox never disagree; `ok` otherwise; `off` when the feature is not switched on here
   (`IHR_DUMPS`, `IHR_LOGS_ARCHIVE`); `UNREADABLE` when a source did not answer, or the client key check is stale
   (`ClientKeyCheckStale`), or the target that exports a row's gauge (the dumper, the log archiver, the public

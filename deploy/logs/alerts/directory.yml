@@ -1,0 +1,38 @@
+# The staff directory behind the hospital switcher (P1-T31; plugins/ihr_platform/ihr_identity/
+# directory.py; design docs/reviews/p1-t31/design.md §3.3, attack.md "Orchestrator decision" items
+# 3-5). One fixed line, never a person's sub:
+#   "ihr-directory: hospital=<slug> outcome=<drift|failed>"
+# - failed: a single-hospital restore could not rebuild the hospital's directory rows in its
+#   reconcile step or its abort (logged; the restore itself goes on: attack D6). Written by the
+#   restore's one-off ("migrate").
+# - drift: `manage.py ihr_staff_directory --check` found rows that differ from the hospital's
+#   links, or a trigger or function that is not this build's. It prints this line on its own
+#   stderr only: in the unlogged admin one-off it reaches no rule, so in staging this alert
+#   fires on a restore's `failed` line alone. The operator's weekly check
+#   (`scripts/staging.sh manage --operator <you> --reason "<ticket>" ihr_staff_directory --check`,
+#   a row of `scripts/staging.sh due`) runs in the unlogged admin one-off: the operator reads its
+#   lines and exit code there; only a run in a logged container reaches this rule.
+# Drift never gates a hospital (attack D1): its switcher menu may list a hospital too many (the
+# click then ends at Keycloak's per-hospital gate) or too few, until repaired.
+# StaffDirectoryDrift: one such line in 24 hours. What to do: as the operator, run
+#   `scripts/staging.sh manage --operator <you> --reason "<ticket>" ihr_staff_directory --repair --slug <it>`
+# then `... --check`.
+# Forgery (as root.yml, S1): only container lines of the restore's one-off (never the web
+# backend, whose access log prints request paths anyone can choose), and only a whole line that is
+# exactly ours with a slug-shaped hospital. A forged line can at most raise a false alert naming
+# a slug: the label is never put into the action's command. Tests: scripts/check-logs.py (cases
+# in deploy/logs/tests/alert-cases.json) and scripts/test_staging_logs.py.
+groups:
+  - name: staff-directory
+    type: vlogs
+    interval: 1m
+    rules:
+      - alert: StaffDirectoryDrift
+        expr: '_time:24h source:=container service:in(migrate) "ihr-directory: hospital=" | extract_regexp "^ihr-directory: hospital=(?P<hospital>[a-z][a-z0-9-]{2,30}) outcome=(?:drift|failed)$" | filter hospital:~"^[a-z][a-z0-9-]{2,30}$" | stats by (hospital) count() as problems'
+        labels:
+          severity: warning
+          notify: anytime
+          service: directory
+        annotations:
+          summary: 'Hospital {{ $labels.hospital }}: its staff directory (the hospital switcher) differs from its links or could not be rebuilt ({{ $value }} times in 24 hours)'
+          action: 'Run scripts/staging.sh manage --operator <you> --reason "<ticket>" ihr_staff_directory --repair --slug <the hospital named above>, then the same with --check instead of --repair (deploy/staging/README.md, Staff directory)'

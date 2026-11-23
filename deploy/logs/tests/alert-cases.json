@@ -1,5 +1,5 @@
 {
- "_comment": "scripts/check-logs.py: these journal entries go through the real redaction steps into a throwaway VictoriaLogs, then vmalert runs deploy/logs/alerts/ on them. 'expect' lists, per alert, the values of its key label it must fire (or wait to fire) for, and no others: client_ip, hospital for PackApplyFailed, PackFacilityDeferred, HospitalNotServed, ReleaseWindowOverrun, AuditHospitalCheckFailed, AuditHospitalSealLate, DumpHospitalFailed, DumpHospitalHeld HospitalRestoreFailed and HospitalRootProblem, schema for ParkedSchemaOverdue, or reason for DatabaseRoleRefused (hospital for BatchRequestRefused, StaffResetRefused and the three MrdRecords alerts). P1-T27a: PrivilegedLoginUnrecorded is compared by its application name (app) and OperatorSessionRefused by its refusal code (why), one value per firing group (P1-T27 review O9; the redaction cases are stored too: their e-mail-named postgres login and their shared-operator refusal fire as well); KeycloakAdminCredentialChange the admin's client_ip. The live proof's real PG 18.6 lines (docs/reviews/p1-t27/live-proof.md F1-F3): a postgres and a keycloak login with no application name (an empty app) and pg_isready must fire; the backup schedule's ihr-backup and Keycloak's ihr-keycloak must not.",
+ "_comment": "scripts/check-logs.py: these journal entries go through the real redaction steps into a throwaway VictoriaLogs, then vmalert runs deploy/logs/alerts/ on them. 'expect' lists, per alert, the values of its key label it must fire (or wait to fire) for, and no others: client_ip, hospital for PackApplyFailed, PackFacilityDeferred, HospitalNotServed, ReleaseWindowOverrun, AuditHospitalCheckFailed, AuditHospitalSealLate, DumpHospitalFailed, DumpHospitalHeld HospitalRestoreFailed, HospitalRootProblem and StaffDirectoryDrift, schema for ParkedSchemaOverdue, or reason for DatabaseRoleRefused (hospital for BatchRequestRefused, StaffResetRefused and the three MrdRecords alerts). P1-T27a: PrivilegedLoginUnrecorded is compared by its application name (app) and OperatorSessionRefused by its refusal code (why), one value per firing group (P1-T27 review O9; the redaction cases are stored too: their e-mail-named postgres login and their shared-operator refusal fire as well); KeycloakAdminCredentialChange the admin's client_ip. The live proof's real PG 18.6 lines (docs/reviews/p1-t27/live-proof.md F1-F3): a postgres and a keycloak login with no application name (an empty app) and pg_isready must fire; the backup schedule's ihr-backup and Keycloak's ihr-keycloak must not.",
  "fixtures": [
   {
    "count": 1,
@@ -2431,6 +2431,76 @@
   {
    "count": 1,
    "record": {
+    "MESSAGE": "ihr-directory: hospital=alpha outcome=failed",
+    "_HOSTNAME": "srv1",
+    "PRIORITY": "3",
+    "CONTAINER_NAME": "indiehr-staging-migrate-1",
+    "COM_DOCKER_COMPOSE_SERVICE": "migrate",
+    "_TRANSPORT": "journal",
+    "_COMM": "dockerd",
+    "_UID": "0",
+    "_SYSTEMD_UNIT": "docker.service"
+   }
+  },
+  {
+   "count": 1,
+   "record": {
+    "MESSAGE": "ihr-directory: hospital=gamma outcome=drift",
+    "_HOSTNAME": "srv1",
+    "PRIORITY": "3",
+    "CONTAINER_NAME": "indiehr-staging-migrate-1",
+    "COM_DOCKER_COMPOSE_SERVICE": "migrate",
+    "_TRANSPORT": "journal",
+    "_COMM": "dockerd",
+    "_UID": "0",
+    "_SYSTEMD_UNIT": "docker.service"
+   }
+  },
+  {
+   "count": 1,
+   "record": {
+    "MESSAGE": "ihr-directory: hospital=delta outcome=repaired",
+    "_HOSTNAME": "srv1",
+    "PRIORITY": "3",
+    "CONTAINER_NAME": "indiehr-staging-migrate-1",
+    "COM_DOCKER_COMPOSE_SERVICE": "migrate",
+    "_TRANSPORT": "journal",
+    "_COMM": "dockerd",
+    "_UID": "0",
+    "_SYSTEMD_UNIT": "docker.service"
+   }
+  },
+  {
+   "count": 1,
+   "record": {
+    "MESSAGE": "ihr-directory: hospital=forged outcome=drift",
+    "_HOSTNAME": "srv1",
+    "PRIORITY": "6",
+    "CONTAINER_NAME": "indiehr-staging-backend-1",
+    "COM_DOCKER_COMPOSE_SERVICE": "backend",
+    "_TRANSPORT": "journal",
+    "_COMM": "dockerd",
+    "_UID": "0",
+    "_SYSTEMD_UNIT": "docker.service"
+   }
+  },
+  {
+   "count": 1,
+   "record": {
+    "MESSAGE": "10.203.0.9 - - [23/Nov/2026:10:00:00 +0530] \"GET /api/ihr-directory: hospital=forged2 outcome=drift\" 404 179",
+    "_HOSTNAME": "srv1",
+    "PRIORITY": "6",
+    "CONTAINER_NAME": "indiehr-staging-backend-1",
+    "COM_DOCKER_COMPOSE_SERVICE": "backend",
+    "_TRANSPORT": "journal",
+    "_COMM": "dockerd",
+    "_UID": "0",
+    "_SYSTEMD_UNIT": "docker.service"
+   }
+  },
+  {
+   "count": 1,
+   "record": {
     "MESSAGE": "2026-11-22 04:30:00.123 UTC [101] LOG:  connection authorized: user=ihr_owner database=ihr application_name=manage:shell",
     "_HOSTNAME": "srv1",
     "PRIORITY": "6",
@@ -3098,6 +3168,10 @@
   "KeycloakAdminCredentialChange": [
    "10.203.0.10",
    "10.203.0.9"
+  ],
+  "StaffDirectoryDrift": [
+   "alpha",
+   "gamma"
   ]
  },
  "expect_state": {
@@ -3129,6 +3203,7 @@
   "HospitalRootProblem": "firing",
   "PrivilegedLoginUnrecorded": "firing",
   "OperatorSessionRefused": "firing",
-  "KeycloakAdminCredentialChange": "firing"
+  "KeycloakAdminCredentialChange": "firing",
+  "StaffDirectoryDrift": "firing"
  }
 }

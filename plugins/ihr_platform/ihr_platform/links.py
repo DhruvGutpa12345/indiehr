@@ -28,7 +28,7 @@ def frontend_base_url():
     if domain is None:
         msg = f"Hospital {schema} has no web address."
         raise ImproperlyConfigured(msg)
-    return settings.IHR_FRONTEND_URL_TEMPLATE.format(domain=domain)
+    return origin_for(domain)
 
 
 def hospital_origins():
@@ -39,6 +39,11 @@ def hospital_origins():
     domains = Domain.objects.filter(tenant__schema_name=schema).values_list(
         "domain", flat=True
     )
-    return {
-        settings.IHR_FRONTEND_URL_TEMPLATE.format(domain=d).rstrip("/") for d in domains
-    }
+    return {origin_for(d) for d in domains}
+
+
+def origin_for(domain):
+    """The browser origin of one of a hospital's web addresses (``Domain.domain``), with no
+    trailing slash: the one place an address becomes an origin (P1-T31 attack Z6). The hospital
+    switcher builds each hospital's sign-in link from it (``ihr_identity.directory``)."""
+    return settings.IHR_FRONTEND_URL_TEMPLATE.format(domain=domain).rstrip("/")

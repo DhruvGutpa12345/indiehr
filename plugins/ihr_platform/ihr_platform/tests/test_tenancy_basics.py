@@ -51,6 +51,9 @@ PUBLIC_TABLE_ALLOW_LIST = {
     "ihr_restore_record",
     "ihr_restore_superseded_seal",
     "ihr_restore_superseded_entry",
+    # Hospital switcher (P1-T31): which hospitals a Keycloak person may switch to (a sub and a
+    # hospital, no names, contacts or patients); written only by each hospital's definer trigger
+    "ihr_platform_staffdirectoryentry",
 }
 SECOND_DOMAIN = "second.testserver"
 

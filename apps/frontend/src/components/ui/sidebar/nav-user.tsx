@@ -20,6 +20,9 @@ import {
 } from "@/components/ui/sidebar";
 import { NavigationLink } from "@/components/ui/sidebar/nav-main";
 
+// IndieHR P1-T31: the Hospitals group of the staff user menu (see docs/UPSTREAM_PATCHES.md)
+import { IhrHospitalsMenu } from "@/components/ihr/IhrHospitalsMenu";
+
 import { Avatar } from "@/components/Common/Avatar";
 
 import { useAppVersion } from "@/hooks/useAppVersion";
@@ -129,6 +132,9 @@ export function FacilityNavUser({
                 </DropdownMenuItem>
               ))}
             </DropdownMenuGroup>
+            {/* IndieHR P1-T31: the person's other hospitals (shown from two; renders its own
+                separator) */}
+            <IhrHospitalsMenu />
             <DropdownMenuSeparator />
             <DropdownMenuItem onClick={signOut}>
               <LogOut />

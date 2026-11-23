@@ -492,3 +492,31 @@ class PostOffice(models.Model):
 
     def __str__(self):
         return f"{self.pincode} {self.name}"
+
+
+class StaffDirectoryEntry(models.Model):
+    """Which hospitals a Keycloak person may switch to (TENANCY_DESIGN §4.4, P1-T31): one row
+    per *listed* link (no row: not listed). A link is listed when, in that hospital's schema,
+    a StaffIdentity with this sub points to a user who is active, not deleted, not a
+    superuser and not a service account (Q-K145 A).
+
+    Written only by each hospital schema's trigger function ``ihr_directory_touch()`` (owner,
+    SECURITY DEFINER; ihr_identity/directory.py), which finds the hospital from the schema
+    that fired it, never from a row's value, and by the owner-run first fill and repair; the
+    app only reads it (public_tables.txt: select). No names or contacts: a sub and a hospital.
+    """
+
+    keycloak_sub = models.UUIDField()
+    hospital = models.ForeignKey(Hospital, on_delete=models.CASCADE, related_name="+")
+
+    class Meta:
+        # Leads with keycloak_sub: the switcher's one query reads by sub (attack D8)
+        constraints = [
+            models.UniqueConstraint(
+                fields=["keycloak_sub", "hospital"],
+                name="ihr_directory_one_per_hospital",
+            )
+        ]
+
+    def __str__(self):
+        return f"{self.keycloak_sub} @ {self.hospital_id}"

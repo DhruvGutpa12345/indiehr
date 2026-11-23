@@ -5,6 +5,7 @@ import type {
   AuditList,
   AuditStatus,
 } from "@/Utils/ihr/audit";
+import type { HospitalsAnswer } from "@/Utils/ihr/hospitals";
 import type {
   PackDecisionBody,
   PackDetail,
@@ -128,5 +129,17 @@ export const ihrPacksApi = {
     path: "/api/ihr/packs/history/",
     method: HttpMethod.GET,
     TRes: Type<PackHistoryList>(),
+  },
+} as const;
+
+/**
+ * The hospital switcher's list (P1-T31): the signed-in person's own hospitals, built by the
+ * backend. Read by `IhrHospitalsMenu`, which asks silently (a passive menu never toasts).
+ */
+export const ihrHospitalsApi = {
+  list: {
+    path: "/api/ihr/my-hospitals/",
+    method: HttpMethod.GET,
+    TRes: Type<HospitalsAnswer>(),
   },
 } as const;

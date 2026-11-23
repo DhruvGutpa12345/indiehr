@@ -2384,7 +2384,7 @@ rel_serve_outgoing_advice() {  # rel_serve_outgoing_advice: at stage 1 (held, wo
 rel_rollback_advice() {  # rel_rollback_advice: the rollbacks `rollback` accepts now, found the way
   # it finds them (release_log.py plan with the running build, then rel_roles_guard), so advice
   # never names one it refuses (D3/O4; review C1)
-  local running out ways=() presplit=0 pres3=0 state t
+  local running out ways=() presplit=0 pres3=0 predir=0 state t
   # Before the move of the roles no rollback is accepted (rel_roles_guard): the build that ran
   # serves again on its own containers. The database's own answer first; unreadable, what this
   # release knows (REL_MOVE: the move was still to come)
@@ -2408,18 +2408,22 @@ rel_rollback_advice() {  # rel_rollback_advice: the rollbacks `rollback` accepts
     t="$(sed -n 's/^target=//p' <<< "$out")"
     if rel_target_presplit "$t"; then presplit=1
     elif rel_target_pre_s3split "$t"; then pres3=1
+    elif rel_target_pre_directory "$t"; then predir=1
     else ways+=("scripts/staging.sh rollback (no --restore: it lifts the holds and clears the window; nothing is lost)"); fi
   fi
   if out="$(rlog plan "$REL_LOG" "$REL_ATTEMPT" "$running" --restore 2>/dev/null)"; then
     t="$(sed -n 's/^target=//p' <<< "$out")"
     if rel_target_presplit "$t"; then presplit=1
     elif rel_target_pre_s3split "$t"; then pres3=1
+    elif rel_target_pre_directory "$t"; then predir=1
     else ways+=("scripts/staging.sh rollback --restore (back to the window's restore point $(sed -n 's/^restore_point=//p' <<< "$out"); what was written since is lost)"); fi
   fi
   if ((${#ways[@]} == 0 && presplit)); then
     echo "no rollback is accepted from here: the release before this one predates the split database roles (P1-T19b). Fix forward$(rel_serve_outgoing_advice)"
   elif ((${#ways[@]} == 0 && pres3)); then
     echo "no rollback is accepted from here: the release before this one predates the split object-storage keys (P1-T20b). Fix forward$(rel_serve_outgoing_advice)"
+  elif ((${#ways[@]} == 0 && predir)); then
+    echo "no rollback is accepted from here: the release before this one predates the staff directory (P1-T31). Fix forward$(rel_serve_outgoing_advice)"
   elif ((${#ways[@]} == 0)); then
     echo "no rollback is accepted from here (scripts/staging.sh rollback says why): fix forward$(rel_serve_outgoing_advice)"
   elif ((${#ways[@]} == 1)); then
@@ -3224,6 +3228,15 @@ rel_target_pre_s3split() {  # rel_target_pre_s3split <target tag>: its kept stac
   text="$(tar -xzOf "$REL_DIR/stack-$1.tgz" deploy/s3/start.sh 2>/dev/null || true)"
   [[ "$text" == *IHR_S3_CARE_KEY* || "$text" != *IHR_S3_FILES_KEY* ]]
 }
+rel_target_pre_directory() {  # rel_target_pre_directory <target tag>: its kept stack predates the
+  # staff directory (P1-T31, attack S4: its restore allow-list, restore/package.py, does not know
+  # ihr_directory_touch). Its db_roles would report the directory's definer function as unknown
+  # and its restore would refuse every newer dump. Never dies
+  local text
+  [[ -f "$REL_DIR/stack-$1.tgz" ]] || return 1
+  text="$(tar -xzOf "$REL_DIR/stack-$1.tgz" plugins/ihr_platform/ihr_platform/restore/package.py 2>/dev/null || true)"
+  [[ "$text" != *ihr_directory_touch* ]]
+}
 rel_outgoing_unmigrated() {  # a release is in progress whose migrations have not started, and the
   # backend that runs is not this stack's build (the outgoing one, which held the hospitals): its
   # holds are lifted by that build, never by the new build on the old schema (D10)
@@ -3248,6 +3261,9 @@ rel_roles_guard() {  # rel_roles_guard <target tag>: never back to a release fro
   fi
   if rel_target_pre_s3split "$1"; then
     die "refused: release $1 predates the split object-storage keys (P1-T20b): its backend would sign patient files with the pictures key, its gateway knows only the retired combined key, and its set-up would make the pictures bucket public again. Fix forward (deploy/staging/README.md, Releases); nothing was changed"
+  fi
+  if rel_target_pre_directory "$1"; then
+    die "refused: release $1 predates the staff directory (P1-T31): its database-role check would report the directory's trigger function as unknown, and its restore would refuse every newer hospital dump. Fix forward (deploy/staging/README.md, Releases); nothing was changed"
   fi
 }
 rollback() {  # rollback [--restore] [--operator NAME]: back to the release before the running one

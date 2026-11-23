@@ -70,6 +70,7 @@ ACCOUNT_SHOW = SRC / "pages/Facility/billing/account/AccountShow.tsx"
 CHARGE_ITEMS_TABLE = SRC / "pages/Facility/billing/account/components/ChargeItemsTable.tsx"
 USER_SUMMARY = SRC / "components/Users/UserSummary.tsx"
 USER_FORM = SRC / "components/Users/UserForm.tsx"
+NAV_USER = SRC / "components/ui/sidebar/nav-user.tsx"
 BED_CHARGE_ITEMS_TABLE = SRC / "pages/Facility/billing/account/components/BedChargeItemsTable.tsx"
 BOOKINGS_LIST = SRC / "pages/Appointments/BookAppointment/BookingsList.tsx"
 UPCOMING_APPOINTMENT = SRC / "pages/Appointments/components/UpcomingAppointmentCard.tsx"
@@ -105,6 +106,7 @@ FILES = [
     BED_CHARGE_ITEMS_TABLE,
     USER_SUMMARY,
     USER_FORM,
+    NAV_USER,
     BOOKINGS_LIST,
     UPCOMING_APPOINTMENT,
     FRONT_DESK,
@@ -209,6 +211,11 @@ STAFF_ANCHORS = [
 # (file, regex that must NOT match, why): a sync that brings it back reopens a removed path
 STAFF_ABSENT = [
     (USER_FORM, r'value="immediate"', "the removed 'set password now' radio (an admin never sets a password)"),
+]
+# P1-T31: the hospital switcher's one mount in the staff user menu (an upstream sync could drop it)
+SWITCHER_ANCHORS = [
+    (NAV_USER, r"<IhrHospitalsMenu\b", "the Hospitals group in the user menu"),
+    (NAV_USER, r"import \{ IhrHospitalsMenu \}", "its import"),
 ]
 ACCOUNT_TABS_UPSTREAM = re.compile(r"export const ACCOUNT_TABS = \[([^\]]*)\]")
 ACCOUNT_TAB_SLUGS_OURS = re.compile(r"ACCOUNT_TAB_SLUGS[^=]*=\s*\{([^}]*)\}")
@@ -389,6 +396,14 @@ def check(root: Path = ROOT) -> list:
     for rel, pattern, why in STAFF_ABSENT:
         if texts[rel] and re.search(pattern, texts[rel]):
             problems.append(f"{rel}: `{pattern}` is back ({why})")
+    # 3e. the hospital switcher's mount in the user menu (P1-T31)
+    for rel, pattern, why, *least in SWITCHER_ANCHORS:
+        needed = least[0] if least else 1
+        found = len(re.findall(pattern, texts[rel])) if texts[rel] else needed
+        if found < needed:
+            problems.append(
+                f"{rel}: `{pattern}` found {found} time(s), expected {needed} ({why})"
+            )
     upstream_tabs = ACCOUNT_TABS_UPSTREAM.search(texts[ACCOUNT_SHOW])
     ours_tabs = ACCOUNT_TAB_SLUGS_OURS.search(texts[FRONT_DESK])
     if texts[ACCOUNT_SHOW] and texts[FRONT_DESK]:

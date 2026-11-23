@@ -367,6 +367,18 @@ class CheckIhrFrontend(unittest.TestCase):
         self.edit(cif.IHR_ROUTES, "watcherScope(key)", "null")
         self.assertProblem(cif.IHR_ROUTES, "facility-less")
 
+    def test_the_hospital_switcher_mount_is_anchored(self):
+        # P1-T31: a sync that drops the tag or its import from the staff user menu is caught
+        self.edit(cif.NAV_USER, "<IhrHospitalsMenu />", "")
+        self.assertProblem(cif.NAV_USER, "the Hospitals group in the user menu")
+        self.setUp()
+        self.edit(
+            cif.NAV_USER,
+            'import { IhrHospitalsMenu } from "@/components/ihr/IhrHospitalsMenu";',
+            "",
+        )
+        self.assertProblem(cif.NAV_USER, "its import")
+
     def test_slug_copy_must_equal_the_backend_file_byte_for_byte(self):
         copy = self.root / cif.SLUGS_COPY
         copy.write_bytes(copy.read_bytes().rstrip(b"\n"))

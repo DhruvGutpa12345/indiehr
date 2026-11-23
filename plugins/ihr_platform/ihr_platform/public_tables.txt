@@ -21,6 +21,7 @@ ihr_platform_staffinvitation dml hospitals' Add user writes invitations (backend
 ihr_platform_staffaccessrequest dml hospital admins' requests (backend); the staff worker carries them out (app)
 ihr_platform_pindirectoryload select the PIN directory's load history: written only by ihr_load_pincodes (admin, owner)
 ihr_platform_postoffice select the PIN directory: written only by ihr_load_pincodes (admin, owner); staff look PIN codes up
+ihr_platform_staffdirectoryentry select the hospital switcher's directory (P1-T31): written only by each hospital schema's trigger function ihr_directory_touch() (owner, SECURITY DEFINER; the hospital is the schema that fired it) and the owner-run first fill and repair; the app reads only the signed-in person's rows
 ihr_refdata_registry_packrelease select pack releases: recorded only by pack apply (migrate one-shot, ihr_fleet_run, provisioning; owner)
 ihr_terminology_codesystemversion select read-only terminology (ADR-016): written only by ihr_terminology_load (admin, owner)
 ihr_terminology_concept select read-only terminology (ADR-016): its write guard is a session flag any session can set, so the privilege is the control

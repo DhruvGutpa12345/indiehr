@@ -215,7 +215,7 @@ class OpsDue(unittest.TestCase):
         rows = rows_of(out.stdout)
         self.assertEqual(sorted(rows), sorted([
             "dumps-expire", "hospital-restore-expire", "logs-archive-expire", "hospital-restore-drill",
-            "client key backend", "client key onboarding", "client key staff",
+            "staff-directory-check", "client key backend", "client key onboarding", "client key staff",
             "TLS certificate auth", "TLS certificate status"]))
         self.assertEqual({s for s, _ in rows.values()}, {"ok"})
         # the plain gauge the alert reads, as a date in IST (oldest dump 20 days before: 03-11-2026)
@@ -232,6 +232,7 @@ class OpsDue(unittest.TestCase):
         self.assertIn("scripts/staging.sh hospital-restore-drill", rows["hospital-restore-drill"][1])
         self.assertIn("scripts/staging.sh keys rotate onboarding", rows["client key onboarding"][1])
         self.assertIn("scripts/staging.sh cert", rows["TLS certificate status"][1])
+        self.assertIn("ihr_staff_directory --check", rows["staff-directory-check"][1])
 
     def test_a_firing_alert_makes_its_row_overdue_and_exit_1(self):
         out = self.fx(alerts=[firing("DumpErasureOverdue", service="dumper")]).render()
@@ -264,6 +265,33 @@ class OpsDue(unittest.TestCase):
         # the schema name never reaches the output (nothing personal)
         self.assertNotIn("ihr_parked", out.stdout)
         self.assertNotIn("abcdef0123", out.stdout)
+
+    def test_the_staff_directory_check_follows_its_log_alert(self):
+        """P1-T31b: the weekly directory check's row follows StaffDirectoryDrift (Alertmanager's
+        list, as the other log alert); the hospital never reaches the output."""
+        rows = rows_of(self.fx().render().stdout)
+        self.assertEqual(rows["staff-directory-check"][0], "ok")
+        self.assertIn("weekly", rows["staff-directory-check"][1])
+        out = self.fx(am=[am_alert("StaffDirectoryDrift", hospital="alpha")]).render()
+        self.assertEqual(out.returncode, 1)
+        rows = rows_of(out.stdout)
+        self.assertEqual([i for i, (s, _) in rows.items() if s == "OVERDUE"], ["staff-directory-check"])
+        self.assertIn("--repair", rows["staff-directory-check"][1])
+        self.assertNotIn("alpha", out.stdout)
+
+    def test_the_staff_directory_row_does_not_claim_a_drift_signal_it_cannot_get(self):
+        """C2/C4: the weekly check runs in the unlogged admin one-off, so only a restore's
+        failed rebuild reaches StaffDirectoryDrift: the row says so, and its quiet text never
+        says that no drift was reported."""
+        rows = rows_of(self.fx().render().stdout)
+        quiet = rows["staff-directory-check"][1]
+        self.assertNotIn("no drift", quiet)
+        self.assertIn("by hand", quiet)
+        fired = rows_of(
+            self.fx(am=[am_alert("StaffDirectoryDrift", hospital="alpha")]).render().stdout
+        )["staff-directory-check"][1]
+        self.assertIn("restore", fired)
+        self.assertNotIn("drift", fired)
 
     def test_an_unreadable_source_exits_2_and_wins_over_overdue(self):
         out = self.fx(alerts=[firing("DumpErasureOverdue")], drop=("gauges",)).render()
@@ -448,7 +476,7 @@ class OpsDue(unittest.TestCase):
         names = {r["alert"] for _, r in rules()}
         src = OPS_DUE.read_text()
         for alert in ("DumpErasureOverdue", "ParkedSchemaOverdue", "LogArchiveErasureOverdue", "DumpDrillOverdue",
-                      "ClientKeyAge", "ClientKeyCheckStale", "TlsCertExpiry"):
+                      "ClientKeyAge", "ClientKeyCheckStale", "TlsCertExpiry", "StaffDirectoryDrift"):
             self.assertIn(alert, names)
             self.assertIn(alert, src)
 

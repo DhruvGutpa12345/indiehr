@@ -335,6 +335,21 @@ class AppRoleTests(AppRoleCase):
             )
         self.assertEqual(row, (True, True))
 
+    def test_the_staff_directory_is_read_only_for_the_app(self):
+        """P1-T31a: the directory behind the hospital switcher is ``select`` for ihr_app; only
+        each hospital's trigger function (SECURITY DEFINER, the owner's) writes it."""
+        self.allowed("SELECT keycloak_sub FROM public.ihr_platform_staffdirectoryentry")
+        self.refused(
+            "INSERT INTO public.ihr_platform_staffdirectoryentry (keycloak_sub, "
+            "hospital_id) SELECT gen_random_uuid(), id FROM public.ihr_platform_hospital "
+            "LIMIT 1"
+        )
+        self.refused(
+            "UPDATE public.ihr_platform_staffdirectoryentry SET hospital_id = 1"
+        )
+        self.refused("DELETE FROM public.ihr_platform_staffdirectoryentry")
+        self.refused(f"SELECT {TEST_SCHEMA}.ihr_directory_touch()")
+
     def test_seals_are_made_only_by_the_database(self):
         """S3: no forged seal; the app seals through ihr_audit_seal_next() alone."""
         from ihr_audit.seal import seal_once, verify
@@ -967,6 +982,26 @@ class GrantsTests(AppRoleCase):
                     found_gated,
                 )
                 self.assertEqual(fetch("SELECT current_user")[0], db_roles.APP)
+
+    def test_the_staff_directory_definer_is_in_the_model(self):
+        """P1-T31a (attack S1): ``ihr_directory_touch`` is a SECURITY DEFINER the model knows,
+        so it is no "definer the model does not know" problem; made INVOKER, or given to
+        ihr_app, it is a finding."""
+        name = f"{TEST_SCHEMA}.ihr_directory_touch"
+        texts = [str(f) for f in db_roles.report(connection, [TEST_SCHEMA])]
+        self.assertFalse([t for t in texts if "ihr_directory_touch" in t], texts)
+        with as_owner(), transaction.atomic():
+            with connection.cursor() as cursor:
+                cursor.execute(f"ALTER FUNCTION {name}() SECURITY INVOKER")
+                cursor.execute(f"GRANT EXECUTE ON FUNCTION {name}() TO ihr_app")
+            texts = [str(f) for f in db_roles.report(connection, [TEST_SCHEMA])]
+            transaction.set_rollback(True)
+        self.assertTrue(
+            any(f"{name}: must be SECURITY DEFINER" in t for t in texts), texts
+        )
+        self.assertTrue(
+            any(f"{name}(): ihr_app has EXECUTE" in t for t in texts), texts
+        )
 
     def test_a_broken_placement_guard_gates_its_hospital(self):
         """P1-T11b1, second review of C1: the role placement guard is a control. Disabled,

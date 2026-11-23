@@ -44,8 +44,9 @@ FORMAT = "ihr-restore-package/1"
 SCHEMA_RE = re.compile(r"^h_[a-z0-9]{10}$")
 # Our functions and triggers in a hospital schema (ihr_audit 0001, install.py, seal.py; the role
 # placement guard, ihr_access/placement.py, P1-T11b1; the answered-form guard,
-# ihr_refdata/forms_guard.py, P1-T15b2b): the only ones a dump may hold. None of them is ever
-# exported (this build's code installs them: the trail's in the load, the two guards by the
+# ihr_refdata/forms_guard.py, P1-T15b2b; the staff directory's trigger, ihr_identity/directory.py,
+# P1-T31): the only ones a dump may hold. None of them is ever exported (this build's code
+# installs them: the trail's in the load, the two guards and the directory trigger by the
 # restore's migrate, after the data, so restored memberships and answers are never re-judged).
 OUR_FUNCTIONS = frozenset(
     {
@@ -59,6 +60,7 @@ OUR_FUNCTIONS = frozenset(
         "ihr_role_placement_guard",
         "ihr_questionnaire_guard",
         "ihr_questionnaire_answer_guard",
+        "ihr_directory_touch",
     }
 )
 OUR_TRIGGERS = {
@@ -71,6 +73,9 @@ OUR_TRIGGERS = {
     "ihr_questionnaire_guard": "ihr_questionnaire_guard",
     "ihr_questionnaire_answer_guard": "ihr_questionnaire_answer_guard",
     "ihr_questionnaire_answer_no_truncate": "ihr_questionnaire_answer_guard",
+    "ihr_directory_link": "ihr_directory_touch",
+    "ihr_directory_user": "ihr_directory_touch",
+    "ihr_directory_truncate": "ihr_directory_touch",
 }
 TABLE_KINDS = ("r",)
 CHUNK = 1 << 20

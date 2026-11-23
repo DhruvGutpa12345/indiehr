@@ -30,6 +30,7 @@ from django.db import OperationalError, connection, connections, transaction
 from django.test import SimpleTestCase, TestCase, override_settings
 from django.utils import timezone
 from django_tenants.utils import schema_context
+from ihr_identity import directory
 
 from ihr_platform import celery_gate, fleet, release
 from ihr_platform.models import (
@@ -38,6 +39,7 @@ from ihr_platform.models import (
     HospitalSchemaState,
     RetiredAddress,
     StaffAccessRequest,
+    StaffDirectoryEntry,
     StaffInvitation,
     TenantOperation,
 )
@@ -250,6 +252,9 @@ class RestoreEndToEnd(SimpleTestCase):
             cls.new_user = User.objects.create(
                 username="after-the-dump", first_name="After", last_name="Dump"
             )
+            # a link the dump lacks: its staff directory row goes in reconcile (P1-T31b)
+            cls.after_sub = uuid.uuid4()
+            StaffIdentity.objects.create(user=cls.new_user, keycloak_sub=cls.after_sub)
             User.objects.filter(pk=cls.revoked.pk).update(is_active=False)
             User.objects.filter(pk=cls.kept.pk).update(first_name="ChangedAfterDump")
             StaffIdentity.objects.filter(user=cls.unlinked).update(
@@ -337,6 +342,10 @@ class RestoreEndToEnd(SimpleTestCase):
             for uid, i in cls.identities.items()
             if uid != cls.not_member.pk
         ]
+
+        # --- A's staff directory rows, before (P1-T31b)
+        with connection.cursor() as cursor:
+            cls.directory_before = directory.row_subs(cursor, cls.a.pk)
 
         # --- B and public, before
         with connection.cursor() as cursor:
@@ -616,6 +625,70 @@ class RestoreEndToEnd(SimpleTestCase):
                 [dumped, parked_max],
             )
             self.assertEqual(cursor.fetchone()[0], 0, "an entry id was used twice")
+
+    def test_the_staff_directory_is_rebuilt_from_the_restored_copy(self):
+        """P1-T31b (attack D6): the restored copy never had the directory's triggers when it
+        was loaded and merged, so reconcile rebuilds A's rows: the link the dump lacks (a sub
+        given after the dump) is gone, and the rows equal the restored copy's listed links."""
+        self.assertIn(
+            self.after_sub, self.directory_before
+        )  # listed before the restore
+        with connection.cursor() as cursor:
+            rows = directory.row_subs(cursor, self.a.pk)
+            self.assertEqual(directory.differences(cursor, self.a), (set(), set()))
+        self.assertNotIn(self.after_sub, rows)
+        result = TenantOperation.objects.get(pk=self.op.pk).result["reconcile"]
+        self.assertEqual(result["directory"]["outcome"], "done")
+        self.assertGreaterEqual(result["directory"]["removed"], 1)
+
+    def test_the_parked_schemas_directory_trigger_writes_nothing(self):
+        """The parked copy keeps its triggers, but no hospital names its schema (D6)."""
+        parked = TenantOperation.objects.get(pk=self.op.pk).result["parked"]
+        sub = uuid.uuid4()
+        with transaction.atomic(), connection.cursor() as cursor:
+            cursor.execute(
+                "SELECT count(*) FROM pg_trigger t JOIN pg_class c ON c.oid = t.tgrelid "
+                "JOIN pg_namespace n ON n.oid = c.relnamespace WHERE n.nspname = %s "
+                "AND t.tgname LIKE 'ihr_directory_%%'",
+                [parked],
+            )
+            self.assertEqual(cursor.fetchone()[0], len(directory.TRIGGERS))
+            before = directory.row_subs(cursor, self.a.pk)
+            cursor.execute(
+                f'UPDATE "{parked}".ihr_identity_staffidentity SET keycloak_sub = %s '
+                "WHERE user_id = %s",
+                [sub, self.kept.pk],
+            )
+            cursor.execute(
+                f'UPDATE "{parked}".users_user SET is_active = NOT is_active WHERE id = %s',
+                [self.revoked.pk],
+            )
+            cursor.execute(f'TRUNCATE "{parked}".ihr_identity_staffidentity')
+            self.assertEqual(directory.row_subs(cursor, self.a.pk), before)
+            cursor.execute(
+                "SELECT count(*) FROM public.ihr_platform_staffdirectoryentry "
+                "WHERE keycloak_sub = %s",
+                [sub],
+            )
+            self.assertEqual(cursor.fetchone()[0], 0)
+            transaction.set_rollback(True)
+
+    def test_a_failed_directory_rebuild_is_logged_and_never_fails_the_restore(self):
+        """D6: reconcile is past the point of no return; ``--repair`` is the way back."""
+        out, err = [], []
+        run = engine.Restore(
+            engine.Options(slug=A_SLUG, out=out.append, err=err.append)
+        )
+        run.hospital = self.a
+        with mock.patch.object(directory, "rebuild", side_effect=RuntimeError("boom")):
+            self.assertEqual(run._directory(), {"outcome": "failed"})
+        self.assertEqual(err, [f"ihr-directory: hospital={A_SLUG} outcome=failed"])
+        self.assertTrue(
+            any(
+                f"ihr_staff_directory --repair --slug {A_SLUG}" in line for line in out
+            ),
+            out,
+        )
 
     def test_the_live_tail_is_sealed_before_the_park(self):
         """Review S5: with the sealer's lock held elsewhere and a transaction pinning the
@@ -1046,9 +1119,14 @@ class RestoreEndToEnd(SimpleTestCase):
         """A step that fails leaves the hospital held (never served half restored); --abort
         before reconcile drops the restored copy, un-parks the live schema and lifts the hold."""
         from care.users.models import User
+        from ihr_identity.models import StaffIdentity
 
+        marker_sub = uuid.uuid4()
         with schema_context(self.a.schema_name):
             marker = User.objects.create(username="live-before-abort")
+            StaffIdentity.objects.create(user=marker, keycloak_sub=marker_sub)
+        with connection.cursor() as cursor:
+            self.assertIn(marker_sub, directory.row_subs(cursor, self.a.pk))
         err = []
         with mock.patch.object(
             fleet, "migrate_one", return_value={"outcome": "failed", "error": "test"}
@@ -1077,6 +1155,13 @@ class RestoreEndToEnd(SimpleTestCase):
         self.assertFalse(release.servable(Hospital.objects.get(pk=self.a.pk)))
         with schema_context(self.a.schema_name):  # the restored copy is in place, held
             self.assertFalse(User.objects.filter(pk=marker.pk).exists())
+        # P1-T31b (D6): the triggers the restore's migrate installed fired from the restored
+        # copy (stood for here: a row of a person only that copy lists, and a live row gone)
+        copy_only = uuid.uuid4()
+        StaffDirectoryEntry.objects.create(keycloak_sub=copy_only, hospital=self.a)
+        StaffDirectoryEntry.objects.filter(
+            hospital=self.a, keycloak_sub=marker_sub
+        ).delete()
         engine.Restore(
             engine.Options(slug=A_SLUG, out=lambda line: None, err=err.append)
         ).abort(op.pk)
@@ -1086,6 +1171,11 @@ class RestoreEndToEnd(SimpleTestCase):
         self.assertEqual(release.restore_holder(self.a), "")
         with schema_context(self.a.schema_name):  # the live schema is back
             self.assertTrue(User.objects.filter(pk=marker.pk).exists())
+        with connection.cursor() as cursor:  # and its directory rows, rebuilt from it
+            self.assertEqual(directory.differences(cursor, self.a), (set(), set()))
+            rows = directory.row_subs(cursor, self.a.pk)
+        self.assertNotIn(copy_only, rows)
+        self.assertIn(marker_sub, rows)
         self.assertNotIn(op.result["parked"], [p[0] for p in engine.parked_schemas()])
         self.assertTrue(release.servable(Hospital.objects.get(pk=self.a.pk)))
         with self.assertRaisesRegex(engine.Refused, "rolled_back"):

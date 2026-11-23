@@ -52,6 +52,7 @@ KEY_LABEL = {"PackApplyFailed": "hospital", "PackFacilityDeferred": "hospital", 
              "HospitalRestoreFailed": "hospital", "ParkedSchemaOverdue": "schema",
              "MrdRecordsRefused": "hospital", "MrdRecordsVolume": "hospital", "MrdRecordsOffHours": "hospital",
              "StaffResetRefused": "hospital", "HospitalRootProblem": "hospital",
+             "StaffDirectoryDrift": "hospital",
              "PrivilegedLoginUnrecorded": "app", "OperatorSessionRefused": "why"}
 
 

@@ -357,6 +357,7 @@ Detailed task definitions: [PLAN.md](PLAN.md) §6. Open questions: [QUESTIONS.md
 - ⬜ P4-T6 Legal pack (terms, Data Processing Agreement, privacy policy)
 - ⬜ P4-T7 Disaster recovery
 - ⬜ P4-T8 Per-tenant DB role (SET ROLE)
+  - Note from P1-T31 (design §7, attack S5): the staff directory (`ihr_platform_staffdirectoryentry`, public, read by the shared `ihr_app`) needs a hospital-bound read once each hospital has its own role. Inside a SECURITY DEFINER function `current_user` is the owner, so "the calling role's own hospital" cannot be decided from it. Decide between a definer read keyed on `session_user` (if per-hospital logins are used) and a keyed hash of the sub (`HMAC(key, sub)`, key in an owner-only public table and a web secret). Correlation of one person across hospitals stays a residual risk. Today the shared `ihr_app` reads every hospital schema anyway, so nothing new is exposed.
 
 ### P5 — Diagnostics
 
