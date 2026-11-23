@@ -1269,7 +1269,7 @@ Q-K76 B needs one "hospital root" per hospital: the organisation whose admins ar
 
 *Reverse:* add B.
 
-### Q-K132 — Where does the first pilot's real data run? (P1-T28, ADR-020; auto-accepted by Claude, 2026-11-22, awaiting owner confirmation)
+### Q-K132 — Where does the first pilot's real data run? (P1-T28, ADR-020; auto-accepted by Claude, 2026-11-22; **confirmed by owner, 2026-11-23**)
 
 CLAUDE.md says "No real patient data outside production", but everything built since P1-T8 is called "staging", and ADR-003 and PLAN §3.2 described production differently (closing review PR1-2).
 
@@ -1279,7 +1279,7 @@ CLAUDE.md says "No real patient data outside production", but everything built s
 
 *Why A:* every go-live gate was proven on this stack, a second instance needs no new code, and the no-real-data rule then holds. *Limit:* until check E3 is built, only the operator's care stops the synthetic settings folder from being deployed to production-1, or the reverse. *Also decided in ADR-020:* real dumps are drilled only on production-1's own `ihr-restore-drill` copy, so real data never leaves production-1. P9-T7 is triggered by measured limits (ADR-020 §4: availability needs or too many cells), not by "about 10 tenants"; a bigger VM and more Compose cells come first. *Open for you:* provider, VM size (P1-T26 decides 8 or 16 GB, plus disk for the drill copy) and when to create it (after the go-live gates, when a pilot signs). *To reverse:* choose B or C and amend ADR-020. With B, the no-real-data rule must be reworded and the staging server's synthetic hospitals removed first.
 
-### Q-K133 — Where does synthetic staging live? (P1-T28, ADR-020 §2; auto-accepted by Claude, 2026-11-22, awaiting owner confirmation)
+### Q-K133 — Where does synthetic staging live? (P1-T28, ADR-020 §2; auto-accepted by Claude, 2026-11-22; **confirmed by owner, 2026-11-23**)
 
 - **A ⭐ (taken).** For now, this workstation: `staging.sh local-proof` and the throwaway local VM (`deploy.sh --local-proof`). P1-T26's rented VM is synthetic staging while it exists, and is destroyed afterwards. An always-on paid staging VM comes only when you choose to pay for one, for example when pilot staff need a training URL.
 - B. A second small paid VM from the first pilot on, always on, with its own suffix (e.g. `<slug>.stg.amhcloud.in`). It costs about ₹4,780 a month with GST at ADR-011's E2E price, or less if P1-T26 shows the small settings fit.
@@ -1287,7 +1287,7 @@ CLAUDE.md says "No real patient data outside production", but everything built s
 
 *Why A:* it costs nothing until a pilot needs a public demo or training URL, and releases and drills are already rehearsed in the local proof. *Rule in every case:* synthetic staging never receives real data, including production-1's backups, dumps, log archive or exports, and never holds a production-1 key. *To reverse:* choose B, then run `staging.sh init stg.amhcloud.in` on a new VM with its own buckets and acme zone.
 
-### Q-K134 — Who is the operator in the record? (P1-T27; auto-accepted by Claude, 2026-11-22, awaiting owner confirmation)
+### Q-K134 — Who is the operator in the record? (P1-T27; auto-accepted by Claude, 2026-11-22; **confirmed by owner, 2026-11-23**)
 
 Every privileged `staging.sh` command now writes an `ihr-operator:` line naming who ran it (docs/reviews/p1-t27/attack.md, "Orchestrator decision").
 
@@ -1297,7 +1297,7 @@ Every privileged `staging.sh` command now writes an `ihr-operator:` line naming 
 
 *Reverse:* B is a bootstrap change plus a check in `op_need`.
 
-### Q-K135 — What does the record keep of the command? (P1-T27; auto-accepted by Claude, 2026-11-22, awaiting owner confirmation)
+### Q-K135 — What does the record keep of the command? (P1-T27; auto-accepted by Claude, 2026-11-22; **confirmed by owner, 2026-11-23**)
 
 - **A ⭐ (taken).** Option names only, every value replaced by `<v>` (`command=` too); a reason of 3–120 characters from `[A-Za-z0-9 ._:/#-]`, refused if it has a run of 6 or more digits. `manage shell`/`dbshell`, `logs`, `logs-archive-get` and journalctl through staging.sh are recorded as data access (reason and hospital required).
 - B. A plus a hash of the full command: a short command can be recovered by guessing.
@@ -1305,7 +1305,7 @@ Every privileged `staging.sh` command now writes an `ihr-operator:` line naming 
 
 *Reverse:* change `op_shape` in `scripts/staging.sh`.
 
-### Q-K136 — What does each hospital's own audit trail get? (P1-T27; auto-accepted by Claude, 2026-11-22, awaiting owner confirmation)
+### Q-K136 — What does each hospital's own audit trail get? (P1-T27; auto-accepted by Claude, 2026-11-22; **confirmed by owner, 2026-11-23**)
 
 - **A ⭐ (taken).** One `operator` entry per hospital in scope at the start of a data session (and of a job that opens hospital schemas: release, restore drill, dumps). `all` writes into every live hospital; a held or absent schema is skipped and the line says so. For `all` the entry carries a fixed reason (`operator access (all hospitals), session <id>`); the full reason stays in the log store. The hospital's audit page shows the new kind later, with the DPA work (P4-T6). No guard that refuses opening another hospital inside a shell (it is bypassable by raw SQL).
 - B. A plus the audit-page view and Hindi strings now.
@@ -1313,7 +1313,7 @@ Every privileged `staging.sh` command now writes an `ihr-operator:` line naming 
 
 *Limit:* `session_user` is not yet in the trigger context, so a shell can still put its writes on another actor; the journal line is the primary evidence. *Reverse:* migration 0007 adds the kind only; drop the hook in `ihr_audit/operator.py`.
 
-### Q-K137 — How does Postgres log privileged logins? (P1-T27; auto-accepted by Claude, 2026-11-22, awaiting owner confirmation)
+### Q-K137 — How does Postgres log privileged logins? (P1-T27; auto-accepted by Claude, 2026-11-22; **confirmed by owner, 2026-11-23**)
 
 PG 18's `log_connections` cannot be set per role.
 - **A ⭐ (taken).** `log_connections=authorization` and `log_disconnections=on` server-wide, with `log_min_messages=warning` and `log_destination=stderr` pinned on the command line so one superuser session cannot switch logging off; a minute check that `postgresql.auto.conf` holds nothing (critical alert `PostgresSettingOverridden`). Every line kept; the local proof measures the volume against the logs budget.
@@ -1322,35 +1322,35 @@ PG 18's `log_connections` cannot be set per role.
 
 *Reverse:* `deploy/postgres/server-settings.txt` and the db command.
 
-### Q-K138 — What if the record cannot be written? (P1-T27; auto-accepted by Claude, 2026-11-22, awaiting owner confirmation)
+### Q-K138 — What if the record cannot be written? (P1-T27; auto-accepted by Claude, 2026-11-22; **confirmed by owner, 2026-11-23**)
 
 - **A ⭐ (taken).** Refuse the command. Break-glass for emergencies only: `IHR_BREAK_GLASS="<reason>"` lets `rollback`, `restore` or `hospital-restore` run; the line goes to stderr and a pending file, shipped as `event=late` by the next recorded session. Data access commands never break glass. Local proofs and CI write the lines to stderr (`IHR_OPERATOR_LOCAL=stderr`).
 - B. Warn and run: the record would be optional.
 
-### Q-K139 — How much host auditing (auditd)? (P1-T27; auto-accepted by Claude, 2026-11-22, awaiting owner confirmation)
+### Q-K139 — How much host auditing (auditd)? (P1-T27; auto-accepted by Claude, 2026-11-22; **confirmed by owner, 2026-11-23**)
 
 - **A ⭐ (taken).** `execve` of docker, ctr, runc, nsenter and psql by logged-in users (b64 and b32), SYSCALL and EXECVE records only with arguments shaped like the operator line; no immutable `-e 2` (tampering is alerted: a minute metric counts the loaded rules); no rule for every root command. Live proof needs sudo on a real host, so it waits for P1-T26.
 - B. Also every root command by a logged-in user (more volume, more redaction).
 - C. Immutable rules (`-e 2`): bootstrap could no longer be re-run without a reboot.
 
-### Q-K140 — How strict is the ops freeze? (P1-T30; auto-accepted by Claude, 2026-11-23, awaiting owner confirmation)
+### Q-K140 — How strict is the ops freeze? (P1-T30; auto-accepted by Claude, 2026-11-23; **confirmed by owner, 2026-11-23**)
 
 - **A ⭐ (taken).** `staging.sh` subcommands only: a names-only list (`deploy/staging/subcommands.txt`) that a test keeps equal to the dispatcher; a new name needs your OK, until P1-T26 (PR1-1) is ✅.
 - B. Also pin the compose overlays.
 - C. A rule in the README only, no test.
 
-### Q-K141 — What does `staging.sh due` show? (P1-T30; auto-accepted by Claude, 2026-11-23, awaiting owner confirmation)
+### Q-K141 — What does `staging.sh due` show? (P1-T30; auto-accepted by Claude, 2026-11-23; **confirmed by owner, 2026-11-23**)
 
 - **A ⭐ (taken).** Chores, drills and key ages that already have an alert: OVERDUE means that alert is firing now, with the gauge it reads as context and the command to run; no session, no second bookkeeping.
 - B. Computed due dates from each chore's cadence (needs "last done" records that do not exist yet).
 
-### Q-K142 — Alert tiers (P1-T30; auto-accepted by Claude, 2026-11-23, awaiting owner confirmation)
+### Q-K142 — Alert tiers (P1-T30; auto-accepted by Claude, 2026-11-23; **confirmed by owner, 2026-11-23**)
 
 - **A ⭐ (taken).** Critical pages at once (same mailbox, subject `[IndieHR PAGE]`); `notify=anytime` and info stay immediate (your Q-O9 and Q-K36 answers kept); warnings come as one digest mail at 09:00 and 17:00 IST. A warning can wait up to about 16 h; one that fires and clears between windows is never mailed.
 - B. One digest a day (09:00 only).
 - C. Keep today's per-alert warning mails 08:00-22:00.
 
-### Q-K143 — Should event and security warnings skip the digest? (P1-T30 review R1; auto-accepted by Claude, 2026-11-23, awaiting owner confirmation)
+### Q-K143 — Should event and security warnings skip the digest? (P1-T30 review R1; auto-accepted by Claude, 2026-11-23; **confirmed by owner, 2026-11-23**)
 
 - Under Q-K142 A a warning is mailed only if it is still firing at 09:00 or 17:00 IST. The log alerts last only their `_time` window (10 minutes to 1 hour), so one-off events can fire and clear unmailed: AuditEventRecorded and AuditWholeRestoreRecorded (the add-only writer key used by someone else), OperatorSessionRefused, BatchRequestRefused, MrdRecordsRefused, StaffResetRefused, DatabaseStatementTimeouts. A 1-hour alert is inside a window about 12.5 % of the day.
 - A. Add `notify: anytime` to the event and security warning rules only (audit, operator, batch, records, staff, root, dumps failures), and a Severity test that every warning log alert with a window under 16 h carries it. In practice that is every log alert (all windows are 10 minutes to 1 hour), so it equals C with a longer list to keep.

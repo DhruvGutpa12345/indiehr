@@ -169,7 +169,7 @@ _Decided: Option B (ADR-001). The planned CARE-vs-Marley spike (P0-T6) was dropp
 
 ### 3.2 Environments
 
-Aligned with [ADR-020](adr/020-environments-for-pilots.md) (Proposed, 2026-11-22; Q-K132, Q-K133). The stack in `deploy/staging/` and `scripts/staging.sh` is the one Compose stack for every server; the environment is set by `IHR_ENVIRONMENT`, not by the folder name.
+Aligned with [ADR-020](adr/020-environments-for-pilots.md) (Accepted, owner 2026-11-23; Q-K132, Q-K133). The stack in `deploy/staging/` and `scripts/staging.sh` is the one Compose stack for every server; the environment is set by `IHR_ENVIRONMENT`, not by the folder name.
 
 On this workstation, local and synthetic staging are the same environment until a synthetic VM exists.
 

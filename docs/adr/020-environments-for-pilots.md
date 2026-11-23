@@ -1,7 +1,7 @@
 # ADR-020: Environments for pilots: production-1, synthetic staging and the drill copy
 
-- **Status:** **Proposed.** The choices below were auto-accepted by Claude, 2026-11-22, awaiting
-  owner confirmation (Q-K132, Q-K133). Nothing here is built yet: §3 names the checks that exist
+- **Status:** **Accepted** (owner, 2026-11-23: Q-K132 A and Q-K133 A confirmed; first auto-accepted
+  by Claude, 2026-11-22). Nothing here is built yet: §3 names the checks that exist
   today and the ones still to build.
 - **Date:** 2026-11-22
 - **Decided by:** Claude, in task P1-T28, from Phase 1 closing review finding PR1-2
