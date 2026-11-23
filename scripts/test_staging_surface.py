@@ -655,7 +655,7 @@ class Severity(unittest.TestCase):
 def render_config(deadman="on", monitoring="on"):
     with tempfile.TemporaryDirectory() as d:
         Path(d, ".env").write_text("\n".join([
-            "IHR_TENANT_DOMAIN_SUFFIX=app.example.in", f"IHR_MONITORING={monitoring}",
+            "IHR_ENVIRONMENT=proof", "IHR_TENANT_DOMAIN_SUFFIX=app.example.in", f"IHR_MONITORING={monitoring}",
             "IHR_ALERT_TO=ops@example.in", "IHR_ALERT_FROM=alerts@example.in",
             "IHR_ALERT_SMTP_HOST=smtp.example.in", "IHR_ALERT_SMTP_PORT=587",
             "IHR_ALERT_SMTP_USER=emailapikey", f"IHR_ALERT_DEADMAN={deadman}", ""]))

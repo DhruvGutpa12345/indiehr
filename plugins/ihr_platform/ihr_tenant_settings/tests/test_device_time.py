@@ -48,3 +48,16 @@ class WarningScriptTests(SimpleTestCase):
         for opening, closing in ("()", "[]", "{}"):
             with self.subTest(pair=opening + closing):
                 self.assertEqual(code.count(opening), code.count(closing))
+
+    def test_sits_below_the_synthetic_bar_when_there_is_one(self):
+        # P1-T32 E5: the synthetic bar publishes its height as --ihr-synthetic-h (absent
+        # on production, where the offset is 0).
+        self.assertIn("top:var(--ihr-synthetic-h,0px);", WARNING_SCRIPT)
+        self.assertIn(
+            'html .fixed.inset-y-0{top:calc(var(--ihr-synthetic-h,0px) + " + h + ")',
+            WARNING_SCRIPT,
+        )
+        self.assertIn(
+            'html{scroll-padding-top:calc(var(--ihr-synthetic-h,0px) + " + h + ")',
+            WARNING_SCRIPT,
+        )

@@ -86,6 +86,27 @@ groups:
         annotations:
           summary: "The dumper refused its database role (not ihr_dump as modelled): nothing is dumped (scripts/staging.sh dumps-role)"
 
+      # P1-T32 E4 (ADR-020 §3): the bucket's instance marker (dumps/instance.json) is missing, not
+      # authentic with this dump key or another instance's: the run dumps nothing into it (the log
+      # alert DumpHospitalFailed names each hospital, reason=marker)
+      - alert: DumpBucketMarkerRefused
+        expr: ihr_dump_instance_marker_ok == 0
+        labels:
+          severity: critical
+          service: dumper
+        annotations:
+          summary: "The dumps bucket's instance marker is missing, not authentic or another instance's: nothing is dumped (scripts/staging.sh dumps-check says which; deploy/staging/README.md, reason=marker)"
+
+      # Manifests in the bucket naming another instance: an authentic one is a key incident,
+      # another only what its writer says. Dumps go on (Q-K156 C); DumpNotAuthentic fires too
+      - alert: DumpForeignObject
+        expr: ihr_dump_foreign_objects > 0
+        labels:
+          severity: warning
+          service: dumper
+        annotations:
+          summary: "The dumps bucket holds {{ $value | printf \"%.0f\" }} manifest(s) naming another instance; dumps go on (scripts/staging.sh dumps-check says which, and whether it is a key incident; deploy/staging/README.md, reason=foreign-object)"
+
       # Space for IHR_DUMP_PARALLEL dumps the size of the largest newest one (with a fifth more
       # and the margin each: ihr_dump_work_need_bytes, worked out by the dumper from what the
       # bucket holds). Below it dumps wait for each other; below one of them a hospital is

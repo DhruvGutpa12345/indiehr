@@ -58,7 +58,7 @@ from django.utils import timezone
 from django_tenants.utils import schema_context
 from psycopg import sql
 
-from ihr_platform import release
+from ihr_platform import environment, release
 from ihr_platform.models import (
     Hospital,
     HospitalSchemaState,
@@ -78,6 +78,8 @@ STEPS = (
 # Abort (un-park, lift the hold) only before anything outside this hospital's schema changed
 ABORTABLE = frozenset({"precheck", "hold", "drain", "seal", "restore", "migrate"})
 PARKED_PREFIX = "ihr_parked_"
+# A recorded instance's suffix, as the dumper writes it (a domain name; dev's "localhost" too)
+SUFFIX_RE = re.compile(r"^[a-z0-9]([a-z0-9.-]{0,251}[a-z0-9])?$")
 PARKED_RE = re.compile(r"^ihr_parked_(h_[a-z0-9]{10})_(\d{8}T\d{6})$")
 PARKED_DAYS = 7  # a parked schema holds personal data: dropped after a week (Q-K33)
 # The P1-T4 erasure ledger (TENANCY §7.5 correction 2; design "After the attack" 11). It does not
@@ -530,6 +532,10 @@ class Restore:
             raise Refused(msg)
         found["dump_at"] = when.isoformat()
         found["source"] = {k: source[k] for k in sorted(source) if k != "manifest"}
+        if (
+            source.get("kind") != "pitr"
+        ):  # a --from-pitr copy has no manifest: unchanged
+            found["instance"] = self._instance(source)
         holder = release.restore_holder(h)
         if holder:
             msg = f"{h.slug} is held for restore {holder}: --resume or --abort it"
@@ -702,6 +708,38 @@ class Restore:
                 else "functions as this build's"
             )
         )
+        return found
+
+    def _instance(self, source):
+        """P1-T32 E4 (Q-K159; ADR-020 §3): the instance that made the dump (the quarantine
+        copies it from the authentic manifest into ``source``, which the pinned package digest
+        covers) against this one. The environment must match; another suffix warns and is
+        recorded (disaster recovery to a new domain). Returns the report's entry."""
+        if not source.get("instance_recorded"):
+            return {"environment": "not recorded (dump older than P1-T32)"}
+        env, suffix = source.get("environment"), source.get("suffix")
+        if not (
+            environment.valid(env)
+            and isinstance(suffix, str)
+            and SUFFIX_RE.fullmatch(suffix)
+        ):
+            msg = "the package names its instance badly (not production-<n>, staging or proof on a domain)"
+            raise Refused(msg)
+        here = environment.name()
+        here_suffix = str(getattr(settings, "IHR_TENANT_DOMAIN_SUFFIX", "") or "")
+        if env != here:
+            msg = (
+                f"this dump was made by {env} ({suffix}); this is {here} ({here_suffix}): "
+                "dumps never cross instances (ADR-020 §3)"
+            )
+            raise Refused(msg)
+        found = {"environment": env, "suffix": suffix}
+        if suffix != here_suffix:
+            found["warning"] = (
+                f"this dump was made by {env} on {suffix}; this instance is on {here_suffix}: "
+                "restored across domains (disaster recovery to a new domain, Q-K159)"
+            )
+            self.say(f"warning: {found['warning']}")
         return found
 
     def _bucket_events(self):

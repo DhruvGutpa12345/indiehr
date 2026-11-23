@@ -14,14 +14,17 @@ if [[ "$(docker image inspect -f '{{index .Config.Labels "ihr.dockerfile.sha256"
 fi
 docker run --rm --network none --read-only --tmpfs /tmp:size=4g --tmpfs /state:size=64m,uid=70,gid=70 \
   --cap-drop ALL --security-opt no-new-privileges:true -e HOME=/tmp -e TMPDIR=/tmp \
-  -e IHR_DUMPS_ROOT=/repo -e IHR_DUMPS_LIVE_REQUIRED=1 -v "$ROOT/deploy/dumps:/repo/deploy/dumps:ro" -v "$ROOT/deploy/lib:/repo/deploy/lib:ro" \
+  -e IHR_DUMPS_ROOT=/repo -e IHR_DUMPS_LIVE_REQUIRED=1 -e IHR_ENVIRONMENT=proof -v "$ROOT/deploy/dumps:/repo/deploy/dumps:ro" -v "$ROOT/deploy/lib:/repo/deploy/lib:ro" \
   -v "$ROOT/deploy/logs/archive:/repo/deploy/logs/archive:ro" -v "$ROOT/scripts/test_dumps.py:/repo/test_dumps.py:ro" \
   --entrypoint python3 "$IMG" -I /repo/test_dumps.py -v 2>&1 | tail -n "${TAIL:-25}"
-# The quarantine of a restore (P1-T22b): a real dump through it, and every refusal
+# The quarantine of a restore (P1-T22b): a real dump through it, and every refusal; and (P1-T32
+# E4) the dumper's own dump and manifest through it, its instance in the package (test_dumps.py
+# lends its fake bucket, which loads the log archive's module)
 docker run --rm --network none --read-only --tmpfs /tmp:size=2g --cap-drop ALL --security-opt no-new-privileges:true \
-  -e HOME=/tmp -e TMPDIR=/tmp -e IHR_DUMPS_ROOT=/repo \
+  -e HOME=/tmp -e TMPDIR=/tmp -e IHR_DUMPS_ROOT=/repo -e IHR_ENVIRONMENT=proof \
   -v "$ROOT/deploy/dumps:/repo/deploy/dumps:ro" -v "$ROOT/deploy/lib:/repo/deploy/lib:ro" \
-  -v "$ROOT/deploy/restore:/repo/deploy/restore:ro" \
+  -v "$ROOT/deploy/restore:/repo/deploy/restore:ro" -v "$ROOT/deploy/logs/archive:/repo/deploy/logs/archive:ro" \
   -v "$ROOT/plugins/ihr_platform/ihr_platform/restore/package.py:/repo/plugins/ihr_platform/ihr_platform/restore/package.py:ro" \
   -v "$ROOT/scripts/test_restore_quarantine.py:/repo/test_restore_quarantine.py:ro" \
+  -v "$ROOT/scripts/test_dumps.py:/repo/test_dumps.py:ro" \
   --entrypoint python3 "$IMG" -I /repo/test_restore_quarantine.py -v 2>&1 | tail -n "${TAIL:-25}"

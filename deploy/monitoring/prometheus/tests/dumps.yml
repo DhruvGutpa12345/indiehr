@@ -293,6 +293,33 @@ tests:
             exp_annotations:
               summary: "Prometheus cannot read the dumper's metrics (scripts/staging.sh ps; logs dumper)"
 
+  - name: the bucket's instance marker and foreign objects (P1-T32 E4)
+    interval: 1m
+    input_series:
+      - series: 'ihr_dump_instance_marker_ok{job="dumps"}'
+        values: '1x10 0x20'
+      - series: 'ihr_dump_foreign_objects{job="dumps"}'
+        values: '0x10 2x20'
+    alert_rule_test:
+      - eval_time: 9m
+        alertname: DumpBucketMarkerRefused
+        exp_alerts: []
+      - eval_time: 11m
+        alertname: DumpBucketMarkerRefused
+        exp_alerts:
+          - exp_labels: {severity: critical, service: dumper, job: dumps}
+            exp_annotations:
+              summary: "The dumps bucket's instance marker is missing, not authentic or another instance's: nothing is dumped (scripts/staging.sh dumps-check says which; deploy/staging/README.md, reason=marker)"
+      - eval_time: 9m
+        alertname: DumpForeignObject
+        exp_alerts: []
+      - eval_time: 11m
+        alertname: DumpForeignObject
+        exp_alerts:
+          - exp_labels: {severity: warning, service: dumper, job: dumps}
+            exp_annotations:
+              summary: "The dumps bucket holds 2 manifest(s) naming another instance; dumps go on (scripts/staging.sh dumps-check says which, and whether it is a key incident; deploy/staging/README.md, reason=foreign-object)"
+
   - name: no dumps target, no dump alerts
     interval: 1h
     input_series:

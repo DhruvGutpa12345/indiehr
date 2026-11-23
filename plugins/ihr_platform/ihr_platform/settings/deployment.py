@@ -29,7 +29,7 @@ SENTRY_DSN = _SENTRY_DSN_GIVEN  # only for the check: Sentry was never started
 LOGGING["disable_existing_loggers"] = False  # noqa: F405
 # A label only. Every deployment runs CARE in production mode: outside it, CARE gives every
 # patient the same sign-in code (45612) and publishes its API schema to anyone.
-IHR_ENVIRONMENT = env("IHR_ENVIRONMENT", default="staging")
+IHR_ENVIRONMENT = env("IHR_ENVIRONMENT", default="")
 IS_PRODUCTION = True
 
 # Hospital addresses <slug>.<suffix> and the other public hosts (TENANCY_DESIGN §9, Q-T11).

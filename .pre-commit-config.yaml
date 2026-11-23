@@ -151,6 +151,15 @@ repos:
         language: system
         files: ^scripts/(ci-mask-dev-secrets|test_ci_mask_dev_secrets)\.py$
         pass_filenames: false
+  # One canonical environment-name regex (P1-T32 E1): every copy equals environment.py's
+  - repo: local
+    hooks:
+      - id: environment-regex-equality
+        name: environment-name regex copies equal the canonical one
+        entry: python3 -m unittest scripts/test_environment_regex.py
+        language: system
+        files: ^(plugins/ihr_platform/ihr_platform/environment\.py$|scripts/(staging|deploy)\.sh$|scripts/instance_check\.py$|deploy/dumps/dumper\.py$|scripts/test_environment_regex\.py$)
+        pass_filenames: false
   # Host kit (P1-T8b1): the bootstrap's required controls (NIC/NPL time, SSH, 180-day logs,
   # firewall) and no provider names in the kit (ADR-011).
   - repo: local

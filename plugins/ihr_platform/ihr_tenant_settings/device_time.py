@@ -18,6 +18,9 @@ The bar is fixed at the top and reserves its height: the page is pushed down
 (``body`` padding) and so are the app's full-height fixed panels (the side bar and side
 sheets, Tailwind ``fixed inset-y-0``), so it covers none of the app's controls.
 
+On a synthetic instance (P1-T32 E5) the synthetic bar is above this one; this bar starts at
+``--ihr-synthetic-h`` (the height that bar publishes, 0 when there is none).
+
 The script must never contain a less-than sign: bootstrap.js is checked for that (it can then
 never close a script tag), so comparisons are written the other way round.
 """
@@ -57,10 +60,14 @@ WARNING_SCRIPT = r"""(function () {
       (document.head || document.documentElement).appendChild(style);
     }
     var h = Math.max(0, Math.ceil(height)) + "px";
+    /* On a synthetic instance the synthetic bar (synthetic_bar.py) sits above this one and
+       publishes its height; absent on production, where the offset is 0. The selector is more
+       specific than the synthetic bar's own, so the order the two run in does not matter. */
     style.textContent =
       "body{padding-top:" + h + " !important}" +
-      "html{scroll-padding-top:" + h + "}" +
-      ".fixed.inset-y-0{top:" + h + " !important;height:auto !important}";
+      "html{scroll-padding-top:calc(var(--ihr-synthetic-h,0px) + " + h + ")}" +
+      "html .fixed.inset-y-0{top:calc(var(--ihr-synthetic-h,0px) + " + h + ") !important;" +
+      "height:auto !important}";
   }
   function show(zone, offset) {
     var label = (zone ? zone + " (" : "(") + offsetLabel(offset) + ")";
@@ -71,7 +78,7 @@ WARNING_SCRIPT = r"""(function () {
       bar.setAttribute("role", "alert");
       bar.setAttribute(
         "style",
-        "position:fixed;top:0;left:0;right:0;z-index:2147483647;" +
+        "position:fixed;top:var(--ihr-synthetic-h,0px);left:0;right:0;z-index:2147483647;" +
           "box-sizing:border-box;margin:0;padding:6px 16px;" +
           "background:#991b1b;color:#ffffff;border-bottom:2px solid #450a0a;" +
           "font:600 14px/1.4 system-ui,-apple-system,'Segoe UI',sans-serif;" +

@@ -635,7 +635,7 @@ class AlertmanagerSettings(unittest.TestCase):
         the same thing only (one missing on both sides counts as equal)."""
         with tempfile.TemporaryDirectory() as d:
             Path(d, ".env").write_text("\n".join([
-                "IHR_TENANT_DOMAIN_SUFFIX=app.example.in", "IHR_MONITORING=on",
+                "IHR_ENVIRONMENT=proof", "IHR_TENANT_DOMAIN_SUFFIX=app.example.in", "IHR_MONITORING=on",
                 "IHR_ALERT_TO=ops@example.in", "IHR_ALERT_FROM=alerts@example.in",
                 "IHR_ALERT_SMTP_HOST=smtp.example.in", "IHR_ALERT_SMTP_PORT=587",
                 "IHR_ALERT_SMTP_USER=emailapikey", "IHR_ALERT_DEADMAN=on", ""]))

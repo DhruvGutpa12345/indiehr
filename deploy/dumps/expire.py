@@ -58,6 +58,9 @@ MIN_DAYS = {"daily": 14, "weekly": 28, "probe": 30}
 NAME_RE = re.compile(r"^dumps/(?:(daily|weekly)/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/"
                      r"(\d{4}-\d{2}-\d{2})\.r[1-9]\d{0,3}\.(?:dump\.enc|public\.enc|manifest\.json)"
                      r"|(ihr-key-check)/(\d{4}-\d{2}-\d{2})T\d{6}\.probe)$")
+# The bucket's instance marker (dumper.py MARKER_KEY, P1-T32 E4): this instance's own, written once,
+# never erased (without it every dump run refuses) and never listed as NOT OURS
+MARKER_KEY = "dumps/instance.json"
 
 
 def kind_and_day(key):
@@ -96,6 +99,8 @@ def erase(s3, bucket, mac_key, now, days, allow_short=False, dry_run=False, out=
     suspect = sorted(k for k, vs in items.items() if (kind_and_day(k) or ("",))[0] in ("daily", "weekly")
                      and (len(vs) > 1 or any("Size" not in v for v in vs)))
     for key, vs in sorted(items.items()):
+        if key == MARKER_KEY:
+            continue
         p = kind_and_day(key)
         if p is None:
             unknown.append(key)
@@ -124,6 +129,8 @@ def erase(s3, bucket, mac_key, now, days, allow_short=False, dry_run=False, out=
           f"(nightly {days['daily']} days, Sundays {days['weekly']} days)", file=out)
     for k in sorted({d[0] for d in doomed}):
         print(f"  {k}", file=out)
+    if MARKER_KEY in items:
+        print(f"instance marker (kept) {MARKER_KEY}", file=out)
     for k in sorted(set(unknown)):
         print(f"NOT OURS (left alone) {k}", file=out)
     for k in suspect:

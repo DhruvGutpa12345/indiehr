@@ -19,7 +19,8 @@ dump mounted read-only:
    hashes are compared with this build's by the restore); no extension, role, grant, rule,
    policy, event trigger, publication or large object; no expression that calls a function
    outside pg_catalog. With the nightly dump's manifest (dumper.py manifest: authentic and
-   chained), its audit head, sequences and migrations must be what was restored.
+   chained), its audit head, sequences and migrations must be what was restored; the instance it
+   names (P1-T32 E4) goes into the package's ``source`` for the restore's pre-check.
 4. Only then is the package written, from this server's catalogue: tables, sequences, keys,
    indexes and rows. That package, never the dump, is what the live cluster loads.
 5. The server is stopped, then the package's files are checked against what this process wrote
@@ -130,7 +131,33 @@ def manifest_problems(manifest, schema, facts, seqs):
     rows = "\n".join(sorted(f"{a}.{n}" for a, n in facts["migrations"]))
     if f.get("migrations_sha256") and hashlib.sha256(rows.encode()).hexdigest() != f["migrations_sha256"]:
         problems.append("the migrations are not the manifest's")
+    # The instance that made it (P1-T32 E4): both or neither (a dump from before P1-T32), and
+    # only the names the dumper writes
+    if "environment" in m or "suffix" in m:
+        import dumper
+
+        env, suffix = m.get("environment"), m.get("suffix")
+        if not (isinstance(env, str) and isinstance(suffix, str)) or dumper.instance_of(env, suffix)[0] is None:
+            problems.append("the manifest's instance (environment and suffix) is incomplete or not well formed")
     return problems
+
+
+def source_of(manifest, pitr=None):
+    """The package's `source`: what the restore's pre-checks read. From a nightly dump's
+    authentic manifest (dumper.py manifest) it carries the instance that made it (P1-T32 E4,
+    attack S1): environment and suffix, or None and instance_recorded false for a dump older
+    than P1-T32. A --from-pitr copy has no manifest: unchanged."""
+    if manifest is None:
+        return {"kind": "pitr", "dump_at": pitr, "dump": f"pitr {pitr}"}
+    m = manifest.get("manifest", manifest)
+    snap = (m.get("facts") or {}).get("snapshot") or m.get("snapshot") or {}
+    recorded = isinstance(m.get("environment"), str) and isinstance(m.get("suffix"), str)
+    return {"kind": "nightly", "dump_at": snap.get("at"), "dump": f"{m.get('date')} r{m.get('revision')}",
+            "kind_of_dump": m.get("kind"),
+            "manifest_sha256": hashlib.sha256(json.dumps(m, sort_keys=True).encode()).hexdigest(),
+            "environment": m["environment"] if recorded else None,
+            "suffix": m["suffix"] if recorded else None,
+            "instance_recorded": recorded}
 
 
 def main(argv=None):  # noqa: PLR0912, PLR0915 (one flat run)
@@ -200,14 +227,8 @@ def main(argv=None):  # noqa: PLR0912, PLR0915 (one flat run)
                 problems += manifest_problems(manifest, schema, facts, seqs)
             if problems:
                 return finish(problems, report)
-            if manifest is not None:
-                m = manifest.get("manifest", manifest)
-                snap = (m.get("facts") or {}).get("snapshot") or m.get("snapshot") or {}
-                source = {"kind": "nightly", "dump_at": snap.get("at"), "dump": f"{m.get('date')} r{m.get('revision')}",
-                          "kind_of_dump": m.get("kind"),
-                          "manifest_sha256": hashlib.sha256(json.dumps(m, sort_keys=True).encode()).hexdigest()}
-            else:
-                source = {"kind": "pitr", "dump_at": a.pitr, "dump": f"pitr {a.pitr}"}
+            # (package.json holds it, and its SHA-256 printed below is what the restore pins)
+            source = source_of(manifest, a.pitr)
             report.update(quarantine="passed", problems=[],
                           checks="schema only; functions and triggers ours by name (bodies not kept); "
                                  "no extension, role, grant, rule, policy or outside call; "

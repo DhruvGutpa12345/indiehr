@@ -48,6 +48,9 @@ table{border-collapse:collapse;width:100%;background:#fff}th,td{text-align:left;
 border-bottom:1px solid #e5e7eb}label{display:block;margin-top:.6rem;font-weight:600}
 input,select{font:inherit;padding:.35rem;width:100%;max-width:28rem;box-sizing:border-box}
 button{font:inherit;padding:.45rem 1rem;margin-top:1rem;cursor:pointer}
+.ihr-synthetic{background:#92400e;color:#fff;padding:.3rem 1.5rem;font-weight:600;
+text-align:center;font-size:.85rem;line-height:1.35}
+.ihr-synthetic+.ihr-synthetic{padding-top:0;border-bottom:2px solid #451a03}
 .error{color:#b91c1c}.ok{color:#047857}.muted{color:#6b7280}.errorlist{color:#b91c1c}
 """
 

@@ -29,7 +29,7 @@ from ihr_platform.settings.tenancy import (  # noqa: E402
 )
 
 SENTRY_DSN = _SENTRY_DSN_GIVEN
-IHR_ENVIRONMENT = env("IHR_ENVIRONMENT", default="staging")
+IHR_ENVIRONMENT = env("IHR_ENVIRONMENT", default="")
 IS_PRODUCTION = True
 DEBUG = False
 # Signs nothing (no sessions, no tokens): a new random one each start, shared with nobody

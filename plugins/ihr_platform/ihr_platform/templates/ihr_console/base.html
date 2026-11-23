@@ -1,4 +1,4 @@
-<!doctype html>
+{% load ihr_environment %}<!doctype html>
 <html lang="en">
 <head>
 <meta charset="utf-8">
@@ -8,7 +8,7 @@
 <link rel="stylesheet" href="/ops/style.css">
 </head>
 <body>
-<header>
+{% synthetic_banner %}<header>
   <strong>IndieHR operator console</strong>
   {% if operator %}
   <a href="/ops/">Hospitals</a>

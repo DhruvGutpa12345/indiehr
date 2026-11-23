@@ -1,8 +1,8 @@
 # ADR-020: Environments for pilots: production-1, synthetic staging and the drill copy
 
 - **Status:** **Accepted** (owner, 2026-11-23: Q-K132 A and Q-K133 A confirmed; first auto-accepted
-  by Claude, 2026-11-22). Nothing here is built yet: §3 names the checks that exist
-  today and the ones still to build.
+  by Claude, 2026-11-22). The checks E1 to E5 of §3 were built in P1-T32
+  (2026-11-23).
 - **Date:** 2026-11-22
 - **Decided by:** Claude, in task P1-T28, from Phase 1 closing review finding PR1-2
   (`docs/reviews/phase-1-closing-review.md`). The owner decides.
@@ -169,22 +169,42 @@ DPDP, or under an owner-approved legal or CERT-In request, never to another envi
   - the restore pre-check refuses a dump whose audit head is not a seal of the live chain, and
     two instances never share a chain.
 
-**Not yet enforced (to build in a follow-up task; the owner numbers and schedules it, about 4 to
-6 agent hours):**
+**Enforced by P1-T32 (built and verified 2026-11-23; decisions Q-K150…Q-K159, design and review
+`docs/reviews/p1-t32/`):**
 
-- E1. `IHR_ENVIRONMENT` becomes required on servers (`secure.py`), with the values
-  `production-<n>`, `staging` or `proof`. `init` writes it, and `smoke` prints it.
-- E2. When `IHR_ENVIRONMENT` is `production-*`, `staging.sh` refuses the proof stand-ins:
-  `local-proof`, `acme-proof`, `acme-init pebble|letsencrypt-staging`, `mail-init --test`,
-  `monitoring-init --test`, and the `--local` variants of the init commands.
-- E3. `deploy.sh` refuses to send a settings folder whose `IHR_ENVIRONMENT` or suffix differs from
-  what the server last ran (`/srv/indiehr/DEPLOYED`). This stops the synthetic folder from being
-  deployed over production-1, and the reverse.
-- E4. Dump manifests and backup labels record the environment, so a refusal to cross instances
-  names the reason instead of failing on keys or the chain.
-- E5. Any non-production instance shows a fixed "Synthetic data only: do not enter real patients"
-  banner. It comes from the public bootstrap, so no login is needed to see it. A person typing a
-  real patient into a demo server is the likeliest way this rule breaks.
+- E1. `IHR_ENVIRONMENT` is required on servers, with the values `production-<n>` (1 to 999),
+  `staging` or `proof`; dev and tests leave it unset and report `dev`. One canonical regex in
+  `plugins/ihr_platform/ihr_platform/environment.py`, checked by `settings/secure.py` (and the
+  drill and watch settings), and equal to its shell and script copies
+  (`scripts/test_environment_regex.py`). `staging.sh init` writes it (`--environment
+  production-<n>|staging`, or `--local`/`--vm` for `proof`; no option is refused),
+  `ensure_environment` in `compose()` upgrades an older proof folder, `init --check` and `smoke`
+  print it. A production instance never runs on the proof suffix.
+- E2. On a `production-*` folder `scripts/staging.sh` refuses the proof stand-ins: one dispatch
+  table of commands (`refuse_on_production`: `local-proof`, `acme-proof`, `acme-init
+  pebble|letsencrypt-staging`, `mail-init --test`, `monitoring-init --test`, the `--local`
+  variants) and a state check of the folder's own `.env` and secrets on every start verb,
+  `release` and `init --check` (`env_state_problems`, fails closed: only exact `staging` or
+  `proof` pass as synthetic). Tests: `scripts/test_staging_environment.py`.
+- E3. `deploy.sh` refuses to send a settings folder whose environment or suffix differs from what
+  the server runs, before anything is written or sent: `scripts/instance_check.py` against the
+  root-owned `INSTANCE` file that `deploy/host/bootstrap.sh --instance` writes (Q-K154 C: a
+  missing or different file refuses, no override). Tests: `scripts/test_instance_check.py`.
+- E4. The dumper records the environment and suffix in each manifest and writes an authentic
+  bucket marker (`dumps/instance.json`, `dumps-init --mark`); a missing or foreign marker refuses
+  a dump run (`reason=marker`), a stray foreign object is a `check` problem and an alert
+  (`reason=foreign-object`) (`deploy/dumps/dumper.py`, alerts in `deploy/logs/alerts/dumps.yml`
+  and `deploy/monitoring/prometheus/rules/dumps.yml`). The quarantine carries the same fields in
+  the package `source` (`deploy/restore/quarantine.py`) and the restore pre-check refuses another
+  environment and records a different suffix (Q-K159; `ihr_platform/restore/engine.py`,
+  `Restore.precheck`). Backup labels were cut from the task (Q-K155).
+- E5. Every non-production instance shows the fixed "Synthetic data only" bar on every web-app
+  page, from the public bootstrap (no login needed), and on the operator console
+  (`ihr_tenant_settings/synthetic_bar.py`, `ihr_platform/templatetags/ihr_environment.py`;
+  the IST bar is offset by a CSS variable). Tests: `ihr_tenant_settings/tests/test_synthetic_bar.py`,
+  `ihr_platform/tests/test_console_banner.py`, and Playwright
+  `apps/frontend/tests-ihr/synthetic-banner.spec.ts` (CI only). The Hindi wording is waiting for
+  the owner's review (`docs/i18n/review/hi-batch-8.csv`).
 
 ### 4. When P9-T7 is needed: measured limits, not "about 10 tenants"
 
@@ -237,8 +257,8 @@ downtime. So P9-T7 waits until L6 or L7 is reached.
 - The no-real-data rule holds with the pilot on the stack that passed the gates. "Production" now
   means an instance whose `IHR_ENVIRONMENT` starts with `production-`, not a different technology.
 - The owner keeps two sets of secrets apart: the synthetic folder in the repository's
-  `deploy/staging/` (git-ignored), and production-1's folder outside it. Until E3 is built, a
-  deploy with the wrong `--env-dir` is stopped only by the operator's care.
+  `deploy/staging/` (git-ignored), and production-1's folder outside it. A deploy with the wrong
+  `--env-dir` is stopped by E3 (`scripts/instance_check.py`).
 - Real-data restore drills need production-1's disk sized for the drill copy (about 2.5 times the
   database, plus one decrypted dump).
 - P9-T7 is no longer tied to a tenant count. A bigger VM and further Compose cells come first.
@@ -260,4 +280,5 @@ downtime. So P9-T7 waits until L6 or L7 is reached.
     per-hospital DNS records or a front router.
   - Slugs must stay unique across cells: today they are checked only inside one database.
   - Moving a hospital between cells needs a new tool, because a dump cannot cross instances (§3).
-- **The follow-up task for E1 to E5,** and its number.
+- **The follow-up task for E1 to E5** is P1-T32 (built; owner confirmation of Q-K150…Q-K159 and
+  the Hindi banner text is pending).

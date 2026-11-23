@@ -128,7 +128,7 @@ class Secrets(unittest.TestCase):
     def run_split(self, app_env, db_env="POSTGRES_PASSWORD=pg\nIHR_DB_PASSWORD=old\nKC_DB_PASSWORD=kc\n",
                   owner_env=None):
         d = Path(self.enterContext(tempfile.TemporaryDirectory()))
-        (d / ".env").write_text("IHR_TENANT_DOMAIN_SUFFIX=app.example.in\n")
+        (d / ".env").write_text("IHR_ENVIRONMENT=proof\nIHR_TENANT_DOMAIN_SUFFIX=app.example.in\n")
         sec = d / "secrets"
         sec.mkdir(mode=0o700)
         (sec / "app.env").write_text(app_env)

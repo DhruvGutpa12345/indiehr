@@ -17,6 +17,7 @@ GOOD_ENV = {
     "REDIS_URL": "redis://redis:6379/0",
     "JWKS_BASE64": "e30=",
     "IHR_TENANT_DOMAIN_SUFFIX": "app.hospital-test.in",
+    "IHR_ENVIRONMENT": "production-1",
     "IHR_KEYCLOAK_PUBLIC_URL": "https://auth.app.hospital-test.in",
     "IHR_KEYCLOAK_URL": "http://keycloak:8080",
     "IHR_CONSOLE_URL": "https://console.app.hospital-test.in",
@@ -42,6 +43,7 @@ GOOD_SETTINGS = {
     "IS_PRODUCTION": True,
     "SECRET_KEY": GOOD_KEY,
     "IHR_TENANT_DOMAIN_SUFFIX": "app.hospital-test.in",
+    "IHR_ENVIRONMENT": "production-1",
     "ALLOWED_HOSTS": [".app.hospital-test.in", "backend"],
     "IHR_KEYCLOAK_PUBLIC_URL": "https://auth.app.hospital-test.in",
     "IHR_CONSOLE_URL": "https://console.app.hospital-test.in",
@@ -245,6 +247,99 @@ class SecureRulesTests(SimpleTestCase):
                 )
 
 
+class EnvironmentRulesTests(SimpleTestCase):
+    """P1-T32 E1: a server names its instance, and only by a known name."""
+
+    def test_environment_must_be_a_known_name(self):
+        for bad in (
+            "",
+            "prod",
+            "production-0",
+            "production-01",
+            "Production-1",
+            "staging ",
+            "dev",
+            "production-1000",
+            "'staging'",
+        ):
+            with self.subTest(value=bad):
+                # an empty setting means an empty variable (REQUIRED_ENV says "not set")
+                env = GOOD_ENV | {"IHR_ENVIRONMENT": bad}
+                found = secure.problems(GOOD_SETTINGS | {"IHR_ENVIRONMENT": bad}, env)
+                self.assertTrue(any("IHR_ENVIRONMENT" in p for p in found), found)
+        for good in ("production-1", "production-12", "staging", "proof"):
+            with self.subTest(value=good):
+                self.assertEqual(
+                    secure.problems(
+                        GOOD_SETTINGS | {"IHR_ENVIRONMENT": good}, GOOD_ENV
+                    ),
+                    [],
+                )
+
+    def test_an_unnamed_environment_is_one_problem_not_two(self):
+        env = {k: v for k, v in GOOD_ENV.items() if k != "IHR_ENVIRONMENT"}
+        found = secure.problems(GOOD_SETTINGS | {"IHR_ENVIRONMENT": ""}, env)
+        self.assertEqual(
+            [p for p in found if "IHR_ENVIRONMENT" in p],
+            ["IHR_ENVIRONMENT is not set."],
+        )
+
+    def test_production_never_runs_on_the_proof_suffix(self):
+        """The proof suffix (ihr-proof.in) belongs to throwaway stands (ADR-020 E2)."""
+        for suffix in ("app.ihr-proof.in", "ihr-proof.in", "x.app.ihr-proof.in."):
+            settings = GOOD_SETTINGS | {
+                "IHR_TENANT_DOMAIN_SUFFIX": suffix,
+                "ALLOWED_HOSTS": [f".{suffix.strip('.')}", "backend"],
+            }
+            with self.subTest(suffix=suffix):
+                found = secure.problems(settings, GOOD_ENV)
+                self.assertTrue(
+                    any("proof" in p and "production" in p for p in found), found
+                )
+                for synthetic in ("staging", "proof"):
+                    self.assertEqual(
+                        secure.problems(
+                            settings | {"IHR_ENVIRONMENT": synthetic}, GOOD_ENV
+                        ),
+                        [],
+                    )
+        # a different domain that merely ends the same way is not the proof suffix
+        near = GOOD_SETTINGS | {
+            "IHR_TENANT_DOMAIN_SUFFIX": "app.notihr-proof.in",
+            "ALLOWED_HOSTS": [".app.notihr-proof.in", "backend"],
+        }
+        self.assertEqual(secure.problems(near, GOOD_ENV), [])
+
+    def test_the_watch_needs_a_known_name_and_never_production_on_the_proof_suffix(
+        self,
+    ):
+        settings = {
+            "DEBUG": False,
+            "IHR_TENANT_DOMAIN_SUFFIX": "app.hospital-test.in",
+            "IHR_ENVIRONMENT": "production-1",
+            "IHR_DB_ROLES": "required",
+            "IHR_DB_ROLE": "watch",
+            "IHR_DB_LIMITS": "watch",
+        }
+        env = {
+            "DATABASE_URL": "postgres://ihr_audit_watch:" + "w" * 43 + "@db:5432/ihr",
+            "IHR_AUDIT_ANCHOR_READ_KEY": "reader",
+        }
+        self.assertEqual(secure.watch_problems(settings, env), [])
+        for bad in ("", "prod", "Production-1", "staging "):
+            with self.subTest(value=bad):
+                found = secure.watch_problems(settings | {"IHR_ENVIRONMENT": bad}, env)
+                self.assertTrue(any("IHR_ENVIRONMENT" in p for p in found), found)
+        proof = settings | {"IHR_TENANT_DOMAIN_SUFFIX": "app.ihr-proof.in"}
+        self.assertTrue(
+            any("proof" in p for p in secure.watch_problems(proof, env)),
+            secure.watch_problems(proof, env),
+        )
+        self.assertEqual(
+            secure.watch_problems(proof | {"IHR_ENVIRONMENT": "proof"}, env), []
+        )
+
+
 class DeploymentSettingsImportTests(SimpleTestCase):
     """The real settings module, imported in a fresh process as a server would."""
 
@@ -286,6 +381,63 @@ class DeploymentSettingsImportTests(SimpleTestCase):
         result = self._import(GOOD_ENV | {"JWKS_BASE64": generate_encoded_jwks()})
         self.assertEqual(result.returncode, 0, result.stderr[-2000:])
         self.assertIn(".app.hospital-test.in", result.stdout)
+
+    def test_the_real_settings_refuse_a_missing_or_unknown_environment(self):
+        """P1-T32 E1: no default stands in for IHR_ENVIRONMENT any more (it was "staging")."""
+        base = GOOD_ENV | {"JWKS_BASE64": generate_encoded_jwks()}
+        missing = self._import(
+            {k: v for k, v in base.items() if k != "IHR_ENVIRONMENT"}
+        )
+        self.assertNotEqual(missing.returncode, 0)
+        self.assertIn("IHR_ENVIRONMENT is not set.", missing.stderr)
+        typo = self._import(base | {"IHR_ENVIRONMENT": "prod"})
+        self.assertNotEqual(typo.returncode, 0)
+        self.assertIn("IHR_ENVIRONMENT must be", typo.stderr)
+
+    def test_the_restore_drill_refuses_a_missing_or_unknown_environment(self):
+        """P1-T32 E1: settings.drill names the instance whose dump it restores, never guesses."""
+
+        live = {  # what the drill refuses (CI's test container sets some of them)
+            "REDIS_URL", "CELERY_BROKER_URL", "BUCKET_KEY", "BUCKET_SECRET",
+            "FILE_UPLOAD_KEY", "FILE_UPLOAD_SECRET", "FACILITY_S3_KEY",
+            "FACILITY_S3_SECRET", "EMAIL_HOST_PASSWORD",
+        }  # fmt: skip
+
+        def drill(**extra):
+            env = (
+                {
+                    k: v
+                    for k, v in os.environ.items()
+                    if not k.startswith(("DJANGO_", "IHR_", "SENTRY")) and k not in live
+                }
+                | {"DATABASE_URL": GOOD_ENV["DATABASE_URL"]}
+                | extra
+            )
+            return subprocess.run(  # noqa: S603 (our own interpreter and a fixed module)
+                [
+                    sys.executable,
+                    "-c",
+                    "import django, os; os.environ['DJANGO_SETTINGS_MODULE']="
+                    "'ihr_platform.settings.drill'; django.setup(); "
+                    "from django.conf import settings; print(settings.IHR_ENVIRONMENT)",
+                ],
+                env=env,
+                capture_output=True,
+                text=True,
+                timeout=120,
+                check=False,
+            )
+
+        for bad in ({}, {"IHR_ENVIRONMENT": "prod"}, {"IHR_ENVIRONMENT": "staging "}):
+            with self.subTest(env=bad):
+                result = drill(**bad)
+                self.assertNotEqual(result.returncode, 0)
+                self.assertIn("IHR_ENVIRONMENT must be", result.stderr)
+        for good in ("production-1", "staging", "proof"):
+            with self.subTest(env=good):
+                result = drill(IHR_ENVIRONMENT=good)
+                self.assertEqual(result.returncode, 0, result.stderr[-1500:])
+                self.assertEqual(result.stdout.strip(), good)
 
     def test_sentry_is_refused_before_it_could_send_anything(self):
         dsn = "https://k@o1.ingest.sentry.io/1"

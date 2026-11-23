@@ -16,7 +16,8 @@ ssh <admin>@<address> true            # <admin>: the image's default user (or ro
 # 2. Copy and run (as root). The key becomes the deploy user's key.
 scp deploy/host/bootstrap.sh <admin>@<address>:/tmp/
 scp ~/.ssh/<your-deploy-key>.pub <admin>@<address>:/tmp/ihr-deploy.pub
-ssh <admin>@<address> sudo bash /tmp/bootstrap.sh --ssh-key-file /tmp/ihr-deploy.pub
+ssh <admin>@<address> sudo bash /tmp/bootstrap.sh --ssh-key-file /tmp/ihr-deploy.pub \
+  --instance <production-<n>|staging> --suffix <domain suffix>
 
 # 3. Before closing this session, from a second terminal: both new logins work.
 #    <new-admin>: the admin bootstrap printed at the end (ihradmin if you came in as root;
@@ -28,8 +29,9 @@ ssh <new-admin>@<address> sudo true
 ssh <new-admin>@<address> sudo /usr/local/sbin/ihr-bootstrap --check
 
 # 5. Deploy the stack (from this machine, as the deploy user). deploy.sh refuses a host whose
-#    key is not already in known_hosts (step 1), whatever ~/.ssh/config says.
-scripts/deploy.sh --host ihr@<address> --operator <you>
+#    key is not already in known_hosts (step 1), whatever ~/.ssh/config says, and a host that is
+#    not the folder's instance (below).
+scripts/deploy.sh --host ihr@<address> --env-dir <the instance's folder> --operator <you>
 ```
 
 After step 2 only `ihr` and the admin user can sign in over SSH (`AllowGroups ihr-ssh`). Any
@@ -41,6 +43,35 @@ Options: `--ssh-key "<public key>"` (repeatable) or `IHR_SSH_PUBKEY`, `--admin-u
 `--no-upgrade` (skip `apt-get upgrade`; for every-boot re-runs), `--dry-run` (best effort: shows
 the files and steps it would change), `--check`. Keys with options (`command=`, `restrict`,
 `from=`…) are ignored: they are never copied and never count as a working login.
+`--instance <environment> --suffix <suffix>` (together): which instance this server is (below).
+
+**Which instance a server is (P1-T32 E3, ADR-020 §3).** `--instance` writes
+`/srv/indiehr/INSTANCE` (`environment=` and `suffix=`, owned by root, mode 644). `scripts/deploy.sh`
+reads it, `DEPLOYED` and the two keys `IHR_ENVIRONMENT` and `IHR_TENANT_DOMAIN_SUFFIX` of the
+server's `.env` in one read ending in `#end`, **before it writes or sends anything** (the folder's
+`.env` and `secrets/` carry the dump, backup, bucket and fingerprint keys), and
+`scripts/instance_check.py` refuses unless every one of them names the folder's environment and
+suffix:
+
+| The server holds | deploy.sh |
+|---|---|
+| no `INSTANCE` (a server bootstrapped without `--instance`, or a mistyped address) | refused: run `bootstrap.sh --instance` first. There is no "new server" exception |
+| an `INSTANCE` not owned by root, or writable by group or others | refused (only a `proof` one may be the deploy user's: the throwaway VM, below) |
+| `INSTANCE`, `DEPLOYED` and the `.env` naming the folder's environment and suffix | ok |
+| any of them naming another environment or suffix, an environment without a suffix, an empty `DEPLOYED`, two values in one file | refused, naming both instances |
+| a `DEPLOYED` or `.env` from before E3/E1 without an environment | ok when its suffix agrees (`INSTANCE` decides the environment) |
+| a read that did not finish (no `#end`) | refused: "cannot read the server" |
+
+The deploy user owns `/srv/indiehr`, so it can delete `INSTANCE` but never write one `deploy.sh`
+accepts; a deleted one makes `deploy.sh` refuse the server. `--instance` is set once: a re-run with
+the same values changes nothing, a different value is refused before anything changes. **A server
+changes instance only by being rebuilt** (a fresh server, bootstrapped with the new `--instance`;
+ADR-020 §1: production-1 is built fresh); there is no override in either script. `--check` reports
+the file (root's, mode 644, a valid environment and suffix; with `--instance`, those values).
+Before it connects, `deploy.sh` also refuses a folder whose `IHR_ENVIRONMENT` is missing or
+malformed (`scripts/staging.sh init --check`), a `proof` folder without `--local-proof`, and a
+`production-*` folder inside the repository checkout (ADR-020 §1.4). `DEPLOYED` records
+`environment=` next to `suffix=`.
 
 **The admin user is chosen once.** The first run picks it (`--admin-user`, else the user who ran
 `sudo`, else `ubuntu`, else a new `ihradmin`) and saves it in `/etc/indiehr/admin-user`; every
@@ -231,3 +262,10 @@ scripts/local-vm.sh destroy
 ```
 
 Inside the test VM the `ubuntu` user has passwordless sudo from cloud-init; that is expected.
+
+The VM is bootstrapped without `--instance`, so its first `deploy.sh --local-proof` writes
+`environment=proof` and `suffix=app.ihr-proof.in` to `/srv/indiehr/INSTANCE` as the deploy user
+(never over an existing one; any other host is bootstrapped with `--instance`). A VM folder from
+before E1 (`~/.cache/indiehr/vm/staging`, exactly that path, with the proof suffix and no
+`IHR_ENVIRONMENT` line) gets `IHR_ENVIRONMENT=proof` appended; a new one is made with it
+(`init --vm`).

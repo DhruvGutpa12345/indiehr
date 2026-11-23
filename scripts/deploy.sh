@@ -32,16 +32,24 @@
 # id); the stack files sent are kept as deploy/staging/releases/stack-<tag>.tgz (mode 600);
 # deploy/staging/releases/releases.log gets the release only after its smoke checks pass, and the
 # images of the last 3 logged releases are never removed (scripts/staging.sh rollback uses them).
+# The instance (P1-T32 E3, ADR-020 §3): the folder must name its environment (staging.sh init
+# --check; a proof folder only with --local-proof; a production-* folder never inside this
+# checkout), and the server must be that instance: /srv/indiehr/INSTANCE (root's, written by
+# deploy/host/bootstrap.sh --instance), DEPLOYED and the server's .env must all name the folder's
+# environment and suffix (scripts/instance_check.py). Checked before anything is written or sent;
+# no override: a server changes instance only by being rebuilt.
 set -euo pipefail
 ROOT="$(git -C "$(dirname "$0")" rev-parse --show-toplevel)"
 cd "$ROOT"
 REMOTE_ROOT=/srv/indiehr
 VM_CACHE="${IHR_VM_CACHE:-$HOME/.cache/indiehr/vm}"
 PROOF_SUFFIX="app.ihr-proof.in"
+# The environment names (P1-T32 E1): one regex, equal to environment.py's (scripts/test_environment_regex.py)
+ENV_RE='^(production-[1-9][0-9]{0,2}|staging|proof)$'
 
 HOST="" PORT=22 ENV_DIR="" ALLOW_DIRTY=0 IDENTITY="" BUILD=1 BUILD_ONLY=0 LOCAL_PROOF=0 NO_START=0 KNOWN_HOSTS=""
 RELEASE=0 RELEASE_NOW=0 OPERATOR=""
-usage() { sed -n '2,34p' "$0" | sed 's/^# \{0,1\}//'; }
+usage() { sed -n '2,40p' "$0" | sed 's/^# \{0,1\}//'; }
 while (($#)); do
   case "$1" in
     --host) HOST="${2:?--host user@address}"; shift ;;
@@ -102,6 +110,44 @@ fi
 
 # ---- Site settings and secrets ---------------------------------------------------------
 env_get() { sed -n "s/^$1=//p" "$ENV_DIR/.env" | tail -1; }
+
+# ---- The instance, before connecting (P1-T32 E3, ADR-020 §3; design docs/reviews/p1-t32/design.md §5.1) ----
+FOLDER_ENV="" FOLDER_SUFFIX=""
+vm_upgrade() {  # the throwaway VM's folder from before E1 (Z3): exactly $VM_CACHE/staging, with the
+  # proof suffix and no IHR_ENVIRONMENT line at all, gets IHR_ENVIRONMENT=proof. Nothing else is
+  # upgraded, and a value that is there (even a malformed one) is never replaced
+  local f="$ENV_DIR/.env"
+  ((LOCAL_PROOF)) || return 0
+  [[ "$(realpath -m "$ENV_DIR")" == "$(realpath -m "$VM_CACHE/staging")" && -f "$f" ]] || return 0
+  ! grep -q '^IHR_ENVIRONMENT=' "$f" || return 0
+  [[ "$(env_get IHR_TENANT_DOMAIN_SUFFIX)" == "$PROOF_SUFFIX" ]] || return 0
+  [[ -z "$(tail -c1 "$f")" ]] || echo >> "$f"
+  echo "IHR_ENVIRONMENT=proof" >> "$f"
+  log "Upgraded the VM's folder $ENV_DIR: IHR_ENVIRONMENT=proof (ADR-020 E1)"
+}
+folder_checks() {  # sets FOLDER_ENV and FOLDER_SUFFIX, or refuses the folder
+  local out ok rest real repo
+  out="$(IHR_STAGING_OUT="$ENV_DIR" scripts/staging.sh init --check)" \
+    || die "$ENV_DIR: its environment is not in order (above): IHR_STAGING_OUT=$ENV_DIR scripts/staging.sh init --check (ADR-020 E1)"
+  read -r ok FOLDER_ENV FOLDER_SUFFIX rest <<< "$out"
+  [[ "$ok" == ok && -z "$rest" && "$FOLDER_ENV" =~ $ENV_RE && -n "$FOLDER_SUFFIX" ]] \
+    || die "$ENV_DIR: staging.sh init --check answered $(printf '%q' "$out")"
+  # What is checked here is what DEPLOYED records and what the server gets
+  [[ "$(env_get IHR_ENVIRONMENT)" == "$FOLDER_ENV" && "$(env_get IHR_TENANT_DOMAIN_SUFFIX)" == "$FOLDER_SUFFIX" ]] \
+    || die "$ENV_DIR/.env: IHR_ENVIRONMENT or IHR_TENANT_DOMAIN_SUFFIX read differently than staging.sh init --check read them"
+  if ((LOCAL_PROOF)); then
+    [[ "$FOLDER_ENV" == proof ]] \
+      || die "--local-proof sends a proof folder only (the throwaway VM); $ENV_DIR is $FOLDER_ENV at $FOLDER_SUFFIX"
+  else
+    [[ "$FOLDER_ENV" != proof ]] \
+      || die "$ENV_DIR is a proof folder (IHR_ENVIRONMENT=proof): a proof never goes to a real host; use --local-proof (the throwaway VM), or a folder made by scripts/staging.sh init <suffix> --environment staging|production-<n>"
+  fi
+  if [[ "$FOLDER_ENV" == production-* ]]; then
+    real="$(realpath -m "$ENV_DIR")"; repo="$(realpath -m "$ROOT")"
+    [[ "$real" != "$repo" && "$real" != "$repo/"* ]] \
+      || die "$ENV_DIR is $FOLDER_ENV's folder inside the repository checkout: production's folder lives outside it (ADR-020 §1.4)"
+  fi
+}
 
 # ---- 1. Images (built here; the web app from the CI bundle, never built locally) -----------
 backend_image() { [[ -f "$ENV_DIR/.env" ]] && env_get IHR_BACKEND_IMAGE || echo "indiehr-backend:staging"; }
@@ -209,6 +255,10 @@ fi
 [[ -f "$ENV_DIR/.env" && -d "$ENV_DIR/secrets" ]] \
   || die "no $ENV_DIR/.env and secrets/: run scripts/staging.sh init <suffix> first"
 [[ -f "$ENV_DIR/.local" ]] && die "$ENV_DIR was made for a proof on this machine (init --local); use init without --local, or --local-proof"
+# Which instance the folder is (P1-T32 E1/E3): checked before anything is written or sent
+vm_upgrade
+folder_checks
+log "The folder is $FOLDER_ENV at $FOLDER_SUFFIX"
 # The split database roles (P1-T19b; the audit watch's own since P1-T21, the dumper's since
 # P1-T22a): their secrets are made
 # here, on the deploying machine, never on the server; this build's stack runs nothing without
@@ -272,9 +322,49 @@ fi
 HOST_CONNECTED=1
 remote() { "${SSH[@]}" "$HOST" "$@"; }
 
+# ---- The server's instance (P1-T32 E3; design §5.2): one read, before anything is written or sent ----
+instance_read() {  # the remote command: INSTANCE, DEPLOYED and the server .env's two keys, one
+  # section each ("#<name> missing" or "#<name> present <owner> <mode>", lines prefixed with |),
+  # then the #end sentinel: a read that did not finish is refused, never taken for an empty server
+  printf 'cd %s || exit 0\n' "$REMOTE_ROOT"
+  cat <<'EOF'
+show() { if [ -f "$2" ]; then echo "#$1 present $(stat -c '%U %a' "$2" 2>/dev/null)"; awk "$3"'{print "|" $0}' "$2"; else echo "#$1 missing"; fi; }
+show instance INSTANCE ''
+show deployed DEPLOYED ''
+show env deploy/staging/.env '/^(IHR_ENVIRONMENT|IHR_TENANT_DOMAIN_SUFFIX)=/'
+echo '#end'; true
+EOF
+}
+check_instance() {  # refuses unless every source on the server names the folder's environment and suffix
+  local rc=0 why
+  remote "$(instance_read)" > "$CM_DIR/instance" 2>/dev/null || true
+  # The throwaway VM bootstrapped before E3 (or by local-vm.sh, without --instance): --local-proof
+  # may write proof there, as the deploy user, and never over an INSTANCE. Any other host is
+  # bootstrapped with --instance (deploy/host/README.md)
+  if ((LOCAL_PROOF)) && [[ "$(tail -n1 "$CM_DIR/instance")" == '#end' ]] && grep -qx '#instance missing' "$CM_DIR/instance"; then
+    # Only the VM itself (review O4): --host or --identity may point --local-proof elsewhere, and a
+    # server labelled proof stays proof (bootstrap.sh refuses to relabel it)
+    [[ "${HOST##*@}" =~ ^(127\.0\.0\.1|localhost)$ && "$IDENTITY" == "$VM_CACHE/id_ed25519" ]] \
+      || die "$HOST has no $REMOTE_ROOT/INSTANCE, and --local-proof writes one only on the throwaway VM (127.0.0.1 or localhost, with $VM_CACHE/id_ed25519): run deploy/host/bootstrap.sh --instance <environment> --suffix <suffix> on it as root first"
+    [[ "$FOLDER_ENV" == proof && "$FOLDER_SUFFIX" == "$PROOF_SUFFIX" ]] \
+      || die "$HOST has no $REMOTE_ROOT/INSTANCE, and --local-proof writes one only for proof at $PROOF_SUFFIX (the folder is $FOLDER_ENV at $FOLDER_SUFFIX)"
+    log "$HOST has no $REMOTE_ROOT/INSTANCE (bootstrapped without --instance): writing proof at $PROOF_SUFFIX (ADR-020 E3; the throwaway VM only)"
+    remote "cd $REMOTE_ROOT && (set -C && umask 022 && printf 'environment=proof\nsuffix=%s\n' '$PROOF_SUFFIX' > INSTANCE)" \
+      || die "could not write $REMOTE_ROOT/INSTANCE on $HOST"
+    remote "$(instance_read)" > "$CM_DIR/instance" 2>/dev/null || true
+  fi
+  why="$(python3 -I scripts/instance_check.py "$FOLDER_ENV" "$FOLDER_SUFFIX" "$CM_DIR/instance")" || rc=$?
+  case "$rc" in
+    0) log "$HOST is $FOLDER_ENV at $FOLDER_SUFFIX ($REMOTE_ROOT/INSTANCE)" ;;
+    1) die "$HOST: $why" ;;
+    *) die "could not check $HOST's instance (scripts/instance_check.py exited $rc)" ;;
+  esac
+}
+
 log "Checking $HOST (port $PORT)"
 remote "test -w $REMOTE_ROOT && docker compose version --short >/dev/null" \
   || die "$HOST: $REMOTE_ROOT not writable or Docker missing (run deploy/host/bootstrap.sh first)"
+check_instance
 REL_REMOTE="$REMOTE_ROOT/deploy/staging/releases"
 if [[ -n "$(remote "cat $REMOTE_ROOT/DEPLOYING 2>/dev/null" || true)" ]]; then
   log "WARNING: the last deploy to $HOST did not finish ($REMOTE_ROOT/DEPLOYING); it is never a rollback target"
@@ -416,6 +506,7 @@ fi
   echo "git_dirty=$(label_of "$BACKEND" ihr.git-dirty)"
   echo "deployed_at=$(date -Iseconds)"
   echo "deployed_from_head=$SHA"
+  echo "environment=$FOLDER_ENV"
   echo "suffix=$(env_get IHR_TENANT_DOMAIN_SUFFIX)"
   echo "backend_image=$BACKEND $(docker image inspect -f '{{.Id}}' "$BACKEND")"
   echo "frontend_image=$FRONTEND $(docker image inspect -f '{{.Id}}' "$FRONTEND")"

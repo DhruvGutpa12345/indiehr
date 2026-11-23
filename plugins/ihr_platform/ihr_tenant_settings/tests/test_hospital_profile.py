@@ -13,10 +13,11 @@ from django.core import mail
 from django.core.exceptions import ValidationError
 from django.core.management import call_command
 from django.db import IntegrityError, connection, transaction
-from django.test import SimpleTestCase
+from django.test import SimpleTestCase, override_settings
 from django_tenants.utils import schema_context
 from ihr_identity import testing
 from ihr_identity.models import StaffIdentity
+from ihr_platform import environment
 from ihr_platform.links import frontend_base_url
 from ihr_platform.models import Domain, Hospital, RetiredAddress, generate_schema_name
 from ihr_platform.test_runner import TEST_SCHEMA
@@ -26,6 +27,7 @@ from rest_framework.test import APIClient
 from ihr_tenant_settings.branding import initials
 from ihr_tenant_settings.device_time import WARNING_SCRIPT
 from ihr_tenant_settings.models import HospitalProfile
+from ihr_tenant_settings.synthetic_bar import SYNTHETIC_SCRIPT
 from ihr_tenant_settings.validators import (
     gstin_check_character,
     logo_content_type,
@@ -258,9 +260,64 @@ class HospitalProfileTests(SimpleTestCase):
             'window.__IHR_AUTH__ = {"idle_seconds": 1800, "warn_seconds": 120};', body
         )
         self.assertNotIn("<", body)  # the time-zone warning included (P1-T7b)
-        self.assertTrue(body.endswith(WARNING_SCRIPT))
+        # the time-zone bar, then (not production) the synthetic bar (P1-T32 E5)
+        self.assertTrue(body.endswith(WARNING_SCRIPT + SYNTHETIC_SCRIPT))
         self.assertEqual(response["Content-Type"], "text/javascript; charset=utf-8")
         self.assertEqual(response["X-Content-Type-Options"], "nosniff")
+
+    # --- the synthetic bar (P1-T32 E5, ADR-020 §3) --------------------------------------------
+
+    def test_bootstrap_json_says_whether_this_instance_is_synthetic(self):
+        """True under test settings (dev); false on production; never the instance's name."""
+        host = self.second_domain
+        body = APIClient().get("/api/ihr/bootstrap/", HTTP_HOST=host)
+        self.assertTrue(body.json()["synthetic"])
+        for name in ("staging", "proof", ""):
+            with self.subTest(name=name), override_settings(IHR_ENVIRONMENT=name):
+                got = APIClient().get("/api/ihr/bootstrap/", HTTP_HOST=host)
+                self.assertTrue(got.json()["synthetic"])
+        with override_settings(IHR_ENVIRONMENT="production-1"):
+            got = APIClient().get("/api/ihr/bootstrap/", HTTP_HOST=host)
+        self.assertFalse(got.json()["synthetic"])
+        self.assertNotIn("production-1", got.content.decode())
+        self.assertNotIn("environment", got.json())
+
+    def test_bootstrap_js_draws_the_synthetic_bar_only_when_synthetic(self):
+        host = self.second_domain
+        for name in ("", "staging", "proof"):
+            with self.subTest(name=name), override_settings(IHR_ENVIRONMENT=name):
+                body = (
+                    APIClient()
+                    .get("/api/ihr/bootstrap.js", HTTP_HOST=host)
+                    .content.decode()
+                )
+                self.assertIn("ihr-synthetic", body)
+                self.assertIn(environment.BANNER_EN, body)
+                self.assertIn(environment.BANNER_HI, body)
+                self.assertNotIn("<", body)
+                self.assertIn(WARNING_SCRIPT, body)
+                self.assertNotIn("__IHR_ENVIRONMENT__", body)
+        with override_settings(IHR_ENVIRONMENT="production-1"):
+            body = (
+                APIClient()
+                .get("/api/ihr/bootstrap.js", HTTP_HOST=host)
+                .content.decode()
+            )
+        self.assertNotIn("ihr-synthetic", body.replace("--ihr-synthetic-h", ""))
+        self.assertNotIn(environment.BANNER_EN, body)
+        self.assertNotIn(environment.BANNER_HI, body)
+        self.assertNotIn("production-1", body)
+        # the IST bar is still served on production, and is the whole tail of the script
+        self.assertTrue(body.endswith(WARNING_SCRIPT))
+
+    def test_branding_in_the_script_and_profile_has_no_synthetic_key(self):
+        """_branding() is unchanged: CARE's config and the staff profile see nothing new."""
+        body = (
+            APIClient()
+            .get("/api/ihr/bootstrap.js", HTTP_HOST=self.second_domain)
+            .content.decode()
+        )
+        self.assertNotIn('"synthetic"', body)
 
     def test_logo_is_served_safely(self):
         profile = self._set(self.second.schema_name, logo=PNG)

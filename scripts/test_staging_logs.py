@@ -66,7 +66,7 @@ WHOLE_RESTORE_LINE = r"^ihr-audit: restore=(?P<restore>[0-9a-f]{8}) event=whole-
 # with a fixed reason; the dumper alone writes them
 DUMP_HELD_LINE = r"^ihr-dump: hospital=(?P<hospital>[a-z][a-z0-9-]{2,30}) outcome=held$"
 DUMP_FAILED_LINE = (r"^ihr-dump: hospital=(?P<hospital>[a-z][a-z0-9-]{2,30}) outcome=failed "
-                    r"reason=(?P<reason>lock|disk|window|dump|upload|verify|check|error)$")
+                    r"reason=(?P<reason>lock|disk|window|dump|upload|verify|check|error|marker|foreign-object)$")
 # A failed single-hospital restore step (P1-T22b; deploy/logs/alerts/restore.yml): the restore's
 # one-off (migrate) and, in dev, the app containers; and a parked schema kept past its days,
 # from the worker's report

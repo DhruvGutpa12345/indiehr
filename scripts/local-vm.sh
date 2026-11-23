@@ -154,10 +154,11 @@ bootstrap() {
   log "Copying deploy/host/bootstrap.sh and the deploy key into the VM"
   vm ubuntu "cat > /tmp/ihr-bootstrap.sh" < "$ROOT/deploy/host/bootstrap.sh"
   vm ubuntu "cat > /tmp/ihr-deploy.pub" < "$KEY.pub"
+  # Which instance the VM is (P1-T32 E3): proof at the proof suffix, root's from the start (review O3)
   log "Run 1"
-  vm ubuntu "sudo bash /tmp/ihr-bootstrap.sh --ssh-key-file /tmp/ihr-deploy.pub" | tee "$CACHE/bootstrap-1.log"
+  vm ubuntu "sudo bash /tmp/ihr-bootstrap.sh --ssh-key-file /tmp/ihr-deploy.pub --instance proof --suffix app.ihr-proof.in" | tee "$CACHE/bootstrap-1.log"
   log "Run 2 (must change nothing)"
-  vm ubuntu "sudo bash /tmp/ihr-bootstrap.sh --ssh-key-file /tmp/ihr-deploy.pub" | tee "$CACHE/bootstrap-2.log"
+  vm ubuntu "sudo bash /tmp/ihr-bootstrap.sh --ssh-key-file /tmp/ihr-deploy.pub --instance proof --suffix app.ihr-proof.in" | tee "$CACHE/bootstrap-2.log"
   grep -qx 'No changes.' "$CACHE/bootstrap-2.log" || die "second run changed something (see $CACHE/bootstrap-2.log)"
   log "Fresh SSH connections under the new rules, then --check"
   close_ssh

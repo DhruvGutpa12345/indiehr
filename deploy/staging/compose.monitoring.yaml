@@ -234,7 +234,7 @@ services:
       - secrets/anchor-read.env
     environment:
       DJANGO_SETTINGS_MODULE: ihr_platform.settings.watch
-      IHR_ENVIRONMENT: ${IHR_ENVIRONMENT:-staging}
+      IHR_ENVIRONMENT: ${IHR_ENVIRONMENT:?set IHR_ENVIRONMENT in .env (ADR-020 E1)}
       IHR_TENANT_DOMAIN_SUFFIX: ${IHR_TENANT_DOMAIN_SUFFIX:?}
       IHR_DB_ROLES: required
       IHR_DB_ROLE: watch

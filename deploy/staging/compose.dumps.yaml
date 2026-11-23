@@ -48,6 +48,10 @@ services:
       IHR_DUMP_LOCK_WAIT: ${IHR_DUMP_LOCK_WAIT:-600}
       IHR_DUMP_WORKDIR: /state
       IHR_DUMP_SCRAPERS: prometheus
+      # Which instance this is (P1-T32 E4): every manifest records both under its MAC, and the run
+      # refuses a bucket whose instance marker (dumps/instance.json) is missing or another's
+      IHR_ENVIRONMENT: ${IHR_ENVIRONMENT:?set IHR_ENVIRONMENT in .env (ADR-020 E1)}
+      IHR_TENANT_DOMAIN_SUFFIX: ${IHR_TENANT_DOMAIN_SUFFIX:?set IHR_TENANT_DOMAIN_SUFFIX in .env}
       HOME: /tmp
       TMPDIR: /state
     volumes:

@@ -12,7 +12,9 @@ written; a forged package's CHECK is refused by the load before it can run.
 Run: python3 -m unittest scripts/test_restore_quarantine.py (static part anywhere).
 """
 
+import contextlib
 import importlib.util
+import io
 import json
 import os
 import shutil
@@ -24,6 +26,7 @@ from pathlib import Path
 
 ROOT = Path(os.environ.get("IHR_DUMPS_ROOT") or Path(__file__).resolve().parents[1])
 QUARANTINE = ROOT / "deploy" / "restore" / "quarantine.py"
+TEST_DUMPS = Path(__file__).resolve().parent / "test_dumps.py"  # beside this file (here and in the image)
 PACKAGE = ROOT / "plugins" / "ihr_platform" / "ihr_platform" / "restore" / "package.py"
 for path in (QUARANTINE.parent, PACKAGE.parent, ROOT / "deploy" / "dumps", ROOT / "deploy" / "lib"):
     if path.is_dir() and str(path) not in sys.path:
@@ -70,6 +73,18 @@ CREATE TRIGGER ihr_directory_user AFTER UPDATE OF is_active ON {SCHEMA}.users_us
   WHEN (OLD.is_active IS DISTINCT FROM NEW.is_active) EXECUTE FUNCTION {SCHEMA}.ihr_directory_touch();
 CREATE TRIGGER ihr_directory_truncate AFTER TRUNCATE ON {SCHEMA}.ihr_identity_staffidentity
   FOR EACH STATEMENT EXECUTE FUNCTION {SCHEMA}.ihr_directory_touch();
+"""
+# The hospital's rows in public, as the dumper reads them (deploy/dumps/dumper.py HOSPITALS_SQL,
+# read_facts), for the end-to-end case of a real nightly dump (P1-T32 E4)
+HOSPITAL_ROWS = f"""
+CREATE TABLE public.ihr_platform_hospital (id serial PRIMARY KEY, uuid uuid UNIQUE, slug text, name text,
+  schema_name text, status text, activated_at timestamptz, created_on timestamptz DEFAULT now());
+CREATE TABLE public.ihr_platform_hospitalschemastate (hospital_id int PRIMARY KEY REFERENCES public.ihr_platform_hospital,
+  schema_fingerprint text DEFAULT '', upgrading_since timestamptz, hold_reason text DEFAULT '',
+  restore_operation uuid, restore_since timestamptz);
+INSERT INTO public.ihr_platform_hospital (uuid, slug, name, schema_name, status, activated_at)
+  VALUES ('44444444-4444-4444-8444-444444444444', 'quarant', 'Quarantine Test Hospital', '{SCHEMA}', 'active', now());
+INSERT INTO public.ihr_platform_hospitalschemastate (hospital_id, schema_fingerprint) VALUES (1, 'abc');
 """
 # Each a way a dump could try something; each must be refused (and write no package)
 ATTACKS = {
@@ -135,6 +150,34 @@ class Static(unittest.TestCase):
         unsigned = self.manifest()
         unsigned["authentic"] = False
         self.assertTrue(self.q.manifest_problems(unsigned, SCHEMA, self.facts(), seqs))
+
+    def test_the_package_source_names_the_instance_its_manifest_names(self):
+        """P1-T32 E4 (attack S1): `source` copies the instance from the authentic manifest the
+        dumper wrote (the restore's pre-check reads it there); older dumps say it is not recorded;
+        a --from-pitr copy has no manifest and is unchanged."""
+        m = self.manifest(environment="staging", suffix="stg.example.in", kind="daily", date="2027-01-04",
+                          revision=1, snapshot={"at": "2027-01-04T03:30:00+05:30"})
+        src = self.q.source_of(m)
+        self.assertEqual((src["environment"], src["suffix"], src["instance_recorded"]),
+                         ("staging", "stg.example.in", True))
+        self.assertEqual((src["kind"], src["dump_at"], src["dump"]), ("nightly", "2027-01-04T03:30:00+05:30", "2027-01-04 r1"))
+        old = self.q.source_of(self.manifest())
+        self.assertEqual((old["environment"], old["suffix"], old["instance_recorded"]), (None, None, False))
+        pitr = self.q.source_of(None, "2026-11-14T10:00:00+05:30")
+        self.assertEqual(pitr, {"kind": "pitr", "dump_at": "2026-11-14T10:00:00+05:30", "dump": "pitr 2026-11-14T10:00:00+05:30"})
+
+    def test_a_half_or_malformed_instance_in_the_manifest_is_refused(self):
+        seqs = {"users_user_id_seq": [50, True]}
+        good = self.manifest(environment="production-1", suffix="app.example.in")
+        self.assertEqual(self.q.manifest_problems(good, SCHEMA, self.facts(), seqs), [])
+        for over in ({"environment": "staging"}, {"suffix": "stg.example.in"},
+                     {"environment": "dev", "suffix": "stg.example.in"},
+                     {"environment": "Production-1", "suffix": "app.example.in"},
+                     {"environment": "staging", "suffix": 5},
+                     {"environment": "staging", "suffix": "not a domain"}):
+            with self.subTest(over=over):
+                problems = self.q.manifest_problems(self.manifest(**over), SCHEMA, self.facts(), seqs)
+                self.assertTrue(any("instance" in p for p in problems), problems)
 
     def test_the_staff_directory_trigger_is_ours(self):
         """P1-T31a (attack S2): every dump taken after P1-T31 holds the directory's trigger
@@ -458,6 +501,47 @@ class Live(unittest.TestCase):
         ddl = Path(out, "ddl.json").read_text()
         self.assertNotIn("FUNCTION", ddl)
         self.assertNotIn("TRIGGER", ddl)
+
+    def test_a_real_nightly_dump_names_its_instance_in_the_package(self):
+        """P1-T32 E4 (attack S1), end to end: the dumper's own dump of a hospital schema (dump_one,
+        then `manifest` and `get` as the restore reads them) through the quarantine: package.json's
+        source names the instance the dumper recorded under its MAC."""
+        from datetime import date, datetime
+        from unittest import mock
+
+        import sealer
+        from cryptography.fernet import Fernet
+
+        T = _load("test_dumps_for_quarantine", TEST_DUMPS)  # its fake versioned, locked bucket
+        D = T.D
+        name = "fromdumper"
+        self.psql("postgres", f"CREATE DATABASE {name}")
+        self.psql(name, SETUP)
+        self.psql(name, HOSPITAL_ROWS)
+        source = D.Source.__new__(D.Source)  # a Unix socket: no host for pg_env to read
+        source.url = f"postgresql://postgres@/{name}?host={self.tmp}"
+        tools = D.Tools({"PGHOST": self.tmp, "PGUSER": "postgres", "PGDATABASE": name})
+        seal = sealer.Sealer(Fernet.generate_key().decode(), D.PURPOSE)
+        bucket = D.locked_bucket.Bucket(T.FakeS3(writer=True), "ihr-dumps")
+        work = tempfile.mkdtemp(dir=self.tmp)
+        cfg = D.Config({"IHR_DUMP_WORKDIR": work, "IHR_DUMP_LOCK_WAIT": "2",
+                        "IHR_ENVIRONMENT": "staging", "IHR_TENANT_DOMAIN_SUFFIX": "stg.example.in"})
+        hospital = next(h for h in source.hospitals() if h.schema == SCHEMA)
+        noon = datetime(2027, 1, 4, 12, 0, tzinfo=D.IST)  # outside the quiet window
+        with mock.patch.object(D, "now_ist", return_value=noon), contextlib.redirect_stdout(io.StringIO()):
+            m, _ = D.dump_one(cfg, source, tools, bucket, seal, hospital, "daily", date(2027, 1, 4), None, 1, work)
+            self.assertEqual((m["environment"], m["suffix"]), ("staging", "stg.example.in"))
+            text = io.StringIO()
+            D.manifest(bucket, seal, hospital.uuid, "latest", text, instance=cfg.instance)
+            dump = os.path.join(self.tmp, "fromdumper.dump")
+            with open(dump, "wb") as f:
+                D.get(bucket, seal, hospital.uuid, "latest", "dump", f)
+        out = os.path.join(self.tmp, "fromdumper-package")
+        self.assertEqual(self.quarantine(dump, out, json.loads(text.getvalue())), 0)
+        source_doc = json.loads(Path(out, "package.json").read_text())["source"]
+        self.assertEqual((source_doc["environment"], source_doc["suffix"], source_doc["instance_recorded"]),
+                         ("staging", "stg.example.in", True))
+        self.assertEqual(source_doc["kind"], "nightly")
 
     def test_a_manifest_that_does_not_match_is_refused(self):
         dump = self.source("manifested")

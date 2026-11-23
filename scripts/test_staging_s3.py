@@ -347,7 +347,7 @@ def make_site(d, *, s3="local", gateway=GATEWAY_OLD, app=APP_OLD, local=False):
     """A staging folder (.env, secrets/) as init and s3-init made it; P1-T19b's roles split
     (and P1-T21's audit watch role, P1-T22a's dumper role)."""
     d.mkdir(parents=True, exist_ok=True)
-    (d / ".env").write_text("IHR_TENANT_DOMAIN_SUFFIX=app.example.in\nIHR_BACKEND_IMAGE=indiehr-backend:staging\n"
+    (d / ".env").write_text("IHR_ENVIRONMENT=proof\nIHR_TENANT_DOMAIN_SUFFIX=app.example.in\nIHR_BACKEND_IMAGE=indiehr-backend:staging\n"
                             + (f"IHR_S3={s3}\n" if s3 else ""))
     sec = d / "secrets"
     sec.mkdir(mode=0o700)

@@ -6,7 +6,7 @@ One VM in an Indian region (provider-neutral, ADR-011), Docker Compose, Traefik 
 
 | Command | What it does |
 |---|---|
-| `scripts/staging.sh init <suffix>` | Writes `.env` (site settings, image digests) and `secrets/*.env` (mode 600, git-ignored). Refuses to overwrite. `<suffix>`: hospitals live at `<slug>.<suffix>` |
+| `scripts/staging.sh init <suffix> --environment production-<n>\|staging` (or `--local`/`--vm` for a proof) | Writes `.env` (site settings, `IHR_ENVIRONMENT`, image digests) and `secrets/*.env` (mode 600, git-ignored). Refuses to overwrite, and refuses no option or `--environment proof` (ADR-020 E1). A production folder gets `ihr-prod<n>-*` bucket names. `<suffix>`: hospitals live at `<slug>.<suffix>`. `init --check` says whether `$OUT/.env` names its environment and its bucket names fit it |
 | `scripts/staging.sh up` | Database, Redis, the platform's (public) migrations, web app, Celery, Keycloak, Traefik; then the Keycloak realms and the two workers' narrow accounts. Never migrates a hospital (P1-T18a): if a live hospital's schema is not the new build's, the `migrate` one-shot refuses and nothing starts; migrate hospitals in the announced window (`staging.sh release`, P1-T18b: see "Releases" below). A hospital this build's release already tried and left held (its migration failed) stays at 503 and the others start |
 | `scripts/staging.sh release` / `rollback` / `releases` | The new images in the announced window, rolling back, the releases in force (P1-T18b): see "Releases" below |
 | `scripts/staging.sh smoke` | 20 checks through Traefik: what is public and what is not, TLS redirect, HSTS, token issuer, production mode, no query strings in logs; and every active hospital served (a held one, 503 "upgrading", fails it: P1-T18b) |
@@ -410,7 +410,7 @@ Postgres 18.6 image plus Python, so `pg_dump` matches the server):
 
 | Command | What it does |
 |---|---|
-| `scripts/staging.sh dumps-init https://in-south1-objectstore.e2enetworks.net <bucket> Chennai [--uri-style path\|host]` | Once: asks for the dumps bucket's dumper key (typed or two lines on stdin), makes the dump key, writes `secrets/dumps.env` (mode 600) and `IHR_DUMPS=s3`. **Copy `IHR_DUMP_KEY` into your password manager.** `--existing-key`: a rebuilt server continuing the dumps. `--local`: a proof into this stack's SeaweedFS (automatic in `local-proof`; same disk, not a second copy). AWS: `https://s3.ap-south-2.amazonaws.com <dumps bucket> ap-south-2` (`tofu output -json dumper_key`) |
+| `scripts/staging.sh dumps-init https://in-south1-objectstore.e2enetworks.net <bucket> Chennai [--uri-style path\|host]` | Once: asks for the dumps bucket's dumper key (typed or two lines on stdin), makes the dump key, writes `secrets/dumps.env` (mode 600) and `IHR_DUMPS=s3`. **Copy `IHR_DUMP_KEY` into your password manager.** `--existing-key`: a rebuilt server continuing the dumps. `--local`: a proof into this stack's SeaweedFS (automatic in `local-proof`; same disk, not a second copy; `up` marks a proof's stand-in bucket itself). `dumps-init --mark` (after `up`, once): writes the bucket's instance marker `dumps/instance.json` (P1-T32 E4); until then every dump run refuses (`reason=marker`) and `up` warns. Run it only once you know the bucket is this instance's own (empty, or already ours): already this instance's is fine, another instance's is refused. AWS: `https://s3.ap-south-2.amazonaws.com <dumps bucket> ap-south-2` (`tofu output -json dumper_key`) |
 | `scripts/staging.sh dumps-now [--slug S]...` | A run now: every due hospital without a dump since today's 03:30 (or the named ones, again), then the check |
 | `scripts/staging.sh dumps-check [--deep [--all]]` | Every manifest and erasure record authentic, each hospital's chain whole, every name under `dumps/` written once, every object present with its size (the version its manifest recorded), the bucket's lock. `--deep`: each hospital's newest dump (`--all`: every dump) read back, decrypted, read whole by `pg_restore`, listed and restored schema-only. Runs from your machine too, without the server (its copies on a Docker volume of its own, removed afterwards: room for the largest sealed dump) |
 | `scripts/staging.sh dumps-get --operator <you> --reason "<ticket>" <hospital uuid> <YYYY-MM-DD\|latest> <dump\|public> > file` | One dump (or its public rows, gzip JSON) back, in the version its manifest recorded, checked whole and decrypted (P1-T22b restores from it). Needs disk for the sealed object (a Docker volume, removed afterwards) and for the decrypted file |
@@ -423,7 +423,7 @@ Postgres 18.6 image plus Python, so `pg_dump` matches the server):
 - **DumpTooOld** (critical): a hospital has had no good dump for 26 hours (one never dumped
   counts from when it went live; a held one is not excused).
 - **DumpHospitalFailed** (log): names the hospital and why (`ihr-dump: hospital=<slug>
-  outcome=failed reason=<lock|disk|window|dump|upload|verify|check|error>`); **DumpHospitalHeld**
+  outcome=failed reason=<lock|disk|window|dump|upload|verify|check|error|marker|foreign-object>`); **DumpHospitalHeld**
   (log) names a held one; **DumpRunFailing**: the last run's count of failures.
 - **DumpRunMissing** (critical): no run ended for 26 hours. **DumpRunOverBudget**: a run still
   going after 2.5 hours (06:00 IST).
@@ -433,6 +433,11 @@ Postgres 18.6 image plus Python, so `pg_dump` matches the server):
   with `--allow-short` (a proof's only), counted whatever its records say; off a proof's own
   stand-in such a record is also checked against the retention like any other (DumpNotAuthentic).
 - **DumpRoleRefused** (critical): the dumper refused its database role; nothing is dumped.
+- **DumpBucketMarkerRefused** (critical, P1-T32 E4): the bucket's instance marker is missing,
+  not authentic or another instance's; nothing is dumped (`reason=marker`).
+  **DumpForeignObject** (warning): the bucket holds a manifest naming another instance; dumps go
+  on (`reason=foreign-object` when it is under one of this instance's hospitals; `dumps-check`
+  says which and whether it is authentic).
 - **DumpDiskLow** (less room than `IHR_DUMP_PARALLEL` dumps the size of the largest need),
   **DumpErasureOverdue** (dumps older than 36 days: a weekly `dumps-expire` was missed),
   **DumpDrillOverdue** (no passing restore drill for 35 days, or none 35 days after the first
@@ -452,6 +457,8 @@ The metrics count hospitals only; they never carry a hospital's name or id.
 | `verify` | The uploaded dump did not read back whole (size, SHA-256, every token, the plaintext's SHA-256) or list as that schema alone: no manifest was written. Run `dumps-check --deep`; if it repeats, suspect the bucket or the link |
 | `check` | The night's schema-only restore of the new dump failed (`logs dumper` says why) |
 | `error` | Anything else, or a hospital row with an unexpected schema name or id |
+| `marker` | Nothing was dumped: the bucket's instance marker (`dumps/instance.json`, P1-T32 E4) is missing, not authentic with this dump key, or names another instance (`logs dumper` and `dumps-check` say which; **DumpBucketMarkerRefused**). A dumps setting points at another instance's bucket, or this instance holds another's dump key: never write into it; fix `secrets/dumps.env` (the bucket and the key from the password manager) and run again. A new bucket, or one from before P1-T32, gets its marker from `dumps-init --mark` (a proof's stand-in: from `up`) |
+| `foreign-object` | The bucket holds a manifest under this hospital's name that names another instance (P1-T32 E4; **DumpForeignObject**); this hospital's dumps went on. `dumps-check` prints it: "authentic but from …" is a key incident (another instance's dump key is here: ADR-020 §2, rotate it); "written by … Unverified" was written by whoever holds the bucket key. Keep the object (the lock does) and record it; the restore will not use this hospital's dumps (`dumps-get` refuses) until it is resolved |
 
 **At go-live (owner):**
 
@@ -462,7 +469,10 @@ The metrics count hospitals only; they never carry a hospital's name or id.
    key in your password manager (erasure only).
 3. On your machine: `scripts/staging.sh dumps-init https://in-south1-objectstore.e2enetworks.net <bucket> Chennai --uri-style path`,
    then copy `IHR_DUMP_KEY` into your password manager. Deploy.
-4. On the server: `scripts/staging.sh dumps-probe`. **Every line must PASS; any FAIL blocks
+4. On the server: `scripts/staging.sh dumps-init --mark` (the bucket is this instance's: P1-T32 E4). The deploy's
+   own smoke fails on the unmarked bucket (`up` warns), so the release was not recorded: run
+   `scripts/staging.sh smoke` and `scripts/staging.sh release-record` now (each with `--operator <you>`).
+   Then `scripts/staging.sh dumps-probe`. **Every line must PASS; any FAIL blocks
    go-live** (a delete, delete-marker, lock or "write outside dumps/" line: ask E2E for a role
    without it, or use AWS: `infra/aws` makes the bucket and a put-only key). The line "replace
    it without If-None-Match" says whether the store refuses it or keeps a second version for

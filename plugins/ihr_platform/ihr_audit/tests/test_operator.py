@@ -757,7 +757,11 @@ class ProcessTests(SimpleTestCase):
     SERVICES = {
         "drill": (
             "ihr-restore-drill",
-            {"DATABASE_URL": "postgres://ihr_owner:x@db:5432/ihr"},
+            # P1-T32 E1: both refuse to start without the instance (staging.sh passes it)
+            {
+                "DATABASE_URL": "postgres://ihr_owner:x@db:5432/ihr",
+                "IHR_ENVIRONMENT": "staging",
+            },
         ),
         "watch": (
             "ihr-audit-watch",
@@ -767,6 +771,7 @@ class ProcessTests(SimpleTestCase):
                 "IHR_TENANT_DOMAIN_SUFFIX": "example.in",
                 "IHR_DB_ROLES": "required",
                 "IHR_DB_ROLE": "watch",
+                "IHR_ENVIRONMENT": "staging",
             },
         ),
     }

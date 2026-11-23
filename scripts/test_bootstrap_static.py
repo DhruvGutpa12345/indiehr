@@ -688,3 +688,415 @@ class HostAuditTests(unittest.TestCase):
         for part in ("auditctl -l", "ausearch -k ihr-docker", "P1-T26", "HostAuditRulesMissing",
                      "not recorded", "docker.sock"):
             self.assertIn(part, section)
+
+
+# ---- E3: host identity (P1-T32, ADR-020 §3; docs/reviews/p1-t32/design.md §5) ------------------
+CANONICAL_ENV_RE = r"^(production-[1-9][0-9]{0,2}|staging|proof)$"
+INSTANCE_CHECK = ROOT / "scripts" / "instance_check.py"
+
+
+def shell_function(text: str, name: str) -> str:
+    """The full definition of a shell function (one-line or multi-line) in ``text``."""
+    m = re.search(rf"^{re.escape(name)}\(\) \{{.*$", text, re.M)
+    assert m, f"function {name} not found"
+    line = m.group(0).rstrip()
+    if line.endswith("}") and line.count("{") == line.count("}"):
+        return m.group(0)
+    end = re.compile(r"^\}$", re.M).search(text, m.end())
+    assert end, f"end of function {name} not found"
+    return text[m.start():end.end()]
+
+
+def deploy_assignment(name: str) -> str:
+    m = re.search(rf"^{name}='([^']*)'", DEPLOY, re.M) or re.search(rf'^{name}="([^"]*)"', DEPLOY, re.M)
+    assert m, f"{name} not set in deploy.sh"
+    return m.group(1)
+
+
+def run_deploy(script: str, cwd: Path = ROOT) -> subprocess.CompletedProcess:
+    """deploy.sh's own functions, with its log/die and constants, run under its shell options."""
+    prelude = ("set -euo pipefail\n"
+               'log() { printf "==> %s\\n" "$*"; }\n'
+               'die() { printf "DIE %s\\n" "$*"; exit 1; }\n'
+               f"ENV_RE='{deploy_assignment('ENV_RE')}'\n"
+               f"PROOF_SUFFIX=\"{deploy_assignment('PROOF_SUFFIX')}\"\n"
+               + shell_function(DEPLOY, "env_get") + "\n")
+    return subprocess.run(["bash", "-c", prelude + script], text=True, capture_output=True,
+                          timeout=60, cwd=cwd)
+
+
+def call_line(text: str, name: str) -> int:
+    """Where the script calls ``name`` on a line of its own (its top level)."""
+    m = re.search(rf"^{re.escape(name)}$", text, re.M)
+    assert m, f"no top-level call of {name}"
+    return m.start()
+
+
+class DeployInstanceTests(unittest.TestCase):
+    """deploy.sh: the folder's own checks before connecting (§5.1), the server's instance before
+    anything is written or sent (§5.2), and the record (§5.3)."""
+
+    def setUp(self):
+        self.tmp = Path(tempfile.mkdtemp())
+        self.addCleanup(shutil.rmtree, self.tmp, True)
+
+    def folder(self, name: str, env: str | None, suffix: str, newline: bool = True) -> Path:
+        d = self.tmp / name
+        (d / "secrets").mkdir(parents=True, exist_ok=True)
+        lines = ["IHR_S3=s3"]
+        if env is not None:
+            lines.append(f"IHR_ENVIRONMENT={env}")
+        lines.append(f"IHR_TENANT_DOMAIN_SUFFIX={suffix}")
+        (d / ".env").write_text("\n".join(lines) + ("\n" if newline else ""))
+        return d
+
+    # -- static ---------------------------------------------------------------------------------
+    def test_one_regex_and_no_override(self):
+        self.assertEqual(deploy_assignment("ENV_RE"), CANONICAL_ENV_RE)
+        options = DEPLOY.split("while (($#)); do", 1)[1].split("done", 1)[0]
+        for banned in ("--force", "--new-server", "--override", "--skip-instance", "--no-instance"):
+            self.assertNotIn(banned, options)
+
+    def test_checks_come_before_anything_is_written_or_sent(self):
+        local = DEPLOY.index('[[ -f "$ENV_DIR/.local" ]] && die')
+        upgrade = call_line(DEPLOY, "vm_upgrade")
+        folder = call_line(DEPLOY, "folder_checks")
+        self.assertLess(local, upgrade)
+        self.assertLess(upgrade, folder)
+        self.assertLess(folder, DEPLOY.index("db-split-secrets --check"))
+        instance = call_line(DEPLOY, "check_instance")
+        self.assertLess(DEPLOY.index('log "Checking $HOST'), instance)
+        for later in ("cat $REMOTE_ROOT/DEPLOYING", "releases.log 2>/dev/null", "> $REMOTE_ROOT/DEPLOYING",
+                      'ship_image "$BACKEND"', 'log "Sending .env and secrets/'):
+            self.assertLess(instance, DEPLOY.index(later), later)
+
+    def test_the_read_ends_in_its_sentinel(self):
+        body = shell_function(DEPLOY, "instance_read")
+        self.assertIn("echo '#end'; true", body)
+        code = [line for line in body.splitlines() if line.strip() and not line.strip().startswith("#")]
+        self.assertEqual(code[-3:], ["echo '#end'; true", "EOF", "}"])  # the last command of the read
+        self.assertIn("python3 -I scripts/instance_check.py", shell_function(DEPLOY, "check_instance"))
+
+    def test_deployed_records_the_environment(self):
+        block = DEPLOY.split("# ---- 6. Record what is deployed", 1)[1]
+        self.assertIn('echo "environment=$FOLDER_ENV"', block)
+        self.assertLess(block.index('echo "environment=$FOLDER_ENV"'), block.index('echo "suffix='))
+
+    # -- the remote read, run against a folder standing in for the server ------------------------
+    def read(self, root: Path) -> subprocess.CompletedProcess:
+        script = shell_function(DEPLOY, "instance_read") + f'\nREMOTE_ROOT="{root}"\nsh -c "$(instance_read)"\n'
+        return run_deploy(script)
+
+    def check(self, env: str, suffix: str, text: str) -> subprocess.CompletedProcess:
+        f = self.tmp / "answer"
+        f.write_text(text)
+        return subprocess.run(["python3", "-I", str(INSTANCE_CHECK), env, suffix, str(f)],
+                              capture_output=True, text=True, timeout=30)
+
+    def test_read_of_a_server_with_nothing_deployed_finishes(self):
+        server = self.tmp / "srv"
+        server.mkdir()
+        (server / "INSTANCE").write_text("environment=proof\nsuffix=app.ihr-proof.in\n")
+        out = self.read(server)
+        self.assertEqual(out.returncode, 0, out.stderr)
+        self.assertEqual(out.stdout.splitlines()[-1], "#end")
+        self.assertIn("#deployed missing", out.stdout)
+        self.assertIn("#env missing", out.stdout)
+        self.assertEqual(self.check("proof", "app.ihr-proof.in", out.stdout).returncode, 0)
+        # this test's files are not root's: a staging INSTANCE written so is refused
+        (server / "INSTANCE").write_text("environment=staging\nsuffix=app.stg.example.in\n")
+        refused = self.check("staging", "app.stg.example.in", self.read(server).stdout)
+        self.assertEqual(refused.returncode, 1)
+        self.assertIn("not root's", refused.stdout)
+
+    def test_read_carries_only_the_two_env_keys(self):
+        server = self.tmp / "srv"
+        (server / "deploy/staging").mkdir(parents=True)
+        (server / "INSTANCE").write_text("environment=proof\nsuffix=app.ihr-proof.in\n")
+        (server / "DEPLOYED").write_text("git_sha=abc\nenvironment=proof\nsuffix=app.ihr-proof.in\n")
+        (server / "deploy/staging/.env").write_text(
+            "POSTGRES_PASSWORD=do-not-send\nIHR_ENVIRONMENT=proof\nIHR_TENANT_DOMAIN_SUFFIX=app.ihr-proof.in")
+        out = self.read(server)
+        self.assertNotIn("do-not-send", out.stdout)
+        self.assertIn("|IHR_TENANT_DOMAIN_SUFFIX=app.ihr-proof.in\n#end", out.stdout)
+        self.assertEqual(self.check("proof", "app.ihr-proof.in", out.stdout).returncode, 0)
+
+    def test_read_of_an_unreachable_root_has_no_sentinel(self):
+        out = self.read(self.tmp / "missing")
+        self.assertNotIn("#end", out.stdout)
+        self.assertEqual(self.check("proof", "app.ihr-proof.in", out.stdout).returncode, 1)
+
+    # -- check_instance, with remote() standing in for SSH ----------------------------------------
+    def check_instance(self, server: Path, env: str, suffix: str, local_proof: int,
+                       remote: str = 'remote() { sh -c "$*"; }', host: str = "ihr@127.0.0.1",
+                       identity: str = "$VM_CACHE/id_ed25519") -> subprocess.CompletedProcess:
+        cm = self.tmp / "cm"
+        cm.mkdir(exist_ok=True)
+        script = (shell_function(DEPLOY, "instance_read") + "\n" + shell_function(DEPLOY, "check_instance")
+                  + f'\n{remote}\nREMOTE_ROOT="{server}" CM_DIR="{cm}" HOST="{host}" LOCAL_PROOF={local_proof}\n'
+                  f'VM_CACHE="{self.tmp}/vm"\nIDENTITY="{identity}"\n'
+                  f'FOLDER_ENV="{env}" FOLDER_SUFFIX="{suffix}"\ncheck_instance\necho PASSED\n')
+        return run_deploy(script)
+
+    def test_local_proof_writes_proof_only_on_the_vm_itself(self):
+        """Review O4: --local-proof keeps a --host or --identity override; a host that is not the
+        throwaway VM (127.0.0.1 or localhost with the VM's own key) is never written proof."""
+        for host, identity in (("ihr@203.0.113.7", "$VM_CACHE/id_ed25519"), ("ihr@prod.example.in", "$VM_CACHE/id_ed25519"),
+                               ("ihr@127.0.0.1", f"{self.tmp}/other_key"), ("ihr@127.0.0.1.example.in", "$VM_CACHE/id_ed25519")):
+            with self.subTest(host=host, identity=identity):
+                server = self.tmp / "srv"
+                shutil.rmtree(server, ignore_errors=True)
+                server.mkdir()
+                out = self.check_instance(server, "proof", "app.ihr-proof.in", 1, host=host, identity=identity)
+                self.assertIn("DIE", out.stdout)
+                self.assertIn("bootstrap.sh --instance", out.stdout)
+                self.assertNotIn("PASSED", out.stdout)
+                self.assertFalse((server / "INSTANCE").exists())
+        for host in ("ihr@127.0.0.1", "ihr@localhost"):
+            with self.subTest(host=host):
+                server = self.tmp / "srv"
+                shutil.rmtree(server, ignore_errors=True)
+                server.mkdir()
+                out = self.check_instance(server, "proof", "app.ihr-proof.in", 1, host=host)
+                self.assertIn("PASSED", out.stdout, out.stdout + out.stderr)
+
+    def test_a_server_without_instance_is_refused(self):
+        server = self.tmp / "srv"
+        server.mkdir()
+        out = self.check_instance(server, "staging", "app.stg.example.in", 0)
+        self.assertIn("DIE", out.stdout)
+        self.assertIn("bootstrap.sh --instance", out.stdout)
+        self.assertNotIn("PASSED", out.stdout)
+        self.assertFalse((server / "INSTANCE").exists())
+
+    def test_local_proof_writes_proof_on_a_vm_from_before_e3(self):
+        server = self.tmp / "srv"
+        server.mkdir()
+        out = self.check_instance(server, "proof", "app.ihr-proof.in", 1)
+        self.assertIn("PASSED", out.stdout, out.stdout + out.stderr)
+        self.assertEqual((server / "INSTANCE").read_text(), "environment=proof\nsuffix=app.ihr-proof.in\n")
+        self.assertEqual(oct((server / "INSTANCE").stat().st_mode & 0o777), "0o644")
+
+    def test_local_proof_never_writes_over_an_instance(self):
+        server = self.tmp / "srv"
+        server.mkdir()
+        (server / "INSTANCE").write_text("environment=staging\nsuffix=app.stg.example.in\n")
+        out = self.check_instance(server, "proof", "app.ihr-proof.in", 1)
+        self.assertIn("DIE", out.stdout)
+        self.assertNotIn("PASSED", out.stdout)
+        self.assertEqual((server / "INSTANCE").read_text(), "environment=staging\nsuffix=app.stg.example.in\n")
+
+    def test_local_proof_writes_only_the_proof_suffix(self):
+        server = self.tmp / "srv"
+        server.mkdir()
+        out = self.check_instance(server, "proof", "app.other-proof.in", 1)
+        self.assertIn("DIE", out.stdout)
+        self.assertFalse((server / "INSTANCE").exists())
+
+    def test_a_failed_read_is_refused(self):
+        server = self.tmp / "srv"
+        server.mkdir()
+        out = self.check_instance(server, "staging", "app.stg.example.in", 0, remote="remote() { return 255; }")
+        self.assertIn("DIE", out.stdout)
+        self.assertIn("cannot read the server", out.stdout)
+        self.assertNotIn("PASSED", out.stdout)
+
+    # -- the VM's folder from before E1 (Z3) ------------------------------------------------------
+    def upgrade(self, env_dir: Path, local_proof: int = 1) -> subprocess.CompletedProcess:
+        script = (shell_function(DEPLOY, "vm_upgrade") + f'\nVM_CACHE="{self.tmp}/vm" ENV_DIR="{env_dir}" '
+                  f"LOCAL_PROOF={local_proof}\nvm_upgrade\n")
+        return run_deploy(script)
+
+    def test_vm_folder_is_upgraded_by_exact_path_and_suffix(self):
+        d = self.folder("vm/staging", None, "app.ihr-proof.in", newline=False)
+        out = self.upgrade(Path(f"{self.tmp}/vm/../vm/staging/"))
+        self.assertEqual(out.returncode, 0, out.stdout + out.stderr)
+        self.assertIn("IHR_ENVIRONMENT=proof", out.stdout)
+        self.assertEqual((d / ".env").read_text().splitlines()[-2:],
+                         ["IHR_TENANT_DOMAIN_SUFFIX=app.ihr-proof.in", "IHR_ENVIRONMENT=proof"])
+
+    def test_nothing_else_is_upgraded(self):
+        cases = {
+            "another folder": (("other/staging", None, "app.ihr-proof.in"), 1),
+            "another suffix": (("vm/staging", None, "app.stg.example.in"), 1),
+            "not a VM proof": (("vm/staging", None, "app.ihr-proof.in"), 0),
+        }
+        for label, (made, local_proof) in cases.items():
+            with self.subTest(label):
+                d = self.folder(*made)
+                before = (d / ".env").read_text()
+                self.upgrade(d, local_proof)
+                self.assertEqual((d / ".env").read_text(), before)
+        d = self.folder("vm/staging", '"proof"', "app.ihr-proof.in")  # a malformed value is never replaced
+        before = (d / ".env").read_text()
+        self.upgrade(d)
+        self.assertEqual((d / ".env").read_text(), before)
+
+    # -- the folder's own checks, with staging.sh init --check (§5.1) --------------------------
+    def folder_checks(self, d: Path, local_proof: int, root: Path | None = None) -> subprocess.CompletedProcess:
+        script = (shell_function(DEPLOY, "folder_checks") + f'\nROOT="{root or self.tmp / "repo"}" ENV_DIR="{d}" '
+                  f'LOCAL_PROOF={local_proof}\nfolder_checks\necho "FOLDER $FOLDER_ENV $FOLDER_SUFFIX"\n')
+        return run_deploy(script)
+
+    def test_folder_checks(self):
+        (self.tmp / "repo").mkdir()
+        out = self.folder_checks(self.folder("stg", "staging", "app.stg.example.in"), 0)
+        self.assertIn("FOLDER staging app.stg.example.in", out.stdout, out.stdout + out.stderr)
+        out = self.folder_checks(self.folder("prod", "production-1", "app.example.in"), 0)
+        self.assertIn("FOLDER production-1 app.example.in", out.stdout, out.stdout + out.stderr)
+        out = self.folder_checks(self.folder("vm", "proof", "app.ihr-proof.in"), 1)
+        self.assertIn("FOLDER proof app.ihr-proof.in", out.stdout, out.stdout + out.stderr)
+
+    def test_folder_refusals(self):
+        repo = self.tmp / "repo"
+        cases = {
+            "a proof to a real host": (self.folder("p", "proof", "app.ihr-proof.in"), 0, "a proof never goes to a real host"),
+            "a real folder as a VM proof": (self.folder("s", "staging", "app.stg.example.in"), 1, "--local-proof"),
+            "production inside the checkout": (self.folder("repo/deploy/prod", "production-1", "app.example.in"), 0,
+                                               "inside the repository checkout"),
+            "no environment": (self.folder("n", None, "app.stg.example.in"), 0, "init --check"),
+            "a malformed environment": (self.folder("m", "staging ", "app.stg.example.in"), 0, "init --check"),
+        }
+        for label, (d, local_proof, why) in cases.items():
+            with self.subTest(label):
+                out = self.folder_checks(d, local_proof, repo)
+                self.assertIn("DIE", out.stdout, out.stdout + out.stderr)
+                self.assertIn(why, out.stdout)
+                self.assertNotIn("FOLDER ", out.stdout)
+
+
+class BootstrapInstanceTests(unittest.TestCase):
+    """bootstrap.sh --instance <env> --suffix <s> writes /srv/indiehr/INSTANCE, root's (S2)."""
+
+    def setUp(self):
+        self.tmp = Path(tempfile.mkdtemp())
+        self.addCleanup(shutil.rmtree, self.tmp, True)
+
+    def test_regex_and_file(self):
+        self.assertEqual(assignment("ENV_RE", quote="'"), CANONICAL_ENV_RE)
+        self.assertEqual(assignment("INSTANCE_FILE"), "$SRV_DIR/INSTANCE")
+        self.assertIn("--instance) INSTANCE_ENV=", BOOTSTRAP)
+        self.assertIn("--suffix) INSTANCE_SUFFIX=", BOOTSTRAP)
+
+    def test_options_are_checked_before_anything_runs(self):
+        for args in (["--instance", "staging"], ["--suffix", "app.stg.example.in"],
+                     ["--instance", "Staging", "--suffix", "app.stg.example.in"],
+                     ["--instance", "production-01", "--suffix", "app.example.in"],
+                     ["--instance", "staging", "--suffix", "App.Example"]):
+            with self.subTest(args=args):
+                out = subprocess.run(["bash", str(ROOT / "deploy/host/bootstrap.sh"), *args],
+                                     capture_output=True, text=True, timeout=30)
+                self.assertEqual(out.returncode, 2, out.stderr)
+        # a valid pair gets as far as the root check
+        out = subprocess.run(["bash", str(ROOT / "deploy/host/bootstrap.sh"), "--instance", "production-1",
+                              "--suffix", "app.example.in", "--dry-run"], capture_output=True, text=True, timeout=30)
+        self.assertEqual(out.returncode, 1)
+        self.assertIn("run as root", out.stderr)
+
+    def conf(self, env: str, suffix: str) -> str:
+        out = run_bash(f"INSTANCE_ENV={env} INSTANCE_SUFFIX={suffix}\n" + function("instance_conf") + "\ninstance_conf\n")
+        self.assertEqual(out.returncode, 0, out.stderr)
+        return out.stdout
+
+    def test_what_it_writes_is_what_deploy_accepts(self):
+        text = self.conf("production-1", "app.example.in")
+        self.assertIn("environment=production-1\nsuffix=app.example.in\n", text)
+        answer = ("#instance present root 644\n" + "".join("|" + line + "\n" for line in text.splitlines())
+                  + "#deployed missing\n#env missing\n#end\n")
+        f = self.tmp / "answer"
+        f.write_text(answer)
+        for env, suffix, rc in (("production-1", "app.example.in", 0), ("staging", "app.example.in", 1),
+                                ("production-1", "app.stg.example.in", 1)):
+            out = subprocess.run(["python3", "-I", str(INSTANCE_CHECK), env, suffix, str(f)],
+                                 capture_output=True, text=True, timeout=30)
+            self.assertEqual(out.returncode, rc, out.stdout)
+
+    def conflict(self, setup: str) -> str:
+        f = self.tmp / "INSTANCE"
+        out = run_bash(f'INSTANCE_FILE="{f}" INSTANCE_ENV=staging INSTANCE_SUFFIX=app.stg.example.in\n{setup}\n'
+                       + function("instance_conflict") + "\ninstance_conflict\n")
+        self.assertEqual(out.returncode, 0, out.stderr)
+        return out.stdout
+
+    def test_an_instance_is_never_changed_in_place(self):
+        f = self.tmp / "INSTANCE"
+        self.assertEqual(self.conflict(""), "")
+        self.assertEqual(self.conflict(f"printf 'environment=staging\\nsuffix=app.stg.example.in\\n' > '{f}'"), "")
+        why = self.conflict(f"printf 'environment=production-1\\nsuffix=app.example.in\\n' > '{f}'")
+        self.assertIn("production-1 at app.example.in", why)
+        self.assertIn("staging at app.stg.example.in", why)
+        self.assertIn("rebuilt", why)
+        why = self.conflict(f"printf 'environment=staging\\nsuffix=app.other.example.in\\n' > '{f}'")
+        self.assertIn("rebuilt", why)
+        f.unlink()
+        why = self.conflict(f"ln -s /etc/hostname '{f}'")
+        self.assertIn("not a regular file", why)
+        f.unlink()
+        why = self.conflict(f"mkdir '{f}'")
+        self.assertIn("not a regular file", why)
+
+    def test_written_by_root_after_the_folder_and_refused_before_any_change(self):
+        self.assertIn('write_file "$INSTANCE_FILE" 644 < <(instance_conf)', BOOTSTRAP)
+        write = BOOTSTRAP.index('write_file "$INSTANCE_FILE" 644')
+        self.assertLess(BOOTSTRAP.index('act "created $SRV_DIR"'), write)
+        conflict = BOOTSTRAP.index('why="$(instance_conflict)"')
+        self.assertLess(BOOTSTRAP.index("flock -w 900 9"), conflict)
+        self.assertLess(conflict, BOOTSTRAP.index("# ---- 1. Packages"))
+        # write_file's default owner is root:root
+        self.assertIn('local path="$1" mode="$2" owner="${3:-root:root}"', function("write_file"))
+
+    def test_check_mode_reports_the_instance(self):
+        check = function("run_check")
+        self.assertIn("$INSTANCE_FILE", check)
+        self.assertIn("instance_owner_ok", check)
+        self.assertIn("regular file root:root 644", function("instance_owner_ok"))
+
+    def test_check_mode_takes_the_owners_deploy_sh_takes(self):
+        """Review O3: deploy.sh --local-proof may write a proof's INSTANCE as the deploy user (and
+        instance_check.py accepts that for proof only); bootstrap.sh --check takes the same rule."""
+        defs = "DEPLOY_USER=ihr\n" + function("instance_owner_ok") + "\n"
+        for stat_line, env, ok in (("regular file root:root 644", "production-1", True),
+                                   ("regular file root:root 644", "proof", True),
+                                   ("regular file ihr:ihr 644", "proof", True),
+                                   ("regular file ihr:ihr 644", "staging", False),
+                                   ("regular file ihr:ihr 644", "production-1", False),
+                                   ("regular file ihr:ihr 664", "proof", False),
+                                   ("regular file ihr:ihr 666", "proof", False),
+                                   ("regular file other:other 644", "proof", False),
+                                   ("regular file root:root 664", "staging", False),
+                                   ("symbolic link root:root 777", "proof", False),
+                                   ("directory ihr:ihr 755", "proof", False), ("", "proof", False)):
+            with self.subTest(stat_line=stat_line, env=env):
+                out = run_bash(defs + f'if instance_owner_ok "{stat_line}" "{env}"; then echo OWNER_OK; fi\n')
+                self.assertEqual(out.returncode, 0, out.stderr)
+                self.assertEqual("OWNER_OK" in out.stdout, ok, out.stdout)
+
+    def test_the_local_vm_is_bootstrapped_as_proof(self):
+        """Review O3: scripts/local-vm.sh bootstraps the VM with --instance proof, so its INSTANCE is
+        root's from the start (both runs: the second must change nothing)."""
+        text = (ROOT / "scripts/local-vm.sh").read_text()
+        body = text.split("\nbootstrap() {", 1)[1].split("\n}\n", 1)[0]
+        runs = [line for line in body.splitlines() if "ihr-bootstrap.sh --ssh-key-file" in line]
+        self.assertEqual(len(runs), 2, body)
+        for line in runs:
+            self.assertIn("--instance proof --suffix app.ihr-proof.in", line)
+        self.assertEqual(deploy_assignment("PROOF_SUFFIX"), "app.ihr-proof.in")
+
+    def test_readme(self):
+        readme = (ROOT / "deploy/host/README.md").read_text()
+        for part in ("--instance", "/srv/indiehr/INSTANCE", "ADR-020", "instance_check.py", "rebuilt"):
+            self.assertIn(part, readme)
+
+    def test_check_mode_validates_what_the_file_names(self):
+        f = self.tmp / "INSTANCE"
+        defs = (f"ENV_RE='{assignment('ENV_RE', quote=chr(39))}'\nDOMAIN_RE='{assignment('DOMAIN_RE', quote=chr(39))}'\n"
+                f'INSTANCE_FILE="{f}"\n' + function("instance_valid") + "\n")
+        for text, ok in (("environment=staging\nsuffix=app.stg.example.in\n", True),
+                         ("environment=Staging\nsuffix=app.stg.example.in\n", False),
+                         ("environment=staging\n", False), ("", False)):
+            with self.subTest(text=text):
+                f.write_text(text)
+                out = run_bash(defs + "if instance_valid; then echo VALID; fi\n")
+                self.assertEqual("VALID" in out.stdout, ok, out.stderr)
+        self.assertIn("instance_valid", function("run_check"))
+        self.assertNotRegex(function("run_check"), r"expect [^\n]*\[\[")  # [[ is a keyword: expect cannot run it

@@ -1287,7 +1287,7 @@ class EndToEnd(unittest.TestCase):
             (d / "releases" / "releases.log").write_text("".join(rl.format_line(e) + "\n" for e in entries))
             if attempt_line is not None:
                 (d / "releases" / "attempt").write_text(rl.format_line(attempt_line) + "\n")
-            (d / ".env").write_text("IHR_BACKEND_IMAGE=indiehr-backend:staging\nIHR_FRONTEND_IMAGE=indiehr-frontend:staging\n"
+            (d / ".env").write_text("IHR_ENVIRONMENT=proof\nIHR_BACKEND_IMAGE=indiehr-backend:staging\nIHR_FRONTEND_IMAGE=indiehr-frontend:staging\n"
                                     "IHR_POSTGRES_IMAGE=indiehr-postgres:staging\nIHR_KEYCLOAK_IMAGE=indiehr-keycloak:staging\n")
             (d / "secrets").mkdir()
             if split:  # the split database roles' addresses (P1-T19b; made by db-split-secrets)

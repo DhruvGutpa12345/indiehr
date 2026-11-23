@@ -1593,6 +1593,34 @@
   {
    "count": 1,
    "record": {
+    "MESSAGE": "ihr-dump: hospital=delta outcome=failed reason=marker",
+    "_HOSTNAME": "srv1",
+    "PRIORITY": "6",
+    "CONTAINER_NAME": "indiehr-staging-dumper-1",
+    "COM_DOCKER_COMPOSE_SERVICE": "dumper",
+    "_TRANSPORT": "journal",
+    "_COMM": "dockerd",
+    "_UID": "0",
+    "_SYSTEMD_UNIT": "docker.service"
+   }
+  },
+  {
+   "count": 1,
+   "record": {
+    "MESSAGE": "ihr-dump: hospital=epsilon outcome=failed reason=foreign-object",
+    "_HOSTNAME": "srv1",
+    "PRIORITY": "6",
+    "CONTAINER_NAME": "indiehr-staging-dumper-1",
+    "COM_DOCKER_COMPOSE_SERVICE": "dumper",
+    "_TRANSPORT": "journal",
+    "_COMM": "dockerd",
+    "_UID": "0",
+    "_SYSTEMD_UNIT": "docker.service"
+   }
+  },
+  {
+   "count": 1,
+   "record": {
     "MESSAGE": "ihr-dump: hospital=gamma outcome=held",
     "_HOSTNAME": "srv1",
     "PRIORITY": "6",
@@ -3109,6 +3137,8 @@
   "DumpHospitalFailed": [
    "alpha",
    "beta",
+   "delta",
+   "epsilon",
    "invalid-slug"
   ],
   "DumpHospitalHeld": [

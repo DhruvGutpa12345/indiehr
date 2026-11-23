@@ -22,6 +22,7 @@ from config.settings.base import *  # noqa: E402, F403
 from config.settings.base import env  # noqa: E402
 from django.core.exceptions import ImproperlyConfigured  # noqa: E402
 
+from ihr_platform import environment  # noqa: E402
 from ihr_platform.settings.tenancy import (  # noqa: E402
     apply_tenancy,
     operator_appname,
@@ -47,7 +48,16 @@ if _found:
     )
 
 IHR_RESTORE_DRILL = True
-IHR_ENVIRONMENT = env("IHR_ENVIRONMENT", default="staging")
+# The instance whose dump is restored (staging.sh passes it from the instance's own .env); the
+# restore pre-check compares a dump's recorded environment with it (P1-T32 E4), so a missing or
+# unknown name is refused here, not guessed.
+IHR_ENVIRONMENT = env("IHR_ENVIRONMENT", default="")
+if not environment.valid(IHR_ENVIRONMENT):
+    _message = (
+        "Refusing to run the restore drill: IHR_ENVIRONMENT must be production-<n>, "
+        f"staging or proof, not {IHR_ENVIRONMENT!r} (P1-T32 E1)."
+    )
+    raise ImproperlyConfigured(_message)
 IS_PRODUCTION = True
 DEBUG = False
 SECRET_KEY = secrets.token_urlsafe(64)  # signs nothing; shared with nobody

@@ -52,6 +52,10 @@ IST = D.IST
 UUID_A = "11111111-1111-4111-8111-111111111111"
 UUID_B = "22222222-2222-4222-8222-222222222222"
 UUID_C = "33333333-3333-4333-8333-333333333333"
+# This instance (P1-T32 E4): the dumper's IHR_ENVIRONMENT and IHR_TENANT_DOMAIN_SUFFIX
+HERE = ("staging", "stg.example.in")
+OTHER = ("production-1", "app.example.in")
+INSTANCE_ENV = {"IHR_ENVIRONMENT": HERE[0], "IHR_TENANT_DOMAIN_SUFFIX": HERE[1]}
 
 
 class S3Error(Exception):
@@ -357,7 +361,9 @@ class Base(unittest.TestCase):
         self.bucket = D.locked_bucket.Bucket(self.s3, "ihr-dumps")
         self.tmp = tempfile.TemporaryDirectory()
         self.addCleanup(self.tmp.cleanup)
-        self.cfg = D.Config({"IHR_DUMP_WORKDIR": self.tmp.name, "IHR_DUMP_LOCK_WAIT": "0"})
+        self.cfg = D.Config({"IHR_DUMP_WORKDIR": self.tmp.name, "IHR_DUMP_LOCK_WAIT": "0", **INSTANCE_ENV})
+        # The bucket's instance marker, as dumps-init --mark writes it (P1-T32 E4)
+        self.assertEqual(D.mark(self.bucket, self.sealer, self.cfg.instance, out=io.StringIO()), 0)
         self.source = FakeSource([hosp("alpha", UUID_A, "h_alpha00001"), hosp("beta", UUID_B, "h_beta000001")])
         self.tools = FakeTools()
         self.status = D.Status()
@@ -388,6 +394,7 @@ class Base(unittest.TestCase):
         return [h.by_hospital[uuid][sha] for sha in h.order.get(uuid, [])]
 
     def check(self, **kw):
+        kw.setdefault("instance", self.cfg.instance)
         out = io.StringIO()
         n, failed = D.check(self.bucket, self.sealer, self.tools, out=out, **kw)
         return n, failed, out.getvalue()
@@ -1008,6 +1015,234 @@ class Metrics(Base):
             D.Config({"IHR_DUMP_TIME": "3:30"})
 
 
+class Instance(Base):
+    """P1-T32 E4 (design docs/reviews/p1-t32/design.md §6.1; Q-K155, Q-K156 C): every manifest
+    says which instance made it, under its MAC; the bucket's authentic instance marker decides
+    whose bucket it is; a stray foreign object is a check problem and an alert, never a halt."""
+
+    def put_plain(self, key, data):
+        self.s3.put_object(Bucket="ihr-dumps", Key=key, Body=data,
+                           ContentMD5=base64.b64encode(hashlib.md5(data).digest()).decode())  # noqa: S324
+
+    def fresh_bucket(self):
+        self.s3 = FakeS3(writer=True)
+        self.bucket = D.locked_bucket.Bucket(self.s3, "ihr-dumps")
+
+    def remac(self, m, drop=(), **over):
+        forged = {k: v for k, v in m.items() if k != "mac" and k not in drop}
+        forged.update(over)
+        forged["mac"] = self.sealer.mac(forged)
+        return forged
+
+    def test_manifests_carry_the_instance_under_their_mac(self):
+        self.run_at(MON)
+        m = self.manifests()[0]
+        self.assertEqual((m["environment"], m["suffix"]), HERE)
+        self.assertEqual(m["format"], "ihr-dump/1")  # additions: the format stays
+        changed = {**m, "environment": OTHER[0]}
+        key = D.object_keys("daily", UUID_A, MON.date(), 1)[2]
+        self.assertFalse(D.valid_manifest(changed, key, self.sealer))
+
+    def test_the_instance_is_required_for_run_and_once_only(self):
+        self.assertIsNone(D.Config({}).instance)
+        self.assertIn("unknown instance", D.Config({}).instance_problem)
+        for env in ({"IHR_ENVIRONMENT": "Production-1", "IHR_TENANT_DOMAIN_SUFFIX": HERE[1]},
+                    {"IHR_ENVIRONMENT": "dev", "IHR_TENANT_DOMAIN_SUFFIX": HERE[1]},
+                    {"IHR_ENVIRONMENT": "staging ", "IHR_TENANT_DOMAIN_SUFFIX": HERE[1]},
+                    {"IHR_ENVIRONMENT": "staging", "IHR_TENANT_DOMAIN_SUFFIX": ""},
+                    {"IHR_ENVIRONMENT": "staging", "IHR_TENANT_DOMAIN_SUFFIX": "not a domain"},
+                    {"IHR_ENVIRONMENT": "staging"}):
+            with self.subTest(env=env):
+                cfg = D.Config(env)
+                self.assertIsNone(cfg.instance)
+                self.assertTrue(cfg.instance_problem)
+        self.assertEqual(D.Config(INSTANCE_ENV).instance, HERE)
+        self.assertIsNone(D.Config(INSTANCE_ENV).instance_problem)
+        for cmd in ("run", "once", "mark"):
+            with self.subTest(cmd=cmd), mock.patch.dict(os.environ, {"IHR_DUMP_WORKDIR": self.tmp.name}, clear=True):
+                with self.assertRaises(SystemExit) as stop:
+                    D.main(["dumper.py", cmd])
+                self.assertIn("IHR_ENVIRONMENT", str(stop.exception.code))
+        # The read commands go on without it (a lost server's one-off, the owner's machine): the
+        # next thing they need is the dump key
+        for cmd in ("check", "get", "manifest", "probe"):
+            with self.subTest(cmd=cmd), mock.patch.dict(os.environ, {"IHR_DUMP_WORKDIR": self.tmp.name}, clear=True):
+                with self.assertRaises(SystemExit) as stop:
+                    D.main(["dumper.py", cmd])
+                self.assertIn("IHR_DUMP_KEY is not set", str(stop.exception.code))
+
+    def test_a_bucket_without_the_marker_refuses_every_dump(self):
+        self.fresh_bucket()
+        results = self.run_at(MON)
+        self.assertEqual(results, {"alpha": "marker", "beta": "marker"})
+        self.assertEqual(self.s3.objects, {})
+        self.assertIn("ihr-dump: hospital=alpha outcome=failed reason=marker", self.lines())
+        self.assertIn("ihr-dump: hospital=beta outcome=failed reason=marker", self.lines())
+        self.assertEqual(self.status.get("instance_marker_ok"), 0)
+        self.assertIn("no instance marker", self.out.getvalue())
+        n, _, text = self.check()
+        self.assertGreater(n, 0)
+        self.assertIn("instance marker", text)
+
+    def test_the_missing_marker_refusal_names_the_step_that_marks(self):
+        """Verifier (P1-T32, after review O1): only `dumps-init --mark` (a proof's stand-in: `up`)
+        writes the marker, never plain dumps-init; and `up`'s hint in staging.sh greps this very
+        text, so the two cannot drift apart."""
+        why = D.marker_problem("missing", None, HERE)
+        self.assertIn("scripts/staging.sh dumps-init --mark", why)
+        self.assertNotIn("marked by scripts/staging.sh dumps-init (", why)
+        staging = (ROOT / "scripts" / "staging.sh").read_text()
+        grep = staging.split("dumps_up() {", 1)[1].split("\n}\n", 1)[0]
+        prefix = grep.split("grep -q '^", 1)[1].split("'", 1)[0]
+        self.assertTrue(f"BAD   instance marker: {why}".startswith(prefix), (prefix, why))
+
+    def test_a_marker_naming_another_instance_refuses(self):
+        self.fresh_bucket()
+        self.assertEqual(D.mark(self.bucket, self.sealer, OTHER, out=io.StringIO()), 0)
+        self.assertEqual(self.run_at(MON), {"alpha": "marker", "beta": "marker"})
+        self.assertIn("the dumps bucket belongs to production-1 (app.example.in); this is staging "
+                      "(stg.example.in): dumps never cross instances (ADR-020 §3)", self.out.getvalue())
+        self.assertEqual([k for k in self.s3.objects if k != D.MARKER_KEY], [])
+
+    def test_a_marker_that_is_not_authentic_refuses(self):
+        self.fresh_bucket()
+        other = sealer.Sealer(Fernet.generate_key().decode(), D.PURPOSE)  # another instance's key
+        self.assertEqual(D.mark(self.bucket, other, HERE, out=io.StringIO()), 0)
+        self.assertEqual(self.run_at(MON), {"alpha": "marker", "beta": "marker"})
+        self.assertIn("not authentic with this dump key", self.out.getvalue())
+        self.fresh_bucket()
+        self.put_plain(D.MARKER_KEY, b"{not json")
+        self.assertEqual(self.run_at(MON), {"alpha": "marker", "beta": "marker"})
+        # a manifest is no marker (its format differs, though its MAC is good)
+        self.fresh_bucket()
+        D.mark(self.bucket, self.sealer, HERE, out=io.StringIO())
+        self.run_at(MON)
+        m = self.manifests()[0]
+        self.fresh_bucket()
+        self.put_plain(D.MARKER_KEY, D.record_bytes(m))
+        self.assertEqual(self.run_at(ist(2027, 1, 5, 3, 30)), {"alpha": "marker", "beta": "marker"})
+
+    def test_a_second_marker_version_is_a_problem_but_the_first_decides(self):
+        """Its first version decides (as every reader takes a manifest); a replacement or a
+        delete marker is a check problem, never a halt (the bucket key alone could write it)."""
+        forged = D.record_bytes(D.marker_doc(self.sealer, OTHER))
+        self.put_plain(D.MARKER_KEY, forged)
+        self.assertEqual(self.run_at(MON), {"alpha": "ok", "beta": "ok"})
+        n, _, text = self.check()
+        self.assertGreater(n, 0)
+        self.assertIn(D.MARKER_KEY, text)
+        self.fresh_bucket()
+        D.mark(self.bucket, self.sealer, HERE, out=io.StringIO())
+        self.s3.hide(D.MARKER_KEY)
+        self.assertEqual(self.run_at(MON), {"alpha": "ok", "beta": "ok"})
+        n, _, text = self.check()
+        self.assertGreater(n, 0)
+        self.assertIn("delete marker", text)
+
+    def test_mark_writes_once_and_never_over_another_instance(self):
+        self.fresh_bucket()
+        out = io.StringIO()
+        self.assertEqual(D.mark(self.bucket, self.sealer, HERE, out=out), 0)
+        doc = json.loads(self.s3.objects[D.MARKER_KEY])
+        self.assertEqual((doc["environment"], doc["suffix"], doc["format"]), (*HERE, D.MARKER_FORMAT))
+        self.assertTrue(sealer.mac_ok(self.sealer.mac_key, doc))
+        self.assertEqual(D.mark(self.bucket, self.sealer, HERE, out=out), 0)  # again: nothing written
+        self.assertEqual(len(self.s3.versions[D.MARKER_KEY]), 1)
+        self.assertIn("already", out.getvalue())
+        out = io.StringIO()
+        self.assertEqual(D.mark(self.bucket, self.sealer, OTHER, out=out), 1)
+        self.assertEqual(len(self.s3.versions[D.MARKER_KEY]), 1)
+        self.assertIn("belongs to staging (stg.example.in)", out.getvalue())
+        with self.assertRaises(SystemExit):
+            D.mark(self.bucket, self.sealer, None, out=io.StringIO())
+        # the marker is no dump: never "not authentic" in the holdings
+        self.assertNotIn(D.MARKER_KEY, D.Holdings(self.bucket, self.sealer).bad)
+
+    def test_a_stray_foreign_manifest_is_a_check_problem_and_dumps_continue(self):
+        self.run_at(MON)
+        stray = {"format": "ihr-dump/1", "hospital": UUID_C, "environment": OTHER[0], "suffix": OTHER[1],
+                 "mac": "00" * 32}
+        key = D.object_keys("daily", UUID_C, MON.date(), 1)[2]
+        self.put_plain(key, D.record_bytes(stray))
+        held = D.Holdings(self.bucket, self.sealer, instance=HERE)
+        self.assertIn(key, held.bad)
+        self.assertEqual([f[0] for f in held.foreign], [key])
+        n, _, text = self.check()
+        self.assertGreater(n, 0)
+        self.assertIn("written by production-1 (app.example.in), this is staging (stg.example.in): dumps never "
+                      "cross instances (ADR-020 §3). Unverified: it does not check with this instance's key", text)
+        # the next night: dumped as ever, and the object counted for its alert
+        results = self.run_at(ist(2027, 1, 5, 3, 30))
+        self.assertEqual(results, {"alpha": "ok", "beta": "ok"})
+        self.assertEqual(self.status.get("foreign_objects"), 1)
+        self.assertEqual(self.status.get("instance_marker_ok"), 1)
+
+    def test_a_stray_object_under_one_of_our_hospitals_names_it(self):
+        self.run_at(MON)
+        stray = {"format": "ihr-dump/1", "environment": OTHER[0], "suffix": "app.example.in\nihr-dump: x"}
+        self.put_plain(D.object_keys("daily", UUID_A, MON.date(), 7)[2], D.record_bytes(stray))
+        results = self.run_at(ist(2027, 1, 5, 3, 30))
+        self.assertEqual(results["beta"], "ok")
+        self.assertIn("ihr-dump: hospital=alpha outcome=failed reason=foreign-object", self.lines())
+        self.assertFalse(any("ihr-dump: x" == ln for ln in self.out.getvalue().splitlines()))
+        with self.assertRaises(SystemExit) as stop:
+            D.manifest(self.bucket, self.sealer, UUID_A, "latest", io.StringIO(), instance=HERE)
+        self.assertIn("written by production-1", str(stop.exception.code))
+
+    def test_an_authentic_manifest_of_another_instance_is_a_key_incident(self):
+        self.run_at(MON)
+        m = self.manifests()[0]
+        rev = D.object_keys("daily", UUID_A, MON.date(), 2)
+        theirs = self.remac(m, environment=OTHER[0], suffix=OTHER[1], revision=2,
+                            dump={**m["dump"], "key": rev[0]}, public={**m["public"], "key": rev[1]})
+        self.put_plain(rev[2], D.record_bytes(theirs))
+        held = D.Holdings(self.bucket, self.sealer, instance=HERE)
+        self.assertIn(rev[2], held.bad)
+        n, _, text = self.check()
+        self.assertGreater(n, 0)
+        self.assertIn("authentic but from production-1 (app.example.in): this instance holds another "
+                      "instance's dump key, a key incident (ADR-020 §2)", text)
+        # without this process's instance (an owner's one-off with no .env): not compared
+        held = D.Holdings(self.bucket, self.sealer)
+        self.assertNotIn(rev[2], held.bad)
+        out = io.StringIO()
+        D.check(self.bucket, self.sealer, self.tools, out=out)
+        self.assertIn("instance unknown", out.getvalue())
+
+    def test_a_manifest_from_before_p1_t32_stays_valid(self):
+        """Q-K155: no fields, valid as before."""
+        self.run_at(MON)
+        m = self.manifests()[0]
+        old = self.remac(m, drop=("environment", "suffix"))
+        self.assertNotIn("environment", old)
+        self.assertTrue(D.valid_manifest(old, D.object_keys("daily", UUID_A, MON.date(), 1)[2], self.sealer))
+        key = D.object_keys("daily", UUID_A, dt.date(2027, 1, 6), 1)
+        old = self.remac(m, drop=("environment", "suffix"), date="2027-01-06", previous=None,
+                         dump={**m["dump"], "key": key[0]}, public={**m["public"], "key": key[1]})
+        self.put_plain(key[2], D.record_bytes(old))
+        held = D.Holdings(self.bucket, self.sealer, instance=HERE)
+        self.assertNotIn(key[2], held.bad)
+        self.assertEqual(held.foreign, [])
+
+    def test_the_new_reasons_and_their_alerts(self):
+        D.emit("alpha", "failed", "marker")
+        D.emit("beta", "failed", "foreign-object")
+        self.assertEqual(self.lines(), ["ihr-dump: hospital=alpha outcome=failed reason=marker",
+                                        "ihr-dump: hospital=beta outcome=failed reason=foreign-object"])
+        if not (ROOT / "deploy" / "logs" / "alerts").is_dir():
+            self.skipTest("the alerts and the README are not here (the dumper image's run)")
+        alerts = (ROOT / "deploy" / "logs" / "alerts" / "dumps.yml").read_text()
+        self.assertIn("reason=(?P<reason>" + "|".join(D.REASONS) + ")$", alerts)
+        rules = (ROOT / "deploy" / "monitoring" / "prometheus" / "rules" / "dumps.yml").read_text()
+        self.assertIn("ihr_dump_instance_marker_ok == 0", rules)
+        self.assertIn("ihr_dump_foreign_objects > 0", rules)
+        readme = (ROOT / "deploy" / "staging" / "README.md").read_text()
+        for reason in D.REASONS:
+            self.assertIn(f"| `{reason}` |", readme)
+        for name in ("instance_marker_ok", "foreign_objects"):
+            self.assertIn(name, D.Status.METRICS)
+
+
 class Toc(unittest.TestCase):
     S = "h_alpha00001"
 
@@ -1288,6 +1523,21 @@ class Expire(Base):
             self.assertIsNone(X.kind_and_day(odd), odd)
             self.assertIsNone(D.parse_key(odd), odd)
 
+    def test_the_instance_marker_is_ours_and_never_erased(self):
+        """P1-T32 E4 (review O5): dumps/instance.json is this instance's own marker, written once by
+        `dumper.py mark`: never called NOT OURS (an invitation to delete it, which stops every
+        dump) and never erased, however old."""
+        self.assertIn(D.MARKER_KEY, self.admin.objects)
+        self.assertEqual(X.MARKER_KEY, D.MARKER_KEY)
+        for dry_run in (True, False):
+            with self.subTest(dry_run=dry_run):
+                (doomed, _), text = self.erase(dry_run=dry_run)
+                self.assertNotIn(f"NOT OURS (left alone) {D.MARKER_KEY}", text)
+                self.assertIn(f"instance marker (kept) {D.MARKER_KEY}", text)
+                self.assertNotIn(D.MARKER_KEY, [d[0] for d in doomed])
+        self.assertIn(D.MARKER_KEY, self.admin.objects)
+        self.assertEqual(D.read_marker(self.bucket, self.sealer)[0], "ok")
+
     def test_allow_short_is_refused_off_the_stand_in(self):
         env = {k: v for k, v in os.environ.items() if not k.startswith("IHR_")}
         script = str(ROOT / "deploy" / "dumps" / "expire.py")
@@ -1337,6 +1587,17 @@ class StagingScript(unittest.TestCase):
         m = re.search(r"^%s\(\) \{(.*?)^\}" % re.escape(name), self.text, re.S | re.M)
         self.assertTrue(m, name)
         return m.group(1)
+
+    def test_the_dumper_service_gets_the_instance_from_compose(self):
+        """P1-T32 E4: the running dumper's IHR_ENVIRONMENT and IHR_TENANT_DOMAIN_SUFFIX come from
+        the instance's .env, never a default (the one-offs: scripts/test_staging_environment.py)."""
+        self.assertEqual(self.instance_lines((ROOT / "deploy" / "staging" / "compose.dumps.yaml").read_text()), [
+            "IHR_ENVIRONMENT: ${IHR_ENVIRONMENT:?set IHR_ENVIRONMENT in .env (ADR-020 E1)}",
+            "IHR_TENANT_DOMAIN_SUFFIX: ${IHR_TENANT_DOMAIN_SUFFIX:?set IHR_TENANT_DOMAIN_SUFFIX in .env}"])
+
+    @staticmethod
+    def instance_lines(text):
+        return [ln.strip() for ln in text.splitlines() if ln.strip().startswith(("IHR_ENVIRONMENT:", "IHR_TENANT_DOMAIN_SUFFIX:"))]
 
     def test_up_and_a_release_stop_the_dumper_before_any_migration(self):
         """Review C1: a dump in flight holds its hospital's lock, which the start-up roles step
@@ -1485,7 +1746,8 @@ class Live(unittest.TestCase):
         self.s3 = FakeS3(writer=True)
         self.bucket = D.locked_bucket.Bucket(self.s3, "ihr-dumps")
         self.tmp = tempfile.mkdtemp(dir=self.work)
-        self.cfg = D.Config({"IHR_DUMP_WORKDIR": self.tmp, "IHR_DUMP_LOCK_WAIT": "2"})
+        self.cfg = D.Config({"IHR_DUMP_WORKDIR": self.tmp, "IHR_DUMP_LOCK_WAIT": "2", **INSTANCE_ENV})
+        D.mark(self.bucket, self.sealer, self.cfg.instance, out=io.StringIO())
         self.url = f"postgresql://ihr_dump:dump-test@127.0.0.1:{self.port}/ihr"
         self.source = D.Source(self.url)
         self.tools = D.Tools(D.pg_env(self.url))

@@ -9,7 +9,13 @@
 #     record): your name (or IHR_OPERATOR) always; --reason and --hospital as well for manage, logs,
 #     logs-archive-get, dumps-get, hospital-root, restore-drill --keep, restore-drill-psql and
 #     audit-supersede export.
-#   scripts/staging.sh init <suffix> [--local|--vm]  write .env and secrets (once; no overwrite)
+#   scripts/staging.sh init <suffix> --environment <production-<n>|staging>   write .env and secrets (once; no overwrite)
+#   scripts/staging.sh init <suffix> --local | --vm   the same for a proof (IHR_ENVIRONMENT=proof; P1-T32 E1: no
+#                                                option, or --environment proof, is refused)
+#   scripts/staging.sh init --check              whether $OUT/.env names its environment (IHR_ENVIRONMENT) and
+#                                                its bucket names fit it, and on production-<n> holds no stand-in
+#                                                (test CA, mail catcher, local storage, proof suffix ...; E2):
+#                                                ok <env> <suffix>, or every problem (exit 1); no operator session
 #   scripts/staging.sh up [--new-database]       start everything, then the Keycloak realm + workers
 #                                                (--new-database: an empty database where backups exist)
 #   scripts/staging.sh smoke                     check every public address through Traefik
@@ -107,6 +113,8 @@
 #   scripts/staging.sh dumps-init <https://endpoint> <bucket> <region> [--uri-style path|host]
 #                     [--existing-key] | --local nightly per-hospital dumps (P1-T22a); the bucket
 #                                                key (and, rebuilding, the dump key) on stdin
+#   scripts/staging.sh dumps-init --mark         marks this instance's own dumps bucket (P1-T32 E4), once,
+#                                                after up; a proof's own stand-in is marked by up itself
 #   scripts/staging.sh dumps-now [--slug S]... | dumps-check [--deep [--all]] | dumps-role
 #   scripts/staging.sh dumps-get --operator <you> --reason "<ticket>" <hospital uuid> <YYYY-MM-DD|latest> <dump|public> > file
 #   scripts/staging.sh dumps-probe               the bucket's lock and what the dumper key may do
@@ -142,6 +150,11 @@ OUT="${IHR_STAGING_OUT:-$DIR}"
 GEN="$DIR/generated"  # files made from .env on each start (names only, no secrets)
 compose() {  # the file list is worked out on each call: init may have just made .local
   local files=(-f "$DIR/compose.yaml") acme
+  # E1 (P1-T32): before anything else, on every call (Compose's ${IHR_ENVIRONMENT:?} would fail
+  # down, ps and logs too, so a proof folder from before E1 upgrades itself here)
+  ensure_environment
+  # E2: a start verb (not ps, down, logs) on a folder holding stand-ins or wrong-kind names is refused
+  case "$(compose_verb "$@")" in up|run|start|restart|create) state_guard "$DIR" ;; esac
   # Made by us, not by Docker: a bind mount of a missing folder (generated/client-keys in admin
   # and provisioner) would create it owned by root, and staging.sh could no longer write there
   [[ -d "$GEN/client-keys" ]] || mkdir -p "$GEN/client-keys"
@@ -190,6 +203,148 @@ LOCAL_SUFFIX="app.ihr-proof.in"  # local proof only; resolved to 127.0.0.1 by cu
 
 rand() { python3 -c "import secrets,sys;print(secrets.token_urlsafe(int(sys.argv[1])))" "$1"; }
 env_get() { [[ -f "$DIR/.env" ]] || return 0; sed -n "s/^$1=//p" "$DIR/.env" | tail -1; }
+# The instance's environment (P1-T32 E1, ADR-020 §3; docs/reviews/p1-t32/design.md §4.1). One regex,
+# equal to environment.py's (scripts/test_environment_regex.py): production-<n> (1-999), staging, proof.
+ENV_RE='^(production-[1-9][0-9]{0,2}|staging|proof)$'
+env_of() {  # env_of <folder>: the raw IHR_ENVIRONMENT value of <folder>/.env, "" when there is none.
+  # Raw on purpose (quotes, spaces, \r and a wrong case stay in the value, so they fail ENV_RE and
+  # are refused, never read as "not production"); a missing file is not an error under errexit
+  [[ -f "$1/.env" ]] || return 0
+  sed -n 's/^IHR_ENVIRONMENT=//p' "$1/.env" | tail -1
+}
+ENV_FIX="add IHR_ENVIRONMENT=staging or IHR_ENVIRONMENT=production-<n> to it (a proof folder is upgraded by local-proof itself; ADR-020 E1)"
+ensure_environment() {  # on every compose() call: the folder names a known environment, and Compose sees exactly that
+  local f="$DIR/.env" v
+  [[ -f "$f" ]] || die "no $f: run scripts/staging.sh init <suffix> --environment staging|production-<n> (or --local/--vm for a proof) first"
+  v="$(env_of "$DIR")"
+  # A folder init --local made (.local) is a proof by construction: the only automatic upgrade
+  # (Q-K152). A value that is there but malformed is never replaced.
+  if [[ -z "$v" && -f "$DIR/.local" ]] && ! grep -q '^IHR_ENVIRONMENT=' "$f"; then
+    [[ -z "$(tail -c1 "$f")" ]] || echo >> "$f"
+    echo "IHR_ENVIRONMENT=proof" >> "$f"
+    echo "upgraded this proof folder: IHR_ENVIRONMENT=proof (ADR-020 E1)" >&2
+    v=proof
+  fi
+  [[ "$v" =~ $ENV_RE ]] || die "$f has no valid IHR_ENVIRONMENT (found: $(printf '%q' "$v")): $ENV_FIX"
+  # What was checked is what Compose gets: an exported IHR_ENVIRONMENT neither wins over .env nor stands in for it
+  export IHR_ENVIRONMENT="$v"
+}
+# ---- E2 (P1-T32, ADR-020 §3, design §4.3 and §4.4): no stand-in on a production instance -----------
+# One table of guarded stand-in calls, checked once at dispatch in main (never edits inside the twelve
+# functions that make them), and one list of what a production folder must never hold, used by
+# init --check, release, up and every Compose start verb. Both fail closed: only an exact staging or
+# proof passes a command guard; the state check looks at what Compose would read.
+# command|position|pattern  (position: empty = the command alone is the stand-in, * = any argument, 1 = the first)
+E2_STAND_INS=(
+  "local-proof||"
+  "acme-proof||"
+  "acme-init|1|^(pebble|letsencrypt-staging)$"
+  "mail-init|*|^--test$"
+  "monitoring-init|*|^--test$"
+  "init|*|^--(local|vm)$"
+  "backup-init|*|^--local$"
+  "logs-archive-init|*|^--local$"
+  "dumps-init|*|^--local$"
+)
+stand_in_call() {  # stand_in_call <command> <args...>: prints the command line when this call makes a stand-in
+  local entry ecmd epos epat cmd="${1:-}" a
+  shift || true
+  for entry in "${E2_STAND_INS[@]}"; do
+    IFS='|' read -r ecmd epos epat <<< "$entry"
+    [[ "$ecmd" == "$cmd" ]] || continue
+    if [[ -z "$epos" ]]; then echo "$cmd"; return 0; fi
+    if [[ "$epos" == 1 ]]; then
+      if [[ "${1:-}" =~ $epat ]]; then echo "$cmd $1"; return 0; fi
+      continue
+    fi
+    for a in "$@"; do
+      if [[ "$a" =~ $epat ]]; then echo "$cmd $a"; return 0; fi
+    done
+  done
+  return 0
+}
+refuse_on_production() {  # refuse_on_production <command line>: DIR and OUT must each be staging or proof (or hold no .env yet)
+  # On a server DIR and OUT are one folder; on the deploying machine OUT is production-1's folder
+  # (IHR_STAGING_OUT) and DIR the repository's synthetic one: either being production, or unreadable,
+  # or not exactly staging or proof, is enough. A folder with no .env is new (init makes it).
+  local f v suffix seen=" "
+  for f in "$DIR" "$OUT"; do
+    if [[ "$seen" == *" $f "* ]]; then continue; fi
+    seen+="$f "
+    if [[ ! -f "$f/.env" ]]; then continue; fi
+    v="$(env_of "$f")" || die "refused: $f/.env cannot be read, so '$1' cannot be allowed (ADR-020 E2)"
+    # init --local made this folder (.local) and it has no IHR_ENVIRONMENT line at all: a proof by construction (Q-K152)
+    if [[ -z "$v" && -f "$f/.local" ]] && ! grep -q '^IHR_ENVIRONMENT=' "$f/.env"; then continue; fi
+    if [[ "$v" == staging || "$v" == proof ]]; then continue; fi
+    if [[ "$v" =~ $ENV_RE ]]; then
+      suffix="$(sed -n 's/^IHR_TENANT_DOMAIN_SUFFIX=//p' "$f/.env" | tail -1)"
+      die "refused on production: '$1' makes a stand-in (a test certificate authority, mail catcher or local storage), and $f is $v ($suffix): a production instance never runs one (ADR-020 §3 E2). Nothing was changed"
+    fi
+    die "refused: $f/.env has no valid IHR_ENVIRONMENT (found: $(printf '%q' "$v")), so '$1' cannot be allowed: $ENV_FIX. Nothing was changed"
+  done
+}
+env_val() {  # env_val <folder> <KEY>: the value of KEY in <folder>/.env as Compose reads it (last line wins; quotes, CR and blanks around it removed)
+  [[ -f "$1/.env" ]] || return 0
+  local v
+  v="$(sed -n "s/^$2=//p" "$1/.env" | tail -1)"
+  v="${v%$'\r'}"; v="${v#"${v%%[![:space:]]*}"}"; v="${v%"${v##*[![:space:]]}"}"
+  v="${v#[\"\']}"; v="${v%[\"\']}"
+  printf '%s' "$v"
+}
+env_state_problems() {  # env_state_problems <folder>: one line per stand-in on a production folder, and per bucket name of the wrong kind
+  local d="$1" v suffix key name f
+  v="$(env_of "$d")"
+  if [[ "$v" =~ $ENV_RE && "$v" == production-* ]]; then
+    case "$(env_val "$d" IHR_ACME)" in
+      pebble|letsencrypt-staging) echo "$d/.env: IHR_ACME=$(env_val "$d" IHR_ACME): a test certificate authority; a production instance uses letsencrypt" ;;
+    esac
+    [[ "$(env_val "$d" IHR_MAIL)" != test ]] || echo "$d/.env: IHR_MAIL=test: the mail catcher; a production instance sends through a real mail service"
+    [[ "$(env_val "$d" IHR_MONITORING)" != test ]] || echo "$d/.env: IHR_MONITORING=test: the test alert route; a production instance alerts a real recipient"
+    [[ "$(env_val "$d" IHR_BACKUP_ENDPOINT)" != http://s3:8333 ]] || echo "$d/.env: IHR_BACKUP_ENDPOINT=http://s3:8333: backups into this stack's own stand-in storage"
+    [[ "$(env_val "$d" IHR_DUMPS)" != local ]] || echo "$d/.env: IHR_DUMPS=local: dumps into this stack's own stand-in storage"
+    [[ "$(env_val "$d" IHR_LOGS_ARCHIVE)" != local ]] || echo "$d/.env: IHR_LOGS_ARCHIVE=local: the log archive into this stack's own stand-in storage"
+    [[ ! -e "$d/.local" ]] || echo "$d/.local exists: this folder was made by a local proof (init --local)"
+    suffix="$(env_val "$d" IHR_TENANT_DOMAIN_SUFFIX)"
+    if [[ "$suffix" == "$LOCAL_SUFFIX" || "$suffix" =~ (^|\.)ihr-proof\.in$ ]]; then
+      echo "$d/.env: IHR_TENANT_DOMAIN_SUFFIX=$suffix: the proof domain (ihr-proof.in)"
+    fi
+    [[ -z "$(env_val "$d" IHR_SMOKE_RESOLVE)" ]] || echo "$d/.env: IHR_SMOKE_RESOLVE=$(env_val "$d" IHR_SMOKE_RESOLVE): smoke checks would bypass real DNS"
+    [[ "$(env_val "$d" IHR_BIND)" != 127.0.0.1 ]] || echo "$d/.env: IHR_BIND=127.0.0.1: a local proof's bind address"
+    for f in "$d"/secrets/anchor-*.env; do
+      [[ -f "$f" ]] || continue
+      if grep -Eq '^IHR_AUDIT_ANCHOR_ENDPOINT=["'"'"']?http://s3:8333' "$f"; then
+        echo "$f: IHR_AUDIT_ANCHOR_ENDPOINT=http://s3:8333: the fingerprint bucket on this same VM (ADR-020 §1.3)"
+      fi
+    done
+  fi
+  # Bucket names say which kind of instance owns them (ADR-020 §1.2): never "staging" in a production
+  # one, never "prod" in a synthetic one. Only when the folder has the names (secrets/app.env)
+  if [[ "$v" =~ $ENV_RE && -f "$d/secrets/app.env" ]]; then
+    for key in FILE_UPLOAD_BUCKET FACILITY_S3_BUCKET; do
+      name="$(sed -n "s/^$key=//p" "$d/secrets/app.env" | tail -1)"
+      if [[ "$v" == production-* ]]; then
+        [[ ! "$name" =~ (^|[-_.])staging([-_.]|$) ]] || echo "$d/secrets/app.env: $key=$name: a production bucket name must not say staging (ADR-020 §1.2)"
+      else
+        [[ ! "$name" =~ (^|[-_.])prod(uction)?[0-9]*([-_.]|$) ]] || echo "$d/secrets/app.env: $key=$name: a $v bucket name must not say prod (ADR-020 §1.2)"
+      fi
+    done
+  fi
+  return 0
+}
+state_guard() {  # state_guard <folder>: dies with every problem of env_state_problems (nothing was changed)
+  local p
+  p="$(env_state_problems "$1")"
+  [[ -z "$p" ]] || die "$p"$'\n'"refused: $1 does not fit its IHR_ENVIRONMENT (ADR-020 §3 E2). Fix the lines above, or start from a new folder. Nothing was changed"
+}
+compose_verb() {  # compose_verb <compose args>: the Compose command word (leading options such as --profile X skipped)
+  while (($#)); do
+    case "$1" in
+      --profile) shift 2 || return 0 ;;
+      -*) shift ;;
+      *) echo "$1"; return 0 ;;
+    esac
+  done
+}
 die() { echo "$*" >&2; exit 1; }
 DOMAIN_RE='^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)+$'
 write_secret() {  # write_secret <file> <<EOF ... EOF   (mode 600 from the first byte)
@@ -201,9 +356,65 @@ digest() {  # digest <image:tag>: the multi-arch index digest, pinned in .env
     | python3 -c "import json,sys;print(json.load(sys.stdin)['digest'].split(':')[1])"
 }
 
-init() {
-  local suffix="${1:?suffix, e.g. app.example.in}" local_run="${2:-}"
+init_check() {  # init --check: does $OUT/.env name its environment, and does the folder fit it (P1-T32 E1, E2)
+  # No operator wrapper and no operator session (like acme-proof): it only reads $OUT. deploy.sh
+  # runs it before it sends anything. The state check (stand-ins on a production folder, bucket
+  # names of the wrong kind) is env_state_problems' one list (design §4.4)
+  local f="$OUT/.env" v suffix problems=() line
+  [[ -f "$f" ]] || { echo "$f does not exist: run scripts/staging.sh init <suffix> --environment staging|production-<n> (or --local/--vm for a proof)" >&2; return 1; }
+  v="$(env_of "$OUT")"
+  if [[ ! "$v" =~ $ENV_RE ]]; then
+    problems+=("$f has no valid IHR_ENVIRONMENT (found: $(printf '%q' "$v")): $ENV_FIX")
+  fi
+  suffix="$(sed -n 's/^IHR_TENANT_DOMAIN_SUFFIX=//p' "$f" | tail -1)"
+  [[ "$suffix" =~ $DOMAIN_RE ]] || problems+=("$f has no valid IHR_TENANT_DOMAIN_SUFFIX (found: $(printf '%q' "$suffix"))")
+  while IFS= read -r line; do
+    [[ -z "$line" ]] || problems+=("$line")
+  done < <(env_state_problems "$OUT")
+  if ((${#problems[@]})); then printf '%s\n' "${problems[@]}" >&2; return 1; fi
+  echo "ok $v $suffix"
+}
+
+init() {  # init <suffix> --environment <production-<n>|staging> | --local | --vm   |   init --check
+  local suffix="" local_run="" envname="" check=0 envval n
+  while (($#)); do
+    case "$1" in
+      --check) check=1 ;;
+      --local|--vm)
+        [[ -z "$local_run" ]] || die "init: give one of --local, --vm (not both)"
+        local_run="$1" ;;
+      --environment)
+        (($# >= 2)) || die "init: --environment needs a value: production-<n> or staging"
+        [[ -z "$envname" ]] || die "init: --environment given twice"
+        envname="$2"; shift ;;
+      -*) die "init: unknown option $1 (usage: init <suffix> --environment production-<n>|staging | --local | --vm | --check)" ;;
+      *) [[ -z "$suffix" ]] || die "init: one suffix only (got $suffix and $1)"
+         suffix="$1" ;;
+    esac
+    shift
+  done
+  if ((check)); then
+    [[ -z "$suffix$local_run$envname" ]] || die "init --check takes no other arguments"
+    init_check; return
+  fi
+  [[ -n "$suffix" ]] || die "init: the suffix is missing, e.g. init app.example.in --environment staging"
   [[ "$suffix" =~ $DOMAIN_RE ]] || die "not a domain: $suffix"
+  # Which environment this folder is, said once, never guessed (P1-T32 E1, Q-K151). A proof is
+  # --local or --vm, never --environment proof
+  if [[ -n "$local_run" ]]; then
+    [[ -z "$envname" ]] || die "init: $local_run makes a proof; do not add --environment"
+    envval=proof
+  else
+    [[ -n "$envname" ]] || die "init: say which environment: --environment production-<n>|staging, or --local/--vm for a proof (ADR-020 E1)"
+    [[ "$envname" != proof ]] || die "init: a proof is made with --local or --vm, not --environment proof"
+    [[ "$envname" =~ $ENV_RE ]] || die "init: --environment must be production-<n> (n 1-999) or staging, not '$envname'"
+    envval="$envname"
+  fi
+  # A production instance's buckets say so (ADR-020 §1.2); synthetic ones keep their names
+  local files_bucket=ihr-staging-files pictures_bucket=ihr-staging-facility
+  if [[ "$envval" =~ ^production-([0-9]+)$ ]]; then
+    n="${BASH_REMATCH[1]}"; files_bucket="ihr-prod$n-files"; pictures_bucket="ihr-prod$n-pictures"
+  fi
   if [[ -e "$OUT/.env" || -e "$OUT/secrets" ]]; then
     echo "$OUT/.env or secrets/ already exist; refusing to overwrite secrets." >&2
     exit 1
@@ -223,6 +434,7 @@ init() {
   mkdir -m 700 "$work/secrets"
   {
     echo "# IndieHR staging: site settings for Compose (no secrets). Written by staging.sh init."
+    echo "IHR_ENVIRONMENT=$envval"
     echo "IHR_TENANT_DOMAIN_SUFFIX=$suffix"
     echo "IHR_SUFFIX_RE=${suffix//./\\.}"
     echo "IHR_BACKEND_IMAGE=$backend_image"
@@ -284,8 +496,8 @@ JWKS_BASE64=$jwks
 DATABASE_URL=postgres://ihr_app:$app@db:5432/ihr
 REDIS_URL=redis://:$redis_pw@redis:6379/0
 # Object storage (S3 in ap-south-1; P1-T8b fills these in on the VM)
-FILE_UPLOAD_BUCKET=ihr-staging-files
-FACILITY_S3_BUCKET=ihr-staging-facility
+FILE_UPLOAD_BUCKET=$files_bucket
+FACILITY_S3_BUCKET=$pictures_bucket
 BUCKET_REGION=ap-south-1
 EOF
   # Keycloak's first-start admin: used once to create the realms and the narrow accounts,
@@ -715,8 +927,16 @@ op_prepare() {  # the top level, before main: a fresh state (or the session of t
   trap 'op_end 129; op_tidy; exit 129' HUP
   op_parse "$@"
 }
+dispatch_guard() {  # dispatch_guard <command> <args...>: E2 (P1-T32), once per run, before any branch of main
+  # runs and before a session opens: a stand-in (a test CA, mail or alert catcher, local storage, a
+  # proof; the table E2_STAND_INS) is refused when DIR or OUT is not exactly staging or proof
+  local stand_in
+  stand_in="$(stand_in_call "$@")"
+  [[ -z "$stand_in" ]] || refuse_on_production "$stand_in"
+}
 op_open_eager() {  # the data tier: before anything runs. A job (the ones of every hospital too, with
   # their hospital entries) opens at its first privileged call, after its own cheap refusals
+  dispatch_guard "${OP_ARGV[@]}"
   if [[ "$(op_tier "${OP_ARGV[@]}")" == data ]]; then op_begin data; fi
 }
 op_tidy() { [[ -z "$OP_STATE" ]] || ((OP_JOINED)) || rm -f "$OP_STATE"; }
@@ -1056,7 +1276,7 @@ db_split_secrets() {  # db-split-secrets: the split roles' secrets (P1-T19b), on
       return 1 ;;
     *) die "usage: scripts/staging.sh db-split-secrets [--check]" ;;
   esac
-  [[ -f "$OUT/.env" && -d "$sec" ]] || die "no $OUT/.env / secrets: run scripts/staging.sh init <suffix> first"
+  [[ -f "$OUT/.env" && -d "$sec" ]] || die "no $OUT/.env / secrets: run scripts/staging.sh init <suffix> --environment staging|production-<n> (or --local/--vm) first"
   local SECRETS_TARGET="$sec"
   owner="$(db_password owner "$sec")"; app="$(db_password app "$sec")"
   if [[ -z "$app" ]]; then
@@ -1254,7 +1474,7 @@ db_roles_cmd() {  # db-roles --migrate [--operator NAME] | --serve-previous [--o
     esac
     shift
   done
-  [[ -f "$DIR/.env" ]] || die "run: scripts/staging.sh init <suffix>"
+  [[ -f "$DIR/.env" ]] || die "run: scripts/staging.sh init <suffix> --environment staging|production-<n> (or --local/--vm)"
   case "$what" in
     --status)
       if db_secrets_split; then echo "secrets: split (secrets/app.env: ihr_app, secrets/db-owner.env: ihr_owner, secrets/audit-watch.env: ihr_audit_watch, secrets/dumper-db.env: ihr_dump)"
@@ -1330,7 +1550,11 @@ up() {  # up [--new-database]: the flag only where an empty database is really m
   local new_db=0
   [[ "${1:-}" != --new-database ]] || new_db=1
   [[ $# -eq 0 || $new_db == 1 ]] || die "usage: scripts/staging.sh up [--new-database]"
-  [[ -f "$DIR/.env" ]] || { echo "run: scripts/staging.sh init <suffix>" >&2; exit 1; }
+  [[ -f "$DIR/.env" ]] || { echo "run: scripts/staging.sh init <suffix> --environment staging|production-<n> (or --local/--vm)" >&2; exit 1; }
+  # E1/E2: a valid IHR_ENVIRONMENT, and on production no stand-in, before anything is touched (the
+  # Compose :? would stop it too, with a worse message)
+  ensure_environment
+  state_guard "$DIR"
   db_need_split_secrets
   watch_need_reader
   # CARE's storage keys (P1-T20b) before anything starts: a local proof splits its own (its
@@ -1468,9 +1692,28 @@ repo_info() {  # repo_info [--keep-running]: the repository's info as JSON, read
   return "$rc"
 }
 
+banner_line() {  # banner_line <slug> <environment> <bootstrap.js text>: ok/FAIL line; 1 when the synthetic banner does not fit the environment (E5's live check)
+  # Synthetic (staging, proof) must carry the synthetic bar; production-<n> must not. Anything else, and an
+  # answer that could not be read, never counts as "production": it fails. The bar is matched by its exact
+  # id line (synthetic_bar.py, pinned by its test), never the bare word: the IST bar served on every
+  # instance names `--ihr-synthetic-h` (review O2)
+  local has=0 want=""
+  if [[ "$3" == *'var BAR_ID = "ihr-synthetic";'* ]]; then has=1; fi
+  if [[ "$2" == staging || "$2" == proof ]]; then want=1
+  elif [[ "$2" =~ $ENV_RE ]]; then want=0
+  fi
+  if [[ -n "$want" && "$has" == "$want" ]]; then
+    echo "ok    $1: banner state fits IHR_ENVIRONMENT ($2)"
+    return 0
+  fi
+  echo "FAIL  $1: banner state does not match IHR_ENVIRONMENT ($(printf '%q' "$2"); bootstrap.js has $( ((has)) && echo the || echo no) ihr-synthetic banner)"
+  return 1
+}
+
 smoke() {  # every public address through Traefik, as a browser would reach it
   local suffix port bind resolve fail=0
   suffix="$(env_get IHR_TENANT_DOMAIN_SUFFIX)"
+  echo "environment: $(env_of "$DIR") (suffix $suffix)"
   port="$(env_get IHR_HTTPS_PORT)"; port="${port:-443}"
   bind="$(env_get IHR_BIND)"
   # Where the names point for the checks: the bind address of a local proof, or an address
@@ -1547,8 +1790,16 @@ smoke() {  # every public address through Traefik, as a browser would reach it
     "$(app_exec backend python manage.py ihr_terminology_load --status 2>/dev/null | grep -c '^active ' || true)"
   check "unknown hospital address: no branding" 404 "$(code "https://nope.$suffix:$port/api/ihr/bootstrap/")"
   if ((${#slugs[@]} == 0)); then echo "skip  every hospital served: no active hospital yet"; fi
+  local served js
   for slug in ${slugs[@]+"${slugs[@]}"}; do
-    check "hospital $slug served (not held: 503 upgrading)" 200 "$(code "https://$slug.$suffix:$port/api/ihr/bootstrap/")"
+    served="$(code "https://$slug.$suffix:$port/api/ihr/bootstrap/")"
+    check "hospital $slug served (not held: 503 upgrading)" 200 "$served"
+    # E5's live check: the synthetic banner is in bootstrap.js exactly when the environment is not
+    # production. Only a hospital that is served: a held one answers a stub (and 503 above)
+    if [[ "$served" == 200 ]]; then
+      js="$(curl "${curl_args[@]}" "https://$slug.$suffix:$port/api/ihr/bootstrap.js" 2>/dev/null || true)"
+      banner_line "$slug" "$(env_of "$DIR")" "$js" || fail=1
+    fi
   done
   check "bare suffix not served" 404 "$(code "https://$suffix:$port/")"
   check "HSTS on the console" "max-age=31536000" "$(header "https://console.$suffix:$port/ops/" strict-transport-security)"
@@ -1576,7 +1827,7 @@ smoke() {  # every public address through Traefik, as a browser would reach it
 backup_init() {  # backup_init <https://endpoint> <bucket> <region> [--uri-style path|host] | --local
   local envf="$OUT/.env" sec="$OUT/secrets" endpoint="" bucket="" region="" style="host" local_repo=0
   local key secret args=() existing=0 pass
-  [[ -f "$envf" && -d "$sec" ]] || die "no $envf / secrets: run scripts/staging.sh init <suffix> first"
+  [[ -f "$envf" && -d "$sec" ]] || die "no $envf / secrets: run scripts/staging.sh init <suffix> --environment staging|production-<n> (or --local/--vm) first"
   grep -q '^IHR_BACKUP=' "$envf" && die "$envf already has backup settings (IHR_BACKUP=...)"
   while (($#)); do
     case "$1" in
@@ -2469,7 +2720,10 @@ release() {  # release [--now [--minutes N] [--note T]] [--operator NAME] | --fi
   done
   [[ "$minutes" =~ ^[0-9]+$ ]] || die "--minutes N"
   op="$(rel_operator "$op")"
-  [[ -f "$DIR/.env" ]] || die "run: scripts/staging.sh init <suffix>"
+  [[ -f "$DIR/.env" ]] || die "run: scripts/staging.sh init <suffix> --environment staging|production-<n> (or --local/--vm)"
+  # E1/E2: before anything is held or stopped: a valid IHR_ENVIRONMENT, and on production no stand-in
+  ensure_environment
+  state_guard "$DIR"
   # This build runs the app as ihr_app and the owner's one-shots as ihr_owner (P1-T19b)
   db_need_split_secrets
   # ...and refuses one storage key for both buckets (P1-T20b): checked before anything is held,
@@ -3280,7 +3534,7 @@ rollback() {  # rollback [--restore] [--operator NAME]: back to the release befo
     shift
   done
   op="$(rel_operator "$op")"
-  [[ -f "$DIR/.env" ]] || die "run: scripts/staging.sh init <suffix>"
+  [[ -f "$DIR/.env" ]] || die "run: scripts/staging.sh init <suffix> --environment staging|production-<n> (or --local/--vm)"
   s3_need_split_keys  # every rollback ends with up, which refuses them (after the tags moved)
   # A restore's schema migrated by this build would be ahead of the build rolled back to, and
   # the restore could not finish (review C1): finish or abort it first
@@ -3484,7 +3738,7 @@ MAIL_TEST_HOST="mail.ihr-proof.test"
 mail_init() {  # mail_init <from-address> [--host H] [--port P] [--user U] | mail_init --test
   local envf="$OUT/.env" sec="$OUT/secrets" from="" host="smtp.zeptomail.in" port=587
   local user="emailapikey" test=0 token tmp
-  [[ -f "$envf" && -d "$sec" ]] || die "no $envf / secrets: run scripts/staging.sh init <suffix> first"
+  [[ -f "$envf" && -d "$sec" ]] || die "no $envf / secrets: run scripts/staging.sh init <suffix> --environment staging|production-<n> (or --local/--vm) first"
   grep -q '^IHR_MAIL=' "$envf" && die "$envf already has mail settings (IHR_MAIL=...)"
   while (($#)); do
     case "$1" in
@@ -3598,7 +3852,7 @@ s3_care_env() {  # s3_care_env <files key> <files secret> <pictures key> <pictur
 
 s3_init() {  # SeaweedFS keys into secrets/, CARE's and the fingerprint keys into their env files
   local envf="$OUT/.env" sec="$OUT/secrets" suffix patient facility k tmp
-  [[ -f "$envf" && -d "$sec" ]] || die "no $envf / secrets: run scripts/staging.sh init <suffix> first"
+  [[ -f "$envf" && -d "$sec" ]] || die "no $envf / secrets: run scripts/staging.sh init <suffix> --environment staging|production-<n> (or --local/--vm) first"
   grep -q '^IHR_S3=' "$envf" && die "$envf already has object storage settings (IHR_S3=...)"
   suffix="$(sed -n 's/^IHR_TENANT_DOMAIN_SUFFIX=//p' "$envf" | tail -1)"
   patient="$(sed -n 's/^FILE_UPLOAD_BUCKET=//p' "$sec/app.env" | tail -1)"
@@ -3775,7 +4029,7 @@ s3_need_split_keys() {  # s3_need_split_keys [folder]: refuses, before anything 
 s3_split_keys_cmd() {  # s3-split-keys [--check]: CARE's split storage keys (P1-T20b) in $OUT, on the
   # deploying machine like db-split-secrets (IHR_STAGING_OUT: elsewhere); --check only says
   # whether they are split (scripts/deploy.sh runs it before sending anything)
-  [[ -f "$OUT/.env" && -d "$OUT/secrets" ]] || die "no $OUT/.env / secrets: run scripts/staging.sh init <suffix> first"
+  [[ -f "$OUT/.env" && -d "$OUT/secrets" ]] || die "no $OUT/.env / secrets: run scripts/staging.sh init <suffix> --environment staging|production-<n> (or --local/--vm) first"
   case "${1:-}" in
     --check) s3_need_split_keys "$OUT"; return 0 ;;
     "") ;;
@@ -3839,7 +4093,7 @@ ACME_API="http://acme-dns-api:8053"  # acme-dns's API, only on the internal netw
 
 acme_init() {  # acme_init <letsencrypt|letsencrypt-staging|pebble> <acme-dns zone> <its NS name>
   local ca="${1:-}" zone="${2:-}" ns="${3:-}" suffix server net envf="$OUT/.env"
-  [[ -f "$envf" ]] || die "no $envf: run scripts/staging.sh init <suffix> first"
+  [[ -f "$envf" ]] || die "no $envf: run scripts/staging.sh init <suffix> --environment staging|production-<n> (or --local/--vm) first"
   grep -q '^IHR_ACME=' "$envf" && die "$envf already has certificate settings (IHR_ACME=...)"
   suffix="$(sed -n 's/^IHR_TENANT_DOMAIN_SUFFIX=//p' "$envf" | tail -1)"
   case "$ca" in
@@ -4173,6 +4427,7 @@ acme_proof() {  # acme_proof [--keep]: the certificate proof alone, in a throwaw
   fi
   cat > "$p/.env" <<EOF
 # Certificate proof (scripts/staging.sh acme-proof): only Traefik, acme-dns, CoreDNS, Pebble
+IHR_ENVIRONMENT=proof
 IHR_TENANT_DOMAIN_SUFFIX=$LOCAL_SUFFIX
 IHR_SUFFIX_RE=${LOCAL_SUFFIX//./\\.}
 IHR_BACKEND_IMAGE=unused:proof
@@ -4284,7 +4539,7 @@ MON_ONESHOTS='migrate|admin|keytool|s3-tool|traefik-data|alertmanager-data|logs-
 monitoring_init() {  # monitoring_init <alert-recipient> [--from A] [--host H] [--port P] [--user U] | --test
   local envf="$OUT/.env" sec="$OUT/secrets" to="" from="" host="smtp.zeptomail.in" port=587
   local user="emailapikey" test=0 token="" deadman="" suffix pg_pw redis_pw
-  [[ -f "$envf" && -d "$sec" ]] || die "no $envf / secrets: run scripts/staging.sh init <suffix> first"
+  [[ -f "$envf" && -d "$sec" ]] || die "no $envf / secrets: run scripts/staging.sh init <suffix> --environment staging|production-<n> (or --local/--vm) first"
   grep -q '^IHR_MONITORING=' "$envf" && die "$envf already has monitoring settings (IHR_MONITORING=...)"
   while (($#)); do
     case "$1" in
@@ -5123,7 +5378,7 @@ ops_tunnel() {  # ops-tunnel [user@server] [--port N]: Grafana, Prometheus, Aler
 logs_archive_init() {  # <https://endpoint> <bucket> <region> [--uri-style path|host] [--existing-key] | --local
   local envf="$OUT/.env" sec="$OUT/secrets" endpoint="" bucket="" region="" style="host" local_arc=0
   local existing=0 key="" secret="" enc args=()
-  [[ -f "$envf" && -d "$sec" ]] || die "no $envf / secrets: run scripts/staging.sh init <suffix> first"
+  [[ -f "$envf" && -d "$sec" ]] || die "no $envf / secrets: run scripts/staging.sh init <suffix> --environment staging|production-<n> (or --local/--vm) first"
   grep -q '^IHR_LOGS_ARCHIVE=' "$envf" && die "$envf already has log archive settings (IHR_LOGS_ARCHIVE=...)"
   grep -q '^IHR_MONITORING=' "$envf" || die "the log archive needs the logs: run monitoring-init first"
   while (($#)); do
@@ -5311,10 +5566,20 @@ PY
 }
 
 # ---- Nightly per-hospital dumps (P1-T22a; compose.dumps.yaml, deploy/dumps/) ---------------------
-dumps_init() {  # <https://endpoint> <bucket> <region> [--uri-style path|host] [--existing-key] | --local
+dumps_init() {  # <https://endpoint> <bucket> <region> [--uri-style path|host] [--existing-key] | --local | --mark
   local envf="$OUT/.env" sec="$OUT/secrets" endpoint="" bucket="" region="" style="host" local_d=0
   local existing=0 key="" secret="" enc args=()
-  [[ -f "$envf" && -d "$sec" ]] || die "no $envf / secrets: run scripts/staging.sh init <suffix> first"
+  if [[ "${1:-}" == --mark ]]; then
+    # The bucket's instance marker (P1-T32 E4, design §6.1): `dumper.py mark` writes dumps/instance.json
+    # (this instance, sealed with the dump key) once; until then every dump run refuses (reason=marker).
+    # An operator's step for a real bucket, after checking it is this instance's own and empty (or
+    # already ours): marking by itself would accept a wrong empty bucket. Already this instance's: ok;
+    # another's or not authentic: refused, nothing written
+    (($# == 1)) || die "usage: scripts/staging.sh dumps-init --mark (nothing else)"
+    dumps_exec mark
+    return
+  fi
+  [[ -f "$envf" && -d "$sec" ]] || die "no $envf / secrets: run scripts/staging.sh init <suffix> --environment staging|production-<n> (or --local/--vm) first"
   grep -q '^IHR_DUMPS=' "$envf" && die "$envf already has dump settings (IHR_DUMPS=...)"
   while (($#)); do
     case "$1" in
@@ -5385,6 +5650,12 @@ dumps_init() {  # <https://endpoint> <bucket> <region> [--uri-style path|host] [
   if ((local_d)) && ! grep -q '^IHR_S3_MEMORY=' "$envf"; then echo "IHR_S3_MEMORY=768m" >> "$envf"; fi
   echo "Dump settings added ($endpoint, bucket $bucket). Copy IHR_DUMP_KEY from $sec/dumps.env into"
   echo "your password manager now: without it no dump can be read, checked or restored."
+  if ((local_d)); then
+    echo "This proof's stand-in bucket is marked as this instance's by up itself (P1-T32 E4)."
+  else
+    echo "Then, after up: scripts/staging.sh dumps-init --mark, once you know $bucket is this instance's own"
+    echo "(empty, or already ours): until the bucket is marked, every dump run refuses (P1-T32 E4)."
+  fi
 }
 
 dumper_image() {  # built by scripts/deploy.sh (a server) or here (a proof on this machine); a
@@ -5405,9 +5676,15 @@ dumper_image() {  # built by scripts/deploy.sh (a server) or here (a proof on th
 }
 
 dumps_up() {  # the dumper, after migrate; it checks its database role before every run
-  local rc i
+  local rc i out
   [[ -f "$SECRETS/dumps.env" ]] || die "no secrets/dumps.env: run scripts/staging.sh dumps-init"
   dumper_image
+  # The bucket's instance marker (P1-T32 E4): a proof's own stand-in (this stack's SeaweedFS, made for
+  # it) is marked here, before the dumper's first run, so local-proof's smoke finds it; a real bucket
+  # never is (dumps-init --mark, the operator's step, below). Already marked as this proof: no change
+  if [[ "$(env_get IHR_DUMPS)" == local && "$(env_of "$DIR")" == proof ]]; then
+    dumps_exec mark || die "this proof's dumps bucket could not be marked as this instance's (scripts/staging.sh dumps-check says why)"
+  fi
   compose up -d --wait --no-deps dumper
   # `dumper.py role`: 0 as modelled, 1 not, 2 could not connect (the role's connection limit
   # while dumps run, or the database): only 1 is a wrong role; 2 is tried again (review C7)
@@ -5421,11 +5698,20 @@ dumps_up() {  # the dumper, after migrate; it checks its database role before ev
     2) die "could not connect as ihr_dump to check the dumper's database role (its connection limit, or the database): scripts/staging.sh dumps-role says why" ;;
     *) die "the dumper's database role is not ihr_dump as modelled: scripts/staging.sh dumps-role says why" ;;
   esac
+  # A real bucket without its marker dumps nothing (reason=marker, DumpBucketMarkerRefused): say so here
+  if [[ "$(env_get IHR_DUMPS)" != local || "$(env_of "$DIR")" != proof ]]; then
+    out="$(dumps_exec check 2>/dev/null || true)"
+    if grep -q '^BAD   instance marker: the dumps bucket has no instance marker' <<< "$out"; then
+      echo "WARN  dumps: the bucket has no instance marker yet, so no hospital is dumped (P1-T32 E4): once you"
+      echo "      know it is this instance's own bucket, run scripts/staging.sh dumps-init --mark"
+    fi
+  fi
 }
 
 dumps_exec() {  # dumps_exec <dumper.py args>: in the running dumper (its keys, its networks);
-  # without one (a lost server, or the owner's machine) `check`, `get` and `probe` run in a
-  # one-off container from secrets/dumps.env (no database address)
+  # without one (a lost server, the owner's machine, or before the dumper's first start) `check`,
+  # `get`, `manifest`, `probe` and `mark` run in a one-off container from secrets/dumps.env (no
+  # database address)
   local d net=()
   d="$(env_get IHR_DUMPS)"
   [[ -n "$d" ]] || die "no nightly dumps here (dumps-init)"
@@ -5433,7 +5719,7 @@ dumps_exec() {  # dumps_exec <dumper.py args>: in the running dumper (its keys, 
     app_exec dumper python3 -I /opt/ihr-dumps/dumper.py "$@"
     return
   fi
-  case "$1" in check|get|manifest|probe) ;; *) die "the dumper is not running here (scripts/staging.sh up)" ;; esac
+  case "$1" in check|get|manifest|probe|mark) ;; *) die "the dumper is not running here (scripts/staging.sh up)" ;; esac
   if [[ "$d" == local ]]; then
     net=(--network "$(stack_net s3 internal)")
     [[ "${net[1]}" ]] || die "the proof's object storage is not running (scripts/staging.sh up)"
@@ -5442,8 +5728,11 @@ dumps_exec() {  # dumps_exec <dumper.py args>: in the running dumper (its keys, 
   # /state on disk, never in memory (review C8): an anonymous volume (the image's /state, owned
   # by postgres), removed with the container; `get` and `check --deep` copy a whole sealed dump
   # into it (gigabytes for a busy hospital)
+  # The instance too (E4, design §6.1): the manifests it reads say which instance made them, so a lost
+  # server's check, get and probe compare with this folder's environment and suffix
   docker run --rm -i "${net[@]}" --log-driver none --read-only --tmpfs /tmp -v /state \
     -e HOME=/tmp -e TMPDIR=/state --env-file "$SECRETS/dumps.env" \
+    -e IHR_ENVIRONMENT="$(env_of "$DIR")" -e IHR_TENANT_DOMAIN_SUFFIX="$(env_get IHR_TENANT_DOMAIN_SUFFIX)" \
     -v "$ROOT/deploy/dumps:/opt/ihr-dumps:ro" -v "$ROOT/deploy/lib:/opt/ihr-lib:ro" \
     "$(v="$(env_get IHR_DUMPER_IMAGE)"; echo "${v:-indiehr-dumper:staging}")" "$@"
 }
@@ -5829,7 +6118,8 @@ hospital_restore_drill() {  # hospital_restore_drill [--slug S]: the monthly dri
   DATABASE_URL="postgres://ihr_owner:$pw@$DRILL:5432/ihr" \
   docker run --rm --network "$net" --read-only --tmpfs /tmp --cap-drop ALL --security-opt no-new-privileges:true \
     "${OP_ENV[@]}" -e DATABASE_URL -e DJANGO_SETTINGS_MODULE=ihr_platform.settings.drill -e IHR_DB_ROLES=required -e IHR_DB_ROLE=owner \
-    -e IHR_TENANT_DOMAIN_SUFFIX="$(env_get IHR_TENANT_DOMAIN_SUFFIX)" -v "$(restore_volume "drill-$slug"):/restore:ro" \
+    -e IHR_ENVIRONMENT="$(env_of "$DIR")" -e IHR_TENANT_DOMAIN_SUFFIX="$(env_get IHR_TENANT_DOMAIN_SUFFIX)" \
+    -v "$(restore_volume "drill-$slug"):/restore:ro" \
     --entrypoint python "$(env_get IHR_BACKEND_IMAGE)" manage.py ihr_hospital_restore --slug "$slug" --package /restore/package \
     --package-sha256 "$RESTORE_PKG_SHA" --reason "monthly restore drill on the drill copy" --operator "$OP_NAME" --drill || rc=$?
   echo "time: the restore in the copy $((SECONDS - t0)) s"

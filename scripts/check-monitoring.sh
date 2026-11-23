@@ -36,6 +36,7 @@ render() {  # render <on|test> <acme yes|no>: staging.sh's own files from sample
   local d="$WORK/$1-$2"
   mkdir -p "$d/secrets"
   {
+    echo "IHR_ENVIRONMENT=proof"
     echo "IHR_TENANT_DOMAIN_SUFFIX=app.example.in"
     echo "IHR_MONITORING=$1"
     echo "IHR_ALERT_TO=ops@example.in"

@@ -78,6 +78,7 @@ name
 platform
 primary_colour
 short_name
+synthetic
 
 [/api/ihr/profile/] cash,lab,mrd,owner,rad,rec,store,tpa
 address_line1

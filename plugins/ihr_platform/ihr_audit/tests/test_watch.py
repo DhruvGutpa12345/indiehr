@@ -668,6 +668,7 @@ class WatchSettingsTests(SimpleTestCase):
     SETTINGS = {
         "DEBUG": False,
         "IHR_TENANT_DOMAIN_SUFFIX": "app.example.in",
+        "IHR_ENVIRONMENT": "staging",
         "IHR_DB_ROLES": "required",
         "IHR_DB_ROLE": "watch",
         "IHR_DB_LIMITS": "watch",
@@ -696,6 +697,8 @@ class WatchSettingsTests(SimpleTestCase):
             ({}, {"FILE_UPLOAD_SECRET": "s"}, "FILE_UPLOAD_SECRET"),
             ({"DEBUG": True}, {}, "DEBUG"),
             ({"IHR_TENANT_DOMAIN_SUFFIX": "localhost"}, {}, "real domain"),
+            ({"IHR_ENVIRONMENT": ""}, {}, "IHR_ENVIRONMENT"),
+            ({"IHR_ENVIRONMENT": "prod"}, {}, "IHR_ENVIRONMENT"),
         ):
             found = secure.watch_problems(
                 {**self.SETTINGS, **settings}, {**self.GOOD, **env}

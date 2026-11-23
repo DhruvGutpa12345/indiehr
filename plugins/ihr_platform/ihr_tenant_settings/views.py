@@ -12,7 +12,7 @@ from care.emr.resources.organization.spec import OrganizationReadSpec
 from config.patient_otp_authentication import JWTTokenPatientAuthentication
 from django.conf import settings
 from django.http import HttpResponse, JsonResponse
-from ihr_platform import pincodes
+from ihr_platform import environment, pincodes
 from ihr_platform.models import PostOffice
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
@@ -24,6 +24,7 @@ from ihr_tenant_settings.branding import default_logo_svg
 from ihr_tenant_settings.device_time import WARNING_SCRIPT
 from ihr_tenant_settings.india import GST_STATE_CODES
 from ihr_tenant_settings.models import HospitalProfile
+from ihr_tenant_settings.synthetic_bar import SYNTHETIC_SCRIPT
 from ihr_tenant_settings.validators import PIN_RE
 
 PLATFORM_NAME = "IndieHR"
@@ -72,7 +73,10 @@ def _private_no_cache(response):
 
 
 def bootstrap(request):
-    return _private_no_cache(JsonResponse(_branding(HospitalProfile.current())))
+    # "synthetic" (P1-T32 E5): this instance is not production. Never the instance's name.
+    # _branding() itself is unchanged, so the staff profile and the app's config see nothing new.
+    data = _branding(HospitalProfile.current()) | {"synthetic": environment.synthetic()}
+    return _private_no_cache(JsonResponse(data))
 
 
 def bootstrap_js(request):
@@ -94,6 +98,9 @@ def bootstrap_js(request):
     )
     # A bar until the computer is set to India Standard Time (P1-T7b).
     body += WARNING_SCRIPT
+    # A permanent "synthetic data only" bar on every instance that is not production (P1-T32 E5).
+    if environment.synthetic():
+        body += SYNTHETIC_SCRIPT
     response = HttpResponse(body, content_type="text/javascript; charset=utf-8")
     response["X-Content-Type-Options"] = "nosniff"
     return _private_no_cache(response)

@@ -5,6 +5,11 @@
 #
 #   sudo bash bootstrap.sh [--ssh-key "<public key>"]... [--ssh-key-file FILE] [--admin-user NAME]
 #                          [--change-admin] [--no-upgrade] [--dry-run]
+#                          [--instance <environment> --suffix <suffix>]
+#   --instance: which instance this server is (P1-T32 E3, ADR-020 §3): production-<n>, staging or
+#               proof, with its hospitals' domain suffix, written to /srv/indiehr/INSTANCE (root's,
+#               mode 644). deploy.sh refuses a server without it or that names another instance.
+#               Set once: a different value is refused (a server changes instance by being rebuilt)
 #   sudo bash bootstrap.sh --check        read-only: PASS/FAIL per control, exit 1 on any FAIL
 #
 # Idempotent: a second run changes nothing and says "No changes." It never locks the operator
@@ -42,6 +47,13 @@ JOURNAL_SYSTEM_KEEP_FREE="15G"
 DEPLOY_USER="ihr"
 SSH_GROUP="ihr-ssh"
 SRV_DIR="/srv/indiehr"
+# Which instance this server is (P1-T32 E3, ADR-020 §3): read by scripts/deploy.sh before it sends
+# anything (scripts/instance_check.py). Root's, so the deploy user can never write one deploy.sh
+# accepts (it owns $SRV_DIR, so it can remove it: then deploy.sh refuses the server)
+INSTANCE_FILE="$SRV_DIR/INSTANCE"
+# One regex, equal to environment.py's (scripts/test_environment_regex.py); the suffix as staging.sh's DOMAIN_RE
+ENV_RE='^(production-[1-9][0-9]{0,2}|staging|proof)$'
+DOMAIN_RE='^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)+$'
 SWAPFILE="/swapfile"
 # acme-dns (P1-T8b2) publishes port 53; systemd-resolved's local stub would hold it
 RESOLVED_DROPIN="/etc/systemd/resolved.conf.d/60-indiehr.conf"
@@ -74,8 +86,8 @@ BASE_PACKAGES=(ca-certificates curl gnupg ufw fail2ban python3-systemd chrony
   unattended-upgrades rsync iptables openssh-server python3 tzdata)
 
 # ---- Arguments -------------------------------------------------------------------------
-MODE=apply DRY_RUN=0 UPGRADE=1 ADMIN_USER="" CHANGE_ADMIN=0 KEY_INPUT=()
-usage() { sed -n '2,14p' "$0" | sed 's/^# \{0,1\}//'; }
+MODE=apply DRY_RUN=0 UPGRADE=1 ADMIN_USER="" CHANGE_ADMIN=0 KEY_INPUT=() INSTANCE_ENV="" INSTANCE_SUFFIX=""
+usage() { sed -n '2,19p' "$0" | sed 's/^# \{0,1\}//'; }
 while (($#)); do
   case "$1" in
     --check) MODE=check ;;
@@ -83,6 +95,8 @@ while (($#)); do
     --no-upgrade) UPGRADE=0 ;;
     --admin-user) ADMIN_USER="${2:?--admin-user NAME}"; shift ;;
     --change-admin) CHANGE_ADMIN=1 ;;
+    --instance) INSTANCE_ENV="${2:?--instance production-<n>|staging|proof}"; shift ;;
+    --suffix) INSTANCE_SUFFIX="${2:?--suffix <domain suffix of the hospitals>}"; shift ;;
     --ssh-key) KEY_INPUT+=("${2:?--ssh-key \"<public key>\"}"); shift ;;
     --ssh-key-file)
       [[ -r "${2:?--ssh-key-file FILE}" ]] || { echo "cannot read $2" >&2; exit 2; }
@@ -99,6 +113,11 @@ if [[ -n "$ADMIN_USER" ]]; then
     exit 2; }
 fi
 ((CHANGE_ADMIN == 0)) || [[ -n "$ADMIN_USER" ]] || { echo "--change-admin needs --admin-user NAME" >&2; exit 2; }
+if [[ -n "$INSTANCE_ENV" || -n "$INSTANCE_SUFFIX" ]]; then
+  [[ -n "$INSTANCE_ENV" && -n "$INSTANCE_SUFFIX" ]] || { echo "--instance and --suffix go together" >&2; exit 2; }
+  [[ "$INSTANCE_ENV" =~ $ENV_RE ]] || { echo "--instance: production-<n> (1-999), staging or proof, not $(printf '%q' "$INSTANCE_ENV")" >&2; exit 2; }
+  [[ "$INSTANCE_SUFFIX" =~ $DOMAIN_RE ]] || { echo "--suffix: a lower-case domain name, not $(printf '%q' "$INSTANCE_SUFFIX")" >&2; exit 2; }
+fi
 if [[ -n "${IHR_SSH_PUBKEY:-}" ]]; then
   mapfile -t -O "${#KEY_INPUT[@]}" KEY_INPUT <<< "$IHR_SSH_PUBKEY"
 fi
@@ -126,6 +145,38 @@ declare -A DOCKER_PINS=(
 )
 
 # ---- Desired file contents (shared by apply and --check) ---------------------------------
+instance_conf() {  # $INSTANCE_FILE: what scripts/instance_check.py reads (comment lines, environment=, suffix=)
+  echo "# Managed by deploy/host/bootstrap.sh --instance (P1-T32 E3, ADR-020 §3): which instance this"
+  echo "# server is. scripts/deploy.sh refuses any other; a server changes instance by being rebuilt."
+  echo "environment=$INSTANCE_ENV"
+  echo "suffix=$INSTANCE_SUFFIX"
+}
+instance_named() {  # "<environment> at <suffix>" as $INSTANCE_FILE names them (empty when it does not)
+  echo "$(sed -n 's/^environment=//p' "$INSTANCE_FILE" 2>/dev/null | tail -1) at $(sed -n 's/^suffix=//p' "$INSTANCE_FILE" 2>/dev/null | tail -1)"
+}
+instance_valid() {  # does $INSTANCE_FILE name a valid environment and suffix?
+  local env suffix
+  env="$(sed -n 's/^environment=//p' "$INSTANCE_FILE" 2>/dev/null | tail -1)"
+  suffix="$(sed -n 's/^suffix=//p' "$INSTANCE_FILE" 2>/dev/null | tail -1)"
+  [[ "$env" =~ $ENV_RE && "$suffix" =~ $DOMAIN_RE ]]
+}
+instance_owner_ok() {  # instance_owner_ok <stat '%F %U:%G %a'> <environment>: root's, mode 644; or a proof's
+  # written by deploy.sh --local-proof as the deploy user (mode 644), the rule scripts/instance_check.py applies
+  [[ "$1" == "regular file root:root 644" ]] && return 0
+  [[ "$2" == proof && "$1" =~ ^regular\ file\ ${DEPLOY_USER}:[a-z_][a-z0-9_-]*\ 644$ ]]
+}
+instance_conflict() {  # why --instance cannot be written (nothing when it can): never over another instance
+  local f="$INSTANCE_FILE" env suffix
+  [[ -e "$f" || -L "$f" ]] || return 0
+  if [[ -L "$f" || ! -f "$f" ]]; then
+    echo "$f is not a regular file: remove it (it was not written by this script), then re-run"
+    return 0
+  fi
+  env="$(sed -n 's/^environment=//p' "$f" | tail -1)"
+  suffix="$(sed -n 's/^suffix=//p' "$f" | tail -1)"
+  [[ "$env" == "$INSTANCE_ENV" && "$suffix" == "$INSTANCE_SUFFIX" ]] && return 0
+  echo "this server is already $(printf '%q' "${env:-unknown}") at $(printf '%q' "${suffix:-unknown}") ($f); it does not become $INSTANCE_ENV at $INSTANCE_SUFFIX: a server changes instance only by being rebuilt (ADR-020 §3 E3)"
+}
 chrony_conf() {
   echo "# Managed by deploy/host/bootstrap.sh. Time from NIC and NPL only (CERT-In)."
   echo "# Ubuntu's own chrony.conf (pools, DHCP sources) is not read: see chrony.service.d."
@@ -640,6 +691,20 @@ run_check() {
     expect "sysctl $name = $v" [ "$(sysctl -n "$name" 2>/dev/null)" == "$v" ]
   done < <(sysctl_conf)
   expect "$SRV_DIR owned by $DEPLOY_USER" [ "$(stat -c '%U' "$SRV_DIR" 2>/dev/null)" == "$DEPLOY_USER" ]
+  # which instance this server is (P1-T32 E3): deploy.sh refuses a server without it
+  if [[ -e "$INSTANCE_FILE" || -L "$INSTANCE_FILE" ]]; then
+    expect "$INSTANCE_FILE a regular file, root:root 644 (a proof's may be $DEPLOY_USER's)" instance_owner_ok \
+      "$(stat -c '%F %U:%G %a' "$INSTANCE_FILE" 2>/dev/null)" "$(sed -n 's/^environment=//p' "$INSTANCE_FILE" 2>/dev/null | tail -1)"
+    v="$(instance_named)"
+    expect "$INSTANCE_FILE names an environment and a suffix ($(printf '%q' "$v"))" instance_valid
+    if [[ -n "$INSTANCE_ENV" ]]; then
+      expect "$INSTANCE_FILE is $INSTANCE_ENV at $INSTANCE_SUFFIX" same_content "$INSTANCE_FILE" "$(instance_conf)"
+    fi
+  elif [[ -n "$INSTANCE_ENV" ]]; then
+    fail "$INSTANCE_FILE is $INSTANCE_ENV at $INSTANCE_SUFFIX (missing)"
+  else
+    info "no $INSTANCE_FILE yet: deploy.sh refuses this server until bootstrap.sh --instance <environment> --suffix <suffix>"
+  fi
 
   # host metrics for Prometheus (P1-T9a)
   expect "$TEXTFILE_DIR owned by $DEPLOY_USER, mode 755" \
@@ -717,6 +782,11 @@ fi
 # =========================================================================================
 exec 9>/run/ihr-bootstrap.lock
 flock -w 900 9 || die "another bootstrap run holds /run/ihr-bootstrap.lock"
+# A server changes instance only by being rebuilt (P1-T32 E3): refused before anything changes
+if [[ -n "$INSTANCE_ENV" ]]; then
+  why="$(instance_conflict)"
+  [[ -z "$why" ]] || die "$why"
+fi
 CHANGES=()
 changed() { CHANGES+=("$1"); printf '    changed: %s\n' "$1"; }
 act() {  # act <description> <command...>: run (or, with --dry-run, report) one change
@@ -1138,6 +1208,13 @@ log "Directories ($SRV_DIR) and $SELF_INSTALL"
 if [[ ! -d "$SRV_DIR" ]]; then act "created $SRV_DIR" install -d -m 750 -o "$DEPLOY_USER" -g "$DEPLOY_USER" "$SRV_DIR"; fi
 if [[ "$(stat -c '%U:%G %a' "$SRV_DIR" 2>/dev/null)" != "$DEPLOY_USER:$DEPLOY_USER 750" ]] && ! ((DRY_RUN)); then
   act "$SRV_DIR owned by $DEPLOY_USER, mode 750" bash -c "chown '$DEPLOY_USER:$DEPLOY_USER' '$SRV_DIR' && chmod 750 '$SRV_DIR'"
+fi
+
+# Which instance this server is (P1-T32 E3): root's, mode 644 (the deploy user reads it). Without
+# --instance an INSTANCE already there is kept as it is
+if [[ -n "$INSTANCE_ENV" ]]; then
+  log "Instance ($INSTANCE_FILE: $INSTANCE_ENV at $INSTANCE_SUFFIX; ADR-020 §3 E3)"
+  write_file "$INSTANCE_FILE" 644 < <(instance_conf)
 fi
 
 if [[ -f "${BASH_SOURCE[0]}" && "$(realpath "${BASH_SOURCE[0]}")" != "$SELF_INSTALL" ]]; then

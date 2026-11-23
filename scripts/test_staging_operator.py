@@ -99,6 +99,9 @@ class Stack:
         self.tmp = tempfile.TemporaryDirectory(prefix="ihr-op-test.")
         self.dir = Path(self.tmp.name) / "staging"
         self.dir.mkdir()
+        # P1-T32 E1: every folder names its environment (compose() refuses one that does not)
+        if not any(line.startswith("IHR_ENVIRONMENT=") for line in env_lines):
+            env_lines = ("IHR_ENVIRONMENT=proof", *env_lines)
         (self.dir / ".env").write_text("\n".join(env_lines) + "\n")
         (self.dir / "secrets").mkdir(mode=0o700)
         (self.dir / "secrets" / "keycloak.env").write_text("KC_BOOTSTRAP_ADMIN_CLIENT_ID=x\nKC_BOOTSTRAP_ADMIN_CLIENT_SECRET=y\n")

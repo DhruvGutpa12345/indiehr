@@ -9,6 +9,8 @@ so tests can feed it anything.
 
 import re
 
+from ihr_platform import environment
+
 # CARE's base.py default (config/settings/base.py): published in its repository.
 CARE_DEFAULT_SECRET_KEY = (
     "eXZQzOzx8gV38rDG0Z0fFZWweUGl3LwMZ9aTKqJiXQTI0nKMh0Z7sbHfqT8KFEnd"
@@ -32,6 +34,7 @@ REQUIRED_ENV = (
     "REDIS_URL",
     "JWKS_BASE64",
     "IHR_TENANT_DOMAIN_SUFFIX",
+    "IHR_ENVIRONMENT",  # P1-T32 E1: no default may name the instance
     "IHR_KEYCLOAK_PUBLIC_URL",
     "IHR_KEYCLOAK_URL",
     "IHR_CONSOLE_URL",
@@ -43,6 +46,35 @@ REQUIRED_ENV = (
 
 def _https(value):
     return str(value or "").startswith("https://")
+
+
+def environment_problems(settings, *, report_missing=True):
+    """The instance's name (P1-T32 E1, ADR-020): a known one, and a production instance never
+    on the proof stands' domain. ``report_missing`` is off where REQUIRED_ENV already says an
+    empty value is not set."""
+    found = []
+    value = settings.get("IHR_ENVIRONMENT")
+    if not value:
+        if report_missing:
+            found.append(
+                "IHR_ENVIRONMENT is not set (production-<n>, staging or proof; ADR-020)."
+            )
+        return found
+    if not environment.valid(value):
+        found.append(
+            f"IHR_ENVIRONMENT must be production-<n> (n from 1 to 999), staging or proof, "
+            f"not {str(value)!r}."
+        )
+    suffix = str(settings.get("IHR_TENANT_DOMAIN_SUFFIX", "")).strip(".").lower()
+    on_proof_domain = suffix == environment.PROOF_DOMAIN or suffix.endswith(
+        "." + environment.PROOF_DOMAIN
+    )
+    if on_proof_domain and environment.is_production(value):
+        found.append(
+            f"A production instance cannot use the proof domain {environment.PROOF_DOMAIN} "
+            "(it belongs to throwaway stands; ADR-020)."
+        )
+    return found
 
 
 def problems(settings, environ):  # noqa: PLR0912, PLR0915 (one flat list of rules)
@@ -142,7 +174,8 @@ def problems(settings, environ):  # noqa: PLR0912, PLR0915 (one flat list of rul
             "SENTRY_DSN must stay unset (no data leaves India; P1-T9 monitoring)."
         )
     found += (
-        mail_problems(settings)
+        environment_problems(settings, report_missing=False)
+        + mail_problems(settings)
         + db_role_problems(settings)
         + db_limits_problems(settings)
         + service_problems(settings)
@@ -376,4 +409,5 @@ def watch_problems(settings, environ):
         )
     if settings.get("SENTRY_DSN"):
         found.append("SENTRY_DSN must stay unset (no data leaves India).")
+    found += environment_problems(settings)
     return found

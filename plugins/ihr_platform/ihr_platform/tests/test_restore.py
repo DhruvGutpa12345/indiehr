@@ -1252,6 +1252,94 @@ class RefusalTests(SimpleTestCase):
             report["restored_to"][0], self.doc["facts"]["audit"]["seal_seq"]
         )
 
+    # --- which instance made the dump (P1-T32 E4, Q-K159; design p1-t32 §6.2) -----------------
+
+    def _from(self, kind="nightly", **instance):
+        doc = copy.deepcopy(self.doc)
+        doc["source"].update(kind=kind, **instance)
+        return doc
+
+    def test_a_dump_of_another_environment_is_refused(self):
+        """Under test settings this instance is `dev` (IHR_ENVIRONMENT unset), on `localhost`:
+        a dump any server made is another instance's."""
+        doc = self._from(
+            environment="production-1", suffix="app.example.in", instance_recorded=True
+        )
+        self.assertRefused(
+            r"this dump was made by production-1 \(app\.example\.in\); this is dev "
+            r"\(localhost\): dumps never cross instances \(ADR-020 §3\)",
+            doc,
+        )
+        with override_settings(IHR_ENVIRONMENT="production-1"):
+            self.assertRefused(
+                "dumps never cross instances",
+                self._from(
+                    environment="staging", suffix="localhost", instance_recorded=True
+                ),
+            )
+
+    def test_the_same_environment_on_another_domain_warns_and_is_recorded(self):
+        """Q-K159: disaster recovery to a new domain (a rebuilt production-1 restores its own
+        dumps); the suffix only warns, and the report keeps it."""
+        lines = []
+        with override_settings(IHR_ENVIRONMENT="production-1"):
+            run = self._run(
+                self._from(
+                    environment="production-1",
+                    suffix="old.example.in",
+                    instance_recorded=True,
+                )
+            )
+            run.options.out = lines.append
+            report = run.precheck()
+        self.assertEqual(report["instance"]["environment"], "production-1")
+        self.assertEqual(report["instance"]["suffix"], "old.example.in")
+        self.assertIn("old.example.in", report["instance"]["warning"])
+        self.assertIn("localhost", report["instance"]["warning"])
+        self.assertTrue(
+            any("warning" in line and "old.example.in" in line for line in lines)
+        )
+        with override_settings(IHR_ENVIRONMENT="production-1"):
+            same = self._run(
+                self._from(
+                    environment="production-1",
+                    suffix="localhost",
+                    instance_recorded=True,
+                )
+            ).precheck()
+        self.assertNotIn("warning", same["instance"])
+
+    def test_a_dump_from_before_p1_t32_is_noted(self):
+        """Q-K155: no instance recorded: accepted, the report says so (the key and chain checks
+        still apply upstream)."""
+        report = self._run(
+            self._from(environment=None, suffix=None, instance_recorded=False)
+        ).precheck()
+        self.assertEqual(
+            report["instance"], {"environment": "not recorded (dump older than P1-T32)"}
+        )
+        # a package of an older quarantine says nothing at all: the same
+        self.assertEqual(
+            self._run(self._from()).precheck()["instance"],
+            {"environment": "not recorded (dump older than P1-T32)"},
+        )
+
+    def test_a_pitr_copy_is_unchanged(self):
+        self.assertNotIn("instance", self._run(self._from(kind="pitr")).precheck())
+
+    def test_a_recorded_instance_that_is_not_well_formed_is_refused(self):
+        for instance in (
+            {"environment": "dev", "suffix": "localhost"},
+            {"environment": "staging", "suffix": None},
+            {"environment": "staging\nx", "suffix": "localhost"},
+            {"environment": "staging", "suffix": "not a domain"},
+        ):
+            with self.subTest(instance=instance):
+                self.assertRefused(
+                    "names its instance badly",
+                    self._from(**instance, instance_recorded=True),
+                )
+
     def test_a_dump_with_the_form_guards_passes(self):
         """P1-T15b2b item 5: the answered-form guard is ours, so a dump holding it passes the
         quarantine's checks and the pre-check, and it is never taken from the dump."""

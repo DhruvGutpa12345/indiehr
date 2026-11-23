@@ -58,9 +58,20 @@ process's key may add, read and list versions under dumps/ and read erasure/, ne
     dumper.py drill-mark <hospital uuid> <ok|failed>
                                      records a restore drill (P1-T22b's drill calls it; until then
                                      DumpDrillOverdue fires 35 days after the first dump ever)
+    dumper.py mark                   writes the bucket's instance marker, dumps/instance.json (this
+                                     instance's IHR_ENVIRONMENT and IHR_TENANT_DOMAIN_SUFFIX,
+                                     authenticated with IHR_DUMP_KEY), once; refuses a bucket marked
+                                     by another instance (scripts/staging.sh dumps-init --mark)
+
+Which instance (P1-T32 E4, ADR-020 §3; docs/reviews/p1-t32/design.md §6.1): every manifest
+records IHR_ENVIRONMENT and IHR_TENANT_DOMAIN_SUFFIX under its MAC. `run` and `once` need both
+and refuse to dump into a bucket whose authentic marker is missing or names another instance
+(reason=marker). The read commands (check, get, manifest, probe) work without them ("instance
+unknown": a lost server's one-off, the owner's machine). A manifest naming another instance is
+a check problem and an alert (reason=foreign-object, ihr_dump_foreign_objects); dumps go on.
 
 The fixed lines, one per hospital whose dump failed or was skipped (deploy/logs/alerts/dumps.yml):
-    ihr-dump: hospital=<slug> outcome=failed reason=<lock|disk|window|dump|upload|verify|check|error>
+    ihr-dump: hospital=<slug> outcome=failed reason=<lock|disk|window|dump|upload|verify|check|error|marker|foreign-object>
     ihr-dump: hospital=<slug> outcome=held
 Everything else this process prints starts "dumper: " with every control character escaped.
 """
@@ -123,7 +134,14 @@ KEY_RE = re.compile(r"^dumps/(daily|weekly)/([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}
 SCHEMA_RE = re.compile(r"^h_[a-z0-9]{10}$")
 SLUG_RE = re.compile(r"^[a-z][a-z0-9-]{2,30}$")
 UUID_RE = re.compile(r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$")
-REASONS = ("lock", "disk", "window", "dump", "upload", "verify", "check", "error")
+REASONS = ("lock", "disk", "window", "dump", "upload", "verify", "check", "error", "marker", "foreign-object")
+# The instance (P1-T32 E4): the canonical copy of the name regex is SERVER_PATTERN in
+# plugins/ihr_platform/ihr_platform/environment.py (scripts/test_environment_regex.py keeps them equal)
+ENVIRONMENT_RE = re.compile(r"^(production-[1-9][0-9]{0,2}|staging|proof)$")
+DOMAIN_RE = re.compile(r"^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)+$")  # staging.sh's
+# The bucket's instance marker: under dumps/ (the dumper's key writes nowhere else), written once
+MARKER_KEY = PREFIX + "instance.json"
+MARKER_FORMAT = "ihr-dump-instance/1"
 # Sessions as ihr_dump: each dump holds two while pg_dump runs (the lock's, which also exports the
 # snapshot, and pg_dump's); the role's CONNECTION LIMIT (scripts/staging.sh) is
 # SESSIONS_PER_DUMP x MAX_PARALLEL + 2, the two for `dumper.py role` and the hospitals' listing
@@ -192,10 +210,33 @@ class Config:
         self.scrapers = [s for s in g("IHR_DUMP_SCRAPERS", "prometheus").split(",") if s]
         if not 1 <= self.weekly_day <= 7:
             sys.exit("dumper: IHR_DUMP_WEEKLY_DAY is 1 (Monday) to 7 (Sunday)")
+        # Which instance this is (P1-T32 E4): required by run, once and mark only (main), so a
+        # lost server's or the owner's one-off check, get, manifest and probe still work
+        self.instance, self.instance_problem = instance_of(g("IHR_ENVIRONMENT", ""), g("IHR_TENANT_DOMAIN_SUFFIX", ""))
 
     def in_quiet(self, t):
         a, b = self.quiet
         return a <= t < b if a <= b else (t >= a or t < b)
+
+
+def instance_of(environment, suffix):
+    """(environment, suffix), None) when both are well formed, else (None, the problem)."""
+    if not environment and not suffix:
+        return None, ("unknown instance: IHR_ENVIRONMENT and IHR_TENANT_DOMAIN_SUFFIX are not set "
+                      "(compose.dumps.yaml passes them; ADR-020 E4)")
+    if not ENVIRONMENT_RE.fullmatch(environment or ""):
+        return None, (f"IHR_ENVIRONMENT must be production-<n>, staging or proof, not {one_line(repr(environment))[:40]} "
+                      "(ADR-020 E1)")
+    if not DOMAIN_RE.fullmatch(suffix or "") or len(suffix) > 253:
+        return None, f"IHR_TENANT_DOMAIN_SUFFIX must be a domain name, not {one_line(repr(suffix))[:80]}"
+    return (environment, suffix), None
+
+
+def named(instance):
+    """'<environment> (<suffix>)', escaped and cut short: also for what an unauthenticated
+    object says."""
+    env, suffix = instance
+    return f"{one_line(str(env))[:40]} ({one_line(str(suffix))[:80]})"
 
 
 def now_ist():
@@ -274,6 +315,81 @@ def valid_manifest(m, key, sealer):
     return bool(ok)
 
 
+def recorded(m):
+    """The (environment, suffix) a manifest or marker names, or None (a manifest from before
+    P1-T32, Q-K155, or not a document)."""
+    if isinstance(m, dict) and isinstance(m.get("environment"), str) and isinstance(m.get("suffix"), str):
+        return m["environment"], m["suffix"]
+    return None
+
+
+# ---- the bucket's instance marker (P1-T32 E4; Q-K156 C) -----------------------------------------
+
+
+def marker_doc(sealer, instance):
+    doc = {"format": MARKER_FORMAT, "environment": instance[0], "suffix": instance[1], "created": iso(now_ist())}
+    doc["mac"] = sealer.mac(doc)
+    return doc
+
+
+def read_marker(bucket, sealer):
+    """The marker as every reader takes it: its first version decides. Returns (state, what it
+    names or None, problems): state is "missing", "bad" (not ours: unreadable, not authentic with
+    this dump key, or not a marker) or "ok"; problems name a replaced or hidden marker (the
+    dumper writes it once), which never decides anything (the bucket key alone can write one)."""
+    vs = [v for v in bucket.versions(MARKER_KEY) if v["key"] == MARKER_KEY]
+    kept = [v for v in vs if not v["marker"]]
+    problems = []
+    if len(kept) > 1 or len(kept) < len(vs):
+        problems.append(f"{MARKER_KEY}: {len(kept)} version(s) and {len(vs) - len(kept)} delete marker(s); "
+                        "the marker is written once (replaced or hidden?)")
+    if not kept:
+        return "missing", None, problems
+    first = min(kept, key=_written)
+    try:
+        doc = json.loads(bucket.get(MARKER_KEY, first["version"]).read())
+    except (ValueError, TypeError, UnicodeDecodeError):
+        return "bad", None, problems
+    if not (isinstance(doc, dict) and doc.get("format") == MARKER_FORMAT and mac_ok(sealer.mac_key, doc)):
+        return "bad", None, problems
+    names = recorded(doc)
+    if not names or instance_of(*names)[0] is None:
+        return "bad", None, problems
+    return "ok", names, problems
+
+
+def marker_problem(state, names, instance):
+    """Why `run` refuses this bucket, or None."""
+    if state == "missing":
+        return (f"the dumps bucket has no instance marker ({MARKER_KEY}): once it is known to be this "
+                "instance's own, scripts/staging.sh dumps-init --mark marks it (a proof's stand-in: up); "
+                "ADR-020 E4")
+    if state == "bad":
+        return (f"the dumps bucket's instance marker ({MARKER_KEY}) is not authentic with this dump key: "
+                "another instance's bucket or key, or a forged marker (ADR-020 §2)")
+    if names != instance:
+        return (f"the dumps bucket belongs to {named(names)}; this is {named(instance)}: "
+                "dumps never cross instances (ADR-020 §3)")
+    return None
+
+
+def mark(bucket, sealer, instance, out=sys.stdout):
+    """`dumper.py mark`: writes the marker once. 0: written, or already this instance's; 1: the
+    bucket is marked otherwise (nothing written)."""
+    if instance is None:
+        sys.exit("dumper: mark needs this instance (IHR_ENVIRONMENT and IHR_TENANT_DOMAIN_SUFFIX)")
+    state, names, _ = read_marker(bucket, sealer)
+    if state == "ok" and names == instance:
+        print(f"the dumps bucket is already marked as {named(instance)}", file=out)
+        return 0
+    if state != "missing":
+        print(f"refused: {marker_problem(state, names, instance)}", file=out)
+        return 1
+    bucket.put_bytes(MARKER_KEY, record_bytes(marker_doc(sealer, instance)), "application/json")
+    print(f"the dumps bucket is marked as {named(instance)} ({MARKER_KEY})", file=out)
+    return 0
+
+
 # ---- what the bucket holds ----------------------------------------------------------------------
 
 
@@ -292,11 +408,13 @@ class Holdings:
     record's contents are what its writer says: the dates it names are checked, not proven
     (docs/reviews/p1-t22/design.md, Known limits)."""
 
-    def __init__(self, bucket, sealer, now=None, proof=None):
+    def __init__(self, bucket, sealer, now=None, proof=None, instance=None):
         now = (now or now_ist()).astimezone(IST)
         self.proof = on_stand_in() if proof is None else proof
+        self.instance = instance  # (environment, suffix) of this process; None: not compared
         self.manifests = {}  # sha256 of its bytes -> (key, manifest)
         self.bad = []  # keys that are not authentic
+        self.foreign = []  # (key, text): manifests naming another instance (P1-T32 E4), also in bad
         self.problems = []  # chain problems and names written twice (text)
         self.taken = collections.defaultdict(int)  # (kind, hospital, day) -> highest revision of any key
         self.erased = {}  # sha256 of an erased manifest -> its previous
@@ -305,7 +423,7 @@ class Holdings:
         self.oldest_object = None  # date of the oldest dump name present
         names = collections.defaultdict(list)
         for v in bucket.versions(PREFIX):
-            if not v["key"].startswith(PROBE_PREFIX):
+            if not v["key"].startswith(PROBE_PREFIX) and v["key"] != MARKER_KEY:
                 names[v["key"]].append(v)
         for key in sorted(names):
             vs = names[key]
@@ -326,11 +444,22 @@ class Holdings:
             if not kept:
                 continue  # only a delete marker: the problem above names it
             first = min(kept, key=_written)
+            m = None
             try:
                 raw = bucket.get(key, first["version"]).read()
                 m = json.loads(raw)
                 ok = valid_manifest(m, key, sealer)
             except (ValueError, TypeError, UnicodeDecodeError):
+                ok = False
+            theirs = recorded(m) if instance else None
+            if theirs and theirs != instance:
+                # Q-K156 C: never a halt. Authentic: this instance holds another's dump key.
+                # Not authentic: only what the object says (anyone with the bucket key wrote it)
+                self.foreign.append((key, (
+                    f"authentic but from {named(theirs)}: this instance holds another instance's dump key, "
+                    "a key incident (ADR-020 §2)") if ok else (
+                    f"written by {named(theirs)}, this is {named(instance)}: dumps never cross instances "
+                    "(ADR-020 §3). Unverified: it does not check with this instance's key")))
                 ok = False
             if not ok:
                 self.bad.append(key)
@@ -981,6 +1110,9 @@ def dump_one(cfg, source, tools, bucket, sealer, hospital, kind, day, previous_s
                         "encryption": "fernet, 1 MiB chunks (deploy/lib/sealer.py)",
                         "seconds": seconds,
                         "previous": previous_sha,
+                        # Which instance made it (P1-T32 E4), under the MAC like every field
+                        "environment": cfg.instance[0],
+                        "suffix": cfg.instance[1],
                     }
                     manifest["mac"] = sealer.mac(manifest)
                     raw = record_bytes(manifest)
@@ -1044,6 +1176,10 @@ class Status:
         "largest_seconds": "The longest single-hospital dump of the last run.",
         "work_free_bytes": "Free bytes on the work volume.",
         "role_ok": "1 if the database role is ihr_dump as modelled (0: refused, nothing is dumped).",
+        "instance_marker_ok": "1 if the bucket's instance marker is authentic and names this instance "
+                              "(0: missing, not authentic or another instance's: nothing is dumped; P1-T32 E4).",
+        "foreign_objects": "Manifests in the bucket that name another instance (authentic: a key incident; "
+                           "otherwise unverified). Dumps go on (P1-T32 E4).",
     }
 
     def __init__(self, path=None, fresh=False):
@@ -1129,14 +1265,14 @@ def good_ages(times, now):
             "stale_hospitals": sum(1 for t in times if now.timestamp() - t > 26 * 3600)}
 
 
-def refresh(bucket, sealer, status, hospitals=None, now=None, held=None, parallel=2):
+def refresh(bucket, sealer, status, hospitals=None, now=None, held=None, parallel=2, instance=None):
     """The metrics read from the bucket: the newest good dump of every due hospital, chain
     problems, the oldest dump name, the largest newest dump and what the work volume needs.
     Returns the Holdings."""
     now = now or now_ist()
-    held = held or Holdings(bucket, sealer, now)
+    held = held or Holdings(bucket, sealer, now, instance=instance)
     vals = {"bad_manifests": len(held.bad) + len(held.problems), "bucket_locked": bucket_state(bucket),
-            "early_erasures": len(held.early_erasures)}
+            "early_erasures": len(held.early_erasures), "foreign_objects": len(held.foreign)}
     if hospitals is not None:
         due = [h for h in hospitals if h.status in DUE]
         vals.update(good_ages((good_time(held.newest(h.uuid), h) for h in due), now))
@@ -1159,8 +1295,9 @@ def refresh(bucket, sealer, status, hospitals=None, now=None, held=None, paralle
     largest = max((m["dump"]["bytes"] + m["public"]["bytes"] for m in newest if m), default=0)
     vals.update(largest_bytes=largest, work_need_bytes=parallel * (int(largest * 1.2) + DISK_MARGIN))
     status.set(**vals)
+    foreign = dict(held.foreign)
     for key in held.bad:
-        say(f"not authentic: {key}")
+        say(f"not authentic: {key}" + (f": {foreign[key]}" if key in foreign else ""))
     for p in held.problems:
         say(f"chain: {p}")
     for key in held.early_erasures:
@@ -1185,7 +1322,25 @@ def run(cfg, source, tools, bucket, sealer, status, only=None, catch_up=False, n
             return None
         status.set(role_ok=1)
         hospitals = source.hospitals()
-        held = Holdings(bucket, sealer, now)
+        # The bucket's marker decides whose it is (P1-T32 E4, Q-K156 C): missing, not authentic
+        # or another instance's, nothing is dumped into it
+        state, names, _ = read_marker(bucket, sealer)
+        refused = marker_problem(state, names, cfg.instance)
+        status.set(instance_marker_ok=0 if refused else 1)
+        if refused:
+            say(f"refused: {refused}")
+            for h in hospitals:
+                if h.status in DUE and not (only and h.slug not in only):
+                    results[h.slug] = "marker"
+                    emit(h.slug, "failed", "marker")
+            status.set(hospitals=sum(1 for h in hospitals if h.status in DUE), hospitals_dumped=0,
+                       hospitals_failed=len(results), hospitals_held=0)
+            return results
+        held = Holdings(bucket, sealer, now, instance=cfg.instance)
+        # A foreign object under one of our hospitals' names: that hospital is named (dumps go on)
+        ours = {h.uuid: h.slug for h in hospitals}
+        for slug in sorted({ours[p[1]] for p in (parse_key(k) for k, _ in held.foreign) if p and p[1] in ours}):
+            emit(slug, "failed", "foreign-object")
         day = now.date()
         kind = "weekly" if now.isoweekday() == cfg.weekly_day else "daily"
         since = (now - dt.timedelta(hours=26)) if catch_up else dt.datetime.combine(day, cfg.at, IST)
@@ -1279,7 +1434,7 @@ def run(cfg, source, tools, bucket, sealer, status, only=None, catch_up=False, n
                    last_run_bytes=total, largest_seconds=int(longest),
                    last_run_end_timestamp_seconds=int(ended), last_run_seconds=int(ended - started),
                    work_free_bytes=Reserve(cfg.workdir).free())
-        refresh(bucket, sealer, status, hospitals, parallel=cfg.parallel)
+        refresh(bucket, sealer, status, hospitals, parallel=cfg.parallel, instance=cfg.instance)
         say(f"run ended in {int(ended - started)} s: {sum(1 for v in results.values() if v == 'ok')} dumped, "
             f"{sum(1 for v in results.values() if v == 'held')} held, "
             f"{sum(1 for v in results.values() if v not in ('ok', 'held'))} failed")
@@ -1355,17 +1510,35 @@ class Scratch:
 # ---- check, get, probe --------------------------------------------------------------------------
 
 
-def check(bucket, sealer, tools, deep=False, every=False, scratch_factory=None, out=sys.stdout):
+def check(bucket, sealer, tools, deep=False, every=False, scratch_factory=None, out=sys.stdout, instance=None):
     """Everything in the bucket authentic and chained per hospital, every name written once;
     objects present with their sizes (the versions the manifests recorded). deep: the newest
     dump of each hospital (every: all) read back, decrypted and read whole by pg_restore, and
-    restored schema-only when scratch_factory is given. Returns (problems, hospitals that
-    failed)."""
-    held = Holdings(bucket, sealer)
+    restored schema-only when scratch_factory is given. instance: this process's (P1-T32 E4),
+    to compare the marker and the manifests with (None: not compared). Returns (problems,
+    hospitals that failed)."""
+    held = Holdings(bucket, sealer, instance=instance)
     problems = len(held.bad) + len(held.problems)
     failed = set()
+    state, names, marker_problems = read_marker(bucket, sealer)
+    if instance is None:
+        print("WARN  instance unknown (IHR_ENVIRONMENT and IHR_TENANT_DOMAIN_SUFFIX not set here): the marker "
+              "and the manifests are not compared with it", file=out)
+        refused = marker_problem(state, names, names) if state != "ok" else None
+    else:
+        refused = marker_problem(state, names, instance)
+    if refused:
+        problems += 1
+        print(f"BAD   instance marker: {refused}", file=out)
+    else:
+        print(f"ok    instance marker: {named(names)}", file=out)
+    for p in marker_problems:
+        problems += 1
+        print(f"BAD   {p}", file=out)
+    foreign = dict(held.foreign)
     for key in held.bad:
-        print(f"BAD   {key}: not authentic (not ours, changed, or not a manifest / erasure record)", file=out)
+        print(f"BAD   {key}: " + (foreign[key] if key in foreign else
+                                  "not authentic (not ours, changed, or not a manifest / erasure record)"), file=out)
     for p in held.problems:
         print(f"BAD   chain: {p}", file=out)
     for key in held.early_erasures:
@@ -1432,15 +1605,19 @@ def get(bucket, sealer, hospital, when, part, out):
             out.write(chunk)
 
 
-def manifest(bucket, sealer, hospital, when, out):
+def manifest(bucket, sealer, hospital, when, out, instance=None):
     """The manifest of the dump `get` would return (P1-T22b: the restore's pre-checks read it):
     authentic (its MAC) and chained, as every reader takes it, or exit 1. Ids, hashes, sizes,
-    fingerprints and sequence values only: no personal data."""
-    held = Holdings(bucket, sealer)
+    fingerprints and sequence values only: no personal data. It names the instance that made it
+    (P1-T32 E4): the restore compares it with its own."""
+    held = Holdings(bucket, sealer, instance=instance)
     ms = sorted((m for m in (held.by_hospital.get(hospital) or {}).values()
                  if when == "latest" or m["date"] == when), key=lambda m: m["created"])
     if not ms:
         sys.exit(f"dumper: no dump of {hospital}" + ("" if when == "latest" else f" on {when}"))
+    for key, text in held.foreign:
+        if hospital in key:
+            sys.exit(f"dumper: {hospital}'s dumps have problems: {one_line(key)}: {text}: none is used")
     if any(hospital in text for text in [*held.problems, *held.bad]):
         sys.exit(f"dumper: {hospital}'s dumps have problems (dumper.py check says which): none is used")
     out.write(json.dumps({"authentic": True, "manifest": ms[-1]}, sort_keys=True) + "\n")
@@ -1675,7 +1852,7 @@ def service(cfg, source, tools, bucket, sealer, status):
                         scratch_factory=lambda: Scratch(cfg.workdir))
                 last_refresh = time.time()
             elif time.time() - last_refresh >= cfg.refresh:
-                refresh(bucket, sealer, status, source.hospitals(), parallel=cfg.parallel)
+                refresh(bucket, sealer, status, source.hospitals(), parallel=cfg.parallel, instance=cfg.instance)
                 status.set(work_free_bytes=Reserve(cfg.workdir).free())
                 last_refresh = time.time()
             first = False
@@ -1688,9 +1865,12 @@ def service(cfg, source, tools, bucket, sealer, status):
 
 def main(argv):
     cmd = argv[1] if len(argv) > 1 else "run"
-    if cmd not in ("run", "once", "check", "get", "manifest", "probe", "role", "drill-mark"):
+    if cmd not in ("run", "once", "check", "get", "manifest", "probe", "role", "drill-mark", "mark"):
         sys.exit(__doc__)
     cfg = Config()
+    if cmd in ("run", "once", "mark") and cfg.instance_problem:
+        # Only the commands that write into the bucket need to know whose it is (P1-T32 E4)
+        sys.exit(f"dumper: {cmd}: {cfg.instance_problem}")
     status = Status(os.path.join(cfg.workdir, "status.json") if os.path.isdir(cfg.workdir) else None,
                     fresh=cmd == "run")
     if cmd == "drill-mark":
@@ -1702,6 +1882,8 @@ def main(argv):
     tools = Tools(pg_env(url) if url else None)
     if cmd == "probe":
         sys.exit(1 if probe(bucket) else 0)
+    if cmd == "mark":
+        sys.exit(mark(bucket, sealer, cfg.instance))
     if cmd == "get":
         if len(argv) != 5 or not UUID_RE.match(argv[2]) or argv[4] not in ("dump", "public"):
             sys.exit("usage: dumper.py get <hospital uuid> <YYYY-MM-DD|latest> <dump|public>")
@@ -1710,10 +1892,10 @@ def main(argv):
     if cmd == "manifest":
         if len(argv) != 4 or not UUID_RE.match(argv[2]):
             sys.exit("usage: dumper.py manifest <hospital uuid> <YYYY-MM-DD|latest>")
-        manifest(bucket, sealer, argv[2], argv[3], sys.stdout)
+        manifest(bucket, sealer, argv[2], argv[3], sys.stdout, instance=cfg.instance)
         return
     if cmd == "check":
-        n, _ = check(bucket, sealer, tools, deep="--deep" in argv, every="--all" in argv,
+        n, _ = check(bucket, sealer, tools, deep="--deep" in argv, every="--all" in argv, instance=cfg.instance,
                      scratch_factory=(lambda: Scratch(cfg.workdir)) if "--deep" in argv and shutil.which("initdb") else None)
         status.set(check_problems=n, last_check_timestamp_seconds=int(time.time()))
         sys.exit(1 if n else 0)
