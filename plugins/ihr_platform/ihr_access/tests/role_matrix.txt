@@ -116,7 +116,7 @@ GET /api/v1/facility/{facility_external_id}/location/{location_external_id}/prod
 GET /api/v1/facility/{facility_external_id}/location/{location_external_id}/product/ ?{location_external_id}=store_location  all:deny admin:allow store:project  # stock at a place: inventory rights at that place (Store Keeper at the store)
 GET /api/v1/facility/{facility_external_id}/location/{location_external_id}/product/{external_id}/  all:deny care:invalid  # stock at a place: inventory rights at that place (Store Keeper at the store)
 GET /api/v1/facility/{facility_external_id}/medication_prescription/summary/  all:deny admin:allow  # products and prescription summaries: store and pharmacy rights
-GET /api/v1/facility/{facility_external_id}/order/delivery/  all:project clinical:allow  # CARE lists every order to any member when neither origin nor destination is given (Q-K40 gap); patient-linked rows absent for our roles (Q-K43 A)
+GET /api/v1/facility/{facility_external_id}/order/delivery/  all:invalid  # P2-T0a: CARE needs an origin or a destination (400), which closes the old unscoped list (Q-K40 gap); patient-linked rows stay absent for our roles (Q-K43 A)
 GET /api/v1/facility/{facility_external_id}/order/delivery/ ?destination=store_location  all:deny admin:allow store:project  # the store's incoming orders: the Store Keeper, patient-linked rows absent (Q-K43 A)
 GET /api/v1/facility/{facility_external_id}/order/delivery/ ?origin=store_location  all:deny store,admin:empty  # orders leaving the store (none in this world): the Store Keeper and the Facility Admin may list them (empty); the others are refused
 GET /api/v1/facility/{facility_external_id}/order/delivery/{external_id}/  all:deny admin:allow store:project  # the stock order: the Store Keeper (store rights at the destination)
@@ -237,7 +237,7 @@ GET /api/v1/patient/{patient_external_id}/diagnostic_report/  all:deny care:allo
 GET /api/v1/patient/{patient_external_id}/diagnostic_report/ ?encounter=encounter  all:deny care:allow mrdg:allow  # clinical data: CARE's clinical rights only (none of our restricted roles; the Radiologist has no Radiology visit here); MRD with a grant: the granted patient's record (CARE's clinical read through the hidden role, or the grant authorizer for reports, P1-T11b4)
 GET /api/v1/patient/{patient_external_id}/diagnostic_report/ ?service_request=lab_service_request  all:deny care:allow lab:allow mrdg:allow  # the lab copy's reports: the Lab Technician through the request's Laboratory place; MRD with a grant: the granted patient's record (CARE's clinical read through the hidden role, or the grant authorizer for reports, P1-T11b4)
 GET /api/v1/patient/{patient_external_id}/diagnostic_report/ ?service_request=xray_service_request  all:deny clinical:allow mrdg:allow  # the imaging copy's reports: the Radiologist through the request's Radiology place; MRD with a grant: the granted patient's record (CARE's clinical read through the hidden role, or the grant authorizer for reports, P1-T11b4)
-GET /api/v1/patient/{patient_external_id}/diagnostic_report/ ?encounter=encounter_b  all:deny admin:empty  # another patient's visit named (review K1): refused to every role of ours (ihr_access/visits.py); CARE's roles get CARE's answer (a list narrowed to that visit: empty; a row by id: CARE does not check whose visit it is, Q-K40's list)
+GET /api/v1/patient/{patient_external_id}/diagnostic_report/ ?encounter=encounter_b  all:deny care:empty  # (P2-T0a: CARE now authorizes the list on the patient first, as its other clinical lists, so the Doctor too gets the list narrowed to that visit: empty) another patient's visit named (review K1): refused to every role of ours (ihr_access/visits.py); CARE's roles get CARE's answer (a list narrowed to that visit: empty; a row by id: CARE does not check whose visit it is, Q-K40's list)
 GET /api/v1/patient/{patient_external_id}/diagnostic_report/ ?{patient_external_id}=patient_b&encounter=encounter_b  all:deny admin:allow rad:allow mrdg:deny  # the Radiology patient's own visit's reports (P1-T11b4 review C1): the Radiologist reads it through Radiology on the visit (Q-K44 A); MRD's grant is on the first patient, so the grant authorizer refuses it here (mutation records-grant-scope)
 GET /api/v1/patient/{patient_external_id}/diagnostic_report/{external_id}/  all:deny care:allow mrdg:project  # clinical data: CARE's clinical rights only (none of our restricted roles; the Radiologist has no Radiology visit here); MRD with a grant: through the grant authorizer (authz.RecordsGrantAuthorizer, P1-T11b4); the bed's occupant is projected
 GET /api/v1/patient/{patient_external_id}/diagnostic_report/{external_id}/ ?{external_id}=lab_diagnostic_report  all:deny care:allow lab:project mrdg:project  # the lab copy: Lab Technician, projected (the patient and visit it embeds); MRD with a grant: through the grant authorizer (authz.RecordsGrantAuthorizer, P1-T11b4); the bed's occupant is projected
@@ -305,10 +305,8 @@ GET /api/v1/product_knowledge/  all:empty  # settings and terminology: no patien
 GET /api/v1/product_knowledge/ ?facility=facility  all:deny care:allow store:allow  # settings and terminology: no patient data
 GET /api/v1/product_knowledge/favorite_lists/  all:allow  # settings and terminology: no patient data
 GET /api/v1/product_knowledge/{slug}/  all:deny care:allow store:allow  # settings and terminology: no patient data
-GET /api/v1/questionnaire/  all:deny  # settings and terminology: no patient data
+GET /api/v1/questionnaire/  all:empty  # settings and terminology: no patient data (P2-T0a: CARE lists the forms each person may read, get_filtered_questionnaires: none of this world's, no longer a 403)
 GET /api/v1/questionnaire/favorite_lists/  all:allow  # settings and terminology: no patient data
-GET /api/v1/questionnaire/{slug}/  all:deny  # settings and terminology: no patient data
-GET /api/v1/questionnaire/{slug}/get_organizations/  all:deny  # settings and terminology: no patient data
 GET /api/v1/questionnaire_response_template/  all:empty  # settings and terminology: no patient data
 GET /api/v1/questionnaire_response_template/{external_id}/  all:skip  # fill() cannot fill it: no row of this kind in the access world (a setting, no patient data; the isolation crawl seeds one)
 GET /api/v1/resource/  all:deny care:allow  # resource requests (each names its patient, no permission in CARE): closed to users of our roles only (branches.closed; b2, P1-T11b3)
@@ -317,12 +315,8 @@ GET /api/v1/resource/{resource_external_id}/comment/  all:deny care:allow  # res
 GET /api/v1/resource/{resource_external_id}/comment/{external_id}/  all:deny care:allow  # resource requests (each names its patient, no permission in CARE): closed to users of our roles only (branches.closed; b2, P1-T11b3)
 GET /api/v1/role/  all:allow  # settings and terminology: no patient data
 GET /api/v1/role/{external_id}/  all:allow  # settings and terminology: no patient data
-GET /api/v1/supply_delivery/  all:invalid  # CARE needs an order, origin or destination
-GET /api/v1/supply_delivery/ ?destination=store_location  all:deny admin:allow store:project  # deliveries into the store: the Store Keeper, patient-linked rows absent (Q-K43 A)
+GET /api/v1/supply_delivery/  all:invalid  # CARE needs an order (P2-T0a: by order only)
 GET /api/v1/supply_delivery/ ?order=delivery_order  all:deny admin:allow store:project  # the stock order's deliveries: the Store Keeper, projected (the store's place); the Facility Admin
-GET /api/v1/supply_delivery/ ?request_order=request_order  all:deny admin:allow store:project  # deliveries against the store's request order: the Store Keeper sees the stock delivery only, never the patient's return (Q-K43 A: _NoPatientRows); the Facility Admin sees both
-GET /api/v1/supply_delivery/delivery_orders/  all:invalid  # CARE needs request_order (400 without it); the request-order variant below is the world's (review M8)
-GET /api/v1/supply_delivery/delivery_orders/ ?request_order=request_order  all:deny admin:allow store:project  # the orders delivered against the store's request order (review M8): the Store Keeper sees the stock order only, projected (the store's place), never the patient's return (Q-K43 A; StoreRows); the Facility Admin sees both; not the Doctor or the other roles
 GET /api/v1/supply_delivery/{external_id}/  all:deny admin:allow store:project  # the stock delivery: the Store Keeper
 GET /api/v1/supply_delivery/{external_id}/ ?{external_id}=return_delivery  all:deny admin:allow  # the patient's return delivery: absent for users of our roles (Q-K43 A)
 GET /api/v1/supply_request/  all:invalid  # CARE needs an order, origin or destination (list_params.txt gives one)
@@ -346,9 +340,6 @@ GET /api/v1/users/{username}/  all:allow  # the staff directory and the person's
 GET /api/v1/users/{username}/check_availability/  all:conflict  # a username already taken: 409
 GET /api/v1/users/{username}/pnconfig/  all:allow  # the staff directory and the person's own profile: membership only
 GET /api/v1/valueset/  all:empty  # settings and terminology: no patient data
-GET /api/v1/valueset/{slug}/  all:skip  # fill() cannot fill it: no row of this kind in the access world (a setting, no patient data; the isolation crawl seeds one)
-GET /api/v1/valueset/{slug}/favourites/  all:skip  # fill() cannot fill it: no row of this kind in the access world (a setting, no patient data; the isolation crawl seeds one)
-GET /api/v1/valueset/{slug}/recent_views/  all:skip  # fill() cannot fill it: no row of this kind in the access world (a setting, no patient data; the isolation crawl seeds one)
 GET /app_version/  all:allow  # health, version and root: no hospital data
 GET /health/  all:allow  # health, version and root: no hospital data
 GET /health/celery_queue_length  all:allow  # health, version and root: no hospital data
@@ -358,6 +349,72 @@ GET /health/statuspage  all:allow  # health, version and root: no hospital data
 GET /ping/  all:allow  # health, version and root: no hospital data
 GET /redoc/  all:allow  # the API description: no hospital data
 GET /swagger/  all:allow  # the API description: no hospital data
+
+# --- CARE 2026-11 (P2-T0a): each new route read from the answers (IHR_MATRIX_DUMP=1) -------------
+GET /api/v1/action_configuration/  all:allow  # the action engine's definitions (Action rows: conditions and instructions, no patient value; any signed-in person, CARE's plain queryset; only a superuser makes one). Running one is closed to our roles (ihr_access/actions.py, review F2)
+GET /api/v1/action_configuration/contexts/  all:allow  # the engine's catalogue of contexts (code, no hospital data)
+GET /api/v1/action_configuration/fields/  all:allow  # the engine's catalogue of fields (code, no hospital data)
+GET /api/v1/action_configuration/instructions/  all:allow  # the engine's catalogue of instructions (code, no hospital data)
+GET /api/v1/action_configuration/{external_id}/  all:allow  # one action's definition (the world's: an expression, no marker): as the list
+GET /api/v1/facility/{facility_external_id}/order/delivery/ ?destination=store_location&patient_return~true  all:deny admin:allow  # the store's patient returns (P2-T0a): CARE's can_read_medication_return, which no role of ours holds (403; _NoPatientRows would empty it anyway, Q-K43 A); the Facility Admin sees the return
+GET /api/v1/immunization/policy/  all:empty  # immunisation schedules (a setting, no patient data): none in this world
+GET /api/v1/immunization/policy/{external_id}/  all:skip  # fill() cannot fill it: no row of this kind in the access world (a setting, no patient data)
+GET /api/v1/patient/{patient_external_id}/immunization/recommendation/  all:deny care:allow  # clinical data: CARE's can_read_patient_immunization / can_read_encounter_immunization only (none of our roles; the hidden records role does not hold it, so a records grant opens less, never more)
+GET /api/v1/patient/{patient_external_id}/immunization/recommendation/ ?encounter=encounter_b  all:deny  # another patient's visit named (review K1): refused to every role of ours (visits.py); CARE's roles get 404 (CARE checks the visit is this patient's)
+GET /api/v1/patient/{patient_external_id}/immunization/recommendation/{external_id}/  all:deny care:allow  # as the list
+GET /api/v1/patient/{patient_external_id}/immunization/recommendation/{external_id}/ ?encounter=encounter_b  all:deny  # another patient's visit named (review K1): refused to every role of ours (visits.py); CARE's roles 404
+GET /api/v1/patient/{patient_external_id}/immunization/record/  all:deny care:allow  # clinical data: CARE's immunisation read rights only (none of our roles; a records grant opens less)
+GET /api/v1/patient/{patient_external_id}/immunization/record/ ?encounter=encounter_b  all:deny  # another patient's visit named (review K1): refused to every role of ours (visits.py); CARE's roles 404
+GET /api/v1/patient/{patient_external_id}/immunization/record/{external_id}/  all:deny care:allow  # as the list
+GET /api/v1/patient/{patient_external_id}/immunization/record/{external_id}/ ?encounter=encounter_b  all:deny  # another patient's visit named (review K1): refused to every role of ours (visits.py); CARE's roles 404
+GET /api/v1/patient/{patient_external_id}/procedure/  all:deny care:allow mrdg:allow  # clinical data: CARE's can_view_clinical_data only (none of our restricted roles; the Radiologist has no Radiology visit here); MRD with a grant: the granted patient's record (CARE's clinical read through the hidden role, P1-T11b4)
+GET /api/v1/patient/{patient_external_id}/procedure/ ?encounter=encounter_b  all:deny  # another patient's visit named (review K1): refused to every role of ours (visits.py); CARE's roles 404 (CARE checks the visit is this patient's)
+GET /api/v1/patient/{patient_external_id}/procedure/{external_id}/  all:deny care:allow mrdg:allow  # as the list
+GET /api/v1/patient/{patient_external_id}/procedure/{external_id}/ ?encounter=encounter_b  all:deny  # another patient's visit named (review K1): refused to every role of ours (visits.py); CARE's roles 404
+GET /api/v1/questionnaire/{external_id}/  all:allow  # a form's definition (questions, no answers; CARE 2026-11 opens forms by id, auth_context instance): settings, no patient data
+GET /api/v1/questionnaire/{external_id}/get_facility_organizations/  all:deny  # a form's departments: CARE's questionnaire rights (none in this world)
+GET /api/v1/questionnaire/{external_id}/get_organizations/  all:deny  # a form's organisations: CARE's questionnaire rights (none in this world)
+GET /api/v1/referral/  all:invalid ours:deny  # CARE needs a scope (an entity, a visit or a patient); every role of ours is refused before that (403: ihr_access/referrals.py, Q-K163)
+GET /api/v1/referral/ ?encounter=encounter  all:deny care:allow  # a visit's referrals (title and note: clinical): CARE's can_read_referral, which none of our roles holds
+GET /api/v1/referral/ ?entity_type~facility&entity_id=facility  all:deny admin:allow  # the referrals sent to the hospital's desk: can_read_referral at the facility root (the Facility Admin)
+GET /api/v1/referral/ ?patient=patient  all:deny care:allow  # a patient's referrals: as the visit's
+GET /api/v1/referral/{external_id}/  all:deny care:allow  # one referral with its form answers: can_read_referral (none of our roles)
+GET /api/v1/referral/{external_id}/questionnaires/  all:deny care:empty  # the destination's forms for a referral: can_read_referral first
+GET /api/v1/referral/{external_id}/referenced_by/  all:deny care:empty  # referrals pointing at this one: can_read_referral first
+GET /api/v1/referral/{referral_external_id}/notes/  all:deny care:allow  # the referral's note thread: can_read_referral (none of our roles)
+GET /api/v1/referral/{referral_external_id}/notes/{external_id}/  all:deny  # the world's default note is the ward round's, not this referral's: 404 for everyone (the referral's own note: the variant below)
+GET /api/v1/referral/{referral_external_id}/notes/{external_id}/ ?{external_id}=referral_note  all:deny care:allow  # one note of the referral: can_read_referral
+GET /api/v1/referral/{referral_external_id}/questionnaire_responses/  all:deny care:allow  # the referral's form answers: can_read_referral
+GET /api/v1/referral/{referral_external_id}/questionnaire_responses/{external_id}/  all:deny care:allow  # one of them
+GET /api/v1/referral/{referral_external_id}/resources/  all:deny care:allow  # the records attached to the referral (a request here): can_read_referral
+GET /api/v1/referral/{referral_external_id}/resources/{external_id}/  all:deny care:allow  # one attachment
+GET /api/v1/referral/{referral_external_id}/resources/{external_id}/resolve/  all:deny care:allow  # the attached record itself (the ward request): can_read_referral, then the record
+GET /api/v1/referral_assigned/  all:empty care:allow  # referrals assigned to the caller: CARE checks no permission, and each row names the patient and the referral's note; every person here is an assignee, and every role of ours gets an empty list (ihr_access/referrals.py, P2-T0a; test_actions.AssignedReferrals)
+GET /api/v1/referral_availability/  all:invalid  # CARE needs entity_type
+GET /api/v1/referral_availability/ ?entity_type~facility  all:empty admin:allow  # the hospital's referral destinations (a setting: name, forms, care team): public ones or the referral availability rights; the world's desk is not public
+GET /api/v1/referral_availability/{external_id}/  all:deny admin:allow  # one destination: CARE's can_view_referral_availability (the Facility Admin)
+GET /api/v1/referral_availability/{external_id}/questionnaires/  all:deny admin:empty  # a destination's forms: as the destination
+GET /api/v1/referral_availability_config/  all:invalid  # CARE needs entity_type and entity_id
+GET /api/v1/referral_availability_config/ ?entity_type~facility&entity_id=facility  all:deny admin:allow  # managing the hospital's destinations: can_manage_referral_availability (the Facility Admin)
+GET /api/v1/resource_observation/  all:invalid  # CARE needs subject_type and subject_id
+GET /api/v1/resource_observation/ ?subject_type~location&subject_id=location  all:deny care:empty  # a place's form answers as observations (a bed, a device or the facility, never a patient): CARE's place questionnaire read right, which none of our roles holds; none in this world
+GET /api/v1/resource_observation/{external_id}/  all:skip  # fill() cannot fill it: no row of this kind in the access world (a place's form answer; the list variant shows who may read them)
+GET /api/v1/resource_responses/  all:invalid  # CARE needs subject_type and subject_id
+GET /api/v1/resource_responses/ ?subject_type~location&subject_id=location  all:deny care:empty  # a place's form answers (never a patient's): CARE's place questionnaire read right, which none of our roles holds; none in this world
+GET /api/v1/resource_responses/{external_id}/  all:skip  # fill() cannot fill it: no row of this kind in the access world (the list variant shows who may read them)
+GET /api/v1/supply_delivery/ ?order=return_order  all:deny admin:allow  # the patient's return's deliveries (P2-T0a: CARE lists deliveries by their order only): CARE's medication-return right (none of our roles; Q-K43 A)
+GET /api/v1/users/degrees/  all:allow  # CARE's catalogue of medical degrees (code, no hospital data)
+GET /api/v1/valueset/favourites_by_slug/  all:invalid  # CARE needs a value set's slug: the caller's own favourite codes (a setting)
+GET /api/v1/valueset/recent_views_by_slug/  all:invalid  # CARE needs a value set's slug: the caller's own recent codes (a setting)
+GET /api/v1/valueset/{external_id}/  all:skip  # fill() cannot fill it: no row of this kind in the access world (a setting, no patient data; the isolation crawl seeds one)
+GET /api/v1/valueset/{external_id}/favourites/  all:skip  # fill() cannot fill it: no row of this kind in the access world (a setting, no patient data)
+GET /api/v1/valueset/{external_id}/get_facility_organizations/  all:skip  # fill() cannot fill it: no row of this kind in the access world (a setting, no patient data)
+GET /api/v1/valueset/{external_id}/recent_views/  all:skip  # fill() cannot fill it: no row of this kind in the access world (a setting, no patient data)
+GET /api/v1/workspace/  all:empty  # workspaces (P2-T0a: a facility's grouping of departments for the web app; a setting, no patient data): none in this world
+GET /api/v1/workspace/get_user_default_attributes/  all:empty  # the caller's own workspace defaults (a setting)
+GET /api/v1/workspace/{external_id}/  all:skip  # fill() cannot fill it: no row of this kind in the access world (a setting, no patient data)
+GET /api/v1/workspace/{external_id}/get_facility_organizations/  all:skip  # fill() cannot fill it: no row of this kind in the access world (a setting, no patient data)
+GET /api/v1/workspace/{external_id}/get_organizations/  all:skip  # fill() cannot fill it: no row of this kind in the access world (a setting, no patient data)
 
 # --- writes (allowed ones; every other non-GET method: ours:deny care:care) ------------------
 POST /api/ihr/records-access/  ours:deny care:care mrd:allow  # MRD asks for a records grant (Q-K36 A; records.create_grant), with or without a grant on another patient; every other role of ours is refused (403, a refused line); tests: ihr_access.tests.test_records.GrantFlow.test_mrd_asks_reads_and_ends, ihr_access.tests.test_records.GrantFlow.test_only_the_records_role_may_ask, ihr_access.tests.test_records.GrantFlow.test_reasons_and_references
@@ -438,6 +495,7 @@ POST /api/v1/facility/{facility_external_id}/charge_item_definition/{slug}/add_f
 POST /api/v1/facility/{facility_external_id}/charge_item_definition/{slug}/remove_favorite/  ours:deny care:care rec,cash,tpa:allow  # as add_favorite; tests: ihr_access.tests.test_role_matrix.AllowedWrites.test_preferences_are_the_callers_own
 POST /api/v1/facility/{facility_external_id}/organizations/{external_id}/add_favorite/  ours:deny care:care rec:allow  # the person's own favourites list (Q-K42 A); tests: ihr_access.tests.test_role_matrix.AllowedWrites.test_preferences_are_the_callers_own
 POST /api/v1/facility/{facility_external_id}/organizations/{external_id}/remove_favorite/  ours:deny care:care rec:allow  # as add_favorite; tests: ihr_access.tests.test_role_matrix.AllowedWrites.test_preferences_are_the_callers_own
+POST /api/v1/questionnaire/{external_id}/add_favorite/  all:care ours:allow  # the person's own favourites list of forms (P2-T0a: forms are opened by id, a form's definition is no patient data; CARE answers {}); tests: ihr_access.tests.test_role_matrix.AllowedWrites.test_preferences_are_the_callers_own
 POST /api/v1/product_knowledge/{slug}/add_favorite/  all:care ours:allow  # the person's own favourites list (CARE checks no right: Q-K40; it answers {} and shows nothing); tests: ihr_access.tests.test_role_matrix.AllowedWrites.test_preferences_are_the_callers_own
 POST /api/v1/product_knowledge/{slug}/remove_favorite/  all:care ours:allow  # as add_favorite; tests: ihr_access.tests.test_role_matrix.AllowedWrites.test_preferences_are_the_callers_own
 PATCH /api/v1/users/{username}/pnconfig/  all:care ours:allow  # the caller's own push settings, whatever username is named; tests: ihr_access.tests.test_role_matrix.AllowedWrites.test_preferences_are_the_callers_own
@@ -465,12 +523,21 @@ W /api/v1/organization/{organization_external_id}/users/{external_id}/  all:skip
 W /api/v1/plug_config/{slug}/  all:skip  # no row of this kind in the access world (a setting, no patient data): ihr_platform's isolation crawl seeds one
 W /api/v1/questionnaire_response_template/{external_id}/  all:skip  # no row of this kind in the access world (a setting, no patient data): ihr_platform's isolation crawl seeds one
 W /api/v1/supply_request/{external_id}/  ours:deny care:care store:allow  # a supply request (can_write_supply_request; no patient link); tests: ihr_roles.tests.test_grants.ExactGrants.test_each_of_our_roles_holds_exactly_its_grants
-W /api/v1/valueset/{slug}/  all:skip  # no row of this kind in the access world (a setting, no patient data): ihr_platform's isolation crawl seeds one
-W /api/v1/valueset/{slug}/add_favourite/  all:skip  # no row of this kind in the access world (a setting, no patient data): ihr_platform's isolation crawl seeds one
-W /api/v1/valueset/{slug}/add_recent_view/  all:skip  # no row of this kind in the access world (a setting, no patient data): ihr_platform's isolation crawl seeds one
-W /api/v1/valueset/{slug}/clear_favourites/  all:skip  # no row of this kind in the access world (a setting, no patient data): ihr_platform's isolation crawl seeds one
-W /api/v1/valueset/{slug}/clear_recent_views/  all:skip  # no row of this kind in the access world (a setting, no patient data): ihr_platform's isolation crawl seeds one
-W /api/v1/valueset/{slug}/expand/  all:skip  # no row of this kind in the access world (a setting, no patient data): ihr_platform's isolation crawl seeds one
-W /api/v1/valueset/{slug}/remove_favourite/  all:skip  # no row of this kind in the access world (a setting, no patient data): ihr_platform's isolation crawl seeds one
-W /api/v1/valueset/{slug}/remove_recent_view/  all:skip  # no row of this kind in the access world (a setting, no patient data): ihr_platform's isolation crawl seeds one
-W /api/v1/valueset/{slug}/validate_code/  all:skip  # no row of this kind in the access world (a setting, no patient data): ihr_platform's isolation crawl seeds one
+
+W /api/v1/immunization/policy/{external_id}/  all:skip  # no row of this kind in the access world (a setting, no patient data); P2-T0a
+W /api/v1/resource_responses/{external_id}/  all:skip  # no row of this kind in the access world (a place's form answer, never a patient's; CARE's place questionnaire rights); P2-T0a
+W /api/v1/valueset/{external_id}/  all:skip  # no row of this kind in the access world (a setting, no patient data): ihr_platform's isolation crawl seeds one (P2-T0a: value sets are opened by id)
+W /api/v1/valueset/{external_id}/add_favourite/  all:skip  # no row of this kind in the access world (a setting, no patient data): ihr_platform's isolation crawl seeds one (P2-T0a: value sets are opened by id)
+W /api/v1/valueset/{external_id}/add_recent_view/  all:skip  # no row of this kind in the access world (a setting, no patient data): ihr_platform's isolation crawl seeds one (P2-T0a: value sets are opened by id)
+W /api/v1/valueset/{external_id}/clear_favourites/  all:skip  # no row of this kind in the access world (a setting, no patient data): ihr_platform's isolation crawl seeds one (P2-T0a: value sets are opened by id)
+W /api/v1/valueset/{external_id}/clear_recent_views/  all:skip  # no row of this kind in the access world (a setting, no patient data): ihr_platform's isolation crawl seeds one (P2-T0a: value sets are opened by id)
+W /api/v1/valueset/{external_id}/expand/  all:skip  # no row of this kind in the access world (a setting, no patient data): ihr_platform's isolation crawl seeds one (P2-T0a: value sets are opened by id)
+W /api/v1/valueset/{external_id}/remove_favourite/  all:skip  # no row of this kind in the access world (a setting, no patient data): ihr_platform's isolation crawl seeds one (P2-T0a: value sets are opened by id)
+W /api/v1/valueset/{external_id}/remove_recent_view/  all:skip  # no row of this kind in the access world (a setting, no patient data): ihr_platform's isolation crawl seeds one (P2-T0a: value sets are opened by id)
+W /api/v1/valueset/{external_id}/set_facility_organizations/  all:skip  # no row of this kind in the access world (a setting, no patient data): ihr_platform's isolation crawl seeds one (P2-T0a: value sets are opened by id)
+W /api/v1/valueset/{external_id}/set_slug_preference/  all:skip  # no row of this kind in the access world (a setting, no patient data): ihr_platform's isolation crawl seeds one (P2-T0a: value sets are opened by id)
+W /api/v1/valueset/{external_id}/validate_code/  all:skip  # no row of this kind in the access world (a setting, no patient data): ihr_platform's isolation crawl seeds one (P2-T0a: value sets are opened by id)
+W /api/v1/workspace/{external_id}/  all:skip  # no row of this kind in the access world (a setting, no patient data); P2-T0a
+W /api/v1/workspace/{external_id}/set_default_attributes/  all:skip  # no row of this kind in the access world (a setting, no patient data); P2-T0a
+W /api/v1/workspace/{external_id}/set_facility_organizations/  all:skip  # no row of this kind in the access world (a setting, no patient data); P2-T0a
+W /api/v1/workspace/{external_id}/set_organizations/  all:skip  # no row of this kind in the access world (a setting, no patient data); P2-T0a

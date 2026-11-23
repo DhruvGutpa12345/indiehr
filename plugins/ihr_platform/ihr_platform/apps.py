@@ -10,6 +10,7 @@ class IhrPlatformConfig(AppConfig):
 
     def ready(self):
         from ihr_platform import (  # noqa: F401
+            actions,
             celery_gate,
             db_roles,
             identifier_cache,
@@ -25,6 +26,11 @@ class IhrPlatformConfig(AppConfig):
         # process by post_save (P1-T15b2a, Q-K64); E025 refuses to start without it
         identifier_cache.install()
         checks.register(identifier_cache.system_check)
+        # CARE's action engine serves only reviewed instructions and fields: upstream's test
+        # "logging" instruction (patient data to the INFO log) and test field are taken out,
+        # and E028 refuses to start on an unreviewed one (P2-T0a, review F3)
+        actions.prune()
+        checks.register(actions.system_check)
         # Queued Celery tasks never run in a hospital that is not served (P1-T18a, S1)
         celery_gate.install()
         # Every process checks its database role on its first connection (P1-T19; only

@@ -3,7 +3,9 @@
 - ihr_access.E022: the guard and the PatientUser rule sit on the classes CARE actually uses (an
   upstream sync that moves a spec, or a subclass that defines its own ``serialize``, would
   otherwise bypass them silently); the visit check (visits.py) is installed and no view under a
-  patient overrides ``initial`` outside our code.
+  patient overrides ``initial`` outside our code; CARE's action engine and its assigned-referral
+  list are closed to our roles, and every viewset mixing in the engine is reviewed
+  (actions.py, referrals.py, fields/action_viewsets.txt; P2-T0a).
 - ihr_access.E023: the records grant authorizer (authz.RecordsGrantAuthorizer) answers each of
   CARE's read checks it wraps, delegates to a CARE handler that still defines it, answers no
   write and never ``can_view_clinical_data``; the signed-link cap is installed (P1-T11b4).
@@ -17,7 +19,15 @@ from django.core.checks import Error
 
 
 def guard_installed(app_configs=None, **kwargs):
-    from ihr_access import authz, exceptions, guard, identifiers, visits
+    from ihr_access import (
+        actions,
+        authz,
+        exceptions,
+        guard,
+        identifiers,
+        referrals,
+        visits,
+    )
 
     return [
         Error(f"the access guard does not hold: {problem}", id="ihr_access.E022")
@@ -27,6 +37,8 @@ def guard_installed(app_configs=None, **kwargs):
             + exceptions.problems()
             + identifiers.problems()
             + visits.problems()
+            + actions.problems()
+            + referrals.problems()
         )
     ]
 

@@ -273,17 +273,36 @@ class PatientReturns(SwapCase):
             )
 
     def answers(self, client):
+        """Since P2-T0a CARE lists a store's patient returns only when asked
+        (``patient_return=true``, under its own medication-return right) and supply deliveries
+        only by their order (``?order=``): each list is asked both ways."""
         w = self.world
         orders = f"/api/v1/facility/{w.facility.external_id}/order/delivery/"
         store = {"destination": str(self.store.external_id)}
+        deliveries = "/api/v1/supply_delivery/"
         return {
             "order list": client.get(orders, store),
+            "return order list": client.get(
+                orders, {**store, "patient_return": "true"}
+            ),
             "order": client.get(f"{orders}{self.return_order.external_id}/"),
-            "delivery list": client.get("/api/v1/supply_delivery/", store),
+            "delivery list": client.get(
+                deliveries, {"order": str(self.stock_order.external_id)}
+            ),
+            "return delivery list": client.get(
+                deliveries, {"order": str(self.return_order.external_id)}
+            ),
             "delivery": client.get(
-                f"/api/v1/supply_delivery/{self.deliveries['return'].external_id}/"
+                f"{deliveries}{self.deliveries['return'].external_id}/"
             ),
         }
+
+    def assert_no_rows(self, response):
+        """Refused, or an empty list: either way no row of the return."""
+        if response.status_code == 200:
+            self.assertEqual(response.json()["results"], [])
+        else:
+            self.assertIn(response.status_code, (403, 404), response.content[:300])
 
     def test_store_keeper_never_sees_a_patient_return(self):
         """§10 test 11 (Q-K43 A): the return order and its delivery are absent from every list,
@@ -295,10 +314,13 @@ class PatientReturns(SwapCase):
             [o["id"] for o in keeper["order list"].json()["results"]],
             [str(self.stock_order.external_id)],
         )
+        self.assertEqual(keeper["delivery list"].status_code, 200)
         self.assertEqual(
             [d["id"] for d in keeper["delivery list"].json()["results"]],
             [str(self.deliveries["stock"].external_id)],
         )
+        self.assert_no_rows(keeper["return order list"])
+        self.assert_no_rows(keeper["return delivery list"])
         self.assertEqual(keeper["order"].status_code, 404)
         self.assertEqual(keeper["delivery"].status_code, 404)
         for name, response in keeper.items():
@@ -390,9 +412,13 @@ class PatientReturns(SwapCase):
         self.assertEqual(SupplyDelivery.objects.count(), before)
         # The Pharmacist handles returns (CARE's own path)
         pharmacist = self.answers(self.api(self.pharmacist))
-        self.assertIn(
-            str(self.return_order.external_id),
-            [o["id"] for o in pharmacist["order list"].json()["results"]],
+        self.assertEqual(
+            [o["id"] for o in pharmacist["return order list"].json()["results"]],
+            [str(self.return_order.external_id)],
+        )
+        self.assertEqual(
+            [d["id"] for d in pharmacist["return delivery list"].json()["results"]],
+            [str(self.deliveries["return"].external_id)],
         )
         self.assertEqual(pharmacist["order"].status_code, 200)
         self.assertIn(CANARY, pharmacist["order"].content.decode())

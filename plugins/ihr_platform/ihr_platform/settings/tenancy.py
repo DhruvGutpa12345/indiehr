@@ -77,6 +77,10 @@ def apply_tenancy(settings):  # noqa: PLR0915 (one flat list of settings)
         a for a in settings["TENANT_APPS"] if a not in SHARED_APPS
     ]
     settings["ROOT_URLCONF"] = "ihr_platform.urls_tenant"
+    # CARE's anonymous Prometheus /metrics/ (P2-T0a, review F1/F8): per-hospital counts of
+    # patients, visits and staff for anyone who asks. Our monitoring never scrapes it, so it is
+    # off everywhere (secure.py refuses it on servers, blocked.py blocks the path as well).
+    settings["ENABLE_PROMETHEUS_METRICS"] = False
 
     settings["DATABASES"]["default"]["ENGINE"] = "django_tenants.postgresql_backend"
     # Writes made outside a request or task are named after the process in the audit trail

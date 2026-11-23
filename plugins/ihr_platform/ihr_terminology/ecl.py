@@ -7,8 +7,11 @@ product|"}. Only one focus concept with an optional operator and term is accepte
     >>  X   X and its ancestors          >  X   its ancestors
         X   X itself                     *      any concept
 
-Everything else (refinements ':', AND/OR/MINUS, member-of '^', nested braces, comments) is refused,
-so a value set can never come out wider than written.
+One ``MINUS`` between two such focus expressions is accepted too (``parse_expression``): CARE
+3.1's system-symptom-code says ``< 404684003 MINUS << 64572001`` (P2-T0a). MINUS only takes
+concepts away, so it never widens a set. Everything else (refinements ':', AND/OR, a second
+MINUS, '*' beside MINUS, member-of '^', brackets, nested braces, comments) is refused, so a
+value set can never come out wider than written.
 """
 
 import re
@@ -31,3 +34,23 @@ def parse(text):
         msg = "an operator with '*' is not supported"
         raise EclError(msg)
     return op, code
+
+
+_MINUS = re.compile(r"\s+MINUS\s+")
+
+
+def parse_expression(text):
+    """-> ((operator, code), (operator, code) or None): the focus, and the focus taken away
+    from it (``A MINUS B``), each as ``parse`` reads it; EclError beyond that."""
+    parts = _MINUS.split(str(text or ""))
+    if len(parts) > 2:  # noqa: PLR2004 (A MINUS B, nothing longer)
+        msg = f"ECL beyond the supported subset: {str(text)[:80]!r}"
+        raise EclError(msg)
+    focus = parse(parts[0])
+    if len(parts) == 1:
+        return focus, None
+    taken = parse(parts[1])
+    if "*" in (focus[1], taken[1]):
+        msg = "'*' is not supported beside MINUS"
+        raise EclError(msg)
+    return focus, taken

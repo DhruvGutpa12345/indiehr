@@ -105,6 +105,7 @@ EDITED = OPENED - {"retrieve"}  # our authorize_update serves these
 
 class IhrPatientViewSet(PatientViewSet):
     ihr_opened = False  # our get_object branch served this request
+    ihr_edit_branch = False  # our edit rule served this write (handle_update)
 
     def initial(self, request, *args, **kwargs):
         super().initial(request, *args, **kwargs)
@@ -186,7 +187,9 @@ class IhrPatientViewSet(PatientViewSet):
         checks only that the facility exists (review C1). MRD reading a patient under its own
         live records grant (CARE's path, unprojected) gets that facility's tags and numbers
         as a clinician does, where it holds the records right (P1-T11b4)."""
-        if self.ihr_opened:  # our branch: no facility tags to show
+        if (
+            self.ihr_opened or self.ihr_edit_branch
+        ):  # our branch: no facility tags to show
             if facility := self.request.GET.get("facility"):
                 get_object_or_404(Facility, external_id=facility)
             return {"facility": None}
@@ -268,7 +271,10 @@ class IhrPatientViewSet(PatientViewSet):
         edit.check_geo_move(instance, spec, body)
         model_instance = spec.de_serialize(obj=instance)
         self.perform_update(model_instance)
-        return self.get_retrieve_pydantic_model().serialize(model_instance).to_json()
+        # CARE's handle_update answers through serialize_retrieve (the user and the retrieve
+        # context, P2-T0a); on our branch that context is ours: no facility tags to show
+        self.ihr_edit_branch = True
+        return self.serialize_retrieve(instance)
 
     def clean_create_data(self, request_data):
         """A restricted user's create (POST and CARE's upsert): CARE validates the body,
@@ -535,11 +541,9 @@ class IhrEncounterViewSet(EncounterViewSet):
             if not self._status_retrievable(instance):
                 raise
             branches.widen()
-        data = (
-            self.get_retrieve_pydantic_model()
-            .serialize(instance, request.user, **self.get_serializer_retrieve_context())
-            .to_json()
-        )
+        data = self.serialize_retrieve(
+            instance
+        )  # CARE's (P2-T0a: the user and context)
         return Response(data)
 
     def clean_create_data(self, request_data):
@@ -733,3 +737,16 @@ class IhrSlotViewSet(SlotViewSet):
             if not resource:
                 raise ValidationError("No schedules found for this resource")
             self.authorize_resource_read(resource)
+
+    def finalize_response(self, request, response, *args, **kwargs):
+        """CARE's ``create_appointment`` answers the configured actions' outputs in
+        ``_actions``; for ``branches.closed`` users no action runs (actions.py) and the key is
+        not sent (P2-T0a, review F2)."""
+        data = getattr(response, "data", None)
+        if (
+            self.action == "create_appointment"
+            and isinstance(data, dict)
+            and branches.closed(request.user)
+        ):
+            data.pop("_actions", None)
+        return super().finalize_response(request, response, *args, **kwargs)

@@ -134,6 +134,21 @@ After each sync, before pushing:
      never more); a new read check on these rows is not answered for a grant until it is added
      to `authz.GRANT_READS` (and never a write, `can_view_clinical_data` or a place-wide list);
      run `ihr_access.tests.test_records`;
+   - CARE's action engine (P2-T0a): a viewset that newly mixes in `EMRActionBaseViewSet` stops
+     the start at `ihr_access.E022` until reviewed in
+     `plugins/ihr_platform/ihr_access/fields/action_viewsets.txt` (`ihr_access/actions.py`
+     closes `execute_action`, `perform_actions` and the evaluator to restricted users); a new
+     caller of `ActionEvaluator(` fails
+     `ihr_access.tests.test_actions.EngineReviewed.test_every_caller_of_the_evaluator_is_reviewed`;
+     a new action instruction or context field fails `ihr_platform.E028` until reviewed
+     (`ihr_platform/actions.py`, which also keeps CARE's test instruction `logging` and field
+     `TestContext1` unregistered);
+   - CARE's referral viewsets (P2-T0a, Q-K163): `ihr_access/referrals.py` closes them to
+     restricted users at class level; a moved or overridden wrapped method stops the start at
+     `ihr_access.E022`. A new referral route needs the same gate;
+   - CARE's `ENABLE_PROMETHEUS_METRICS` and `/metrics/` (P2-T0a): off in
+     `settings/tenancy.py`, refused on servers by `secure.py`, `^metrics` blocked in
+     `ihr_identity/blocked.py`; a new anonymous CARE endpoint gets the same treatment;
    - new Playwright specs → check them against our India date formats;
    - new browser storage keys (localStorage, sessionStorage, `atomWithStorage`) → classify them
      in `apps/frontend/tests-ihr/storage-keys.json` or clear them in `clearStaffStorage`

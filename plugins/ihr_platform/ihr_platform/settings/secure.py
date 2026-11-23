@@ -180,7 +180,39 @@ def problems(settings, environ):  # noqa: PLR0912, PLR0915 (one flat list of rul
         + db_limits_problems(settings)
         + service_problems(settings)
         + storage_problems(settings)
+        + upstream_feature_problems(settings, environ)
     )
+    return found
+
+
+# CARE's own default report policy when no report origin is allowed (config/settings/base.py;
+# ihr_platform.tests.test_secure_settings pins it to what base.py builds)
+REPORT_CLOSED_CSP = (
+    "default-src 'none'; img-src data:; font-src data:; style-src 'unsafe-inline'; "
+    "base-uri 'none'; form-action 'none'; frame-ancestors 'none'"
+)
+
+
+def upstream_feature_problems(settings, environ):
+    """CARE features we keep off on servers (P2-T0a, after-sync review F1/F4/F8)."""
+    found = []
+    if settings.get("ENABLE_PROMETHEUS_METRICS"):
+        # Anonymous per-hospital counts of patients, visits and staff; our Prometheus never
+        # scrapes it (tenancy.apply_tenancy switches it off, ihr_identity/blocked.py blocks it)
+        found.append(
+            "ENABLE_PROMETHEUS_METRICS must stay off: CARE's /metrics/ is anonymous (P2-T0a)."
+        )
+    for name in ("REPORT_ALLOWED_RESOURCE_ORIGINS", "REPORT_ALLOWED_IMAGE_ORIGINS"):
+        # The image name is only base.py's environment fallback for the resource list
+        if settings.get(name) or str(environ.get(name, "")).strip():
+            found.append(
+                f"{name} must stay empty: reports never fetch from another host (P2-T0a)."
+            )
+    policy = settings.get("REPORT_CONTENT_SECURITY_POLICY")
+    if policy is not None and policy != REPORT_CLOSED_CSP:
+        found.append(
+            "REPORT_CONTENT_SECURITY_POLICY must be CARE's closed default (P2-T0a)."
+        )
     return found
 
 

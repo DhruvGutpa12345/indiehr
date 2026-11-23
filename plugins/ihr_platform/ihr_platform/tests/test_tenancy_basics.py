@@ -145,6 +145,49 @@ class TenancyBasicsTests(SimpleTestCase):
         with schema_context(self.second.schema_name):
             cache.delete("ihr-isolation-probe")
 
+    def test_test_cache_keys_have_the_servers_shape(self):
+        """The test cache makes keys exactly as a server does (``<schema>::<version>:<key>``,
+        no KEY_PREFIX: base.py sets none), so the runner's Redis audit judges real key shapes.
+        CARE's test settings added a per-run ``care-tests:<uuid>`` prefix (P2-T0a), which moved
+        the operator console's platform sessions off the reviewed ``public::1:ihr:ops:`` rule."""
+        from ihr_platform.console import auth
+        from ihr_platform.test_runner import GLOBAL_REDIS_KEY_PREFIXES
+
+        self.assertEqual(settings.CACHES["default"].get("KEY_PREFIX", ""), "")
+        with schema_context("public"):
+            session_key = cache.make_key(auth._key("probe-cookie"))
+        self.assertTrue(session_key.startswith(GLOBAL_REDIS_KEY_PREFIXES), session_key)
+        with schema_context(TEST_SCHEMA):
+            self.assertEqual(cache.make_key("probe"), f"{TEST_SCHEMA}::1:probe")
+
+    def test_cares_metrics_endpoint_is_not_served(self):
+        """P2-T0a (review F1/F8): CARE's anonymous Prometheus endpoint counts the hospital's
+        patients, visits and staff. Off in the settings, blocked by path, never an allow-list
+        row: no route of the crawl (the isolation suite's) reaches CARE's view."""
+        from django.urls import Resolver404, resolve
+        from ihr_identity.blocked import Blocked
+
+        from ihr_platform.tests.isolation.routes import get_routes
+
+        self.assertFalse(settings.ENABLE_PROMETHEUS_METRICS)
+        for path in ("/metrics/", "/metrics", "/metrics.json"):
+            with self.subTest(path=path):
+                # The block must hold on its own, also while the setting keeps CARE's route out
+                try:
+                    view = resolve(path).func
+                except Resolver404:
+                    self.fail(f"{path} is not blocked by ihr_identity.blocked")
+                self.assertIs(getattr(view, "view_class", None), Blocked)
+        self.assertEqual(
+            self.client.get("/metrics/", HTTP_HOST=SECOND_DOMAIN).status_code, 404
+        )
+        served = [
+            route
+            for route, cls, _ in get_routes()
+            if route.lstrip("^").startswith("metrics") and cls is not Blocked
+        ]
+        self.assertEqual(served, [])
+
     def test_host_selects_tenant(self):
         response = self.client.get("/ping/", HTTP_HOST=SECOND_DOMAIN)
         self.assertEqual(response.status_code, 200)

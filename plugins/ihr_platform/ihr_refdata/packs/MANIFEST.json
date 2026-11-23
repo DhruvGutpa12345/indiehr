@@ -6,6 +6,12 @@
    "pack": "care-valuesets",
    "sha256": "8e867a939cd6d2f7c02f8d05931e5f7a66a36140f5862de427cbd439e4d3f86a",
    "version": 1
+  },
+  {
+   "file": "care-valuesets/2.json",
+   "pack": "care-valuesets",
+   "sha256": "e0192dbd357a228680698c544eb41d9529b4e302ebc2e49921e1431472d36fd7",
+   "version": 2
   }
  ]
 }

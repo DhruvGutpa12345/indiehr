@@ -15,8 +15,23 @@ from django_tenants.utils import schema_context
 from rest_framework.test import APIClient
 
 
+def questionnaire_with_auth_context(create):
+    """CARE's demo-form loader with the auth_context CARE 3.1 requires (P2-T0a).
+
+    The new questionnaire spec requires ``auth_context``, and CARE's own
+    ``data/questionnaire_fixtures.json`` has none, so every demo form answered 400 and CARE's
+    loader dropped it without a word. The demo forms were instance-level forms linked to the
+    government organisation, which is ``instance`` (the seed's user is CARE's superuser)."""
+
+    def create_questionnaire(self, organizations, data):
+        return create(self, organizations, {"auth_context": "instance", **data})
+
+    return create_questionnaire
+
+
 def load_demo_data(schema_name, domain):
     from care.fixtures import context as fixture_context
+    from care.fixtures.base import CareFixtureBase
     from care.fixtures.context import care_fixture_context
     from care.fixtures.scripts.default_fixtures import load_fixtures
     from ihr_refdata import engine
@@ -68,6 +83,10 @@ def load_demo_data(schema_name, domain):
         schema_context(schema_name),
         override_settings(DEBUG=True),
         patch("care.fixtures.base.CareFixtureBase.get_roles", get_roles),
+        patch(
+            "care.fixtures.base.CareFixtureBase.create_questionnaire",
+            questionnaire_with_auth_context(CareFixtureBase.create_questionnaire),
+        ),
         patch("care.fixtures.context.APIClient", client_for_tenant),
         patch("care.fixtures.context.call_command", call_command),
         # CARE's demo users are created with passwords, not invited (P1-T5e1)
@@ -266,7 +285,6 @@ def make_waiting_pack_item(
     did not wait. Run inside a
     hospital's schema; returns True when it made one.
     """
-    from care.emr.models.valueset import ValueSet
     from django.conf import settings
     from django.db import connection, transaction
     from ihr_refdata import engine
@@ -281,7 +299,10 @@ def make_waiting_pack_item(
         raise RuntimeError(msg)
     if PackItem.objects.filter(state=PackItem.State.PENDING).exists():
         return False
-    row = ValueSet._base_manager.filter(slug=item, deleted=False).first()  # noqa: SLF001
+    from ihr_refdata.valuesets import _instance_rows
+
+    # the hospital-wide row the pack wrote, never a facility, organisation or user copy (P2-T0a F1)
+    row = _instance_rows().filter(slug=item, deleted=False).order_by("pk").first()
     if row is None:
         msg = f"No live value set {item!r}: apply the packs first."
         raise RuntimeError(msg)

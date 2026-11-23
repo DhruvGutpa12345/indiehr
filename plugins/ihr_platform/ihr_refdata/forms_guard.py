@@ -12,15 +12,19 @@ raw SQL as the app role and our own engine all write these tables.
 ``ihr_questionnaire_guard`` on ``emr_questionnaire``, BEFORE INSERT, UPDATE OF the frozen
 columns, and DELETE:
 
-- a frozen column (``FROZEN``) changed while an answer exists (a row of
-  ``emr_questionnaireresponse`` or ``emr_formsubmission`` naming the form, soft-deleted ones
-  too): ``ihr_forms: form <slug> has answers; make a new version instead``;
+- a frozen column (``FROZEN``) changed while an answer exists (a row of any of
+  ``ANSWER_TABLES`` naming the form, soft-deleted ones too): ``ihr_forms: form <slug> has
+  answers; make a new version instead``;
 - a hard delete of a form with answers (CASCADE would delete patients' answers);
 - an INSERT, or an UPDATE of ``slug``, into the reserved ``ihr-pack-`` namespace (any case)
   unless the transaction set ``ihr.pack_write = on`` (only the engine's form writes do:
-  forms.py). CARE's create then answers an error, never a stolen pack slug.
+  forms.py). CARE's create then answers an error, never a stolen pack slug. The one INSERT
+  allowed without it is CARE 3.1's archive copy of a live form at that very slug (its
+  ``latest_revision`` names it: CARE's in-place revision, P2-T0a F3), never a live form; a
+  reserved row's ``latest_revision`` changes only with the setting.
 
-``ihr_questionnaire_answer_guard`` on both answer tables, BEFORE INSERT, UPDATE OF
+``ihr_questionnaire_answer_guard`` on every answer table (``ANSWER_TABLES``: CARE 3.1's
+facility-resource and referral answers too, P2-T0a F2), BEFORE INSERT, UPDATE OF
 ``questionnaire_id``, and DELETE:
 
 - every hard delete is refused (a soft delete through ``deleted`` is free). Django's cascade
@@ -41,7 +45,23 @@ The reserved namespace goes both ways (review E6): a slug moved out of ``ihr-pac
 delete of a row in it, also needs ``ihr.pack_write``, so a pack's slug is never freed for
 another pack's record to take.
 
-TRUNCATE of either answer table (directly, or reached by ``TRUNCATE ... CASCADE`` from a patient
+CARE 3.1 resolves an answer's questions by the pair (form, revision): the answer names the live
+form and records the ``internal_revision`` it was given on, and the questions of an older
+revision live only in CARE's archive copy of the form (``latest_revision`` names the live
+row). So (P2-T0a review D1, D2):
+
+- an UPDATE of an answer's revision (``ANSWER_REVISION``: ``revision``, or
+  ``questionnaire_revision`` on a referral's answer) to a value other than its form's current
+  ``internal_revision``, read ``FOR SHARE``, is refused: CARE inserts an answer at 1 and then
+  sets the form's current revision, which passes; pointing an answer at another revision's
+  questions never does. A write that leaves the value as it is passes;
+- an archive copy is "answered" when an answer names its live form at the copy's own
+  ``internal_revision``: its frozen columns and ``deleted`` (otherwise free) never change and it
+  is never hard-deleted, like a live form with answers. A submit that read the form just
+  before an edit of it committed records such an answer (CARE's own race); the copy that holds
+  the questions the clinician saw stays as it was.
+
+TRUNCATE of any answer table (directly, or reached by ``TRUNCATE ... CASCADE`` from a patient
 or a visit) is refused by a BEFORE TRUNCATE statement trigger unless the session set
 ``ihr.answers_truncate = on`` (only the test runner's flush between CARE's TransactionTestCases
 does; review G2). The app role has no TRUNCATE at all; this stops an accidental owner shell.
@@ -67,7 +87,22 @@ ANSWER_FUNCTION = "ihr_questionnaire_answer_guard"
 FUNCTIONS = (FORM_FUNCTION, ANSWER_FUNCTION)  # the first is the stamp's anchor
 TRUNCATE_TRIGGER = "ihr_questionnaire_answer_no_truncate"  # runs ANSWER_FUNCTION
 FORM_TABLE = "emr_questionnaire"
-ANSWER_TABLES = ("emr_questionnaireresponse", "emr_formsubmission")
+# CARE 3.1 adds two more (review P2-T0a F2): answers about a facility's resources, and the
+# answers given with a patient's referral; each names its form in ``questionnaire_id``
+ANSWER_TABLES = (
+    "emr_questionnaireresponse",
+    "emr_formsubmission",
+    "emr_facilityresourcequestionnaireresponse",
+    "emr_referralquestionnaireresponse",
+)
+# The column of each answer table that records the form revision the answer was given on
+# (None: the table has none; a form submission names no revision)
+ANSWER_REVISION = {
+    "emr_questionnaireresponse": "revision",
+    "emr_formsubmission": None,
+    "emr_facilityresourcequestionnaireresponse": "revision",
+    "emr_referralquestionnaireresponse": "questionnaire_revision",
+}
 PREFIX = "ihr_forms:"
 WRITE_SETTING = "ihr.pack_write"
 TRUNCATE_SETTING = "ihr.answers_truncate"
@@ -78,6 +113,12 @@ FIRST_MIGRATION = "0004_forms_guard"
 # a column upstream adds fails until it is listed here). Frozen: what an answer was given
 # against. Free: what an answered form may still change (status, the link caches, soft
 # delete, audit fields; created_by goes NULL when a user is deleted).
+#
+# CARE 3.1 (review P2-T0a F3) revises a form in place: an archive copy of the old row (its
+# ``latest_revision`` names the live row) is inserted, then the live row's questions are
+# edited and its ``internal_revision`` goes up; an answer resolves its questions by the
+# revision it records. The guard keeps refusing that edit of a form with answers (an answer
+# stays with the exact row it was given on: docs/QUESTIONS.md, P2-T0a).
 FROZEN = (
     "id",
     "external_id",
@@ -89,6 +130,16 @@ FROZEN = (
     "subject_type",
     "styling_metadata",
     "questions",
+    # the revision an answer records and resolves its questions by
+    "internal_revision",
+    # set only on CARE's archive copies, when they are inserted: an answered form set to it
+    # would read as a past revision (its answers listed under another form, new ones refused)
+    "latest_revision_id",
+    # whose form it is (instance, facility, facility organisation, user): an answered form
+    # never moves to another owner or another facility
+    "auth_context",
+    "facility_id",
+    "facility_organization_id",
 )
 FREE = (
     "status",
@@ -100,6 +151,11 @@ FREE = (
     "created_by_id",
     "history",
     "meta",
+    # a cache of ``questions`` (frozen) CARE compares to tell a revision from another edit;
+    # emr migration 0084 fills it on every form, answered ones too
+    "questions_hash",
+    # what CARE's action engine runs on a later submit: no answer given depends on it
+    "actions",
 )
 # Every foreign key that points at a form or an answer, classified (review Q5: a table
 # upstream adds that points at one fails tests.test_forms until it is listed here). "answer":
@@ -117,6 +173,19 @@ REFERENCES = {
     ),
     "emr_observation.questionnaire_response_id": (
         "observation (derived from an answer, which is never deleted)"
+    ),
+    # CARE 3.1 (review P2-T0a F2, F3)
+    "emr_facilityresourcequestionnaireresponse.questionnaire_id": "answer",
+    "emr_referralquestionnaireresponse.questionnaire_id": "answer",
+    "emr_questionnaire.latest_revision_id": (
+        "revision (CARE's archive copy names its live form; frozen, and in the reserved "
+        "namespace only an archive copy of the same pack form)"
+    ),
+    "emr_referralavailability_questionnaires.questionnaire_id": (
+        "link (a referral availability offers the form; not an answer)"
+    ),
+    "emr_facilityresourceobservation.questionnaire_response_id": (
+        "observation (derived from a facility-resource answer, which is never deleted)"
     ),
 }
 
@@ -136,19 +205,27 @@ BEGIN
             RAISE EXCEPTION 'ihr_forms: deleting form % needs READ COMMITTED', OLD.slug
                 USING ERRCODE = 'check_violation';
         END IF;
-        IF EXISTS (SELECT 1 FROM {schema}.emr_questionnaireresponse r
-                   WHERE r.questionnaire_id = OLD.id)
-           OR EXISTS (SELECT 1 FROM {schema}.emr_formsubmission s
-                      WHERE s.questionnaire_id = OLD.id) THEN
+        IF {has_answers} THEN
             RAISE EXCEPTION 'ihr_forms: form % has answers; it is never deleted (retire it)',
                 OLD.slug USING ERRCODE = 'check_violation';
+        END IF;
+        IF OLD.latest_revision_id IS NOT NULL AND ({archive_answers}) THEN
+            RAISE EXCEPTION 'ihr_forms: form % is the archive of a revision that has answers; '
+                'it is never deleted', OLD.slug USING ERRCODE = 'check_violation';
         END IF;
         RETURN OLD;
     END IF;
     IF TG_OP = 'INSERT' THEN
         IF left(lower(NEW.slug), 9) = 'ihr-pack-' AND NOT may_name THEN
-            RAISE EXCEPTION 'ihr_forms: slugs starting ihr-pack- belong to reference packs'
-                USING ERRCODE = 'check_violation';
+            -- CARE 3.1's archive copy of a live pack form, at the very same slug, takes
+            -- nothing from the pack: it is never a live form (P2-T0a F3)
+            IF NEW.latest_revision_id IS NULL OR NOT EXISTS (
+                SELECT 1 FROM {schema}.emr_questionnaire h
+                WHERE h.id = NEW.latest_revision_id AND h.slug = NEW.slug
+                  AND h.latest_revision_id IS NULL) THEN
+                RAISE EXCEPTION 'ihr_forms: slugs starting ihr-pack- belong to reference packs'
+                    USING ERRCODE = 'check_violation';
+            END IF;
         END IF;
         RETURN NEW;
     END IF;
@@ -158,17 +235,26 @@ BEGIN
         RAISE EXCEPTION 'ihr_forms: slugs starting ihr-pack- belong to reference packs'
             USING ERRCODE = 'check_violation';
     END IF;
-    IF ({new_frozen}) IS DISTINCT FROM ({old_frozen}) THEN
+    IF NEW.latest_revision_id IS DISTINCT FROM OLD.latest_revision_id AND NOT may_name
+       AND left(lower(OLD.slug), 9) = 'ihr-pack-' THEN
+        RAISE EXCEPTION 'ihr_forms: form % belongs to a reference pack; it stays as it is',
+            OLD.slug USING ERRCODE = 'check_violation';
+    END IF;
+    IF ({new_frozen}) IS DISTINCT FROM ({old_frozen})
+       OR (OLD.latest_revision_id IS NOT NULL AND NEW.deleted IS DISTINCT FROM OLD.deleted)
+    THEN
         IF NOT committed_only THEN
             RAISE EXCEPTION 'ihr_forms: changing form % needs READ COMMITTED', OLD.slug
                 USING ERRCODE = 'check_violation';
         END IF;
-        IF EXISTS (SELECT 1 FROM {schema}.emr_questionnaireresponse r
-                   WHERE r.questionnaire_id = OLD.id)
-           OR EXISTS (SELECT 1 FROM {schema}.emr_formsubmission s
-                      WHERE s.questionnaire_id = OLD.id) THEN
+        IF ({new_frozen}) IS DISTINCT FROM ({old_frozen})
+           AND ({has_answers}) THEN
             RAISE EXCEPTION 'ihr_forms: form % has answers; make a new version instead',
                 OLD.slug USING ERRCODE = 'check_violation';
+        END IF;
+        IF OLD.latest_revision_id IS NOT NULL AND ({archive_answers}) THEN
+            RAISE EXCEPTION 'ihr_forms: form % is the archive of a revision that has answers; '
+                'it stays as it is', OLD.slug USING ERRCODE = 'check_violation';
         END IF;
     END IF;
     RETURN NEW;
@@ -178,6 +264,8 @@ REVOKE ALL ON FUNCTION {schema}.ihr_questionnaire_guard() FROM PUBLIC;
 _ANSWER_SQL = """
 CREATE OR REPLACE FUNCTION {schema}.ihr_questionnaire_answer_guard() RETURNS trigger
 LANGUAGE plpgsql SET search_path = pg_catalog, pg_temp AS $f$
+DECLARE
+    new_revision text;
 BEGIN
     IF TG_OP = 'TRUNCATE' THEN
         IF coalesce(current_setting('ihr.answers_truncate', true), '') <> 'on' THEN
@@ -195,6 +283,21 @@ BEGIN
             RAISE EXCEPTION 'ihr_forms: an answer stays with the form it was given on (% %)',
                 TG_TABLE_NAME, OLD.id USING ERRCODE = 'check_violation';
         END IF;
+        -- the table's revision column: CARE's answers use ``revision``, a referral's
+        -- ``questionnaire_revision``, a form submission has none (both read NULL)
+        new_revision := coalesce(to_jsonb(NEW) ->> 'revision',
+                                 to_jsonb(NEW) ->> 'questionnaire_revision');
+        IF new_revision IS DISTINCT FROM coalesce(to_jsonb(OLD) ->> 'revision',
+                                                  to_jsonb(OLD) ->> 'questionnaire_revision')
+           AND NEW.questionnaire_id IS NOT NULL THEN
+            PERFORM 1 FROM {schema}.emr_questionnaire q WHERE q.id = NEW.questionnaire_id
+                AND q.internal_revision::text = new_revision FOR SHARE;
+            IF NOT FOUND THEN
+                RAISE EXCEPTION 'ihr_forms: an answer''s revision moves only to its form''s '
+                    'current revision (% %)', TG_TABLE_NAME, OLD.id
+                    USING ERRCODE = 'check_violation';
+            END IF;
+        END IF;
         RETURN NEW;
     END IF;
     IF NEW.questionnaire_id IS NOT NULL THEN
@@ -211,9 +314,18 @@ CONFIG = ["search_path=pg_catalog, pg_temp"]
 TRIGGER_TYPE = 1 | 2 | 4 | 8 | 16
 TRUNCATE_TYPE = 2 | 32  # BEFORE TRUNCATE, FOR EACH STATEMENT
 # {table: (trigger and function name, the UPDATE OF columns)}: the row triggers
+# the form trigger also fires on ``deleted``: free on a live form, frozen on an archive copy
+# that holds the questions of answers (D2); an answer trigger fires on the columns that name
+# its form and the revision of it
 TRIGGERS = {
-    FORM_TABLE: (FORM_FUNCTION, FROZEN),
-    **dict.fromkeys(ANSWER_TABLES, (ANSWER_FUNCTION, ("questionnaire_id",))),
+    FORM_TABLE: (FORM_FUNCTION, (*FROZEN, "deleted")),
+    **{
+        table: (
+            ANSWER_FUNCTION,
+            ("questionnaire_id", *((column,) if column else ())),
+        )
+        for table, column in ANSWER_REVISION.items()
+    },
 }
 TRIGGER_SQL = (
     "CREATE OR REPLACE TRIGGER {name} BEFORE INSERT OR UPDATE OF {columns} OR DELETE "
@@ -243,8 +355,10 @@ VERSION = db_functions.version(
     repr(FROZEN),
     repr(sorted(TRIGGERS.items())),
     repr(EXPECTED),
+    repr(ANSWER_TABLES),
+    repr(sorted(ANSWER_REVISION.items())),
 )
-# The other tables the guard functions read (the three above)
+# The tables the guard functions read and guard (the form and every answer table)
 TABLES = (FORM_TABLE, *ANSWER_TABLES)
 _BODY = re.compile(r"AS \$f\$(.*?)\$f\$;", re.DOTALL)
 
@@ -309,9 +423,13 @@ def static_problems(*, installed=True):
     if not installed:
         found.append("the answered-form guard is not installed on post_migrate")
     if set(TRIGGERS) != set(TABLES):
-        found.append("the answered-form guard does not cover its three tables")
+        found.append(
+            "the answered-form guard does not cover the form and answer tables"
+        )
     if overlap := sorted(set(FROZEN) & set(FREE)):
         found.append(f"columns both frozen and free: {', '.join(overlap)}")
+    if set(ANSWER_REVISION) != set(ANSWER_TABLES):
+        found.append("an answer table has no entry in ANSWER_REVISION")
     if "slug" not in FROZEN:
         found.append("slug must be frozen (the reserved namespace check fires on it)")
     return found
@@ -327,6 +445,29 @@ def _row_of(prefix, names):
     )
 
 
+def _has_answers(schema):
+    """True in SQL when any answer table names the form OLD (soft-deleted answers too)."""
+    return sql.SQL("\n           OR ").join(
+        sql.SQL("EXISTS (SELECT 1 FROM {} a WHERE a.questionnaire_id = OLD.id)").format(
+            sql.Identifier(schema, table)
+        )
+        for table in ANSWER_TABLES
+    )
+
+
+def _archive_answers(schema):
+    """True in SQL when an answer names OLD's live form at OLD's own revision: OLD is the
+    archive copy that holds the questions that answer resolves to (CARE 3.1)."""
+    return sql.SQL("\n               OR ").join(
+        sql.SQL(
+            "EXISTS (SELECT 1 FROM {} a WHERE a.questionnaire_id = OLD.latest_revision_id "
+            "AND a.{} = OLD.internal_revision)"
+        ).format(sql.Identifier(schema, table), sql.Identifier(column))
+        for table, column in ANSWER_REVISION.items()
+        if column
+    )
+
+
 def function_sql(schema):
     return sql.Composed(
         [
@@ -334,6 +475,8 @@ def function_sql(schema):
                 schema=sql.Identifier(schema),
                 new_frozen=_row_of("NEW", FROZEN),
                 old_frozen=_row_of("OLD", FROZEN),
+                has_answers=_has_answers(schema),
+                archive_answers=_archive_answers(schema),
             ),
             sql.SQL(_ANSWER_SQL).format(schema=sql.Identifier(schema)),
         ]

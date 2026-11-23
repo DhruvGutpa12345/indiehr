@@ -153,14 +153,33 @@ def retired_hash(row):
 # --- reading and writing the hospital's rows ----------------------------------------------
 
 
+# CARE 3.1 (review F1, P2-T0a): a slug is unique only among the live rows of one context. A
+# facility, facility-organisation or user copy may share the system set's slug (an inherited
+# copy takes its parent's) and is the hospital's own: the pack reads and writes only the
+# hospital-wide row, the one CARE's lookup without a facility resolves.
+INSTANCE = "instance"
+
+
+def _instance_rows():
+    return _model()._base_manager.filter(  # noqa: SLF001
+        auth_context=INSTANCE, facility__isnull=True, facility_organization__isnull=True
+    )
+
+
 def rows(slugs, *, lock=False, targets=None):
-    """{slug: row} for these slugs, soft-deleted rows included (they still hold the slug).
+    """{slug: row}: the hospital-wide row of each slug, soft-deleted ones included (a deleted
+    system set is restored). A live row is preferred to a deleted one, then the oldest, so
+    the pick never depends on the order the database returns rows in.
     ``lock``: rows locked for update (a decision re-checks the row it writes)."""
-    model = _model()
-    found = model._base_manager.filter(slug__in=list(slugs))  # noqa: SLF001
+    found = (
+        _instance_rows().filter(slug__in=list(slugs)).order_by("slug", "deleted", "pk")
+    )
     if lock:
         found = found.select_for_update()
-    return {row.slug: row for row in found}
+    picked = {}
+    for row in found:
+        picked.setdefault(row.slug, row)
+    return picked
 
 
 def label(row, item):
@@ -191,15 +210,15 @@ def shown(row=None, item=None, *, retire=False):
 
 
 def all_present(slugs, targets=None):
-    """True when every slug has a row that is not soft-deleted and whose compose CARE's
-    lookup can read (cheap: one count)."""
-    model = _model()
+    """True when every slug has a hospital-wide row that is not soft-deleted and whose
+    compose CARE's lookup can read (cheap: one count). A copy never counts (F1)."""
     present = (
-        model._base_manager.filter(  # noqa: SLF001
-            slug__in=list(slugs), deleted=False, compose__has_keys=list(ITERATED)
-        )
+        _instance_rows()
+        .filter(slug__in=list(slugs), deleted=False, compose__has_keys=list(ITERATED))
         .exclude(compose__include=None)
         .exclude(compose__exclude=None)
+        .values("slug")
+        .distinct()
         .count()
     )
     return present == len(set(slugs))
@@ -207,7 +226,14 @@ def all_present(slugs, targets=None):
 
 def create(item):
     model = _model()
-    row = model(slug=item["slug"], description="", **item_fields(item))
+    row = model(
+        slug=item["slug"],
+        description="",
+        auth_context=INSTANCE,
+        facility=None,
+        facility_organization=None,
+        **item_fields(item),
+    )
     row.save()
     return row
 
@@ -254,7 +280,18 @@ def target(item):
 
 
 def conflict(key, row, item):
-    """Nothing blocks a value set write (the slug is unique in CARE's table)."""
+    """A deleted hospital-wide row is never restored beside a live one of its slug: CARE's
+    table allows one live hospital-wide row per slug (F1). ``rows`` prefers the live row, so
+    this is met only when one appeared after the read; anything else never blocks a write
+    (copies of other contexts are the hospital's own and are left alone)."""
+    if row is None or not row.deleted:
+        return ""
+    live = _instance_rows().filter(slug=key, deleted=False).exclude(pk=row.pk)
+    if live.exists():
+        return (
+            f"a live hospital-wide value set {key!r} exists beside the deleted one: "
+            "the deleted one is never restored over it"
+        )
     return ""
 
 

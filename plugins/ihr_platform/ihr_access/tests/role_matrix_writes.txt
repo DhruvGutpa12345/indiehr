@@ -14,6 +14,7 @@
 #
 # <METHOD> <route key>  <class>:<viewer>,...
 DELETE /api/ihr/records-access/<int:pk>/  auth:cash,lab,moved,mrd,owner,rad,rec,store,tpa
+DELETE /api/v1/action_configuration/{external_id}/  auth:cash,lab,moved,mrd,mrdg,owner,rad,rec,store,tpa
 DELETE /api/v1/encounter/{external_id}/organizations_remove/  auth:cash,lab,moved,mrd,mrdg,owner,rad,rec,store,tpa
 DELETE /api/v1/facility/{external_id}/  auth:cash,lab,moved,mrd,mrdg,owner,rad,rec,store,tpa
 DELETE /api/v1/facility/{external_id}/cover_image/  auth:cash,lab,moved,mrd,mrdg,owner,rad,rec,store,tpa
@@ -33,20 +34,26 @@ DELETE /api/v1/patient/{patient_external_id}/diagnosis/{external_id}/  auth:cash
 DELETE /api/v1/patient/{patient_external_id}/medication/administration/{external_id}/  auth:cash,lab,moved,mrd,mrdg,owner,rad,rec,store,tpa
 DELETE /api/v1/patient/{patient_external_id}/medication/request/{external_id}/  auth:cash,lab,moved,mrd,mrdg,owner,rad,rec,store,tpa
 DELETE /api/v1/patient/{patient_external_id}/medication/statement/{external_id}/  auth:cash,lab,moved,mrd,mrdg,owner,rad,rec,store,tpa
+DELETE /api/v1/patient/{patient_external_id}/observation/{external_id}/  auth:cash,lab,moved,mrd,mrdg,owner,rad,rec,store,tpa
+DELETE /api/v1/patient/{patient_external_id}/procedure/{external_id}/  auth:cash,lab,moved,mrd,mrdg,owner,rad,rec,store,tpa
 DELETE /api/v1/patient/{patient_external_id}/symptom/{external_id}/  auth:cash,lab,moved,mrd,mrdg,owner,rad,rec,store,tpa
-DELETE /api/v1/questionnaire/{slug}/  auth:cash,lab,moved,mrd,mrdg,owner,rad,rec,store,tpa
+DELETE /api/v1/questionnaire/{external_id}/  auth:cash,lab,moved,mrd,mrdg,owner,rad,rec,store,tpa
+DELETE /api/v1/referral_availability/{external_id}/  auth:cash,lab,moved,mrd,mrdg,owner,rad,rec,store,tpa
+DELETE /api/v1/referral/{referral_external_id}/questionnaire_responses/{external_id}/  auth:cash,lab,moved,mrd,mrdg,owner,rad,rec,store,tpa
+DELETE /api/v1/referral/{referral_external_id}/resources/{external_id}/  auth:cash,lab,moved,mrd,mrdg,owner,rad,rec,store,tpa
 DELETE /api/v1/resource/{external_id}/  auth:cash,lab,moved,mrd,mrdg,owner,rad,rec,store,tpa
 DELETE /api/v1/resource/{resource_external_id}/comment/{external_id}/  auth:cash,lab,moved,mrd,mrdg,owner,rad,rec,store,tpa
 DELETE /api/v1/role/{external_id}/  auth:cash,lab,moved,mrd,mrdg,owner,rad,rec,store,tpa
 DELETE /api/v1/users/{username}/  auth:cash,lab,moved,mrd,mrdg,owner,rad,rec,store,tpa
 DELETE /api/v1/users/{username}/profile_picture/  auth:cash,lab,moved,mrd,mrdg,owner,rad,rec,store,tpa
 DELETE /api/v1/users/{username}/revoke_service_account_token/  body:cash,lab,moved,mrd,mrdg,owner,rad,rec,store,tpa
+PATCH /api/v1/action_configuration/{external_id}/  auth:cash,lab,moved,mrd,mrdg,owner,rad,rec,store,tpa
 PATCH /api/v1/encounter/{external_id}/  body:cash,lab,moved,mrd,mrdg,owner,rad,rec,store,tpa
 PATCH /api/v1/facility/{external_id}/  body:cash,lab,moved,mrd,mrdg,owner,rad,rec,store,tpa
 PATCH /api/v1/facility/{facility_external_id}/account/{external_id}/  auth:lab,mrd,mrdg,owner,rad,store body:moved,rec
 PATCH /api/v1/facility/{facility_external_id}/appointments/{external_id}/  body:cash,lab,mrd,mrdg,owner,rad,store,tpa
-PATCH /api/v1/facility/{facility_external_id}/charge_item/{external_id}/  auth:lab,moved,mrd,mrdg,owner,rad,rec,store body:tpa
 PATCH /api/v1/facility/{facility_external_id}/charge_item_definition/{slug}/  auth:lab,mrd,mrdg,owner,rad,store body:cash,moved,rec,tpa
+PATCH /api/v1/facility/{facility_external_id}/charge_item/{external_id}/  auth:lab,moved,mrd,mrdg,owner,rad,rec,store body:tpa
 PATCH /api/v1/facility/{facility_external_id}/device/{device_external_id}/service_history/{external_id}/  body:cash,lab,moved,mrd,mrdg,owner,rad,rec,store,tpa
 PATCH /api/v1/facility/{facility_external_id}/device/{external_id}/  auth:cash,lab,moved,mrd,mrdg,owner,rad,rec,store,tpa
 PATCH /api/v1/facility/{facility_external_id}/invoice/{external_id}/  auth:lab,moved,mrd,mrdg,owner,rad,rec,store body:tpa
@@ -65,28 +72,34 @@ PATCH /api/v1/facility/{facility_external_id}/specimen/{external_id}/  auth:cash
 PATCH /api/v1/facility/{facility_external_id}/token/category/{external_id}/  auth:cash,lab,mrd,mrdg,owner,rad,store,tpa body:moved,rec
 PATCH /api/v1/facility/{facility_external_id}/token/queue/{external_id}/  body:cash,lab,mrd,mrdg,owner,rad,store,tpa
 PATCH /api/v1/facility/{facility_external_id}/token/queue/{token_queue_external_id}/token/{external_id}/  body:cash,lab,mrd,mrdg,owner,rad,store,tpa
-PATCH /api/v1/files/{external_id}/  auth:cash,lab,moved,mrd,owner,rad,rec,store,tpa body:mrdg
+PATCH /api/v1/files/{external_id}/  body:cash,lab,moved,mrd,mrdg,owner,rad,rec,store,tpa
 PATCH /api/v1/form_submission/{external_id}/  body:cash,lab,moved,mrd,mrdg,owner,rad,rec,store,tpa
 PATCH /api/v1/medication/dispense/{external_id}/  body:cash,lab,moved,mrd,mrdg,owner,rad,rec,store,tpa
 PATCH /api/v1/meta_artifacts/{external_id}/  auth:cash,lab,moved,mrd,owner,rad,rec,store,tpa body:mrdg
 PATCH /api/v1/organization/{external_id}/  body:cash,lab,moved,mrd,mrdg,owner,rad,rec,store,tpa
 PATCH /api/v1/password_change/  auth:cash,lab,moved,mrd,mrdg,owner,rad,rec,store,tpa
 PATCH /api/v1/patient/{external_id}/  auth:cash,lab,mrd,mrdg,owner,rad,store,tpa
+PATCH /api/v1/patient_identifier_config/{external_id}/  body:cash,lab,moved,mrd,mrdg,owner,rad,rec,store,tpa
 PATCH /api/v1/patient/{patient_external_id}/allergy_intolerance/{external_id}/  auth:cash,lab,moved,mrd,owner,rad,rec,store,tpa body:mrdg
 PATCH /api/v1/patient/{patient_external_id}/consent/{external_id}/  auth:cash,lab,moved,mrd,mrdg,owner,rad,rec,store,tpa
 PATCH /api/v1/patient/{patient_external_id}/diagnosis/{external_id}/  auth:cash,lab,moved,mrd,owner,rad,rec,store,tpa body:mrdg
 PATCH /api/v1/patient/{patient_external_id}/diagnostic_report/{external_id}/  body:cash,moved,mrd,mrdg,owner,rec,store,tpa
+PATCH /api/v1/patient/{patient_external_id}/immunization/recommendation/{external_id}/  body:cash,lab,moved,mrd,mrdg,owner,rad,rec,store,tpa
+PATCH /api/v1/patient/{patient_external_id}/immunization/record/{external_id}/  auth:cash,lab,moved,mrd,mrdg,owner,rad,rec,store,tpa
 PATCH /api/v1/patient/{patient_external_id}/medication/administration/{external_id}/  auth:cash,lab,moved,mrd,owner,rad,rec,store,tpa body:mrdg
 PATCH /api/v1/patient/{patient_external_id}/medication/prescription/{external_id}/  body:cash,lab,moved,mrd,mrdg,owner,rad,rec,store,tpa
 PATCH /api/v1/patient/{patient_external_id}/medication/request/{external_id}/  auth:cash,lab,moved,mrd,owner,rad,rec,store,tpa body:mrdg
 PATCH /api/v1/patient/{patient_external_id}/medication/statement/{external_id}/  auth:cash,lab,moved,mrd,owner,rad,rec,store,tpa body:mrdg
+PATCH /api/v1/patient/{patient_external_id}/procedure/{external_id}/  auth:cash,lab,moved,mrd,mrdg,owner,rad,rec,store,tpa
 PATCH /api/v1/patient/{patient_external_id}/questionnaire_response/{external_id}/  auth:cash,lab,moved,mrd,mrdg,owner,rad,rec,store,tpa
 PATCH /api/v1/patient/{patient_external_id}/symptom/{external_id}/  auth:cash,lab,moved,mrd,owner,rad,rec,store,tpa body:mrdg
 PATCH /api/v1/patient/{patient_external_id}/thread/{external_id}/  auth:cash,lab,moved,mrd,owner,rad,rec,store,tpa body:mrdg
 PATCH /api/v1/patient/{patient_external_id}/thread/{thread_external_id}/note/{external_id}/  auth:cash,lab,moved,mrd,owner,rad,rec,store,tpa body:mrdg
-PATCH /api/v1/patient_identifier_config/{external_id}/  body:cash,lab,moved,mrd,mrdg,owner,rad,rec,store,tpa
 PATCH /api/v1/product_knowledge/{slug}/  body:cash,lab,moved,mrd,mrdg,owner,rad,rec,store,tpa
-PATCH /api/v1/questionnaire/{slug}/  auth:cash,lab,moved,mrd,mrdg,owner,rad,rec,store,tpa
+PATCH /api/v1/questionnaire/{external_id}/  body:cash,lab,moved,mrd,mrdg,owner,rad,rec,store,tpa
+PATCH /api/v1/referral_availability/{external_id}/  auth:cash,lab,moved,mrd,mrdg,owner,rad,rec,store,tpa
+PATCH /api/v1/referral/{external_id}/  auth:cash,lab,moved,mrd,mrdg,owner,rad,rec,store,tpa
+PATCH /api/v1/referral/{referral_external_id}/notes/{external_id}/  auth:cash,lab,moved,mrd,mrdg,owner,rad,rec,store,tpa
 PATCH /api/v1/resource/{external_id}/  auth:cash,lab,moved,mrd,mrdg,owner,rad,rec,store,tpa
 PATCH /api/v1/role/{external_id}/  auth:cash,lab,moved,mrd,mrdg,owner,rad,rec,store,tpa
 PATCH /api/v1/supply_delivery/{external_id}/  body:cash,lab,moved,mrd,mrdg,owner,rad,rec,tpa
@@ -97,6 +110,8 @@ PATCH /api/v1/users/{username}/  body:cash,lab,moved,mrd,mrdg,owner,rad,rec,stor
 POST /api/ihr/packs/updates/<int:pk>/  auth:cash,lab,moved,mrd,mrdg,owner,rad,rec,store,tpa
 POST /api/ihr/records-access/  auth:cash,lab,moved,owner,rad,rec,store,tpa
 POST /api/ihr/staff/<str:username>/<slug:action>/  auth:admin,cash,lab,moved,mrd,mrdg,owner,rad,rec,store,tpa body:doctor
+POST /api/v1/action_configuration/  body:cash,lab,moved,mrd,mrdg,owner,rad,rec,store,tpa
+POST /api/v1/action_configuration/upsert/  body:cash,lab,moved,mrd,mrdg,owner,rad,rec,store,tpa
 POST /api/v1/auth/login/  auth:cash,lab,moved,mrd,mrdg,owner,rad,rec,store,tpa
 POST /api/v1/auth/logout/  auth:cash,lab,moved,mrd,mrdg,owner,rad,rec,store,tpa
 POST /api/v1/auth/token/refresh/  auth:cash,lab,moved,mrd,mrdg,owner,rad,rec,store,tpa
@@ -110,7 +125,6 @@ POST /api/v1/encounter/{external_id}/set_care_team_members/  body:cash,lab,moved
 POST /api/v1/encounter/{external_id}/set_facility_identifier/  body:cash,lab,moved,mrd,mrdg,owner,rad,rec,store,tpa
 POST /api/v1/encounter/{external_id}/set_tags/  auth:cash,lab,moved,mrd,mrdg,owner,rad,rec,store,tpa
 POST /api/v1/facility/  body:cash,lab,moved,mrd,mrdg,owner,rad,rec,store,tpa
-POST /api/v1/facility/upsert/  body:cash,lab,moved,mrd,mrdg,owner,rad,rec,store,tpa
 POST /api/v1/facility/{external_id}/cover_image/  auth:cash,lab,moved,mrd,mrdg,owner,rad,rec,store,tpa
 POST /api/v1/facility/{external_id}/set_invoice_expression/  auth:cash,lab,moved,mrd,mrdg,owner,rad,rec,store,tpa
 POST /api/v1/facility/{external_id}/set_monetary_config/  auth:cash,lab,moved,mrd,mrdg,owner,rad,rec,store,tpa
@@ -122,29 +136,30 @@ POST /api/v1/facility/{facility_external_id}/account/{external_id}/set_tags/  au
 POST /api/v1/facility/{facility_external_id}/activity_definition/  body:cash,lab,moved,mrd,mrdg,owner,rad,rec,store,tpa
 POST /api/v1/facility/{facility_external_id}/activity_definition/upsert/  body:cash,lab,moved,mrd,mrdg,owner,rad,rec,store,tpa
 POST /api/v1/facility/{facility_external_id}/appointments/{external_id}/cancel/  auth:cash,lab,mrd,mrdg,owner,rad,store,tpa
+POST /api/v1/facility/{facility_external_id}/appointments/{external_id}/execute_action/  auth:cash,lab,moved,mrd,mrdg,owner,rad,rec,store,tpa
 POST /api/v1/facility/{facility_external_id}/appointments/{external_id}/generate_token/  auth:cash,lab,mrd,mrdg,owner,rad,store,tpa
 POST /api/v1/facility/{facility_external_id}/appointments/{external_id}/remove_tags/  auth:cash,lab,mrd,mrdg,owner,rad,store,tpa
 POST /api/v1/facility/{facility_external_id}/appointments/{external_id}/reschedule/  body:cash,lab,mrd,mrdg,owner,rad,store,tpa
 POST /api/v1/facility/{facility_external_id}/appointments/{external_id}/set_tags/  auth:cash,lab,mrd,mrdg,owner,rad,store,tpa
-POST /api/v1/facility/{facility_external_id}/charge_item/  body:lab,moved,mrd,mrdg,owner,rad,rec,store,tpa
 POST /api/v1/facility/{facility_external_id}/charge_item/apply_charge_item_defs/  auth:lab,moved,mrd,mrdg,owner,rad,rec,store,tpa
+POST /api/v1/facility/{facility_external_id}/charge_item/  body:lab,moved,mrd,mrdg,owner,rad,rec,store,tpa
 POST /api/v1/facility/{facility_external_id}/charge_item/change_account/  auth:lab,moved,mrd,mrdg,owner,rad,rec,store,tpa
-POST /api/v1/facility/{facility_external_id}/charge_item/upsert/  body:lab,moved,mrd,mrdg,owner,rad,rec,store,tpa
-POST /api/v1/facility/{facility_external_id}/charge_item/{external_id}/remove_tags/  auth:lab,moved,mrd,mrdg,owner,rad,rec,store,tpa
-POST /api/v1/facility/{facility_external_id}/charge_item/{external_id}/set_tags/  auth:lab,moved,mrd,mrdg,owner,rad,rec,store,tpa
 POST /api/v1/facility/{facility_external_id}/charge_item_definition/  body:cash,lab,moved,mrd,mrdg,owner,rad,rec,store,tpa
-POST /api/v1/facility/{facility_external_id}/charge_item_definition/upsert/  body:cash,lab,moved,mrd,mrdg,owner,rad,rec,store,tpa
 POST /api/v1/facility/{facility_external_id}/charge_item_definition/{slug}/add_favorite/  auth:lab,mrd,mrdg,owner,rad,store
 POST /api/v1/facility/{facility_external_id}/charge_item_definition/{slug}/remove_favorite/  auth:lab,mrd,mrdg,owner,rad,store
 POST /api/v1/facility/{facility_external_id}/charge_item_definition/{slug}/remove_tags/  auth:cash,lab,moved,mrd,mrdg,owner,rad,rec,store,tpa
 POST /api/v1/facility/{facility_external_id}/charge_item_definition/{slug}/set_tags/  auth:cash,lab,moved,mrd,mrdg,owner,rad,rec,store,tpa
+POST /api/v1/facility/{facility_external_id}/charge_item_definition/upsert/  body:cash,lab,moved,mrd,mrdg,owner,rad,rec,store,tpa
+POST /api/v1/facility/{facility_external_id}/charge_item/{external_id}/remove_tags/  auth:lab,moved,mrd,mrdg,owner,rad,rec,store,tpa
+POST /api/v1/facility/{facility_external_id}/charge_item/{external_id}/set_tags/  auth:lab,moved,mrd,mrdg,owner,rad,rec,store,tpa
+POST /api/v1/facility/{facility_external_id}/charge_item/upsert/  body:lab,moved,mrd,mrdg,owner,rad,rec,store,tpa
 POST /api/v1/facility/{facility_external_id}/device/  auth:cash,lab,moved,mrd,mrdg,owner,rad,rec,store,tpa
-POST /api/v1/facility/{facility_external_id}/device/upsert/  auth:cash,lab,moved,mrd,mrdg,owner,rad,rec,store,tpa
 POST /api/v1/facility/{facility_external_id}/device/{device_external_id}/service_history/  body:cash,lab,moved,mrd,mrdg,owner,rad,rec,store,tpa
 POST /api/v1/facility/{facility_external_id}/device/{external_id}/add_managing_organization/  auth:cash,lab,moved,mrd,mrdg,owner,rad,rec,store,tpa
 POST /api/v1/facility/{facility_external_id}/device/{external_id}/associate_encounter/  auth:cash,lab,moved,mrd,mrdg,owner,rad,rec,store,tpa
 POST /api/v1/facility/{facility_external_id}/device/{external_id}/associate_location/  auth:cash,lab,moved,mrd,mrdg,owner,rad,rec,store,tpa
 POST /api/v1/facility/{facility_external_id}/device/{external_id}/remove_managing_organization/  auth:cash,lab,moved,mrd,mrdg,owner,rad,rec,store,tpa
+POST /api/v1/facility/{facility_external_id}/device/upsert/  auth:cash,lab,moved,mrd,mrdg,owner,rad,rec,store,tpa
 POST /api/v1/facility/{facility_external_id}/healthcare_service/  body:cash,lab,moved,mrd,mrdg,owner,rad,rec,store,tpa
 POST /api/v1/facility/{facility_external_id}/invoice/  body:lab,moved,mrd,mrdg,owner,rad,rec,store,tpa
 POST /api/v1/facility/{facility_external_id}/invoice/{external_id}/attach_account_to_invoice/  auth:lab,moved,mrd,mrdg,owner,rad,rec,store,tpa
@@ -154,7 +169,6 @@ POST /api/v1/facility/{facility_external_id}/invoice/{external_id}/lock/  auth:c
 POST /api/v1/facility/{facility_external_id}/invoice/{external_id}/remove_item_from_invoice/  auth:lab,moved,mrd,mrdg,owner,rad,rec,store,tpa
 POST /api/v1/facility/{facility_external_id}/invoice/{external_id}/unlock/  auth:cash,lab,moved,mrd,mrdg,owner,rad,rec,store,tpa
 POST /api/v1/facility/{facility_external_id}/location/  body:cash,lab,moved,mrd,mrdg,owner,rad,rec,store,tpa
-POST /api/v1/facility/{facility_external_id}/location/upsert/  body:cash,lab,moved,mrd,mrdg,owner,rad,rec,store,tpa
 POST /api/v1/facility/{facility_external_id}/location/{external_id}/associate_encounter/  auth:cash,lab,moved,mrd,mrdg,owner,rad,rec,store,tpa
 POST /api/v1/facility/{facility_external_id}/location/{external_id}/organizations_add/  auth:cash,lab,moved,mrd,mrdg,owner,rad,rec,store,tpa
 POST /api/v1/facility/{facility_external_id}/location/{external_id}/organizations_remove/  auth:cash,lab,moved,mrd,mrdg,owner,rad,rec,store,tpa
@@ -162,22 +176,23 @@ POST /api/v1/facility/{facility_external_id}/location/{external_id}/remove_tags/
 POST /api/v1/facility/{facility_external_id}/location/{external_id}/set_tags/  auth:cash,lab,moved,mrd,mrdg,owner,rad,rec,store,tpa
 POST /api/v1/facility/{facility_external_id}/location/{location_external_id}/association/  auth:cash,lab,moved,mrd,mrdg,owner,rec,store,tpa body:rad
 POST /api/v1/facility/{facility_external_id}/location/{location_external_id}/association/upsert/  auth:cash,lab,moved,mrd,mrdg,owner,rec,store,tpa body:rad
+POST /api/v1/facility/{facility_external_id}/location/upsert/  body:cash,lab,moved,mrd,mrdg,owner,rad,rec,store,tpa
 POST /api/v1/facility/{facility_external_id}/order/delivery/  body:cash,lab,moved,mrd,mrdg,owner,rad,rec,tpa
-POST /api/v1/facility/{facility_external_id}/order/delivery/upsert/  body:cash,lab,moved,mrd,mrdg,owner,rad,rec,tpa
 POST /api/v1/facility/{facility_external_id}/order/delivery/{external_id}/remove_tags/  auth:cash,lab,moved,mrd,mrdg,owner,rad,rec,tpa
 POST /api/v1/facility/{facility_external_id}/order/delivery/{external_id}/set_tags/  auth:cash,lab,moved,mrd,mrdg,owner,rad,rec,tpa
+POST /api/v1/facility/{facility_external_id}/order/delivery/upsert/  body:cash,lab,moved,mrd,mrdg,owner,rad,rec,tpa
 POST /api/v1/facility/{facility_external_id}/order/dispense/  auth:cash,lab,moved,mrd,mrdg,owner,rad,rec,store,tpa
 POST /api/v1/facility/{facility_external_id}/order/dispense/upsert/  auth:cash,lab,moved,mrd,mrdg,owner,rad,rec,store,tpa
 POST /api/v1/facility/{facility_external_id}/order/request/  body:cash,lab,moved,mrd,mrdg,owner,rad,rec,tpa
-POST /api/v1/facility/{facility_external_id}/order/request/upsert/  body:cash,lab,moved,mrd,mrdg,owner,rad,rec,tpa
 POST /api/v1/facility/{facility_external_id}/order/request/{external_id}/remove_tags/  auth:cash,lab,moved,mrd,mrdg,owner,rad,rec,tpa
 POST /api/v1/facility/{facility_external_id}/order/request/{external_id}/set_tags/  auth:cash,lab,moved,mrd,mrdg,owner,rad,rec,tpa
+POST /api/v1/facility/{facility_external_id}/order/request/upsert/  body:cash,lab,moved,mrd,mrdg,owner,rad,rec,tpa
 POST /api/v1/facility/{facility_external_id}/organizations/  body:cash,lab,moved,mrd,mrdg,owner,rad,rec,store,tpa
-POST /api/v1/facility/{facility_external_id}/organizations/upsert/  body:cash,lab,moved,mrd,mrdg,owner,rad,rec,store,tpa
 POST /api/v1/facility/{facility_external_id}/organizations/{external_id}/add_favorite/  auth:cash,lab,mrd,mrdg,owner,rad,store,tpa
 POST /api/v1/facility/{facility_external_id}/organizations/{external_id}/remove_favorite/  auth:cash,lab,mrd,mrdg,owner,rad,store,tpa
 POST /api/v1/facility/{facility_external_id}/organizations/{facility_organizations_external_id}/users/  body:cash,lab,moved,mrd,mrdg,owner,rad,rec,store,tpa
 POST /api/v1/facility/{facility_external_id}/organizations/{facility_organizations_external_id}/users/upsert/  body:cash,lab,moved,mrd,mrdg,owner,rad,rec,store,tpa
+POST /api/v1/facility/{facility_external_id}/organizations/upsert/  body:cash,lab,moved,mrd,mrdg,owner,rad,rec,store,tpa
 POST /api/v1/facility/{facility_external_id}/payment_reconciliation/  body:lab,moved,mrd,mrdg,owner,rad,rec,store,tpa
 POST /api/v1/facility/{facility_external_id}/payment_reconciliation/change_account/  auth:lab,moved,mrd,mrdg,owner,rad,rec,store,tpa
 POST /api/v1/facility/{facility_external_id}/payment_reconciliation/{external_id}/cancel_payment_reconciliation/  body:cash,lab,moved,mrd,mrdg,owner,rad,rec,store,tpa
@@ -186,13 +201,13 @@ POST /api/v1/facility/{facility_external_id}/product/upsert/  body:cash,lab,move
 POST /api/v1/facility/{facility_external_id}/resource_category/  body:cash,lab,moved,mrd,mrdg,owner,rad,rec,store,tpa
 POST /api/v1/facility/{facility_external_id}/resource_category/upsert/  body:cash,lab,moved,mrd,mrdg,owner,rad,rec,store,tpa
 POST /api/v1/facility/{facility_external_id}/schedule/  body:cash,lab,moved,mrd,mrdg,owner,rad,rec,store,tpa
-POST /api/v1/facility/{facility_external_id}/schedule/upsert/  body:cash,lab,moved,mrd,mrdg,owner,rad,rec,store,tpa
-POST /api/v1/facility/{facility_external_id}/schedule/{external_id}/set_charge_item_definition/  body:cash,lab,moved,mrd,mrdg,owner,rad,rec,store,tpa
-POST /api/v1/facility/{facility_external_id}/schedule/{schedule_external_id}/availability/  body:cash,lab,moved,mrd,mrdg,owner,rad,rec,store,tpa
 POST /api/v1/facility/{facility_external_id}/schedule_exceptions/  body:cash,lab,moved,mrd,mrdg,owner,rad,rec,store,tpa
 POST /api/v1/facility/{facility_external_id}/schedule_exceptions/upsert/  body:cash,lab,moved,mrd,mrdg,owner,rad,rec,store,tpa
-POST /api/v1/facility/{facility_external_id}/service_request/  body:cash,lab,moved,mrd,mrdg,owner,rad,rec,store,tpa
+POST /api/v1/facility/{facility_external_id}/schedule/{external_id}/set_charge_item_definition/  body:cash,lab,moved,mrd,mrdg,owner,rad,rec,store,tpa
+POST /api/v1/facility/{facility_external_id}/schedule/{schedule_external_id}/availability/  body:cash,lab,moved,mrd,mrdg,owner,rad,rec,store,tpa
+POST /api/v1/facility/{facility_external_id}/schedule/upsert/  body:cash,lab,moved,mrd,mrdg,owner,rad,rec,store,tpa
 POST /api/v1/facility/{facility_external_id}/service_request/apply_activity_definition/  body:cash,lab,moved,mrd,mrdg,owner,rad,rec,store,tpa
+POST /api/v1/facility/{facility_external_id}/service_request/  body:cash,lab,moved,mrd,mrdg,owner,rad,rec,store,tpa
 POST /api/v1/facility/{facility_external_id}/service_request/{external_id}/cancel/  body:cash,lab,moved,mrd,mrdg,owner,rad,rec,store,tpa
 POST /api/v1/facility/{facility_external_id}/service_request/{external_id}/complete/  auth:cash,lab,moved,mrd,mrdg,owner,rad,rec,store,tpa
 POST /api/v1/facility/{facility_external_id}/service_request/{external_id}/create_specimen/  body:cash,moved,mrd,mrdg,owner,rad,rec,store,tpa
@@ -200,28 +215,31 @@ POST /api/v1/facility/{facility_external_id}/service_request/{external_id}/creat
 POST /api/v1/facility/{facility_external_id}/service_request/{external_id}/remove_tags/  auth:cash,lab,moved,mrd,mrdg,owner,rad,rec,store,tpa
 POST /api/v1/facility/{facility_external_id}/service_request/{external_id}/set_tags/  auth:cash,lab,moved,mrd,mrdg,owner,rad,rec,store,tpa
 POST /api/v1/facility/{facility_external_id}/slots/availability_stats/  body:cash,lab,mrd,mrdg,owner,rad,store,tpa
-POST /api/v1/facility/{facility_external_id}/slots/get_slots_for_day/  body:cash,lab,mrd,mrdg,owner,rad,store,tpa
 POST /api/v1/facility/{facility_external_id}/slots/{external_id}/create_appointment/  auth:cash,lab,mrd,mrdg,owner,rad,store,tpa
-POST /api/v1/facility/{facility_external_id}/specimen/retrieve_by_accession_identifier/  body:cash,moved,mrd,mrdg,owner,rad,rec,store,tpa
+POST /api/v1/facility/{facility_external_id}/slots/{external_id}/execute_action/  auth:cash,lab,moved,mrd,mrdg,owner,rad,rec,store,tpa
+POST /api/v1/facility/{facility_external_id}/slots/get_slots_for_day/  body:cash,lab,mrd,mrdg,owner,rad,store,tpa
 POST /api/v1/facility/{facility_external_id}/specimen_definition/  body:cash,lab,moved,mrd,mrdg,owner,rad,rec,store,tpa
 POST /api/v1/facility/{facility_external_id}/specimen_definition/upsert/  body:cash,lab,moved,mrd,mrdg,owner,rad,rec,store,tpa
+POST /api/v1/facility/{facility_external_id}/specimen/retrieve_by_accession_identifier/  body:cash,moved,mrd,mrdg,owner,rad,rec,store,tpa
 POST /api/v1/facility/{facility_external_id}/token/category/  body:cash,lab,moved,mrd,mrdg,owner,rad,rec,store,tpa
 POST /api/v1/facility/{facility_external_id}/token/category/{external_id}/set_default/  auth:cash,lab,moved,mrd,mrdg,owner,rad,rec,store,tpa
 POST /api/v1/facility/{facility_external_id}/token/queue/  body:cash,lab,mrd,mrdg,owner,rad,store,tpa
-POST /api/v1/facility/{facility_external_id}/token/queue/generate_token/  body:cash,lab,mrd,mrdg,owner,rad,store,tpa
-POST /api/v1/facility/{facility_external_id}/token/queue/upsert/  body:cash,lab,mrd,mrdg,owner,rad,store,tpa
 POST /api/v1/facility/{facility_external_id}/token/queue/{external_id}/set_next_token_to_subqueue/  auth:cash,lab,mrd,mrdg,owner,rad,store,tpa
 POST /api/v1/facility/{facility_external_id}/token/queue/{external_id}/set_primary/  auth:cash,lab,mrd,mrdg,owner,rad,store,tpa
+POST /api/v1/facility/{facility_external_id}/token/queue/generate_token/  body:cash,lab,mrd,mrdg,owner,rad,store,tpa
 POST /api/v1/facility/{facility_external_id}/token/queue/{token_queue_external_id}/token/  body:cash,lab,mrd,mrdg,owner,rad,store,tpa
-POST /api/v1/facility/{facility_external_id}/token/queue/{token_queue_external_id}/token/upsert/  body:cash,lab,mrd,mrdg,owner,rad,store,tpa
 POST /api/v1/facility/{facility_external_id}/token/queue/{token_queue_external_id}/token/{external_id}/set_next/  body:cash,lab,mrd,mrdg,owner,rad,store,tpa
+POST /api/v1/facility/{facility_external_id}/token/queue/{token_queue_external_id}/token/upsert/  body:cash,lab,mrd,mrdg,owner,rad,store,tpa
+POST /api/v1/facility/{facility_external_id}/token/queue/upsert/  body:cash,lab,mrd,mrdg,owner,rad,store,tpa
 POST /api/v1/facility/{facility_external_id}/token/sub_queue/  body:cash,lab,moved,mrd,mrdg,owner,rad,rec,store,tpa
 POST /api/v1/facility/{facility_external_id}/token/sub_queue/upsert/  body:cash,lab,moved,mrd,mrdg,owner,rad,rec,store,tpa
+POST /api/v1/facility/upsert/  body:cash,lab,moved,mrd,mrdg,owner,rad,rec,store,tpa
 POST /api/v1/files/  body:cash,lab,moved,mrd,mrdg,owner,rad,rec,store,tpa
-POST /api/v1/files/upload-file/  body:cash,lab,moved,mrd,mrdg,owner,rad,rec,store,tpa
-POST /api/v1/files/{external_id}/archive/  auth:cash,lab,moved,mrd,owner,rad,rec,store,tpa body:mrdg
+POST /api/v1/files/{external_id}/archive/  body:cash,lab,moved,mrd,mrdg,owner,rad,rec,store,tpa
 POST /api/v1/files/{external_id}/mark_upload_completed/  auth:cash,lab,moved,mrd,mrdg,owner,rad,rec,store,tpa
+POST /api/v1/files/upload-file/  body:cash,lab,moved,mrd,mrdg,owner,rad,rec,store,tpa
 POST /api/v1/form_submission/  body:cash,lab,moved,mrd,mrdg,owner,rad,rec,store,tpa
+POST /api/v1/immunization/policy/  body:cash,lab,moved,mrd,mrdg,owner,rad,rec,store,tpa
 POST /api/v1/medication/dispense/  body:cash,lab,moved,mrd,mrdg,owner,rad,rec,store,tpa
 POST /api/v1/medication/dispense/upsert/  body:cash,lab,moved,mrd,mrdg,owner,rad,rec,store,tpa
 POST /api/v1/meta_artifacts/  body:cash,lab,moved,mrd,mrdg,owner,rad,rec,store,tpa
@@ -234,25 +252,22 @@ POST /api/v1/mfa/totp/verify/  auth:cash,lab,moved,mrd,mrdg,owner,rad,rec,store,
 POST /api/v1/observation_definition/  body:cash,lab,moved,mrd,mrdg,owner,rad,rec,store,tpa
 POST /api/v1/observation_definition/upsert/  body:cash,lab,moved,mrd,mrdg,owner,rad,rec,store,tpa
 POST /api/v1/organization/  body:cash,lab,moved,mrd,mrdg,owner,rad,rec,store,tpa
-POST /api/v1/organization/upsert/  body:cash,lab,moved,mrd,mrdg,owner,rad,rec,store,tpa
 POST /api/v1/organization/{external_id}/managing_organization/  body:cash,lab,moved,mrd,mrdg,owner,rad,rec,store,tpa
 POST /api/v1/organization/{organization_external_id}/users/  body:cash,lab,moved,mrd,mrdg,owner,rad,rec,store,tpa
 POST /api/v1/organization/{organization_external_id}/users/upsert/  body:cash,lab,moved,mrd,mrdg,owner,rad,rec,store,tpa
+POST /api/v1/organization/upsert/  body:cash,lab,moved,mrd,mrdg,owner,rad,rec,store,tpa
 POST /api/v1/otp/login/  body:cash,lab,moved,mrd,mrdg,owner,rad,rec,store,tpa
 POST /api/v1/otp/password_reset/confirm/  auth:cash,lab,moved,mrd,mrdg,owner,rad,rec,store,tpa
 POST /api/v1/otp/password_reset/send/  auth:cash,lab,moved,mrd,mrdg,owner,rad,rec,store,tpa
 POST /api/v1/otp/patient/  auth:cash,lab,moved,mrd,mrdg,owner,rad,rec,store,tpa
 POST /api/v1/otp/send/  body:cash,lab,moved,mrd,mrdg,owner,rad,rec,store,tpa
 POST /api/v1/otp/slots/cancel_appointment/  auth:cash,lab,moved,mrd,mrdg,owner,rad,rec,store,tpa
-POST /api/v1/otp/slots/get_slots_for_day/  auth:cash,lab,moved,mrd,mrdg,owner,rad,rec,store,tpa
 POST /api/v1/otp/slots/{external_id}/create_appointment/  auth:cash,lab,moved,mrd,mrdg,owner,rad,rec,store,tpa
+POST /api/v1/otp/slots/get_slots_for_day/  auth:cash,lab,moved,mrd,mrdg,owner,rad,rec,store,tpa
 POST /api/v1/password_reset/  auth:cash,lab,moved,mrd,mrdg,owner,rad,rec,store,tpa
 POST /api/v1/password_reset/check/  auth:cash,lab,moved,mrd,mrdg,owner,rad,rec,store,tpa
 POST /api/v1/password_reset/confirm/  auth:cash,lab,moved,mrd,mrdg,owner,rad,rec,store,tpa
 POST /api/v1/patient/  auth:cash,lab,mrd,mrdg,owner,store,tpa body:rad
-POST /api/v1/patient/search/  auth:lab,owner,store
-POST /api/v1/patient/search_retrieve/  auth:lab,owner,store
-POST /api/v1/patient/upsert/  body:cash,lab,moved,mrd,mrdg,owner,rad,rec,store,tpa
 POST /api/v1/patient/{external_id}/add_user/  body:cash,lab,moved,mrd,mrdg,owner,rad,rec,store,tpa
 POST /api/v1/patient/{external_id}/delete_user/  body:cash,lab,moved,mrd,mrdg,owner,rad,rec,store,tpa
 POST /api/v1/patient/{external_id}/remove_facility_tags/  auth:cash,lab,moved,mrd,mrdg,owner,rad,rec,store,tpa
@@ -260,46 +275,64 @@ POST /api/v1/patient/{external_id}/remove_instance_tags/  auth:cash,lab,moved,mr
 POST /api/v1/patient/{external_id}/set_facility_tags/  auth:cash,lab,moved,mrd,mrdg,owner,rad,rec,store,tpa
 POST /api/v1/patient/{external_id}/set_instance_tags/  auth:cash,lab,moved,mrd,mrdg,owner,rad,rec,store,tpa
 POST /api/v1/patient/{external_id}/update_identifier/  body:cash,lab,mrd,mrdg,owner,rad,store,tpa
+POST /api/v1/patient_identifier_config/  body:cash,lab,moved,mrd,mrdg,owner,rad,rec,store,tpa
 POST /api/v1/patient/{patient_external_id}/allergy_intolerance/  body:cash,lab,moved,mrd,mrdg,owner,rad,rec,store,tpa
 POST /api/v1/patient/{patient_external_id}/allergy_intolerance/upsert/  body:cash,lab,moved,mrd,mrdg,owner,rad,rec,store,tpa
 POST /api/v1/patient/{patient_external_id}/consent/  body:cash,lab,moved,mrd,mrdg,owner,rad,rec,store,tpa
-POST /api/v1/patient/{patient_external_id}/consent/upsert/  body:cash,lab,moved,mrd,mrdg,owner,rad,rec,store,tpa
 POST /api/v1/patient/{patient_external_id}/consent/{external_id}/add_verification/  auth:cash,lab,moved,mrd,mrdg,owner,rad,rec,store,tpa
 POST /api/v1/patient/{patient_external_id}/consent/{external_id}/remove_verification/  auth:cash,lab,moved,mrd,mrdg,owner,rad,rec,store,tpa
+POST /api/v1/patient/{patient_external_id}/consent/upsert/  body:cash,lab,moved,mrd,mrdg,owner,rad,rec,store,tpa
 POST /api/v1/patient/{patient_external_id}/diagnosis/  body:cash,lab,moved,mrd,mrdg,owner,rad,rec,store,tpa
 POST /api/v1/patient/{patient_external_id}/diagnosis/upsert/  body:cash,lab,moved,mrd,mrdg,owner,rad,rec,store,tpa
 POST /api/v1/patient/{patient_external_id}/diagnostic_report/  body:cash,moved,mrd,mrdg,owner,rec,store,tpa
 POST /api/v1/patient/{patient_external_id}/diagnostic_report/{external_id}/upsert_observations/  body:cash,moved,mrd,mrdg,owner,rec,store,tpa
+POST /api/v1/patient/{patient_external_id}/immunization/recommendation/apply_policy/  body:cash,lab,moved,mrd,mrdg,owner,rad,rec,store,tpa
+POST /api/v1/patient/{patient_external_id}/immunization/recommendation/  body:cash,lab,moved,mrd,mrdg,owner,rad,rec,store,tpa
+POST /api/v1/patient/{patient_external_id}/immunization/record/  body:cash,lab,moved,mrd,mrdg,owner,rad,rec,store,tpa
 POST /api/v1/patient/{patient_external_id}/medication/administration/  body:cash,lab,moved,mrd,mrdg,owner,rad,rec,store,tpa
 POST /api/v1/patient/{patient_external_id}/medication/administration/upsert/  body:cash,lab,moved,mrd,mrdg,owner,rad,rec,store,tpa
 POST /api/v1/patient/{patient_external_id}/medication/prescription/  body:cash,lab,moved,mrd,mrdg,owner,rad,rec,store,tpa
-POST /api/v1/patient/{patient_external_id}/medication/prescription/upsert/  body:cash,lab,moved,mrd,mrdg,owner,rad,rec,store,tpa
 POST /api/v1/patient/{patient_external_id}/medication/prescription/{external_id}/remove_tags/  auth:cash,lab,moved,mrd,mrdg,owner,rad,rec,store,tpa
 POST /api/v1/patient/{patient_external_id}/medication/prescription/{external_id}/set_tags/  auth:cash,lab,moved,mrd,mrdg,owner,rad,rec,store,tpa
+POST /api/v1/patient/{patient_external_id}/medication/prescription/upsert/  body:cash,lab,moved,mrd,mrdg,owner,rad,rec,store,tpa
 POST /api/v1/patient/{patient_external_id}/medication/request/  body:cash,lab,moved,mrd,mrdg,owner,rad,rec,store,tpa
 POST /api/v1/patient/{patient_external_id}/medication/request/upsert/  body:cash,lab,moved,mrd,mrdg,owner,rad,rec,store,tpa
 POST /api/v1/patient/{patient_external_id}/medication/statement/  body:cash,lab,moved,mrd,mrdg,owner,rad,rec,store,tpa
 POST /api/v1/patient/{patient_external_id}/medication/statement/upsert/  body:cash,lab,moved,mrd,mrdg,owner,rad,rec,store,tpa
 POST /api/v1/patient/{patient_external_id}/observation/analyse/  body:cash,lab,moved,mrd,mrdg,owner,rad,rec,store,tpa
+POST /api/v1/patient/{patient_external_id}/observation/  body:cash,lab,moved,mrd,mrdg,owner,rad,rec,store,tpa
+POST /api/v1/patient/{patient_external_id}/procedure/  body:cash,lab,moved,mrd,mrdg,owner,rad,rec,store,tpa
+POST /api/v1/patient/{patient_external_id}/procedure/upsert/  body:cash,lab,moved,mrd,mrdg,owner,rad,rec,store,tpa
 POST /api/v1/patient/{patient_external_id}/symptom/  body:cash,lab,moved,mrd,mrdg,owner,rad,rec,store,tpa
 POST /api/v1/patient/{patient_external_id}/symptom/upsert/  body:cash,lab,moved,mrd,mrdg,owner,rad,rec,store,tpa
 POST /api/v1/patient/{patient_external_id}/thread/  body:cash,lab,moved,mrd,mrdg,owner,rad,rec,store,tpa
 POST /api/v1/patient/{patient_external_id}/thread/{thread_external_id}/note/  body:cash,lab,moved,mrd,mrdg,owner,rad,rec,store,tpa
-POST /api/v1/patient_identifier_config/  body:cash,lab,moved,mrd,mrdg,owner,rad,rec,store,tpa
+POST /api/v1/patient/search/  auth:lab,owner,store
+POST /api/v1/patient/search_retrieve/  auth:lab,owner,store
+POST /api/v1/patient/upsert/  body:cash,lab,moved,mrd,mrdg,owner,rad,rec,store,tpa
 POST /api/v1/plug_config/  auth:cash,lab,moved,mrd,mrdg,owner,rad,rec,store,tpa
 POST /api/v1/product_knowledge/  body:cash,lab,moved,mrd,mrdg,owner,rad,rec,store,tpa
 POST /api/v1/product_knowledge/upsert/  body:cash,lab,moved,mrd,mrdg,owner,rad,rec,store,tpa
-POST /api/v1/questionnaire/  auth:cash,lab,moved,mrd,mrdg,owner,rad,rec,store,tpa
-POST /api/v1/questionnaire/upsert/  body:cash,lab,moved,mrd,mrdg,owner,rad,rec,store,tpa
-POST /api/v1/questionnaire/{slug}/add_favorite/  auth:cash,lab,moved,mrd,mrdg,owner,rad,rec,store,tpa
-POST /api/v1/questionnaire/{slug}/remove_favorite/  auth:cash,lab,moved,mrd,mrdg,owner,rad,rec,store,tpa
-POST /api/v1/questionnaire/{slug}/set_organizations/  auth:cash,lab,moved,mrd,mrdg,owner,rad,rec,store,tpa
-POST /api/v1/questionnaire/{slug}/submit/  body:cash,lab,moved,mrd,mrdg,owner,rad,rec,store,tpa
+POST /api/v1/questionnaire/  body:cash,lab,moved,mrd,mrdg,owner,rad,rec,store,tpa
+POST /api/v1/questionnaire/{external_id}/remove_favorite/  body:cash,lab,moved,mrd,mrdg,owner,rad,rec,store,tpa
+POST /api/v1/questionnaire/{external_id}/set_facility_organizations/  auth:cash,lab,moved,mrd,mrdg,owner,rad,rec,store,tpa
+POST /api/v1/questionnaire/{external_id}/set_organizations/  auth:cash,lab,moved,mrd,mrdg,owner,rad,rec,store,tpa
+POST /api/v1/questionnaire/{external_id}/submit/  body:cash,lab,moved,mrd,mrdg,owner,rad,rec,store,tpa
+POST /api/v1/questionnaire/{external_id}/submit_resource/  body:cash,lab,moved,mrd,mrdg,owner,rad,rec,store,tpa
 POST /api/v1/questionnaire_response_template/  body:cash,lab,moved,mrd,mrdg,owner,rad,rec,store,tpa
 POST /api/v1/questionnaire_response_template/upsert/  body:cash,lab,moved,mrd,mrdg,owner,rad,rec,store,tpa
+POST /api/v1/questionnaire/upsert/  body:cash,lab,moved,mrd,mrdg,owner,rad,rec,store,tpa
+POST /api/v1/referral_availability/  body:cash,lab,moved,mrd,mrdg,owner,rad,rec,store,tpa
+POST /api/v1/referral/  auth:cash,lab,moved,mrd,mrdg,owner,rad,rec,store,tpa
+POST /api/v1/referral/{external_id}/set_assignees/  auth:cash,lab,moved,mrd,mrdg,owner,rad,rec,store,tpa
+POST /api/v1/referral/{external_id}/thread/  auth:cash,lab,moved,mrd,mrdg,owner,rad,rec,store,tpa
+POST /api/v1/referral/{referral_external_id}/notes/  auth:cash,lab,moved,mrd,mrdg,owner,rad,rec,store,tpa
+POST /api/v1/referral/{referral_external_id}/questionnaire_responses/  auth:cash,lab,moved,mrd,mrdg,owner,rad,rec,store,tpa
+POST /api/v1/referral/{referral_external_id}/resources/  auth:cash,lab,moved,mrd,mrdg,owner,rad,rec,store,tpa
 POST /api/v1/resource/  auth:cash,lab,moved,mrd,mrdg,owner,rad,rec,store,tpa
-POST /api/v1/resource/upsert/  auth:cash,lab,moved,mrd,mrdg,owner,rad,rec,store,tpa
+POST /api/v1/resource_observation/analyse/  body:cash,lab,moved,mrd,mrdg,owner,rad,rec,store,tpa
 POST /api/v1/resource/{resource_external_id}/comment/  auth:cash,lab,moved,mrd,mrdg,owner,rad,rec,store,tpa
+POST /api/v1/resource/upsert/  auth:cash,lab,moved,mrd,mrdg,owner,rad,rec,store,tpa
 POST /api/v1/role/  auth:cash,lab,moved,mrd,mrdg,owner,rad,rec,store,tpa
 POST /api/v1/role/upsert/  auth:cash,lab,moved,mrd,mrdg,owner,rad,rec,store,tpa
 POST /api/v1/supply_delivery/  body:cash,lab,moved,mrd,mrdg,owner,rad,rec,tpa
@@ -309,22 +342,26 @@ POST /api/v1/supply_request/upsert/  body:cash,lab,moved,mrd,mrdg,owner,rad,rec,
 POST /api/v1/tag_config/  body:cash,lab,moved,mrd,mrdg,owner,rad,rec,store,tpa
 POST /api/v1/template/  body:cash,lab,moved,mrd,mrdg,owner,rad,rec,store,tpa
 POST /api/v1/template/preview/  auth:cash,lab,moved,mrd,mrdg,owner,rad,rec,store,tpa
-POST /api/v1/template_reports/generate/  auth:cash,lab,moved,mrd,mrdg,owner,rec,store,tpa body:rad
 POST /api/v1/template_reports/{external_id}/archive/  auth:cash,lab,moved,mrd,mrdg,owner,rec,store,tpa body:rad
+POST /api/v1/template_reports/generate/  auth:cash,lab,moved,mrd,mrdg,owner,rec,store,tpa body:rad
 POST /api/v1/users/  body:cash,lab,moved,mrd,mrdg,owner,rad,rec,store,tpa
 POST /api/v1/users/upsert/  auth:cash,lab,moved,mrd,mrdg,owner,rad,rec,store,tpa
 POST /api/v1/users/{username}/generate_service_account_token/  auth:cash,lab,moved,mrd,mrdg,owner,rad,rec,store,tpa
 POST /api/v1/users/{username}/profile_picture/  auth:cash,lab,moved,mrd,mrdg,owner,rad,rec,store,tpa
-POST /api/v1/valueset/  auth:cash,lab,moved,mrd,mrdg,owner,rad,rec,store,tpa
+POST /api/v1/valueset/  body:cash,lab,moved,mrd,mrdg,owner,rad,rec,store,tpa
+POST /api/v1/valueset/expand_slug/  body:cash,lab,moved,mrd,mrdg,owner,rad,rec,store,tpa
 POST /api/v1/valueset/lookup_code/  body:cash,lab,moved,mrd,mrdg,owner,rad,rec,store,tpa
 POST /api/v1/valueset/preview_search/  body:cash,lab,moved,mrd,mrdg,owner,rad,rec,store,tpa
-POST /api/v1/valueset/upsert/  auth:cash,lab,moved,mrd,mrdg,owner,rad,rec,store,tpa
+POST /api/v1/valueset/upsert/  body:cash,lab,moved,mrd,mrdg,owner,rad,rec,store,tpa
+POST /api/v1/workspace/  body:cash,lab,moved,mrd,mrdg,owner,rad,rec,store,tpa
+POST /api/v1/workspace/upsert/  body:cash,lab,moved,mrd,mrdg,owner,rad,rec,store,tpa
+PUT /api/v1/action_configuration/{external_id}/  auth:cash,lab,moved,mrd,mrdg,owner,rad,rec,store,tpa
 PUT /api/v1/encounter/{external_id}/  body:cash,lab,moved,mrd,mrdg,owner,rad,rec,store,tpa
 PUT /api/v1/facility/{external_id}/  body:cash,lab,moved,mrd,mrdg,owner,rad,rec,store,tpa
 PUT /api/v1/facility/{facility_external_id}/account/{external_id}/  auth:lab,mrd,mrdg,owner,rad,store body:moved,rec
 PUT /api/v1/facility/{facility_external_id}/appointments/{external_id}/  body:cash,lab,mrd,mrdg,owner,rad,store,tpa
-PUT /api/v1/facility/{facility_external_id}/charge_item/{external_id}/  auth:lab,moved,mrd,mrdg,owner,rad,rec,store body:tpa
 PUT /api/v1/facility/{facility_external_id}/charge_item_definition/{slug}/  auth:lab,mrd,mrdg,owner,rad,store body:cash,moved,rec,tpa
+PUT /api/v1/facility/{facility_external_id}/charge_item/{external_id}/  auth:lab,moved,mrd,mrdg,owner,rad,rec,store body:tpa
 PUT /api/v1/facility/{facility_external_id}/device/{device_external_id}/service_history/{external_id}/  body:cash,lab,moved,mrd,mrdg,owner,rad,rec,store,tpa
 PUT /api/v1/facility/{facility_external_id}/device/{external_id}/  auth:cash,lab,moved,mrd,mrdg,owner,rad,rec,store,tpa
 PUT /api/v1/facility/{facility_external_id}/invoice/{external_id}/  auth:lab,moved,mrd,mrdg,owner,rad,rec,store body:tpa
@@ -343,28 +380,35 @@ PUT /api/v1/facility/{facility_external_id}/specimen/{external_id}/  auth:cash,m
 PUT /api/v1/facility/{facility_external_id}/token/category/{external_id}/  auth:cash,lab,mrd,mrdg,owner,rad,store,tpa body:moved,rec
 PUT /api/v1/facility/{facility_external_id}/token/queue/{external_id}/  body:cash,lab,mrd,mrdg,owner,rad,store,tpa
 PUT /api/v1/facility/{facility_external_id}/token/queue/{token_queue_external_id}/token/{external_id}/  body:cash,lab,mrd,mrdg,owner,rad,store,tpa
-PUT /api/v1/files/{external_id}/  auth:cash,lab,moved,mrd,owner,rad,rec,store,tpa body:mrdg
+PUT /api/v1/files/{external_id}/  body:cash,lab,moved,mrd,mrdg,owner,rad,rec,store,tpa
 PUT /api/v1/form_submission/{external_id}/  body:cash,lab,moved,mrd,mrdg,owner,rad,rec,store,tpa
 PUT /api/v1/medication/dispense/{external_id}/  body:cash,lab,moved,mrd,mrdg,owner,rad,rec,store,tpa
 PUT /api/v1/meta_artifacts/{external_id}/  auth:cash,lab,moved,mrd,owner,rad,rec,store,tpa body:mrdg
 PUT /api/v1/organization/{external_id}/  body:cash,lab,moved,mrd,mrdg,owner,rad,rec,store,tpa
 PUT /api/v1/password_change/  auth:cash,lab,moved,mrd,mrdg,owner,rad,rec,store,tpa
 PUT /api/v1/patient/{external_id}/  auth:cash,lab,mrd,mrdg,owner,rad,store,tpa
+PUT /api/v1/patient_identifier_config/{external_id}/  body:cash,lab,moved,mrd,mrdg,owner,rad,rec,store,tpa
 PUT /api/v1/patient/{patient_external_id}/allergy_intolerance/{external_id}/  auth:cash,lab,moved,mrd,owner,rad,rec,store,tpa body:mrdg
 PUT /api/v1/patient/{patient_external_id}/consent/{external_id}/  auth:cash,lab,moved,mrd,mrdg,owner,rad,rec,store,tpa
 PUT /api/v1/patient/{patient_external_id}/diagnosis/{external_id}/  auth:cash,lab,moved,mrd,owner,rad,rec,store,tpa body:mrdg
 PUT /api/v1/patient/{patient_external_id}/diagnostic_report/{external_id}/  body:cash,moved,mrd,mrdg,owner,rec,store,tpa
+PUT /api/v1/patient/{patient_external_id}/immunization/recommendation/{external_id}/  body:cash,lab,moved,mrd,mrdg,owner,rad,rec,store,tpa
+PUT /api/v1/patient/{patient_external_id}/immunization/record/{external_id}/  auth:cash,lab,moved,mrd,mrdg,owner,rad,rec,store,tpa
 PUT /api/v1/patient/{patient_external_id}/medication/administration/{external_id}/  auth:cash,lab,moved,mrd,owner,rad,rec,store,tpa body:mrdg
 PUT /api/v1/patient/{patient_external_id}/medication/prescription/{external_id}/  body:cash,lab,moved,mrd,mrdg,owner,rad,rec,store,tpa
 PUT /api/v1/patient/{patient_external_id}/medication/request/{external_id}/  auth:cash,lab,moved,mrd,owner,rad,rec,store,tpa body:mrdg
 PUT /api/v1/patient/{patient_external_id}/medication/statement/{external_id}/  auth:cash,lab,moved,mrd,owner,rad,rec,store,tpa body:mrdg
+PUT /api/v1/patient/{patient_external_id}/procedure/{external_id}/  auth:cash,lab,moved,mrd,mrdg,owner,rad,rec,store,tpa
 PUT /api/v1/patient/{patient_external_id}/questionnaire_response/{external_id}/  auth:cash,lab,moved,mrd,mrdg,owner,rad,rec,store,tpa
 PUT /api/v1/patient/{patient_external_id}/symptom/{external_id}/  auth:cash,lab,moved,mrd,owner,rad,rec,store,tpa body:mrdg
 PUT /api/v1/patient/{patient_external_id}/thread/{external_id}/  auth:cash,lab,moved,mrd,owner,rad,rec,store,tpa body:mrdg
 PUT /api/v1/patient/{patient_external_id}/thread/{thread_external_id}/note/{external_id}/  auth:cash,lab,moved,mrd,owner,rad,rec,store,tpa body:mrdg
-PUT /api/v1/patient_identifier_config/{external_id}/  body:cash,lab,moved,mrd,mrdg,owner,rad,rec,store,tpa
 PUT /api/v1/product_knowledge/{slug}/  body:cash,lab,moved,mrd,mrdg,owner,rad,rec,store,tpa
-PUT /api/v1/questionnaire/{slug}/  auth:cash,lab,moved,mrd,mrdg,owner,rad,rec,store,tpa
+PUT /api/v1/questionnaire/{external_id}/  body:cash,lab,moved,mrd,mrdg,owner,rad,rec,store,tpa
+PUT /api/v1/referral_availability/{external_id}/  auth:cash,lab,moved,mrd,mrdg,owner,rad,rec,store,tpa
+PUT /api/v1/referral/{external_id}/  auth:cash,lab,moved,mrd,mrdg,owner,rad,rec,store,tpa
+PUT /api/v1/referral/{external_id}/thread/  auth:cash,lab,moved,mrd,mrdg,owner,rad,rec,store,tpa
+PUT /api/v1/referral/{referral_external_id}/notes/{external_id}/  auth:cash,lab,moved,mrd,mrdg,owner,rad,rec,store,tpa
 PUT /api/v1/resource/{external_id}/  auth:cash,lab,moved,mrd,mrdg,owner,rad,rec,store,tpa
 PUT /api/v1/role/{external_id}/  auth:cash,lab,moved,mrd,mrdg,owner,rad,rec,store,tpa
 PUT /api/v1/supply_delivery/{external_id}/  body:cash,lab,moved,mrd,mrdg,owner,rad,rec,tpa

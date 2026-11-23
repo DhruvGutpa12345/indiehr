@@ -57,12 +57,17 @@ OMIT = {
         "organization_cache",
         "users_cache",
     ),
-    "users_user": ("cached_role_orgs",),
+    # Both rewritten from the person's role-organisation memberships (audited rows) on every
+    # membership save; role_org_ids is CARE 3.1's (users 0028, P2-T0a review F6)
+    "users_user": ("cached_role_orgs", "role_org_ids"),
     # The parent chain CARE copies into each organisation on read (get_parent_json, every 15
     # days); the parents' own rows are audited. Without this an anonymous GET of the address
     # picker or the facility finder wrote an entry (P1-T20a, review A6).
     "emr_organization": ("cached_parent_json",),
     "emr_facilityorganization": ("cached_parent_json",),
+    # Same read-path cache on locations; emr 0084 empties it on every location, so each is
+    # refilled by the first listing after the release (P2-T0a review TPA-2).
+    "emr_facilitylocation": ("cached_parent_json",),
 }
 # Columns whose names look secret but hold none (reviewed). Anything else that matches
 # SUSPICIOUS must be in SECRET, LAST4 or OMIT.

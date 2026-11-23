@@ -231,6 +231,62 @@ class SecureRulesTests(SimpleTestCase):
         found = secure.problems(GOOD_SETTINGS | role | {"FACILITY_CDN": "x"}, GOOD_ENV)
         self.assertEqual(len(found), 1, found)
 
+    def test_cares_metrics_endpoint_stays_off(self):
+        """P2-T0a (review F1/F8): CARE's anonymous /metrics/ counts each hospital's patients,
+        visits and staff; our monitoring never scrapes it."""
+        found = secure.problems(
+            GOOD_SETTINGS | {"ENABLE_PROMETHEUS_METRICS": True}, GOOD_ENV
+        )
+        self.assertEqual(len(found), 1, found)
+        self.assertIn("ENABLE_PROMETHEUS_METRICS must stay off", found[0])
+        self.assertEqual(
+            secure.problems(
+                GOOD_SETTINGS | {"ENABLE_PROMETHEUS_METRICS": False}, GOOD_ENV
+            ),
+            [],
+        )
+
+    def test_reports_fetch_nothing_remote_and_keep_cares_closed_policy(self):
+        """P2-T0a (review F4): a report origin would make the backend fetch from outside at
+        render time; a custom report CSP could loosen saved and served reports."""
+        cases = (
+            (
+                "REPORT_ALLOWED_RESOURCE_ORIGINS must stay empty",
+                {"REPORT_ALLOWED_RESOURCE_ORIGINS": ["https://cdn.example.in"]},
+            ),
+            (
+                "REPORT_CONTENT_SECURITY_POLICY must be CARE's closed default",
+                {"REPORT_CONTENT_SECURITY_POLICY": "default-src *"},
+            ),
+        )
+        for expected, change in cases:
+            with self.subTest(change=change):
+                found = secure.problems(GOOD_SETTINGS | change, GOOD_ENV)
+                self.assertEqual(len(found), 1, found)
+                self.assertIn(expected, found[0])
+        # The legacy variable is only an environment fallback (base.py), never a setting
+        for name in ("REPORT_ALLOWED_IMAGE_ORIGINS", "REPORT_ALLOWED_RESOURCE_ORIGINS"):
+            with self.subTest(env=name):
+                env = GOOD_ENV | {name: "https://cdn.example.in"}
+                found = secure.problems(GOOD_SETTINGS, env)
+                self.assertEqual(len(found), 1, found)
+                self.assertIn(f"{name} must stay empty", found[0])
+        closed = {
+            "REPORT_ALLOWED_RESOURCE_ORIGINS": [],
+            "REPORT_CONTENT_SECURITY_POLICY": secure.REPORT_CLOSED_CSP,
+        }
+        env = GOOD_ENV | {"REPORT_ALLOWED_IMAGE_ORIGINS": " "}
+        self.assertEqual(secure.problems(GOOD_SETTINGS | closed, env), [])
+
+    def test_the_closed_report_policy_is_cares_default(self):
+        """If upstream changes its default report CSP, this fails until secure.py follows."""
+        from django.conf import settings
+
+        self.assertEqual(settings.REPORT_ALLOWED_RESOURCE_ORIGINS, [])
+        self.assertEqual(
+            settings.REPORT_CONTENT_SECURITY_POLICY, secure.REPORT_CLOSED_CSP
+        )
+
     def test_random_keys_are_never_called_placeholders(self):
         # Random keys contain words like "test" or "secret" by chance; only a key written
         # like a placeholder is refused.

@@ -167,7 +167,7 @@ def parse_compose(compose):
                 raise RefusedError(msg)
             if prop == "constraint":
                 try:
-                    ecl.parse(value)
+                    ecl.parse_expression(value)
                 except ecl.EclError as e:
                     raise RefusedError(str(e)) from e
             inc.filters.append((prop, op, value))
@@ -206,17 +206,10 @@ def _concept_id(version, code):
 def _filter_q(version, prop, op, value):  # noqa: PLR0911 (one exit per filter kind)
     """One filter as a condition on Concept rows of this version."""
     if prop == "constraint":
-        op_ecl, code = ecl.parse(value)
-        if code == "*":
-            return Q()
-        op = {
-            "<<": "is-a",
-            "<": "descendent-of",
-            ">>": "generalizes",
-            ">": "ancestor-of",
-            "": "=",
-        }[op_ecl]
-        value = code
+        focus, taken = ecl.parse_expression(value)
+        if taken is not None:  # A MINUS B: A's concepts, none of B's
+            return _ecl_q(version, *focus) & ~_ecl_q(version, *taken)
+        return _ecl_q(version, *focus)
     if op in ("in", "not-in"):
         codes = [c.strip() for c in value.split(",") if c.strip()]
         return Q(code__in=codes) if op == "in" else ~Q(code__in=codes)
@@ -239,6 +232,20 @@ def _filter_q(version, prop, op, value):  # noqa: PLR0911 (one exit per filter k
         return Q(pk__in=focus["ancestors"])
     msg = f"filter not supported: {op}"
     raise RefusedError(msg)
+
+
+def _ecl_q(version, op_ecl, code):
+    """One ECL focus (``ecl.parse``) as a condition on Concept rows of this version."""
+    if code == "*":
+        return Q()
+    op = {
+        "<<": "is-a",
+        "<": "descendent-of",
+        ">>": "generalizes",
+        ">": "ancestor-of",
+        "": "=",
+    }[op_ecl]
+    return _filter_q(version, "concept", op, code)
 
 
 def _include_q(version, inc):

@@ -1,0 +1,8 @@
+# CARE viewsets that mix in the action engine (care/emr/api/viewsets/action_base.py:
+# EMRActionBaseViewSet; P2-T0a, review F2), each reviewed. ihr_access.actions wraps the engine's
+# execute_action and perform_actions (and ActionEvaluator.evaluate) so that branches.closed users
+# run no action and get no output; ihr_access.E022 fails the start when a viewset of the URL
+# configuration mixes the engine in without a line here, or overrides a wrapped method.
+#   <CARE viewset dotted path> closed  # what it runs, and why our gate is enough
+care.emr.api.viewsets.scheduling.availability.SlotViewSet closed  # create_appointment runs APPOINTMENT actions (perform_actions); execute_action answers 400 in CARE (not performable independently); swapped (IhrSlotViewSet drops _actions for closed users)
+care.emr.api.viewsets.scheduling.booking.TokenBookingViewSet closed  # execute_action runs a performable APPOINTMENT action on a booking with only the booking right ("TODO: Authorize action permission"): 403 for closed users; no create, so perform_actions never runs here

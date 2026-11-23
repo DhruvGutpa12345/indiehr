@@ -11,6 +11,8 @@ from io import StringIO
 from unittest import mock
 
 from care.emr.models.valueset import ValueSet
+from care.facility.models import Facility
+from care.users.models import User
 from django.core.management import call_command
 from django.core.management.base import CommandError
 from django.db import connection
@@ -22,6 +24,7 @@ from ihr_platform.provisioning import runner
 from ihr_platform.test_runner import TEST_SCHEMA
 from ihr_platform.testing import owner_for_test
 from ihr_refdata_registry.models import PackRelease
+from model_bakery import baker
 
 from ihr_refdata import engine, manifest, valuesets
 from ihr_refdata.management.commands import ihr_pack_apply
@@ -868,3 +871,122 @@ class AuditTests(PackCase):
         # afterwards the outer values are back, without the pack's
         current = json.loads(audit._current.get()[0] or "{}")
         self.assertEqual(current, {})
+
+
+class CopyTests(PackCase):
+    """Review F1 (P2-T0a): CARE 3.1's value sets are no longer one row per slug. A facility,
+    facility-organisation or user copy may share the system set's slug (an inherited copy
+    takes its parent's), and a soft-deleted row no longer holds the slug. The pack owns only
+    the hospital-wide row (auth_context "instance", no facility, no facility organisation):
+    every copy is left as it is, and the live hospital-wide row is the one read and written."""
+
+    def setUp(self):
+        super().setUp()
+        self.packs = Packs(self)
+        self.user = User.objects.create_user(username="vs-copy", password="x-Unused-1")
+        self.facility = baker.make(Facility, name="Copies", created_by=self.user)
+
+    def instance(self, slug="ihr-a"):
+        return ValueSet._base_manager.get(
+            slug=slug, auth_context="instance", deleted=False
+        )
+
+    def copy(self, of, **fields):
+        compose = {
+            "include": [{"system": "http://loinc.org", "concept": [{"code": "9-9"}]}],
+            "exclude": [],
+        }
+        return ValueSet.objects.create(
+            slug=of.slug,
+            name="Our own copy",
+            status="active",
+            compose=compose,
+            facility=self.facility,
+            **fields,
+        )
+
+    def snapshot(self, row):
+        row = ValueSet._base_manager.get(pk=row.pk)
+        return (row.name, row.compose, row.deleted, row.modified_date)
+
+    def assert_copy_kept_through_a_pack_change(self, copy):
+        before = self.snapshot(copy)
+        out, _ = self.apply()  # the same release: nothing to do
+        self.assertIn("unchanged", out)
+        self.assertNotIn("local-edit", out)
+        # a new version that changes the set updates the hospital-wide row only
+        self.packs.add(2, vs("ihr-a", "1", "2", name="Renamed"))
+        out, _ = self.apply()
+        self.assertIn("1 updated", out)
+        self.assertEqual(self.instance().name, "Renamed")
+        self.assertEqual(
+            (items()["ihr-a"].state, items()["ihr-a"].applied_version), ("current", 2)
+        )
+        self.assertEqual(self.snapshot(copy), before)
+        out, _ = self.apply()
+        self.assertIn("unchanged", out)
+
+    def test_an_inherited_facility_copy_is_left_alone(self):
+        self.packs.add(1, vs("ihr-a", "1"))
+        self.apply()
+        parent = self.instance()
+        copy = self.copy(parent, auth_context="facility", inherited=True, parent=parent)
+        self.assert_copy_kept_through_a_pack_change(copy)
+
+    def test_a_user_copy_is_left_alone(self):
+        self.packs.add(1, vs("ihr-a", "1"))
+        self.apply()
+        copy = self.copy(self.instance(), auth_context="user", created_by=self.user)
+        self.assert_copy_kept_through_a_pack_change(copy)
+
+    def test_a_deleted_hospital_wide_row_is_restored_beside_a_facility_copy(self):
+        """A facility copy never counts as the system set being there (F1 c)."""
+        self.packs.add(1, vs("ihr-a", "1"))
+        self.apply()
+        parent = self.instance()
+        copy = self.copy(parent, auth_context="facility", inherited=True, parent=parent)
+        before = self.snapshot(copy)
+        ValueSet._base_manager.filter(pk=parent.pk).update(deleted=True)
+        out, _ = self.apply()
+        self.assertIn("1 restored", out)
+        self.assertEqual(self.instance().pk, parent.pk)
+        self.assertEqual(self.snapshot(copy), before)
+
+    def test_a_live_row_beside_a_deleted_one_is_read_and_never_restored_over(self):
+        """CARE's own code hides deleted rows, so it can make a second hospital-wide row
+        beside a soft-deleted one (F1 d): the live row is the set; the deleted one is never
+        restored (that would break CARE's unique slug) and stays as it is."""
+        self.packs.add(1, vs("ihr-a", "1"))
+        self.apply()
+        live = self.instance()
+        # a soft-deleted hospital-wide row of the same slug, the newer of the two
+        # (the database allows any number of deleted ones beside the live one)
+        old = ValueSet._base_manager.create(
+            slug="ihr-a",
+            name="Deleted earlier",
+            status="active",
+            compose=live.compose,
+            is_system_defined=True,
+            deleted=True,
+        )
+        gone = self.snapshot(old)
+        out, _ = self.apply()
+        self.assertIn("unchanged", out)
+        self.packs.add(2, vs("ihr-a", "1", "2", name="Renamed"))
+        out, _ = self.apply()
+        self.assertIn("1 updated", out)
+        self.assertNotIn("restored", out)
+        self.assertEqual(self.instance().pk, live.pk)
+        self.assertEqual(self.instance().name, "Renamed")
+        self.assertEqual(self.snapshot(old), gone)
+        out, _ = self.apply()
+        self.assertIn("unchanged", out)
+
+    def test_a_create_names_the_hospital_wide_context(self):
+        self.packs.add(1, vs("ihr-a", "1"))
+        self.apply()
+        row = self.instance()
+        self.assertEqual(
+            (row.auth_context, row.facility_id, row.facility_organization_id),
+            ("instance", None, None),
+        )

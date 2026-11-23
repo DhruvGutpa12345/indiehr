@@ -36,6 +36,8 @@ _CLINICAL = {
     "consent": "emr.Consent",
     "diagnostic_report": "emr.DiagnosticReport",
     "service_request": "emr.ServiceRequest",
+    # Files on a referral (CARE 3.1, P2-T0a): a referral names its patient
+    "referral": "emr.Referral",
 }
 BY_REFERENCE = {
     "emr.FileUpload": ("file_type", "associating_id", _CLINICAL),

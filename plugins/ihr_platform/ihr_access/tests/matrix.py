@@ -75,7 +75,10 @@ WRITES = HERE / "role_matrix_writes.txt"
 POST_READS = HERE / "post_reads.txt"
 # Path parameters the matrix fills beyond the isolation crawl's PARAM_MODELS (review M5); kept
 # here so the isolation crawl's own route set does not change
-MATRIX_PARAMS = {"schedule_external_id": "emr.schedule"}
+MATRIX_PARAMS = {
+    "schedule_external_id": "emr.schedule",
+    "referral_external_id": "emr.referral",  # P2-T0a: the referral routes nested under one
+}
 # Every GET route under a patient is also requested naming another patient's visit (review
 # K1/K2): CARE authorizes some readers through ?encounter= without checking whose visit it is
 PATIENT_PARAM = "{patient_external_id}"
@@ -355,13 +358,20 @@ def read_keys(path=KEYS):
 
 
 def resolve_test(label):
-    """True if ``label`` (module.Class.method) names a test method."""
-    module, cls, method = label.rsplit(".", 2)
-    try:
-        found = getattr(importlib.import_module(module), cls)
-    except (ImportError, AttributeError):
-        return False
-    return callable(getattr(found, method, None))
+    """True if ``label`` (module.Class.method, or module.Class) names a test. The longest
+    importable module prefix is imported first, so a label resolves however few test modules
+    this run loaded (P2-T0a: ``pkg.tests.test_x.Class`` failed in a narrow run, where
+    ``pkg.tests`` had not imported ``test_x`` yet)."""
+    parts = label.split(".")
+    for cut in range(len(parts) - 1, 0, -1):
+        try:
+            found = importlib.import_module(".".join(parts[:cut]))
+        except ImportError:
+            continue
+        for name in parts[cut:]:
+            found = getattr(found, name, None)
+        return callable(found)
+    return False
 
 
 def filling():

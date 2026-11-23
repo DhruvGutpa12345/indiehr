@@ -1109,6 +1109,13 @@ class AllowedWrites(CheckedWrites):
                 )
                 self.assertEqual(liked.status_code, 200, liked.content[:300])
                 self.assertEqual(liked.json(), {})
+                # P2-T0a: forms are opened by id, so a form joins the caller's own list
+                form = w.objects["questionnaire"].external_id
+                liked = self.api(user).post(
+                    f"/api/v1/questionnaire/{form}/add_favorite/", {}, format="json"
+                )
+                self.assertEqual(liked.status_code, 200, liked.content[:300])
+                self.assertEqual(liked.json(), {})
                 status = self.api(user).post("/health/statuspage", {}, format="json")
                 self.assertEqual(status.status_code, 200)
                 self.assertNotIn(str(w.facility.external_id), status.content.decode())
@@ -1273,26 +1280,49 @@ class DeskWrites(CheckedWrites):
 
 
 class StoreRows(MatrixCase):
-    """Review M8: CARE's delivery-order list (it needs ?request_order) builds its orders from
-    the deliveries the viewset's queryset gives, so the patient's return reaches the Store Keeper
-    only if the patient-row filter fails (Q-K43 A)."""
+    """Review M8: a list CARE builds from another list's rows must not bring the patient's
+    return to the Store Keeper (Q-K43 A). P2-T0a: CARE removed
+    ``supply_delivery/delivery_orders`` (it built its orders from the deliveries of a request
+    order); a store's patient returns are now listed by the delivery-order list itself when
+    asked (``patient_return=true``) under CARE's medication-return right, and our patient-row
+    filter (views._NoPatientRows) keeps them from the Store Keeper either way."""
 
-    def test_delivery_orders_of_a_request_order(self):
+    def test_the_stores_orders_and_its_patient_returns(self):
         o = self.world.objects
-        url = (
-            "/api/v1/supply_delivery/delivery_orders/"
-            f"?request_order={o['request_order'].external_id}"
-        )
+        url = f"/api/v1/facility/{o['facility'].external_id}/order/delivery/"
+        store = str(o["store_location"].external_id)
         stock, returned = (
             str(o[k].external_id) for k in ("delivery_order", "return_order")
         )
         seen = {}
         for who in ("Store Keeper", "Facility Admin"):
-            answer = self.api(who).get(url)
-            self.assertEqual(answer.status_code, 200, answer.content[:300])
-            seen[who] = sorted(r["id"] for r in answer.json()["results"])
-        self.assertEqual(seen["Store Keeper"], [stock])
-        self.assertEqual(seen["Facility Admin"], sorted([stock, returned]))
+            for flag in ("false", "true"):
+                answer = self.api(who).get(
+                    url, {"destination": store, "patient_return": flag}
+                )
+                if who == "Store Keeper":
+                    self.assertNotIn(testing.CANARY, answer.content.decode())
+                if answer.status_code == 403:
+                    seen[who, flag] = "refused"
+                    continue
+                self.assertEqual(answer.status_code, 200, answer.content[:300])
+                seen[who, flag] = sorted(r["id"] for r in answer.json()["results"])
+        self.assertEqual(seen["Store Keeper", "false"], [stock])
+        self.assertIn(seen["Store Keeper", "true"], ("refused", []))
+        self.assertEqual(seen["Facility Admin", "false"], [stock])
+        self.assertEqual(seen["Facility Admin", "true"], [returned])
+
+    def test_the_removed_delivery_orders_route_answers_nothing(self):
+        o = self.world.objects
+        url = (
+            "/api/v1/supply_delivery/delivery_orders/"
+            f"?request_order={o['request_order'].external_id}"
+        )
+        for who in ("Store Keeper", "Facility Admin"):
+            with self.subTest(who=who):
+                answer = self.api(who).get(url)
+                self.assertEqual(answer.status_code, 404, answer.content[:300])
+                self.assertNotIn(testing.CANARY, answer.content.decode())
 
 
 class SpecWalk(SimpleTestCase):

@@ -9,15 +9,18 @@ connections that see committed rows, so it is a SimpleTestCase on a hospital of 
 keys unique to the run; the trail it writes is never cleaned up.
 """
 
+import hashlib
 import json
 import time
 import types
 import uuid
+from functools import partial
 from io import StringIO
 from pathlib import Path
 from unittest import mock
 
-from care.emr.models.organization import Organization
+from care.emr.models.facility_resource import FacilityResourceQuestionnaireResponse
+from care.emr.models.organization import FacilityOrganization, Organization
 from care.emr.models.patient import Patient
 from care.emr.models.questionnaire import (
     FormSubmission,
@@ -26,6 +29,11 @@ from care.emr.models.questionnaire import (
     QuestionnaireOrganization,
     QuestionnaireResponse,
     QuestionnaireResponseTemplate,
+)
+from care.emr.models.referral import (
+    Referral,
+    ReferralAvailability,
+    ReferralQuestionnaireResponse,
 )
 from care.emr.resources.questionnaire.spec import QuestionnaireWriteSpec
 from care.facility.models import Facility
@@ -107,6 +115,55 @@ def submission(row, who=None, status="submitted"):
     return FormSubmission.objects.create(
         questionnaire=row, patient=who or patient(), status=status
     )
+
+
+def a_facility():
+    user = User.objects.create_user(username=f"fr-{_tag()}", password="x-Unused-1")
+    return baker.make(Facility, name=f"Forms {_tag()}", created_by=user)
+
+
+def facility_answer(row, facility=None):
+    """An answer given through CARE 3.1's facility-resource forms."""
+    return FacilityResourceQuestionnaireResponse.objects.create(
+        facility=facility or a_facility(),
+        questionnaire=row,
+        subject_type="facility",
+        subject_id=uuid.uuid4(),
+    )
+
+
+def referral_answer(row, who=None):
+    """An answer given with a patient's referral (CARE 3.1)."""
+    availability = ReferralAvailability.objects.create(
+        entity_type="external", name=f"Referral {_tag()}", referral_type="consult"
+    )
+    referral = Referral.objects.create(
+        availability=availability, patient=who or patient(), title="Referral"
+    )
+    return ReferralQuestionnaireResponse.objects.create(
+        referral=referral, questionnaire=row
+    )
+
+
+def care_hash(questions):
+    """questions_hash as CARE 3.1 computes it (spec.py and migration emr 0084)."""
+    return hashlib.sha256(
+        json.dumps(questions, sort_keys=True).encode("utf-8")
+    ).hexdigest()
+
+
+def archive_copy(row, **fields):
+    """What CARE 3.1's update does before it edits a form's questions in place
+    (QuestionnaireUpdateSpec.perform_extra_deserialization): a copy of the row as it was,
+    pointing at the live row."""
+    old = Questionnaire._base_manager.get(pk=row.pk)
+    old.id = None
+    old.external_id = uuid.uuid4()
+    old.latest_revision = row
+    for name, value in fields.items():
+        setattr(old, name, value)
+    old.save()
+    return old
 
 
 def pack_write(*, on):
@@ -242,6 +299,64 @@ class FormCase(TestCase):
             .first()
         )
         return {c["item"]: c for c in last.changes} if last else {}
+
+
+class Care31PackFormTests(FormCase):
+    """Pack forms on CARE 3.1 (review P2-T0a F3): a pack row carries CARE's questions_hash, so
+    a status-only edit through CARE is no revision; an archive copy CARE makes of a pack form
+    shares its slug and is never read as the form."""
+
+    def test_a_pack_form_carries_cares_questions_hash_and_the_hospital_context(self):
+        self.add(1, form(self.key, 1))
+        self.apply()
+        row = row_at(card(self.key, 1))
+        self.assertEqual(row.questions_hash, care_hash(row.questions))
+        self.assertEqual(
+            (row.auth_context, row.facility_id, row.facility_organization_id),
+            ("instance", None, None),
+        )
+
+    def test_an_archive_copy_of_a_pack_form_is_never_read_as_it(self):
+        self.add(1, form(self.key, 1))
+        self.apply()
+        head = row_at(card(self.key, 1))
+        archived = archive_copy(head, title="An earlier revision")
+        out, _ = self.apply()
+        self.assertIn("unchanged", out)
+        self.assertNotIn("local-edit", out)
+        record = self.record()
+        found = forms.rows([self.key], targets={self.key: record.target})
+        self.assertEqual(found[self.key].pk, head.pk)
+        self.assertTrue(
+            forms.all_present([self.key], targets={self.key: record.target})
+        )
+        # a new version replaces the live form and leaves the copy as it was
+        self.add(2, form(self.key, 2))
+        self.apply()
+        self.assertEqual(Questionnaire._base_manager.get(pk=head.pk).status, "retired")
+        self.assertEqual(
+            Questionnaire._base_manager.get(pk=archived.pk).title, "An earlier revision"
+        )
+
+    def test_a_form_moved_to_a_facility_is_no_longer_the_hospital_wide_pack_form(self):
+        """Review P2-T0a D4: like value sets, a pack form is read only as a hospital-wide
+        one; moved to one facility (raw SQL, CARE cannot) it is not 'unchanged'."""
+        self.add(1, form(self.key, 1))
+        self.apply()
+        head = row_at(card(self.key, 1))
+        record = self.record()
+        targets = {self.key: record.target}
+        self.assertEqual(forms.rows([self.key], targets=targets)[self.key].pk, head.pk)
+        Questionnaire._base_manager.filter(pk=head.pk).update(
+            auth_context="facility", facility=a_facility()
+        )
+        self.assertEqual(forms.rows([self.key], targets=targets), {})
+        self.assertFalse(forms.all_present([self.key], targets=targets))
+        # and a copy moved to a facility organisation or a user's own is not it either
+        Questionnaire._base_manager.filter(pk=head.pk).update(
+            auth_context="instance", facility=None
+        )
+        self.assertEqual(forms.rows([self.key], targets=targets)[self.key].pk, head.pk)
 
 
 class FirstVersionTests(FormCase):
@@ -629,7 +744,7 @@ class CareSpecTests(TestCase):
     fields may read value sets). No form pack ships yet; a test form proves the path."""
 
     def validate(self, item):
-        QuestionnaireWriteSpec.model_validate(
+        spec = QuestionnaireWriteSpec.model_validate(
             {
                 "slug": forms.target(item),
                 "title": item["title"],
@@ -640,6 +755,15 @@ class CareSpecTests(TestCase):
                 "questions": item["questions"],
             }
         )
+        # CARE's edit stores the questions as this dump (de_serialize: exclude_defaults) and
+        # hashes that: a pack's questions must already be that (review P2-T0a D3)
+        stored = spec.model_dump(mode="json", exclude_defaults=True)["questions"]
+        if stored != item["questions"]:
+            msg = (
+                f"form {item['slug']!r}: the questions are not in the normal form CARE "
+                "stores (a key set to its default, or a value CARE would rewrite)"
+            )
+            raise ValueError(msg)
 
     def validate_all(self, root=None):
         """CARE's spec over every form item of every release; how many it checked."""
@@ -677,11 +801,28 @@ class CareSpecTests(TestCase):
                 form("intake", 1, questions=[question("intake", 1, type="nope")])
             )
 
+    def test_questions_with_a_key_set_to_its_default_are_refused(self):
+        """Review P2-T0a D3: CARE's PUT re-serialises the questions without default-valued
+        keys before it compares hashes, so a pack's questions must already be in that form or
+        a status-only edit through CARE would read as a revision of an answered form."""
+        self.validate(form("intake", 1))
+        for extra in (
+            {"description": None},
+            {"collect_time": False},
+            {"questions": []},
+        ):
+            with self.subTest(extra), self.assertRaisesRegex(ValueError, "normal form"):
+                self.validate(
+                    form("intake", 1, questions=[question("intake", 1, **extra)])
+                )
+
 
 class CareViewTests(FormCase):
-    def test_a_hospital_wide_admin_sees_v1_and_sets_its_links(self):
-        """Item 1: the v1 form is listed for a hospital-wide admin, who sets its links
-        through CARE's own viewset."""
+    def test_a_hospital_wide_admin_sees_v1_but_cannot_narrow_its_links(self):
+        """Item 1: the v1 form is listed for a hospital-wide admin. Since CARE 3.1 only a
+        superuser may set the links of a hospital-wide form, and our staff are never
+        superusers, so the admin's narrowing is refused and v1 keeps every top-level link
+        (owner, Q-K165: accepted for now; a later task adds our own links setting)."""
         top = Organization.objects.create(name=f"Admins {self.key}", org_type="team")
         Organization.objects.create(name=f"Ward {self.key}", org_type="team")
         admin = admin_of(top, f"fv-{self.key}")
@@ -694,13 +835,14 @@ class CareViewTests(FormCase):
         self.assertEqual(listed.status_code, 200, listed.content[:300])
         self.assertIn(slug, [r["slug"] for r in listed.json()["results"]])
         self.assertGreater(len(links(row_at(slug))[0]), 1)  # every top-level one
+        # CARE 3.1 finds a form by its external id (no longer its slug)
         answer_ = client.post(
-            f"/api/v1/questionnaire/{slug}/set_organizations/",
+            f"/api/v1/questionnaire/{row_at(slug).external_id}/set_organizations/",
             {"organizations": [str(top.external_id)]},  # narrowed to the admins' own
             format="json",
         )
-        self.assertEqual(answer_.status_code, 200, answer_.content[:300])
-        self.assertEqual(links(row_at(slug))[0], [top.pk])
+        self.assertEqual(answer_.status_code, 403, answer_.content[:300])
+        self.assertGreater(len(links(row_at(slug))[0]), 1)  # unchanged
 
 
 class GuardTests(TestCase):
@@ -806,15 +948,18 @@ class GuardTests(TestCase):
                 "title": "Superuser form",
                 "status": "active",
                 "subject_type": "patient",
-                "questions": [{"link_id": "1", "text": "How?", "type": "string"}],
+                "questions": [question("su", 1, link="1", text="How?")],
                 "organizations": [str(organisation.external_id)],
+                "auth_context": "instance",
             },
             format="json",
         )
         self.assertEqual(made.status_code, 200, made.content[:300])
         row = Questionnaire.objects.get(slug=slug)
         answer(row)
-        body = client.get(f"/api/v1/questionnaire/{slug}/").json()
+        # CARE 3.1 looks a form up by its external id (no longer its slug)
+        url = f"/api/v1/questionnaire/{row.external_id}/"
+        body = client.get(url).json()
         body = {
             k: body[k]
             for k in (
@@ -827,17 +972,11 @@ class GuardTests(TestCase):
                 "questions",
             )
         }
-        edited = client.put(
-            f"/api/v1/questionnaire/{slug}/", {**body, "title": "Edited"}, format="json"
-        )
+        edited = client.put(url, {**body, "title": "Edited"}, format="json")
         self.assertEqual(edited.status_code, 400, edited.content[:300])
         self.assertIn("make a new version", edited.content.decode())
         self.assertEqual(Questionnaire.objects.get(pk=row.pk).title, "Superuser form")
-        retired = client.put(
-            f"/api/v1/questionnaire/{slug}/",
-            {**body, "status": "retired"},
-            format="json",
-        )
+        retired = client.put(url, {**body, "status": "retired"}, format="json")
         self.assertEqual(retired.status_code, 200, retired.content[:300])
         # the reserved namespace: CARE's create answers an error, not a stolen pack slug
         stolen = client.post(
@@ -847,8 +986,9 @@ class GuardTests(TestCase):
                 "title": "Stolen",
                 "status": "active",
                 "subject_type": "patient",
-                "questions": [{"link_id": "1", "text": "How?", "type": "string"}],
+                "questions": [question("su", 1, link="1", text="How?")],
                 "organizations": [str(organisation.external_id)],
+                "auth_context": "instance",
             },
             format="json",
         )
@@ -921,6 +1061,225 @@ class GuardTests(TestCase):
         self.refused(lambda: plain_form("ihr-pack-after-v1"), reserved)
 
 
+class Care31GuardTests(TestCase):
+    """The guard on top of CARE 3.1 (review P2-T0a F2, F3): the two new answer tables are
+    answers like the old two, the new columns are classified by what an answer depends on, and
+    CARE's in-place revision (an archive copy, then the live row edited) works for a form with
+    no answers and is refused whole for one with answers."""
+
+    databases = {"default"}
+
+    def refused(self, write, text=ANSWERED):
+        with self.assertRaisesRegex(IntegrityError, text), transaction.atomic():
+            write()
+
+    def raw(self, statement, params=()):
+        with connection.cursor() as cursor:
+            cursor.execute(statement, params)
+
+    def test_a_facility_resource_or_referral_answer_freezes_the_form(self):
+        for given in (facility_answer, referral_answer):
+            with self.subTest(given.__name__):
+                row, other = plain_form(), plain_form()
+                held = given(row)
+                fresh = Questionnaire.objects.get(pk=row.pk)
+                fresh.title = "Changed"
+                self.refused(fresh.save)
+                # raw SQL: Django's PROTECT (referral answers) would refuse first
+                self.refused(
+                    lambda r=row: self.raw(
+                        "DELETE FROM emr_questionnaire WHERE id = %s", [r.pk]
+                    ),
+                    "never deleted",
+                )
+                self.refused(
+                    lambda h=held: type(h).objects.filter(pk=h.pk).delete(),
+                    "answers are never deleted",
+                )
+                held.questionnaire = other
+                self.refused(held.save, "stays with the form")
+                held.refresh_from_db()
+                held.delete()  # CARE's own: a flag, and the form stays frozen
+                self.refused(fresh.save)
+
+    def test_the_new_columns_are_frozen_on_an_answered_form(self):
+        row, other = plain_form(), plain_form()
+        answer(row)
+        facility = a_facility()
+        with as_owner():
+            team = baker.make(FacilityOrganization, facility=facility, org_type="team")
+        for column, value in (
+            ("latest_revision", other),
+            ("internal_revision", 2),
+            ("auth_context", "facility"),
+            ("facility", facility),
+            ("facility_organization", team),
+        ):
+            with self.subTest(column):
+                fresh = Questionnaire.objects.get(pk=row.pk)
+                setattr(fresh, column, value)
+                self.refused(fresh.save)
+        # a cache of the questions, and what a later submit runs: free
+        fresh = Questionnaire.objects.get(pk=row.pk)
+        fresh.questions_hash = "0" * 64
+        fresh.actions = [{"type": "noop"}]
+        fresh.save()
+
+    def test_cares_revision_of_a_form_with_no_answers_goes_through(self):
+        pack_write(on=True)
+        pack = plain_form(f"ihr-pack-rev{_tag()}-v1")
+        pack_write(on=False)
+        for row in (plain_form(), pack):
+            with self.subTest(row.slug):
+                archived = archive_copy(row)  # a pack form's too: never a stolen slug
+                self.assertEqual(archived.slug, row.slug)
+                row.questions = [question("own", 2)]
+                row.internal_revision += 1
+                row.questions_hash = care_hash(row.questions)
+                row.save()
+
+    def test_cares_revision_of_an_answered_form_is_refused_whole(self):
+        row = plain_form()
+        answer(row)
+
+        def revise():
+            archive_copy(row)
+            row.questions = [question("own", 2)]
+            row.internal_revision += 1
+            row.save()
+
+        self.refused(revise)
+        self.assertFalse(
+            Questionnaire._base_manager.filter(latest_revision=row).exists()
+        )
+
+    def test_only_an_archive_copy_of_the_same_pack_form_may_take_its_slug(self):
+        reserved = "reference pack"
+        pack_write(on=True)
+        pack = plain_form(f"ihr-pack-arc{_tag()}-v1")
+        pack_write(on=False)
+        own = plain_form()
+        # pointing at another form, or at a copy (not a live form): refused
+        self.refused(lambda: archive_copy(own, slug=pack.slug), reserved)
+        archived = archive_copy(pack)
+        self.refused(lambda: archive_copy(archived), reserved)
+        # an archive copy never becomes a live form, nor a copy of another one
+        for target in (None, own):
+            with self.subTest(target=target):
+                fresh = Questionnaire._base_manager.get(pk=archived.pk)
+                fresh.latest_revision = target
+                self.refused(fresh.save, reserved)
+        fresh = Questionnaire._base_manager.get(pk=pack.pk)
+        fresh.latest_revision = own
+        self.refused(fresh.save, reserved)
+
+
+# (how an answer is given, the column that names the form revision it was given on)
+REVISIONS = (
+    (answer, "revision"),
+    (facility_answer, "revision"),
+    (referral_answer, "questionnaire_revision"),
+)
+
+
+def revised(row):
+    """What CARE 3.1's edit of a form with no answers does: an archive copy of the row as it
+    was (returned), then the live row's questions edited and its revision up."""
+    archived = archive_copy(row)
+    row.questions = [question("own", row.internal_revision + 1)]
+    row.internal_revision += 1
+    row.questions_hash = care_hash(row.questions)
+    row.save()
+    return archived
+
+
+class RevisionGuardTests(TestCase):
+    """CARE 3.1 resolves an answer's questions by (form, revision) (review P2-T0a D1, D2): the
+    revision an answer names moves only to the form's current one, and the archive copy that
+    holds the questions of a revision with answers stays as it is."""
+
+    databases = {"default"}
+
+    def refused(self, write, text):
+        with self.assertRaisesRegex(IntegrityError, text), transaction.atomic():
+            write()
+
+    def raw(self, statement, params=()):
+        with connection.cursor() as cursor:
+            cursor.execute(statement, params)
+
+    def move(self, held, column, value, *, raw):
+        """Write ``value`` into the answer's revision column, by raw SQL or the ORM."""
+        if raw:
+            self.raw(
+                f"UPDATE {held._meta.db_table} SET {column} = %s WHERE id = %s",
+                [value, held.pk],
+            )
+        else:
+            setattr(held, column, value)
+            held.save(update_fields=[column])
+
+    def test_an_answers_revision_moves_only_to_the_forms_current_revision(self):
+        moves = "revision moves only"
+        for given, column in REVISIONS:
+            with self.subTest(given.__name__):
+                row = plain_form(internal_revision=3)
+                archive_copy(row, internal_revision=2)  # another revision's questions
+                held = given(row)  # CARE's insert: revision 1 until its submit sets it
+                for value in (2, 7):  # an archive copy's, and one no copy holds
+                    for raw in (True, False):
+                        self.refused(
+                            partial(self.move, held, column, value, raw=raw),
+                            moves,
+                        )
+                held.refresh_from_db()
+                self.assertEqual(getattr(held, column), 1)
+                # CARE's submit: the form's current revision, right after the insert
+                self.move(held, column, 3, raw=False)
+                held.save()  # a full save with the same value
+                self.refused(partial(self.move, held, column, 1, raw=True), moves)
+                held.refresh_from_db()
+                self.assertEqual(getattr(held, column), 3)
+
+    def test_the_archive_copy_holding_an_answers_questions_stays_as_it_is(self):
+        for given, column in REVISIONS:
+            with self.subTest(given.__name__):
+                self.archive_with_answers(given, column)
+
+    def archive_with_answers(self, given, column):
+        stays = "archive of a revision that has answers"
+        row = plain_form()
+        old = revised(row)  # revision 1's questions, the live row now at 2
+        held = given(row)  # answered at revision 1: a submit that read the form
+        self.assertEqual(getattr(held, column), 1)  # before the edit committed
+        fresh = Questionnaire._base_manager.get(pk=old.pk)
+        fresh.title = "Rewritten"
+        self.refused(fresh.save, stays)
+        frozen = "UPDATE emr_questionnaire SET questions = '[]'::jsonb WHERE id = %s"
+        self.refused(partial(self.raw, frozen, [old.pk]), stays)
+        soft = Questionnaire._base_manager.filter(pk=old.pk)
+        self.refused(partial(soft.update, deleted=True), stays)
+        hard = "DELETE FROM emr_questionnaire WHERE id = %s"
+        self.refused(partial(self.raw, hard, [old.pk]), stays)
+        self.assertFalse(Questionnaire._base_manager.get(pk=old.pk).deleted)
+
+    def test_an_archive_copy_no_answer_names_stays_free(self):
+        for given, column in REVISIONS:
+            with self.subTest(given.__name__):
+                row = plain_form()
+                old = revised(row)
+                held = given(row)
+                self.move(
+                    held, column, 2, raw=False
+                )  # CARE's submit on the current one
+                fresh = Questionnaire._base_manager.get(pk=old.pk)
+                fresh.title = "Nobody answered this revision"
+                fresh.save()
+                Questionnaire._base_manager.filter(pk=old.pk).update(deleted=True)
+                self.raw("DELETE FROM emr_questionnaire WHERE id = %s", [old.pk])
+                self.assertFalse(Questionnaire._base_manager.filter(pk=old.pk).exists())
+
+
 class GuardOwnerTests(TestCase):
     """What the guard refuses the owner too (the app role has no TRUNCATE at all)."""
 
@@ -936,6 +1295,9 @@ class GuardOwnerTests(TestCase):
         for statement in (
             "TRUNCATE emr_formsubmission CASCADE",
             "TRUNCATE emr_questionnaireresponse CASCADE",
+            "TRUNCATE emr_facilityresourcequestionnaireresponse CASCADE",
+            "TRUNCATE emr_referralquestionnaireresponse CASCADE",
+            "TRUNCATE emr_referral CASCADE",
             "TRUNCATE emr_patient CASCADE",
         ):
             with (
@@ -1148,8 +1510,9 @@ class AnswerRace(SimpleTestCase):
         cursor.execute(
             f'INSERT INTO "{schema}".emr_questionnaireresponse (external_id, '
             "created_date, modified_date, deleted, history, meta, subject_id, responses, "
-            "structured_responses, patient_id, questionnaire_id, status) VALUES "
-            "(%s, now(), now(), false, '{}', '{}', %s, '[]', '{}', %s, %s, 'completed')",
+            "cleaned_response, structured_responses, patient_id, questionnaire_id, revision, "
+            "status) VALUES (%s, now(), now(), false, '{}', '{}', %s, '[]', '{}', '{}', %s, "
+            "%s, 1, 'completed')",
             [
                 uuid.uuid4(),
                 self.patient.external_id,

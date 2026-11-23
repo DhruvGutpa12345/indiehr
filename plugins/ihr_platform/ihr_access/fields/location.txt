@@ -14,6 +14,8 @@ mode keep  # instance or kind
 inventory_usage keep  # whether it holds stock
 sort_index keep  # display order
 has_children keep  # tree shape
+has_sub_locations keep  # tree shape: whether a child is a kind (ward, room); no occupant (P2-T0a)
+has_beds keep  # tree shape: whether a child is a bed (instance); no occupant (P2-T0a)
 parent location  # the parent location, projected the same way (CARE caches its body for 15 days)
 tags keep  # location tags (design-b.md §5.2: every field but the occupant)
 tags.* keep  # a tag card

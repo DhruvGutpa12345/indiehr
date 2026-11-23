@@ -106,19 +106,19 @@ class OpeningAPatient(SwapCase):
                 },
             ),
             ("delete_user", {"user": str(w.users["Doctor"].external_id)}),
-            ("set_instance_tags", {"tags": [str(tag.external_id)]}),
-            ("remove_instance_tags", {"tags": [str(tag.external_id)]}),
+            ("set_instance_tags", {"tags": [{"tag": str(tag.external_id)}]}),
+            ("remove_instance_tags", {"tags": [{"tag": str(tag.external_id)}]}),
             (
                 "set_facility_tags",
                 {
-                    "tags": [str(w.tags["patient_facility"].external_id)],
+                    "tags": [{"tag": str(w.tags["patient_facility"].external_id)}],
                     "facility": str(w.facility.external_id),
                 },
             ),
             (
                 "remove_facility_tags",
                 {
-                    "tags": [str(w.tags["patient_facility"].external_id)],
+                    "tags": [{"tag": str(w.tags["patient_facility"].external_id)}],
                     "facility": str(w.facility.external_id),
                 },
             ),
@@ -826,7 +826,8 @@ class WritesDecideBeforeTheBody(SwapCase):
         tagged = self.create(
             "Receptionist",
             self.new_patient(
-                name="Devika Tagged", tags=[str(w.tags["patient_instance"].external_id)]
+                name="Devika Tagged",
+                tags=[{"tag": str(w.tags["patient_instance"].external_id)}],
             ),
         )
         self.assertEqual(tagged.status_code, 403, tagged.content[:300])

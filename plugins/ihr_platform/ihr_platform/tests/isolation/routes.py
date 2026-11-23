@@ -36,6 +36,7 @@ PARAM_MODELS = {
     "token_queue_external_id": "emr.tokenqueue",
     "thread_external_id": "emr.notethread",
     "resource_external_id": "emr.resourcerequest",
+    "referral_external_id": "emr.referral",  # CARE 3.1 (P2-T0a)
 }
 # Parameters whose values are the same in every tenant (fixtures), so they can't carry a
 # cross-tenant id: the cross-tenant probe ignores routes that use them. Converter routes

@@ -5,11 +5,17 @@
   ],
   "clinical": [
     "can_read_encounter_clinical_data",
+    "can_read_immunization",
+    "can_read_immunization_recommendation",
+    "can_read_medication_return",
     "can_submit_encounter_questionnaire",
     "can_submit_patient_questionnaire",
     "can_view_clinical_data",
     "can_view_questionnaire_responses",
     "can_write_encounter_clinical_data",
+    "can_write_immunization",
+    "can_write_immunization_recommendation",
+    "can_write_medication_return",
     "is_pharmacist",
     "read_medication_dispense",
     "write_medication_dispense"

@@ -63,8 +63,9 @@ jobs:
               - 'scripts/*batch-allowlist.py'
               - 'scripts/*check-ihr-frontend.py'
               - '.github/workflows/apps.yml'
-            # Mutation runs cost one full-stack job per row (35 today: scripts/isolation-mutation.sh
-            # list), so they run only when an isolation control or its tests change
+            # Mutation runs cost one full-stack job per row (253 on 24-11-2026; GitHub allows 256
+            # jobs per matrix: `scripts/isolation-mutation.sh list | wc -l`), so they run only
+            # when an isolation control or its tests change
             isolation:
               - 'plugins/ihr_platform/**'
               - 'scripts/isolation-mutation.sh'

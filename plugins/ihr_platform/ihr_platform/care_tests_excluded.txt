@@ -7,6 +7,18 @@ care.emr.tests.test_totp
 care.emr.tests.test_reset_password_api
 care.emr.tests.test_otp_reset_password_api
 care.users.tests.test_change_password
+# CARE 3.1 (P2-T0a, data review F4), the same families: the admin's TOTP sign-in (ADMIN_URL, blocked),
+# sign-in lock-out (api/v1/mfa, password_reset, otp/password_reset) and token revocation on password
+# changes (api/v1/auth/login, auth/token/refresh, password_change), all 404 on hospital addresses.
+care.users.tests.test_admin_mfa
+care.users.tests.test_auth_lock
+care.users.tests.test_token_revocation
+# CARE's anonymous Prometheus /metrics/ is off on hospital addresses (P2-T0a, access review F1): no
+# route named "metrics" exists (settings/tenancy.py, secure.py, blocked.py). Collector registration
+# (care.utils.tests.test_metric_registration) needs no route and still runs.
+care.emr.tests.test_metrics
+care.utils.tests.test_metrics
+care.utils.tests.test_metrics_cache
 # Single CARE tests that create staff with a password set by an admin (P1-T5e1: staff always
 # choose their own from the invitation e-mail; ihr_identity/invitations.py refuses a password).
 # Creating staff, its validation and permissions are covered by ihr_identity's invitation tests.

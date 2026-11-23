@@ -38,6 +38,9 @@ BLOCKED_PREFIXES = [
     r"^api/v1/users\.[^/]+/?$",
     # CARE's bulk "upsert" creates users too, outside the invitation (review of P1-T5e1)
     rf"^api/v1/users/upsert{END}",
+    # CARE's anonymous Prometheus metrics (P2-T0a): switched off by the settings, blocked here
+    # too in case a setting ever turns it back on
+    rf"^metrics{END}",
 ]
 
 

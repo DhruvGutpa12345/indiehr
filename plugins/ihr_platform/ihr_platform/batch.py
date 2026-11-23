@@ -189,7 +189,10 @@ class IhrBatchRequestView(BatchRequestView):
         return self._run(requests, wsgi_requests)
 
     def _run(self, requests, wsgi_requests):
-        # CARE's BatchRequestView.create from here on, run on the checked request objects
+        # CARE's BatchRequestView.create from here on, run on the checked request objects.
+        # execute_serially is a generator (CARE 3.1): each sub-request runs as the loop reaches
+        # it, inside this transaction, and none after the first 5xx; get_response rolls a
+        # sub-request's own savepoint back when it answers 300 or more
         errored = False
         loop = 0
         try:

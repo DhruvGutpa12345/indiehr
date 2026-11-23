@@ -119,6 +119,18 @@ CLINICAL_SLUGS = frozenset(
         "is_pharmacist",
         "read_medication_dispense",
         "write_medication_dispense",
+        # CARE 3.1 (P2-T0a): a patient's vaccinations and recommendations, and medication
+        # returns (which patient returned what). Every CARE role holding them already held a
+        # clinical slug, so they make no one clinical who was not. Referrals are not here
+        # (owner, Q-K163): CARE's role-organisation Member and Manager hold them, and a
+        # restricted person who is also a Member must stay restricted; referral routes and
+        # checks are closed to restricted users instead (ihr_access/referrals.py).
+        "can_read_immunization",
+        "can_write_immunization",
+        "can_read_immunization_recommendation",
+        "can_write_immunization_recommendation",
+        "can_read_medication_return",
+        "can_write_medication_return",
     }
 )
 # CARE slugs that open a patient or an encounter, or write one (and through

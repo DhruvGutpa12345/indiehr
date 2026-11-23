@@ -293,20 +293,37 @@ def free_slug(item):
 # --- reading the hospital's rows ----------------------------------------------------------
 
 
+def _live_forms():
+    """The forms the pack writes and reads: never CARE 3.1's archive copies of an earlier
+    revision, which share the live form's slug (``latest_revision`` names it, P2-T0a F3), and
+    only the hospital-wide ones, as value sets are (a form moved to one facility, an
+    organisation or a user is no longer the pack's, review P2-T0a D4)."""
+    form = _models()["form"]
+    return form._base_manager.filter(  # noqa: SLF001
+        latest_revision__isnull=True,
+        auth_context="instance",
+        facility__isnull=True,
+        facility_organization__isnull=True,
+    )
+
+
 def rows(keys, *, lock=False, targets=None):
     """{key: row}: only the row a record names (``targets``: {key: the record's target}),
-    soft-deleted ones included. A key without a recorded target has no row here: a row the
-    pack never wrote is never adopted (item 3)."""
+    soft-deleted ones included, archive copies never. A key without a recorded target has no
+    row here: a row the pack never wrote is never adopted (item 3). A live row is preferred
+    to a deleted one of the same slug, then the oldest (the pick never depends on order)."""
     targets = {k: t for k, t in (targets or {}).items() if k in set(keys) and t}
     if not targets:
         return {}
-    form = _models()["form"]
-    found = form._base_manager.filter(slug__in=list(targets.values()))  # noqa: SLF001
+    found = _live_forms().filter(slug__in=list(targets.values()))
+    found = found.order_by("slug", "deleted", "pk")
     if lock:
         # FOR NO KEY UPDATE: the answers' foreign keys only take FOR KEY SHARE; an answer
         # being inserted (FOR SHARE, the guard) waits for this transaction, as it must
         found = found.select_for_update(no_key=True)
-    by_slug = {row.slug: row for row in found}
+    by_slug = {}
+    for row in found:
+        by_slug.setdefault(row.slug, row)
     return {k: by_slug[t] for k, t in targets.items() if t in by_slug}
 
 
@@ -317,9 +334,10 @@ def all_present(keys, targets=None):
     targets = targets or {}
     if any(not targets.get(k) for k in keys):
         return False
-    form = _models()["form"]
     wanted = {targets[k] for k in keys}
-    present = form._base_manager.filter(slug__in=list(wanted)).count()  # noqa: SLF001
+    present = (
+        _live_forms().filter(slug__in=list(wanted)).values("slug").distinct().count()
+    )
     return present == len(wanted)
 
 
@@ -479,10 +497,28 @@ def _new_row(item):
         status=item["status"],
         styling_metadata=item["styling_metadata"],
         questions=item["questions"],
+        # a hospital-wide form, with the hash CARE 3.1 keeps of its questions: CARE's own
+        # update compares it to tell a revision from a status edit (P2-T0a F3)
+        auth_context="instance",
+        questions_hash=questions_hash(item["questions"]),
     )
     with _PackWrite():
         row.save()
     return row
+
+
+def questions_hash(questions):
+    """What CARE 3.1 stores in ``questions_hash`` (QuestionnaireCreateSpec and emr migration
+    0084): the sha256 of the questions' JSON with sorted keys."""
+    text = json.dumps(questions, sort_keys=True).encode("utf-8")
+    return hashlib.sha256(text).hexdigest()
+
+
+def _sync_caches(row):
+    """CARE 3.1 no longer fills a form's link caches when a link is saved: its views call
+    these after writing links, and so do we (organisation and facility-organisation)."""
+    row.sync_org_cache()
+    row.sync_facility_org_cache()
 
 
 def create(item):
@@ -497,6 +533,7 @@ def create(item):
     for organisation in organisations:
         org_link(questionnaire=row, organization=organisation).save()
         linked += 1
+    _sync_caches(row)
     row.ihr_change = {
         "target": row.slug,
         "links": "linked-to-hospital",
@@ -535,6 +572,7 @@ def write(row, item, *, restore=False):
         for link in model.objects.filter(questionnaire=row).order_by("id"):
             model(questionnaire=new, organization_id=link.organization_id).save()
             copied += 1
+    _sync_caches(new)
     left = stranded(row)
     retire(row)
     new.ihr_change = {

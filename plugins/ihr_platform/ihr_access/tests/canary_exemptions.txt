@@ -102,8 +102,9 @@ rad result-ward /api/v1/patient/{patient_external_id}/*?encounter=encounter_b  n
 rad answer /api/v1/patient/{patient_external_id}/*?encounter=encounter_b  never  # questionnaire answers
 rad note-thread /api/v1/patient/{patient_external_id}/*?encounter=encounter_b  never  # notes
 rad note-message /api/v1/patient/{patient_external_id}/*?encounter=encounter_b  never  # their messages
-rad result-ward POST*analyse-cross  never  # observation/analyse naming that visit
-rad result-lab POST*analyse-cross  never  # the lab copy's results there
+# (P2-T0a: the two analyse-cross negative rows are gone: CARE's observation/analyse now filters
+# by the visit named, so no care role sees a result there either; the Radiologist's 403 is
+# post_reads.txt's analyse-cross row, and visits.py's check is ihr_access.tests.test_visits)
 
 # --- the bed the Cashier and TPA Desk bill for (Q-K37a B, owner 2026-11-15) -------------------
 billing bed /api/v1/encounter/*  allow  # the visit's bed and bed stays (id and name only, no ward), for room rent (fields/encounter_billing.txt)
@@ -158,6 +159,8 @@ mrdg request-xray *  allow  # the granted patient's imaging request (the grant a
 mrdg result-lab *  allow  # the granted patient's lab results
 mrdg result-ward *  allow  # the granted patient's ward results
 mrdg result-xray *  allow  # the granted patient's imaging results
+mrdg procedure *  allow  # the granted patient's procedures (P2-T0a: CARE's can_view_clinical_data through the hidden role)
+mrdg procedure-code *  allow  # their coded names
 mrdg schedule *  allow  # the granted patient's booked doctor (the visit's appointment)
 mrdg specimen-lab *  allow  # the granted patient's lab specimen (the grant authorizer)
 mrdg specimen-ward *  allow  # the granted patient's ward specimen (the grant authorizer)
@@ -172,3 +175,7 @@ mrdg rad-request *  never  # nor the Radiology patient's request (P1-T11b4 revie
 mrdg rad-specimen *  never  # nor its specimen
 mrdg rad-report *  never  # nor its report
 mrdg rad-prescription *  never  # nor its prescription
+
+# --- CARE 2026-11 (P2-T0a) ---------------------------------------------------------------------
+mrd procedure /api/v1/patient/{patient_external_id}/procedure/*  never  # MRD without a grant: no procedure
+mrd procedure-code /api/v1/patient/{patient_external_id}/procedure/*  never  # nor its coded name

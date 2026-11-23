@@ -47,6 +47,11 @@ TEST_RUNNER = "ihr_platform.test_runner.TenantTestRunner"
 # (index 15) so it never touches the running app's keys.
 _test_redis = urlsplit(REDIS_URL)._replace(path="/15", query="")  # noqa: F405
 CACHES["default"]["LOCATION"] = _test_redis.geturl()  # noqa: F405
+# Keys in a server's shape, "<schema>::<version>:<key>" (base.py sets no KEY_PREFIX): CARE's
+# test settings give each run a "care-tests:<uuid>" prefix (for parallel runs sharing one Redis;
+# ours have their own database and a lock), which would move every key off the shapes the
+# runner's Redis audit reviews, e.g. the operator console's "public::1:ihr:ops:" (P2-T0a)
+CACHES["default"]["KEY_PREFIX"] = ""  # noqa: F405
 
 # The terminology loader's test and bench exemptions (folders, no sha256, the synthetic release)
 # apply only where a setting says so, and only to test_*/bench_* databases (P1-T10a2)

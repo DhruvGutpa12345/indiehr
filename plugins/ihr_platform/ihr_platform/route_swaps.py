@@ -80,6 +80,10 @@ SWAPS = {
     "care.emr.api.viewsets.scheduling.availability.SlotViewSet": (
         "ihr_access.views.IhrSlotViewSet"
     ),
+    # CARE 3.1: a value set's recent views only for one this person can open here (P2-T0a)
+    "care.emr.api.viewsets.valueset.ValueSetViewSet": (
+        "ihr_platform.valueset_views.IhrValueSetViewSet"
+    ),
 }
 # {CARE's class: ours}, filled as CARE registers them
 swapped = {}

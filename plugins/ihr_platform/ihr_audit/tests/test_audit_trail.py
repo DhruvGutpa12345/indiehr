@@ -182,6 +182,49 @@ class WriteTests(AuditCase):
         patient.save()  # modified_date moves, nothing else
         self.assertEqual(entries_since(since, tbl="emr_patient"), [])
 
+    def test_a_users_role_organisation_caches_are_not_recorded(self):
+        """CARE rewrites cached_role_orgs and role_org_ids (users 0028, P2-T0a review F6) on
+        every role-organisation membership save; the membership rows themselves are audited."""
+        since = mark()
+        self.admin.role_org_ids = [1, 2]
+        self.admin.cached_role_orgs = [{"x": 1}]
+        self.admin.save(update_fields=["role_org_ids", "cached_role_orgs"])
+        self.assertEqual(
+            [
+                r
+                for r in entries_since(since, tbl="users_user")
+                if r["row_pk"] == str(self.admin.pk)
+            ],
+            [],
+        )
+
+    def test_a_locations_parent_cache_is_not_recorded(self):
+        """CARE copies a location's parent chain into it on read (get_parent_json), and emr
+        0084 empties that cache on every location, so the first listing after the release
+        refills it; without the OMIT entry each refill is recorded as a change by the reader
+        (P2-T0a review TPA-2). The parents' own rows are audited."""
+        from care.emr.models.location import FacilityLocation
+
+        facility = baker.make(Facility, created_by=self.admin)
+        ward = baker.make(FacilityLocation, facility=facility)
+        location = baker.make(FacilityLocation, facility=facility, parent=ward)
+        since = mark()
+        location.get_parent_json()  # the read path: fills the empty cache and saves it
+        self.assertTrue(location.cached_parent_json)
+
+        def mine():
+            return [
+                r
+                for r in entries_since(since, tbl="emr_facilitylocation")
+                if r["row_pk"] == str(location.pk)
+            ]
+
+        self.assertEqual(mine(), [])
+        # The table is audited: a real change is recorded.
+        location.name = "Ward renamed"
+        location.save(update_fields=["name"])
+        self.assertEqual([list(r["data"]) for r in mine()], [["name"]])
+
     def test_secrets_are_hidden_and_identifiers_masked(self):
         since = mark()
         user = baker.make(User, username=f"sec{time.time_ns()}"[:16])

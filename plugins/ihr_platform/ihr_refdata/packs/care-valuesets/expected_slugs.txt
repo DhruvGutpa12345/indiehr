@@ -27,10 +27,15 @@ system-nutrients
 system-observation
 system-practitioner-role-code
 system-prepare_patient_prior_specimen_code
+system-procedure-category
+system-procedure-code
+system-procedure-reason
+system-procedure-status-reason
 system-route
 system-specimen-condition-code
 system-specimen-processing-method-code
 system-specimen_collection_code
 system-specimen_type-code
 system-substance
+system-symptom-code
 system-ucum-units

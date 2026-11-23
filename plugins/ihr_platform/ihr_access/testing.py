@@ -508,6 +508,9 @@ class _MatrixWorld:
         self.records()
         self.people()
         self.packs()
+        self.procedures()
+        self.referrals()
+        self.actions()
 
     def places(self):
         w = self.w
@@ -1334,6 +1337,177 @@ class _MatrixWorld:
             pending_version=1,
             pending_sha256="0" * 64,
             changed_at=self.now,
+        )
+
+    def procedures(self):
+        """CARE 2026-11's clinical rows on the first patient's visit (P2-T0a): a procedure, an
+        immunisation and an immunisation recommendation, each with a marker."""
+        from care.emr.models.immunisation import (
+            Immunization,
+            ImmunizationRecommendation,
+        )
+        from care.emr.models.procedure import Procedure
+
+        w = self.w
+        common = {"patient": w.patient, "encounter": w.encounter}
+        self.name(
+            "procedure",
+            self.make(
+                Procedure,
+                status="completed",
+                code={
+                    "system": "http://snomed.info/sct",
+                    "code": "80146002",
+                    "display": marker("procedure-code"),
+                },
+                recorded_date=self.now,
+                note=marker("procedure"),
+                **common,
+            ),
+        )
+        recommendation = self.name(
+            "immunization_recommendation",
+            self.make(
+                ImmunizationRecommendation,
+                forecast_status="due",
+                is_group=False,
+                description=marker("immunization-recommendation"),
+                **common,
+            ),
+        )
+        self.name(
+            "immunization",
+            self.make(
+                Immunization,
+                status="completed",
+                primary_source=True,
+                occurrence=self.now,
+                code={
+                    "system": "http://hl7.org/fhir/sid/cvx",
+                    "code": "08",
+                    "display": "Hepatitis B",
+                },
+                note=marker("immunization"),
+                recommendation=recommendation,
+                facility=w.facility,
+                **common,
+            ),
+        )
+
+    def referrals(self):
+        """A referral of the first patient's visit to the hospital's physiotherapy desk (P2-T0a),
+        assigned to every person of the matrix: CARE lists a referral to its assignees with no
+        permission check (``referral_assigned``), and each row names the patient and the
+        referral's clinical note (ihr_access/referrals.py). It carries an attached request, a
+        form answer and a note thread."""
+        from care.emr.models.notes import NoteMessage, NoteThread
+        from care.emr.models.referral import (
+            Referral,
+            ReferralAvailability,
+            ReferralQuestionnaireResponse,
+            ReferralResource,
+        )
+
+        w = self.w
+        availability = self.name(
+            "referral_availability",
+            self.make(
+                ReferralAvailability,
+                entity_type="facility",
+                facility=w.facility,
+                status="active",
+                name="Physiotherapy desk",
+                referral_type="consultation",
+            ),
+        )
+        role = {
+            "system": "http://snomed.info/sct",
+            "code": "36682004",
+            "display": "Physiotherapist",
+        }
+        people = sorted({u.pk for u in w.users.values()})
+        thread = self.make(
+            NoteThread,
+            title="Referral talk",
+            thread_type="referral",
+            patient=w.patient,
+            encounter=w.encounter,
+        )
+        self.name(
+            "referral_note",
+            self.make(NoteMessage, thread=thread, message=marker("referral-message")),
+        )
+        referral = self.name(
+            "referral",
+            self.make(
+                Referral,
+                availability=availability,
+                patient=w.patient,
+                encounter=w.encounter,
+                title=f"Knee rehabilitation {marker('referral-title')}",
+                note=marker("referral-note"),
+                assignees=[{"user_id": pk, "role": role} for pk in people],
+                thread=thread,
+            ),
+        )
+        self.name(
+            "referral_resource",
+            self.make(
+                ReferralResource,
+                referral=referral,
+                resource_type="service_request",
+                resource_id=self.objects["service_request"].external_id,
+            ),
+        )
+        self.name(
+            "referral_questionnaire_response",
+            self.make(
+                ReferralQuestionnaireResponse,
+                referral=referral,
+                questionnaire=self.objects["questionnaire"],
+                questionnaire_response={
+                    "responses": [
+                        {
+                            "question_id": "q1",
+                            "values": [{"value": marker("referral-answer")}],
+                        }
+                    ]
+                },
+            ),
+        )
+
+    def actions(self):
+        """One performable APPOINTMENT action for the whole hospital (P2-T0a, review F2): a
+        booking's ``execute_action`` and a slot's ``create_appointment`` run it. Its message is
+        an expression that evaluates to the canary, so the definition (which every signed-in
+        person may read) holds no marker and only a run's output does."""
+        from care.emr.models.action import Action
+
+        head, tail = CANARY[:5], CANARY[5:]
+        self.w.extra["action_output"] = f"{CANARY}-action-output"
+        self.name(
+            "action",
+            self.make(
+                Action,
+                name="Front desk greeting",
+                description="Shown when an appointment is booked",
+                action_context="APPOINTMENT",
+                performable=True,
+                actions=[
+                    {
+                        "condition": "True",
+                        "instructions": [
+                            {
+                                "slug": "show_message",
+                                "context": "self",
+                                "params": {
+                                    "message": f"{{{{'{head}' + '{tail}-action-output'}}}}"
+                                },
+                            }
+                        ],
+                    }
+                ],
+            ),
         )
 
     def people(self):

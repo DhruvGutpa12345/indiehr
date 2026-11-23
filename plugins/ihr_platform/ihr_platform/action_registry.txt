@@ -1,0 +1,29 @@
+# CARE action engine pieces reviewed for hospital addresses (P2-T0a, review F3; ihr_platform/actions.py).
+# One line per registered instruction or context field: "<key> | <reason>". Check ihr_platform.E028
+# refuses to start while a registered piece is missing here, a line names one no longer registered,
+# or a removed piece (the "logging" instruction, the TestContext1 field) is back.
+# Before adding a line: read what the instruction writes or returns, and what the field reads, and
+# whether our restricted roles can reach it (the action engine runs as the submitting user).
+#
+# Instructions
+instruction set_encounter_priority | writes Encounter.priority from a stored action; authorize() checks only the value; runs only in encounter or questionnaire contexts the submitter already writes (booking contexts have no encounter)
+instruction show_message | returns its message to the submitter only; nothing is written or logged
+instruction tag_encounter | applies a tag to the visit; CARE re-checks can_apply_tag_config for the acting user at apply time (tagging/base.py)
+instruction tag_patient | applies a tag to the patient; CARE re-checks can_apply_tag_config for the acting user at apply time (tagging/base.py)
+#
+# Static fields (values read from the context object for conditions and params)
+field Appointment.patient | link from a booking to its patient context; no value of its own
+field Encounter.encounter_class | the visit's class; read only by actions the visit's users run
+field Encounter.priority | the visit's priority; read only by actions the visit's users run
+field Encounter.status | the visit's status; read only by actions the visit's users run
+field EncounterQuestionnaire.encounter | link from a visit form to its visit context; no value of its own
+field EncounterQuestionnaire.patient | link from a visit form to its patient context; no value of its own
+field Patient.age | patient demographic; read by actions of forms the submitter may already write for this patient
+field Patient.blood_group | patient clinical field; read by actions of forms the submitter may already write for this patient
+field Patient.date_of_birth | patient demographic; read by actions of forms the submitter may already write for this patient
+field Patient.deceased | patient status; read by actions of forms the submitter may already write for this patient
+field Patient.gender | patient demographic; read by actions of forms the submitter may already write for this patient
+field Patient.name | patient identifier; read by actions of forms the submitter may already write for this patient
+field Patient.phone_number | patient identifier; read by actions of forms the submitter may already write for this patient
+field Patient.year_of_birth | patient demographic; read by actions of forms the submitter may already write for this patient
+field PatientQuestionnaire.patient | link from a patient form to its patient context; no value of its own

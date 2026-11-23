@@ -23,6 +23,7 @@ from ihr_identity import testing
 from ihr_platform.models import Hospital
 from ihr_platform.test_runner import TEST_SCHEMA
 from ihr_platform.testing import as_owner, owner_for_test
+from ihr_refdata import valuesets
 
 from ihr_terminology import client, ecl, engine, loader, ucum
 from ihr_terminology.models import CodeSystemVersion, Concept, Designation
@@ -178,6 +179,38 @@ class Units(SimpleTestCase):
         ):
             with self.subTest(bad=bad), self.assertRaises(ecl.EclError):
                 ecl.parse(bad)
+
+    def test_ecl_minus(self):
+        """CARE 3.1's system-symptom-code says "< 404684003 MINUS << 64572001" (P2-T0a):
+        one focus minus one focus, which can only narrow the set."""
+        self.assertEqual(
+            ecl.parse_expression("< 404684003 MINUS << 64572001"),
+            (("<", "404684003"), ("<<", "64572001")),
+        )
+        self.assertEqual(
+            ecl.parse_expression("<< 763158003 |Medicinal product|"),
+            (("<<", "763158003"), None),
+        )
+        for bad in (
+            "MINUS 123456",
+            "<< 123456 MINUS",
+            "<< 123456 MINUS << 234567 MINUS << 345678",
+            "(<< 123456) MINUS << 234567",
+            "<< 123456 minus << 234567",
+            "<< 123456 MINUS *",
+            "* MINUS << 234567",
+            "<< 123456 OR << 234567",
+            "<< 123456 MINUS << 234567 : 1 = 2",
+        ):
+            with self.subTest(bad=bad), self.assertRaises(ecl.EclError):
+                ecl.parse_expression(bad)
+
+    def test_every_care_system_value_set_is_within_the_rules(self):
+        """A system value set CARE ships whose compose our in-process terminology refuses
+        would answer nothing for every field bound to it (P2-T0a: system-symptom-code)."""
+        for item in valuesets.care_registry():
+            with self.subTest(item["slug"]):
+                engine.parse_compose(item["compose"])
 
     def test_ucum_syntax(self):
         atoms = {"mg", "kg", "d", "min", "m2", "L", "mL", "%", "[iU]"}
@@ -400,6 +433,23 @@ class Engine(TestCase):
         self.assertEqual(
             codes({"property": "constraint", "op": "=", "value": "*"}, system=NUM),
             ["100000", "100001", "100002"],
+        )
+        minus = {"property": "constraint", "op": "="}
+        self.assertEqual(
+            codes({**minus, "value": "<< 100000 MINUS << 100002"}, system=NUM),
+            ["100000", "100001"],
+        )
+        self.assertEqual(
+            codes({**minus, "value": "< 100000 MINUS << 100001"}, system=NUM), []
+        )
+        self.assertEqual(
+            codes({**minus, "value": "<< 100000 MINUS 100001"}, system=NUM),
+            ["100000", "100002"],
+        )
+        # a focus not loaded takes nothing away
+        self.assertEqual(
+            codes({**minus, "value": "< 100000 MINUS << 999999"}, system=NUM),
+            ["100001", "100002"],
         )
 
     def test_excludes(self):
@@ -941,7 +991,7 @@ class Api(TestCase):
     @classmethod
     def setUpTestData(cls):
         load(TEST_CS)
-        ValueSet.objects.create(
+        cls.valueset = ValueSet.objects.create(
             slug="ihr-api-vs",
             name="Test",
             status="active",
@@ -957,20 +1007,22 @@ class Api(TestCase):
             hospital = Hospital.objects.get(schema_name=TEST_SCHEMA)
         with testing.fake_keycloak():
             c = testing.staff_client(hospital, "testserver", self.user)
+            # CARE 3.1 finds a value set by its external id; by slug only through
+            # expand_slug (the hospital-wide set, or a facility's own: get_closest_valueset)
+            url = f"/api/v1/valueset/{self.valueset.external_id}"
             expand = c.post(
-                "/api/v1/valueset/ihr-api-vs/expand/",
-                {"search": "alpha", "count": 5},
+                f"{url}/expand/", {"search": "alpha", "count": 5}, format="json"
+            )
+            by_slug = c.post(
+                "/api/v1/valueset/expand_slug/",
+                {"slug": "ihr-api-vs", "search": "alpha", "count": 5},
                 format="json",
             )
             good = c.post(
-                "/api/v1/valueset/ihr-api-vs/validate_code/",
-                {"system": TEST, "code": "A1"},
-                format="json",
+                f"{url}/validate_code/", {"system": TEST, "code": "A1"}, format="json"
             )
             bad = c.post(
-                "/api/v1/valueset/ihr-api-vs/validate_code/",
-                {"system": TEST, "code": "ZZ"},
-                format="json",
+                f"{url}/validate_code/", {"system": TEST, "code": "ZZ"}, format="json"
             )
             found = c.post(
                 "/api/v1/valueset/lookup_code/",
@@ -984,6 +1036,8 @@ class Api(TestCase):
             )
         self.assertEqual(expand.status_code, 200, expand.content[:300])
         self.assertEqual([r["code"] for r in expand.json()["results"]][:2], ["A", "A1"])
+        self.assertEqual(by_slug.status_code, 200, by_slug.content[:300])
+        self.assertEqual(by_slug.json()["results"], expand.json()["results"])
         self.assertEqual(
             (good.json(), bad.json()), ({"result": True}, {"result": False})
         )
@@ -1007,6 +1061,7 @@ class Api(TestCase):
             "description": "",
             "status": "active",
             "compose": compose,
+            "disable_composition": False,  # required by CARE 3.1's ValueSetSpec
         }
         with testing.fake_keycloak():
             c = testing.staff_client(hospital, "testserver", self.user)

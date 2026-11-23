@@ -110,6 +110,7 @@ class _Seeder:
 
     def run(self):
         self.clinical()
+        self.care31()
         self.files()
         self.operations()
         self.public_doctor()
@@ -349,6 +350,153 @@ class _Seeder:
             f"/api/v1/patient/{patient}/thread/{thread.external_id}/note/"
             f"{message.external_id}/",
             canary="message",
+        )
+
+    # --- CARE 3.1 (P2-T0a): immunisations, procedures, referrals, facility forms, workspaces --
+
+    def care31(self):
+        from care.emr.models.action import Action
+        from care.emr.models.facility_resource import (
+            FacilityResourceObservation,
+            FacilityResourceQuestionnaireResponse,
+        )
+        from care.emr.models.immunisation import (
+            Immunization,
+            ImmunizationPolicy,
+            ImmunizationRecommendation,
+        )
+        from care.emr.models.notes import NoteMessage, NoteThread
+        from care.emr.models.procedure import Procedure
+        from care.emr.models.questionnaire import Questionnaire
+        from care.emr.models.referral import (
+            Referral,
+            ReferralAvailability,
+            ReferralAvailabilityQuestionnaire,
+            ReferralQuestionnaireResponse,
+            ReferralResource,
+        )
+        from care.emr.models.workspace import Workspace
+
+        f, p, e, canary = self.facility, self.patient, self.encounter, self.canary
+        patient = p.external_id
+        questionnaire = _first(Questionnaire)
+
+        # A patient's records: each detail checked to answer its owner with the canary
+        record = self.make(
+            Immunization,
+            status="completed",
+            code=MEDICATION,
+            primary_source=True,
+            occurrence=self.now,
+            note=canary,
+            encounter=e,
+            patient=p,
+            facility=f,
+        )
+        self.route(
+            f"/api/v1/patient/{patient}/immunization/record/{record.external_id}/",
+            canary="note",
+        )
+        recommendation = self.make(
+            ImmunizationRecommendation,
+            codes=[MEDICATION],
+            forecast_status="due",
+            is_group=False,
+            description=canary,
+            patient=p,
+            encounter=e,
+        )
+        self.route(
+            f"/api/v1/patient/{patient}/immunization/recommendation/"
+            f"{recommendation.external_id}/",
+            canary="description",
+        )
+        procedure = self.make(
+            Procedure,
+            status="completed",
+            code=MEDICATION,
+            note=canary,
+            patient=p,
+            encounter=e,
+        )
+        self.route(
+            f"/api/v1/patient/{patient}/procedure/{procedure.external_id}/",
+            canary="note",
+        )
+        availability = self.make(
+            ReferralAvailability,
+            entity_type="facility",
+            facility=f,
+            status="active",
+            name=f"{canary} referrals",
+            referral_type="consultation",
+        )
+        with _seeding(ReferralAvailabilityQuestionnaire):
+            ReferralAvailabilityQuestionnaire.objects.create(
+                availability=availability, questionnaire=questionnaire
+            )
+        thread = self.make(
+            NoteThread, title=f"{canary} referral", thread_type="referral", patient=p
+        )
+        referral = self.make(
+            Referral,
+            availability=availability,
+            patient=p,
+            encounter=e,
+            title=f"{canary} referral",
+            note=canary,
+            thread=thread,
+        )
+        self.route(f"/api/v1/referral/{referral.external_id}/", canary="title")
+        self.make(NoteMessage, thread=thread, message=canary)
+        self.make(
+            ReferralQuestionnaireResponse,
+            referral=referral,
+            questionnaire=questionnaire,
+            questionnaire_response={"note": canary},
+        )
+        self.make(
+            ReferralResource,
+            referral=referral,
+            resource_type="encounter",
+            resource_id=e.external_id,
+        )
+
+        # Configuration and forms about the facility itself (never a patient)
+        self.make(ImmunizationPolicy, name=f"{canary} policy", facility=f)
+        self.make(
+            Workspace,
+            facility=f,
+            auth_context="facility",
+            name=f"{canary} workspace",
+            status="active",
+        )
+        self.make(
+            Action,
+            name=f"{canary} action",
+            description=canary,
+            action_context="Appointment",
+            actions=[],
+            facility=f,
+            performable=False,
+        )
+        response = self.make(
+            FacilityResourceQuestionnaireResponse,
+            facility=f,
+            questionnaire=questionnaire,
+            subject_type="facility",
+            subject_id=f.external_id,
+        )
+        self.make(
+            FacilityResourceObservation,
+            facility=f,
+            status="final",
+            subject_type="facility",
+            subject_id=f.external_id,
+            value_type="string",
+            value={"value": canary},
+            note=canary,
+            questionnaire_response=response,
         )
 
     # --- files -----------------------------------------------------------------------------

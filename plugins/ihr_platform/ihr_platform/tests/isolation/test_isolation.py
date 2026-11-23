@@ -62,7 +62,7 @@ CONVERTER_ROUTES = (
     "api/ihr/packs/updates/<int:pk>/",  # the tenant's own waiting pack item (world.py)
 )
 # Detail routes of the rows extras.py seeds for the crawl (P1-T16b), per tenant.
-SEEDED_ROUTES = 31
+SEEDED_ROUTES = 35  # 31, and four CARE 3.1 patient records (P2-T0a)
 # Filled for nobody: POST-only (staff_urls.py), so the GET crawl never requests it.
 POST_ONLY_ROUTE = "api/ihr/staff/<str:username>/<slug:action>/"
 # Its value is this tenant's own audit entry of a Patient UPDATE (world.py, _collect_ids).

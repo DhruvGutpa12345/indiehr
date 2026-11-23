@@ -18,11 +18,13 @@ class IhrAccessConfig(AppConfig):
         from rest_framework.views import APIView
 
         from ihr_access import (
+            actions,
             authz,
             exceptions,
             guard,
             identifiers,
             records,
+            referrals,
             state,
             visits,
         )
@@ -38,6 +40,10 @@ class IhrAccessConfig(AppConfig):
         identifiers.install()
         # A visit named in the query must be the path patient's (P1-T11b3 review K1)
         visits.install()
+        # CARE's action engine runs nothing for our roles, and the referrals assigned to one
+        # of them are not listed (P2-T0a, review F2)
+        actions.install()
+        referrals.install()
         # A records grant opens its patient's requests, specimens, reports and prescriptions
         # (reads only), before CARE's controller builds its lazy map; and file links issued
         # under a grant live at most 5 minutes (P1-T11b4)

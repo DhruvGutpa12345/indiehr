@@ -18,8 +18,11 @@ from ihr_platform import batch, public_routes, route_swaps
 # fails here: read the new code, carry it into IhrBatchRequestView._run or the check, then
 # update the fingerprint (docs/UPSTREAM.md, after every sync).
 CARE_CREATE_SHA256 = "800e91c818447dd4f0aac3dc21d94101211b05f946c38ef76230acc6d04a952f"
+# Re-pinned for CARE 3.1 (P2-T0a): get_response rolls its own savepoint back on any answer of
+# 300 or more, and execute_serially (now pinned too) is a generator that _run consumes inside its
+# transaction, so it stops at the first 5xx as CARE's create does
 CARE_EXECUTOR_SHA256 = (
-    "74197a185371df32ca6062a2d9f905f2d0331e55d64df9f25b0dc24610096f5f"
+    "516d38ada974068bc60d254ba507774c655335b3f7096ae752eadca86d5062f2"
 )
 # CARE's three patient-OTP booking actions, whose bodies PublicOTPSlotViewSet repeats with its
 # own booking serialiser (public_routes.py, review S1). A change upstream fails here: carry it
@@ -261,6 +264,7 @@ class UpstreamDrift(SimpleTestCase):
                 care.get_wsgi_request_object,
                 care.construct_wsgi_from_data,
                 care.get_response,
+                care.execute_serially,
             )
         )
         self.assertEqual(hashlib.sha256(create).hexdigest(), CARE_CREATE_SHA256)
