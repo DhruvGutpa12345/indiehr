@@ -19,6 +19,7 @@ Run: python3 -m unittest scripts/test_staging_surface.py
 import json
 import os
 import re
+import shutil
 import stat
 import subprocess
 import sys
@@ -563,6 +564,12 @@ class DueStack(unittest.TestCase):
         d = stack.bin / "docker"
         d.write_text(DOCKER_DUE_STUB)
         d.chmod(d.stat().st_mode | stat.S_IEXEC)
+        # `due` asks `date +%s` for the time; pin it to the fixture's NOW, or the fixture goes stale
+        # (the key check is 10 minutes old at NOW) a few hours after NOW on the real clock.
+        real_date = shutil.which("date")
+        clock = stack.bin / "date"
+        clock.write_text(f'#!/bin/sh\nif [ "$*" = "+%s" ]; then echo {NOW}; else exec {real_date} "$@"; fi\n')
+        clock.chmod(clock.stat().st_mode | stat.S_IEXEC)
         return stack
 
     def run_due(self, stack, fixture, env=None):
