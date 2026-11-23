@@ -288,6 +288,8 @@ Task IDs are `P<phase>-T<n>`. Each task is sized for **one sitting (≈1–3 hou
 | P1-T28 | ADR-020 environments: pilot on staging or production; the no-real-data rule (PR1-2) | Owner decision | Opus / medium |
 | P1-T29 | ADR and docs sync after Phase 1 (PR1-6, PR1-7) | Docs reviewed | Sonnet / medium |
 | P1-T30 | Operator surface: subcommand freeze, `staging.sh due`, alert tiers (PR1-8) | Tests | Sonnet / high |
+| P1-T31 | Hospital switcher: a "Hospitals" user-menu item listing the person's hospitals, as an `ihr_*` frontend plugin (TENANCY §9, R1-05); unblocks P1-T1d's switcher spec | Playwright two-subdomain spec, tenancy review | Sonnet / high (Opus / high review) |
+| P1-T32 | No-real-data checks E1–E5 (ADR-020 §3): `IHR_ENVIRONMENT` required, proof stand-ins refused on production, deploy folder match, environment in dump manifests, synthetic banner | Tests, local proof | Sonnet / high (Opus / high review) |
 
 ### Phase 2 — MVP hospital workflows (sellable to a 10–100 bed hospital)
 
