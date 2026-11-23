@@ -1091,6 +1091,8 @@ class Instance(Base):
         why = D.marker_problem("missing", None, HERE)
         self.assertIn("scripts/staging.sh dumps-init --mark", why)
         self.assertNotIn("marked by scripts/staging.sh dumps-init (", why)
+        if not (ROOT / "scripts" / "staging.sh").exists():
+            self.skipTest("scripts/staging.sh is not here (the dumper image's run)")
         staging = (ROOT / "scripts" / "staging.sh").read_text()
         grep = staging.split("dumps_up() {", 1)[1].split("\n}\n", 1)[0]
         prefix = grep.split("grep -q '^", 1)[1].split("'", 1)[0]
