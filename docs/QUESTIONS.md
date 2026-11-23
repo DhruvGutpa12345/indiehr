@@ -36,7 +36,7 @@
 | Q-F4 | **The product owner reviews clinical content** | Clinical templates are sent to you for review |
 | Q-E6 / Q-D2 / Q-D3 | **Email alerts to you**; auditor shortlist and legal templates when those phases arrive | P1-T9, P3-T11, P4-T6 |
 | Q-S1 | **Yes:** minimal, logged edits to CARE's data model where tenancy needs them (2026-11-03) | P1-T0 may patch `User` links; each patch in UPSTREAM_PATCHES.md |
-| Q-S2 | **Yes:** customer discovery before Phase 2 (5–10 hospitals, aim for one pilot LOI) | New task P1-T14 |
+| Q-S2 | **Yes:** customer discovery before Phase 2 (5–10 hospitals, aim for one pilot LOI). **Changed by owner, 2026-11-23 (Q-K160):** Phase 2 starts now; P1-T14 stays open for later | New task P1-T14 |
 | Q-S3 | **No outage kit**; rely on the hospital's backup internet | Accepted risk (49% of buyers cite poor internet); revisit after pilots |
 | Q-S4 | **Stop** the non-IndieHR services on the dev PC (user runs the steps) | Instructions given 2026-11-03 |
 | Q-T0 | **Tenant = legal entity (GSTIN holder)**; one tenant may have several facilities/branches (2026-11-06, owner accepted defaults) | Hospital model represents the entity; ABDM routes and switcher point to a facility within a tenant |
@@ -1452,6 +1452,18 @@ PG 18's `log_connections` cannot be set per role.
 - **A ⭐ (taken).** The environment must match; a different suffix warns and is recorded in the restore report (disaster recovery to a new domain).
 - B. Refuse any suffix difference.
 - *Why:* a rebuilt production-1 on a new domain must restore its own dumps. *Reverse:* make the suffix strict in `Restore.precheck`.
+
+### Q-K160 — Start Phase 2 before customer discovery? (Phase 2 start; **owner, 2026-11-23**)
+
+- **Owner's answer:** "Start Phase 2. Keep the pending tasks for later." Phase 2 starts now, before P1-T14. This changes Q-S2.
+- The open Phase 1 rows stay on the board for later: P1-T14 (interviews and pilot LOI, also the DHIS re-check), P1-T26 (VM dress rehearsal), P1-T10b (terminology licences), P1-T22c2b (lost tails and package expiry) and the "(you)" go-live row. None of them is dropped. P1-T26 and the "(you)" row stay go-live gates (ADR-007, ADR-020).
+- *Risk taken:* Phase 2 modules are built before pilot hospitals confirm the MVP list (Q-B4 is still open). Interview answers may reorder or trim Phase 2 later.
+
+### Q-K161 — Upstream merge before P2-T1? (Phase 2 start; **owner, 2026-11-23**)
+
+- **A ⭐ (taken, owner).** Merge current upstream CARE first, as new task P2-T0, before P2-T1 (the Phase 1 closing review's PR1-9). At the check of 2026-11-23, upstream was ahead by 348 frontend commits (2,216 files) and 18 backend commits (302 files). 69 of our patched frontend files changed upstream, and some upstream commits are security fixes. Estimate: about 8–12 agent hours.
+- B. P2-T1 first on the current pin, merge later.
+- *Why:* every Phase 2 patch then lands on current CARE, and upstream's security fixes arrive now.
 
 **Still open:** Q-B4 (final MVP module list: assumed as in PLAN.md Phase 2) and Q-B6/B7 (pricing, timeline). Q-F2 is moot while AI is deferred.
 

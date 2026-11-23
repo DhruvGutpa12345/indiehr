@@ -11,8 +11,8 @@
 
 Detailed task definitions: [PLAN.md](PLAN.md) §6. Open questions: [QUESTIONS.md](QUESTIONS.md).
 
-**Current phase:** P1 Platform core: every Phase 1 build task is done (🟡) through P1-T32 (status 2026-11-23). The Phase 1 closing review (2026-11-22, `docs/reviews/phase-1-closing-review.md`) says **Phase 1 can close with conditions**: your confirmation of Q-K126…Q-K131 and of Q-F6…Q-F9, Q-O13, Q-O14 (all confirmed 2026-11-22); the unmet exit criteria (one-click staging URL, the 8 GB load test, P1-T10b, P1-T14, your click-throughs) named as go-live gates. Its findings are P1-T26…P1-T30. P1-T10b waits for your licences, P1-T14 for your interviews (Phase 2 waits for it), P1-T26 for a rented VM (your call 2026-11-22: later, before go-live), and the "(you)" compliance row for you.
-**Next task:** none that is not yours. Every remaining Phase 1 row is an owner gate: P1-T26 (paid VM), P1-T10b (licences) and P1-T14 (interviews); Phase 2 waits for P1-T14. The eleventh run (docs/runs/2026-11-23-run-to-P1-T32.md) built P1-T31 (hospital switcher, a–e) and P1-T32 (no-real-data checks E1–E5, a–e); both are 🟡 awaiting you. Decisions Q-K144…Q-K159 confirmed by you, 2026-11-23 (none reversed).
+**Current phase:** P2 MVP workflows, started 2026-11-23 on your instruction (Q-K160), with P2-T0 (upstream merge) first. Phase 1: every Phase 1 build task is done (🟡) through P1-T32 (status 2026-11-23). The Phase 1 closing review (2026-11-22, `docs/reviews/phase-1-closing-review.md`) says **Phase 1 can close with conditions**: your confirmation of Q-K126…Q-K131 and of Q-F6…Q-F9, Q-O13, Q-O14 (all confirmed 2026-11-22); the unmet exit criteria (one-click staging URL, the 8 GB load test, P1-T10b, P1-T14, your click-throughs) named as go-live gates. Its findings are P1-T26…P1-T30. P1-T10b waits for your licences, P1-T14 for your interviews (Phase 2 waits for it), P1-T26 for a rented VM (your call 2026-11-22: later, before go-live), and the "(you)" compliance row for you.
+**Next task:** P2-T0 upstream merge, then P2-T1 masters and rate cards. You started Phase 2 on 2026-11-23 (Q-K160), before P1-T14. The open Phase 1 rows stay for later: P1-T26 (paid VM), P1-T10b (licences), P1-T14 (interviews), P1-T22c2b and the "(you)" go-live row. The eleventh run (docs/runs/2026-11-23-run-to-P1-T32.md) built P1-T31 (hospital switcher, a–e) and P1-T32 (no-real-data checks E1–E5, a–e); both are 🟡 awaiting you. Decisions Q-K144…Q-K159 confirmed by you, 2026-11-23 (none reversed).
 
 **Next run (recommended by the eleventh run):** none to start yet. **When you rent the VM:** `/run-until P1-T26` (the VM proof, now also E3 on a real host: `bootstrap.sh --instance`, a `deploy.sh` that reads `INSTANCE`; about 1.5 equivalents, 4–6 agent hours, 1–3 decisions). **Why it stops there:** Phase 1 then closes and the phase review is due. **When P1-T14 is done:** the first Phase 2 run. **You first:** (Q-K144…Q-K159 confirmed 2026-11-23) the two click-throughs in the run file (the switcher; the synthetic-data bar); Hindi batch 8 (`docs/i18n/review/hi-batch-8.csv`). **Size rule:** the eleventh run ran about 135 % over its token estimate (both builds), so keep the same size with smaller subtasks.
 **Recommended model for next task:** Opus · high to orchestrate the P1-T26 VM proof (ops + security); Sonnet · high for its scripts, Opus · high review
@@ -313,6 +313,7 @@ Detailed task definitions: [PLAN.md](PLAN.md) §6. Open questions: [QUESTIONS.md
 
 ### P2 — MVP workflows
 
+- ⬜ P2-T0 Upstream merge to current CARE before P2-T1 (PR1-9; owner, 2026-11-23, Q-K161): 348 frontend + 18 backend commits, 69 patched files touched upstream
 - ⬜ P2-T1 Masters and rate cards
 - ⬜ P2-T2 Patient registration (UHID, MLC, masked Aadhaar)
 - ⬜ P2-T3 Appointments + OPD token queue

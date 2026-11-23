@@ -297,6 +297,7 @@ Task IDs are `P<phase>-T<n>`. Each task is sized for **one sitting (≈1–3 hou
 
 | ID | Task | Key India specifics | Effort |
 |---|---|---|---|
+| P2-T0 | Upstream merge before the first CARE-touching task (Phase 1 closing review PR1-9; owner, 2026-11-23, Q-K161): `scripts/sync-upstream.sh all` to current CARE, conflicts resolved by the runbook in docs/UPSTREAM.md, the after-sync checklist, `UPSTREAM_PATCHES.md` and the pins updated | No change to India behaviour; our patches and Hindi strings survive the merge | Opus / high |
 | P2-T1 | Masters: departments, doctors (NMC / state-council reg. no.), service and tariff master, rate cards (Cash / TPA / Corporate / PM-JAY / CGHS / ECHS), ward and bed types | Multiple rate cards per service | Opus / medium |
 | P2-T2 | Patient registration: UHID, demographics, Indian address, relation (S/o, W/o, D/o), ID type (no full Aadhaar number stored), MLC flag, unknown/emergency patient, photo, duplicate detection | Aadhaar must be masked; ABHA field ready | Opus / medium |
 | P2-T3 | Appointments + OPD token queue (**add priority categories — CARE's queue is first-come-first-served only, GAP §8 #1**): doctor schedules, slots, walk-in tokens, queue display screen, follow-up validity rules (e.g. free revisit in 7 days) | Token-display TV page | Opus / medium |
