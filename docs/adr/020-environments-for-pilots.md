@@ -280,5 +280,5 @@ downtime. So P9-T7 waits until L6 or L7 is reached.
     per-hospital DNS records or a front router.
   - Slugs must stay unique across cells: today they are checked only inside one database.
   - Moving a hospital between cells needs a new tool, because a dump cannot cross instances (§3).
-- **The follow-up task for E1 to E5** is P1-T32 (built; owner confirmation of Q-K150…Q-K159 and
-  the Hindi banner text is pending).
+- **The follow-up task for E1 to E5** is P1-T32 (built; Q-K150…Q-K159 confirmed by the owner,
+  2026-11-23; the Hindi banner text is pending).
