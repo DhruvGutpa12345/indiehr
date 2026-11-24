@@ -337,6 +337,11 @@ def on_request(user):
     current = state.current()
     if current is None or not state._signed_in(user) or not current.is_for(user):  # noqa: SLF001
         return
+    if getattr(getattr(user, "_state", None), "adding", False):
+        # An in-memory user never saved or read from the database (CARE's SimpleTestCase
+        # template previews) is no row: it holds no grant, whatever pk it was given
+        current.set_grants({})
+        return
     if getattr(connection, "schema_name", "public") == "public":
         return  # the platform's own hosts: no hospital, no grants
     now = timezone.now()

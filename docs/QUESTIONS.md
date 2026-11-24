@@ -1465,6 +1465,59 @@ PG 18's `log_connections` cannot be set per role.
 - B. P2-T1 first on the current pin, merge later.
 - *Why:* every Phase 2 patch then lands on current CARE, and upstream's security fixes arrive now.
 
+### Q-K162 — How far does P2-T0 go? (Phase 2 start; **owner, 2026-11-23**)
+
+- **A ⭐ (taken, owner).** All of it, in steps the owner approves one at a time. On 19–20 Nov CARE moved its web app from raviger to TanStack Router (release 3.1: #17178, #17186) and deleted `AppRouter.tsx`/`PublicRouter.tsx`. Our route gates, 11 `ihr` screens, `IhrRoutes.tsx` and `IhrStaffSignIn.tsx` import the old router, so the web app needs a port, not only a merge.
+  - **P2-T0a:** the backend merge (3 conflicts).
+  - **P2-T0b:** the web app up to the commit just before the router switch (`60736fa3d2cf`, 23 conflicts).
+  - **P2-T0c:** port our screens and gates to TanStack Router, then merge to the tip.
+  - About 20–30 agent hours, about 4–5 M tokens.
+- B. Stop before the router (P2-T0a + b), with the port later. C. Backend only.
+- *Why:* P2-T1's own screens would otherwise be built on a router upstream has removed.
+
+### Q-K163 — Do CARE 3.1's referral permissions count as clinical? (P2-T0a; **owner, 2026-11-23**)
+
+- **A ⭐ (taken, owner).** Non-clinical, and CARE's referral routes are closed to restricted staff (`ihr_access.branches.closed`), like the assigned-referral list. CARE 3.1 gives its role-organisation roles "Member" and "Manager" `can_create/read/write_referral`; counted as clinical, a Receptionist who is also a Member would stop being restricted (full patient records, a care-team row). Fails closed.
+- B. Clinical: such a person becomes a full clinical user.
+- *Why:* those roles held no clinical permission before the merge; a merge must not widen anyone's access.
+
+### Q-K164 — May CARE 3.1 revise an answered questionnaire in place? (P2-T0a; **owner, 2026-11-23**)
+
+- **A ⭐ (taken, owner).** No. The answered-form guard keeps refusing a change to a frozen column of a form with answers; staff make a new version. CARE's "edit questionnaire" therefore answers 400 on an answered form.
+- B. Allow the change when the same transaction inserts CARE's archive copy (old content, old `internal_revision`): a new guard version, a migration and a race review (about a day).
+- *Why:* nothing new to build or review; old answers keep their exact questions either way.
+
+### Q-K165 — Who narrows a pack form's links now that CARE 3.1 lets only a superuser? (P2-T0a; **owner, 2026-11-23**)
+
+- **A ⭐ (taken, owner).** Accept for now: a pack form v1 stays linked to every non-government top-level organisation (Q-K80, Q-K81). A later task adds a links setting to our own pack admin API and page (`IsHospitalAdmin`), TRACKER row P2-T0d.
+- B. Build that setting inside P2-T0a.
+- *Why:* our staff are never superusers (`IHR_STAFF_REFUSE_SUPERUSERS`), so CARE's own route answers 403; the merge step stays a merge.
+
+### Q-K166 — pycountry (LGPL-2.1) as a CARE 3.1 dependency (P2-T0a; **owner, 2026-11-23**)
+
+- **A ⭐ (taken, owner).** Accept pycountry 26.2.16, used unmodified as an imported library; our code stays proprietary.
+- *Why:* CARE 3.1 imports it; LGPL allows use as an unmodified library.
+
+### Q-K167 — One narrowing `MINUS` in terminology value-set rules (P2-T0a; **owner, 2026-11-23**)
+
+- **A ⭐ (taken, owner).** `ihr_terminology` accepts one `A MINUS B` that only narrows A, beyond P1-T10a1's single-focus rule, because CARE's new `system-symptom-code` is "clinical findings minus diseases". Without it every symptom field answers nothing.
+
+### Q-K168 — Report three CARE bugs upstream (P2-T0a; **owner, 2026-11-23**)
+
+- **A ⭐ (taken, owner).** The owner posts them on CARE's GitHub; Claude drafts the text in `docs/reviews/p2-t0a/upstream-bugs.md`: the test "logging" action instruction shipped and always authorised; `data/questionnaire_fixtures.json` lacks `auth_context`, so every demo form is dropped; value-set `recent_views` does not look up the value set.
+- **Note (Claude, 2026-11-24):** the second P2-T0a review found a fourth upstream bug (review D5: `InterpretationEvaluator` looks a value set up by slug with `.get()`, which fails once a facility copy of it exists). It is drafted as item 4 of `upstream-bugs.md`; post it only if you agree. Item 3 now also covers `clear_recent_views` and `favourites`.
+- **Note (Claude, 2026-11-24, CI triage):** item 5 is a fifth upstream bug (a PUT on a past form revision answers 400 instead of 403; CARE's own CI fails on it). It is patched here and drafted; post it only if you agree.
+
+### Q-K169 — An upstream migration that drops or retypes a column our triggers watch (P2-T0f; open, found by the P2-T0a CI triage, 2026-11-24)
+
+Our column-scoped triggers (`ihr_refdata/forms_guard.py` on the form and answer tables, `ihr_access/placement.py` on the three membership tables, `ihr_identity/directory.py` on `users_user`) make PostgreSQL refuse `DROP COLUMN` or `ALTER COLUMN TYPE` on a column they name. CARE's migration test hit this backwards (excluded: we never migrate a hospital backwards). Forwards, a future CARE migration that drops or retypes such a column would fail `ihr_fleet_run migrate` on every existing hospital. Fail-closed (the hospital is held), but a release would stop. CI cannot see it before the release.
+- **A ⭐** A `pre_migrate` step that, for the hospital being migrated, drops only our triggers naming a column that a `RemoveField`/`AlterField` in the plan touches. `post_migrate` re-creates them through the existing `ensure()` functions. In between, the forms guard and placement are already a per-hospital serving gate (`db_roles.gated_schemas`), so a failure stays closed. It needs a red-first test per trigger family (an `AlterField` on a guarded column migrates and the guard is whole afterwards).
+- **B** Column-free triggers (fire on every `UPDATE`, compare OLD/NEW inside the function). No column dependency, but every update pays for the function, and the guards need new fingerprints and migrations.
+- **C** The minimum: the after-sync checklist (`docs/UPSTREAM.md`) and a script check refuse an upstream sync whose migrations drop or alter a guarded column until it is handled by hand.
+
+Recommendation: A, with C's check as an early warning in `scripts/sync-upstream.sh`. Tracker row P2-T0f.
+- **Note:** the same triage found that django-tenants sends `SET search_path` before every statement (`TENANT_LIMIT_SET_CALLS` is off). Turning it on would save a round trip per query, but a stale cached path could send a query to the wrong hospital, so it needs its own tenancy review first. It is recorded in P2-T0f, not decided here.
+
 **Still open:** Q-B4 (final MVP module list: assumed as in PLAN.md Phase 2) and Q-B6/B7 (pricing, timeline). Q-F2 is moot while AI is deferred.
 
 ---

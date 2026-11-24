@@ -30,6 +30,7 @@ from model_bakery import baker
 
 from ihr_access.testing import CANARY
 from ihr_access.tests.base import SwapCase
+from ihr_access.views import PATIENT_LINK_REFUSED
 
 EVERY_RESTRICTED = tuple(sorted(RESTRICTED))
 
@@ -384,6 +385,9 @@ class PatientReturns(SwapCase):
             format="json",
         )
         self.assertEqual(made.status_code, 403, made.content[:300])
+        # Our refusal, not only CARE's: since CARE 3.1 CARE also answers 403 here, so the
+        # message proves the control ran (mutation access-delivery-create-patient, P2-T0a CI)
+        self.assertIn(PATIENT_LINK_REFUSED, made.content.decode())
         self.assertNotIn(w.patient.name, made.content.decode())
         self.assertFalse(
             DeliveryOrder.objects.filter(name="Return made by the store").exists()

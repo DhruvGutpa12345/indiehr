@@ -37,3 +37,53 @@ care.emr.tests.test_managing_organizations.UserCreationWithRoleOrgsTestCase.test
 care.emr.tests.test_managing_organizations.UserCreationWithRoleOrgsTestCase.test_create_user_with_role_orgs_as_superuser
 care.emr.tests.test_managing_organizations.UserCreationWithRoleOrgsTestCase.test_create_user_with_role_orgs_authorized_via_managing_org
 care.emr.tests.test_managing_organizations.UserCreationWithRoleOrgsTestCase.test_create_user_with_role_orgs_requires_permission
+care.emr.tests.test_user_profile_spec.UserProfileAPITestCase.test_create_and_retrieve_user_profile
+# (profile on create through the invitation path: ihr_identity.tests.test_invitations.InvitationTests.test_invited_staff_keep_their_profile)
+#
+# CARE 3.1 tests found by the tenant-mode CI run after P2-T0a (triage 24-11-2026). Each fails only
+# because of a deliberate difference listed here; the module's other tests still run.
+#
+# CARE's test cache puts the process id into every key (config/caches.py test_cache_key). Tenant mode
+# replaces KEY_FUNCTION on every cache with the tenant one, '<schema>:<prefix>:<version>:<key>'
+# (settings/tenancy.py, TENANCY_DESIGN §6), which the runner's Redis audit requires. Covered by the
+# isolation suite's cache and Redis tests (test_zz_redis_keyspace_is_tenant_prefixed and others).
+care.utils.tests.test_cache_isolation.CacheIsolationTests.test_worker_keys_use_current_process_after_fork
+# Object-storage keys carry t/<hospital uuid>/ (P1-T1b, care/emr/utils/file_manager.py object_key());
+# these tests assert the bare 'patient/<name>' key in their S3 mocks and differ in nothing else. The
+# cleanup task deletes with the same object_key(). Covered by the isolation test
+# test_file_object_keys_carry_the_tenant; CARE's upload and cleanup flow itself is tested only in the
+# plain "Backend" job (P2-T0a review L3).
+care.emr.tests.test_file_upload_api.FileUploadTestCase.test_upload_patient_file
+care.emr.tests.test_file_upload_api.FileUploadTestCase.test_direct_file_upload
+care.emr.tests.test_file_upload_api.FileUploadTestCase.test_cleanup_incomplete_file_uploads
+# Exact query counts: django-tenants issues "SET search_path" before each statement
+# (TENANT_LIMIT_SET_CALLS off) and the counters include it, so every count doubles (3 -> 6, 4 -> 8),
+# the same for 1 and 12 items; no query of ours is on these paths. The plain "Backend" job still runs
+# them. Our own query pins leave the SET out.
+care.emr.tests.test_charge_item_serialization_queries.ChargeItemSerializationQueriesTests.test_shared_invoice_is_loaded_once_without_its_snapshot
+care.emr.tests.test_charge_item_serialization_queries.ChargeItemSerializationQueriesTests.test_invoice_sync_queries_remain_bounded_and_preserve_snapshot_values
+care.emr.tests.test_charge_item_serialization_queries.ChargeItemSerializationQueriesTests.test_draft_invoice_serialization_queries_remain_bounded
+care.emr.tests.test_charge_item_serialization_queries.ChargeItemSerializationQueriesTests.test_charge_item_viewset_serialization_queries_remain_bounded
+care.emr.tests.test_questionnaire_report_context.QuestionnaireReportContextTests.test_current_revision_metadata_is_loaded_with_the_response_queryset
+# The assigned-referral list is empty for anyone none of whose roles grants can_read_referral
+# (Q-K163; ihr_access/referrals.py, branches.may_hold). These tests assign a user with no role and
+# expect CARE's rows. Our gate is covered by ihr_access.tests.test_actions.AssignedReferrals; CARE's
+# own checks in them (filters cannot widen the list, an assignment opens no detail or PATCH) run only
+# in the plain "Backend" job (P2-T0a review L2).
+care.emr.tests.test_referral_list_api.ReferralListAPITestCase.test_assigned_referral_list_uses_cached_membership_without_scope_permissions
+care.emr.tests.test_referral_list_api.ReferralListAPITestCase.test_assigned_referral_filters_and_pagination_cannot_widen_current_user_scope
+care.emr.tests.test_referral_list_api.ReferralListAPITestCase.test_assigned_referral_list_changes_after_cached_membership_is_removed
+care.emr.tests.test_referral_list_api.ReferralListAPITestCase.test_assignment_does_not_grant_other_referral_api_permissions
+# An answered form is never revised in place (Q-K164; ihr_refdata/forms_guard.py freezes questions,
+# internal_revision and latest_revision once an answer exists). These tests edit the answered form
+# through the ORM to fake an in-place revision. Covered by ihr_refdata.tests.test_forms.Care31GuardTests
+# and RevisionGuardTests. The last test's earlier checks (unmapped, invalid and retired forms answer
+# 400) run only in the plain "Backend" job (P2-T0a review L4).
+care.emr.tests.test_referral_api.ReferralAPITestCase.test_referral_preserves_the_submitted_questionnaire_revision
+care.emr.tests.test_referral_api.ReferralAPITestCase.test_existing_responses_keep_their_own_questionnaire_revision
+care.emr.tests.test_referral_api.ReferralAPITestCase.test_invalid_additional_responses_do_not_change_existing_submissions
+# Unapplies emr 0084 with a bare MigrationExecutor. In a hospital schema the answered-form guard's
+# column-scoped triggers depend on columns 0084 adds, so PostgreSQL refuses the DROP COLUMN. We never
+# migrate a hospital backwards (a rollback across migrations is a restore). The plain "Backend" job runs
+# it. The forward case (an upstream migration that drops or retypes a guarded column) is P2-T0f, Q-K169.
+care.emr.tests.test_inventory_item_migration.InventoryItemUniquenessMigrationTests.test_duplicates_are_consolidated_before_enforcing_uniqueness

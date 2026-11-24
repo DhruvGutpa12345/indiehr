@@ -131,6 +131,11 @@ class QuestionnaireViewSet(EMRModelViewSet, EMRFavoritesMixin):
 
         if model_obj:
             queryset = queryset.exclude(id=model_obj.id)
+            if model_obj.latest_revision_id:
+                # IndieHR (P2-T0a): a past revision shares its slug with the latest one, so the
+                # slug check below answered 400 before authorize_update's 403 (upstream 84c3f05).
+                # A past revision is never updated, so its slug needs no check.
+                return super().validate_data(instance, model_obj)
 
         if auth_context == QuestionnaireAuthContext.facility:
             queryset = queryset.filter(facility__external_id=facility)

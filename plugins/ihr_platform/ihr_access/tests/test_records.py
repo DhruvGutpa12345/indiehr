@@ -18,6 +18,7 @@ from types import SimpleNamespace
 from unittest import mock
 
 from care.emr.models import Patient, PatientUser
+from care.users.models import User
 from django.core.management import CommandError, call_command
 from django.db import connection
 from django.test import override_settings
@@ -771,6 +772,23 @@ class GrantedReads(RecordsCase):
         grant.refresh_from_db()
         self.assertIsNotNone(grant.ended_at)
         self.assertEqual(self.outcomes(), [("expired", str(grant.pk), "insurer")])
+
+    def test_the_request_hook_gives_an_unsaved_user_nothing(self):
+        """CARE's SimpleTestCase previews authenticate an in-memory User that was never saved:
+        it is no row, so the hook reads nothing and gives it no grant, even with the pk of a
+        person holding one; that person still gets theirs."""
+        w = self.world
+        mrd = w.users["MRD"]
+        grant_records(w, mrd, w.patient)
+        ghost = User(pk=mrd.pk, username="ghost")
+        state.begin(ghost)
+        self.addCleanup(state.end)
+        with self.assertNumQueries(0):
+            records.on_request(ghost)
+        self.assertEqual(state.current().grants, {})
+        state.begin(mrd)
+        records.on_request(mrd)
+        self.assertEqual(set(state.current().grants), {w.patient.pk})
 
     def test_the_beat_ends_each_grant_once(self):
         """The beat ends each expired grant, removes the PatientUser row and logs one

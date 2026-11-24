@@ -13,10 +13,11 @@ from types import SimpleNamespace
 from unittest import mock
 from urllib.parse import parse_qs, urlsplit
 
+from care.emr.tests.test_user_profile_spec import DEGREES, profile_data
 from care.users.models import User
 from django.conf import settings
 from django.core import mail
-from django.test import SimpleTestCase
+from django.test import SimpleTestCase, override_settings
 from django.utils import timezone
 from django_tenants.utils import schema_context
 from ihr_platform import invitations
@@ -214,6 +215,20 @@ class InvitationTests(InvitationCase):
         self.assertEqual(response.status_code, 400)
         self.assertIn("send an e-mail", str(response.json()))
         self.assertFalse(User.objects.filter(username__startswith="inv").exists())
+
+    @override_settings(USER_QUALIFICATION_DEGREES=DEGREES)
+    def test_invited_staff_keep_their_profile(self):
+        """CARE's profile create test sends a password, so it is left out in tenant mode
+        (care_tests_excluded.txt); this keeps its intent: a profile sent with "Add user" is
+        stored and read back (P2-T0a CI triage)."""
+        profile = profile_data()
+        user, _ = self.invite(**profile)
+        self.assertEqual(user.communication, profile["communication"])
+        self.assertEqual(user.qualifications, profile["qualification"])
+        response = self.api.get(f"{USERS}{user.username}/")
+        self.assertEqual(response.status_code, 200, response.content[:300])
+        self.assertEqual(response.json()["communication"], profile["communication"])
+        self.assertEqual(response.json()["qualification"], profile["qualification"])
 
     def test_no_other_way_to_add_staff(self):
         from django.urls import resolve

@@ -76,3 +76,23 @@ value set then fails, and writing a lab result answers 500 in every facility of 
 
 **Expected:** resolve the value set the way the rest of CARE does (`get_closest_valueset`), or at
 least filter `auth_context="instance"`.
+
+---
+
+## 5. A PUT on a past questionnaire revision answers 400 instead of 403
+
+Found by our CI after the P2-T0a merge (24-11-2026). CARE's own `Test` job fails on the same test at
+`ddfd840dbe31` (`care.emr.tests.test_questionnaire_scopes.TestQuestionnaireScopes.test_question_changes_create_a_revision_preserving_scope`:
+`AssertionError: 400 != 403`). Post it only if the owner agrees.
+
+**Where:** `care/emr/api/viewsets/questionnaire/questionnaire.py`, `QuestionnaireViewSet.validate_data`,
+added by 84c3f05 ("add slug uniqueness validation to Questionnaire model", #3851).
+
+**What happens:** `EMRUpdateMixin.handle_update` runs `validate_data` before `authorize_update`. A
+past revision keeps its slug, and the latest revision has the same slug, so the new uniqueness check
+answers 400 "Questionnaire with this slug already exists" before `authorize_update` can answer 403
+"This Questionnaire is a past revision". Nothing is written either way; only the answer is wrong.
+
+**Expected:** skip the slug check for a past revision (it can never be updated), or run
+`authorize_update` before `validate_data`. Our local patch does the first
+(`docs/UPSTREAM_PATCHES.md`, 2026-11-24).
