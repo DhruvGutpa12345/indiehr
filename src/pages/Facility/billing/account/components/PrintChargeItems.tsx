@@ -6,6 +6,7 @@ import { useTranslation } from "react-i18next";
 import { formatPhoneNumberIntl } from "react-phone-number-input";
 
 import PrintPreview from "@/CAREUI/misc/PrintPreview";
+import PatientPrintPageHeader from "@/components/Common/PatientPrintPageHeader";
 
 import { getPermissions } from "@/common/Permissions";
 import { usePermissions } from "@/context/PermissionContext";
@@ -418,6 +419,11 @@ export const PrintChargeItems = (props: {
         facility={facility}
         templateSlug={PrintTemplateType.charge_items}
         hideFacilityHeader={hideHeader}
+        pageHeader={
+          account?.patient && (
+            <PatientPrintPageHeader patient={account.patient} />
+          )
+        }
       >
         <DisablingCover
           disabled={isLoading || isLoadingPayments || isLoadingAccount}
@@ -1614,7 +1620,7 @@ export const PrintChargeItems = (props: {
                       {/* Account Summary Section */}
                       {account && (
                         <div className="overflow-hidden mt-4">
-                          <Table className="w-full border [&_th]:text-xs [&_td]:text-xs">
+                          <Table className="w-full [&_th]:text-xs [&_td]:text-xs">
                             <TableHeader className="[&_tr]:border [&_th]:p-0.5 [&_th]:h-auto">
                               <TableRow className="bg-transparent hover:bg-transparent">
                                 <TableHead className="text-center font-bold">
