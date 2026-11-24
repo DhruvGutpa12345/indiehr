@@ -248,3 +248,29 @@ class SeedFacilityAdmin(SwapCase):
         make_hospital_admin(user, w.facility)
         with self.assertRaisesMessage(RuntimeError, "hospital-wide"):
             make_facility_admin(w.facility)
+
+
+class DemoLocationsUseInventory(SwapCase):
+    """P2-T0b CI: CARE 3.1 shows a location's Inventory menu only when its
+    ``inventory_usage`` is set (``location-nav.tsx``); the demo's store and lab rooms say
+    how they use stock, as a hospital would set them, and a re-seed fixes older rows."""
+
+    def location(self, department):
+        from care.emr.models.location import FacilityLocation
+
+        ihr_seed_demo._department(self.world.facility, department)
+        return FacilityLocation.objects.get(
+            facility=self.world.facility,
+            name=ihr_seed_demo.DEPARTMENT_LOCATIONS[department],
+        )
+
+    def test_the_store_is_a_store_and_the_lab_consumes(self):
+        self.assertEqual(self.location("Stores").inventory_usage, "store")
+        self.assertEqual(self.location("Laboratory").inventory_usage, "consumption")
+        self.assertEqual(self.location("Radiology").inventory_usage, "none")
+
+    def test_a_reseed_sets_it_on_a_location_made_before_care_3_1(self):
+        store = self.location("Stores")
+        store.inventory_usage = "none"
+        store.save(update_fields=["inventory_usage"])
+        self.assertEqual(self.location("Stores").inventory_usage, "store")

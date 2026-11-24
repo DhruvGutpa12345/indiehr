@@ -203,9 +203,14 @@ export async function expectSignedIn(page: Page) {
     .toBe(200);
 }
 
-/** The signed-in home page (UserDashboard) has rendered for this user. */
+/** The signed-in home page (UserDashboard) has rendered for this user: its greeting heading
+ * (CARE 3.1, P2-T0b: "Good Morning|Afternoon|Evening, <name>", no longer "Hey <name>"). */
 export async function expectHome(page: Page) {
-  await expect(page.getByText(/^Hey /)).toBeVisible();
+  await expect(
+    page.locator('[data-cy="dashboard-greeting"] h1', {
+      hasText: /^Good (Morning|Afternoon|Evening), /,
+    }),
+  ).toBeVisible();
 }
 
 /** "Sign out" on the signed-in home page: its menu on wide screens, a button on phones. */

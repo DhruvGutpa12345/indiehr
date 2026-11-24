@@ -125,6 +125,9 @@ DEPARTMENT_LOCATIONS = {
     "Radiology": "X-Ray Room",
     "Stores": "Main Store",
 }
+# How each demo location uses stock (CARE 3.1 `inventory_usage`; its Inventory menu shows only
+# when set, P2-T0b): the store keeps and issues stock, the lab consumes reagents
+DEPARTMENT_INVENTORY_USAGE = {"Stores": "store", "Laboratory": "consumption"}
 
 
 class Command(BaseCommand):
@@ -287,6 +290,10 @@ def _department(facility, name):
             mode="kind",
             form="ro",
         )
+    usage = DEPARTMENT_INVENTORY_USAGE.get(name, "none")
+    if location.inventory_usage != usage:
+        location.inventory_usage = usage
+        location.save(update_fields=["inventory_usage"])
     FacilityLocationOrganization.objects.get_or_create(
         location=location, organization=department
     )
