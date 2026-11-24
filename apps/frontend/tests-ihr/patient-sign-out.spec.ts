@@ -37,6 +37,7 @@ test("patient sign-out clears the booking 'user' key [needs P1-T1d bundle]", asy
   const header = page.locator("header").first();
   await expect(header.getByRole("button", { name: "Home" })).toBeVisible();
   await header.getByRole("button").filter({ hasNotText: "Home" }).click();
+  const entriesBefore = await page.evaluate(() => history.length);
   await page.getByRole("menuitem", { name: "Sign out" }).click();
   await page.waitForURL((url) => url.pathname === "/login");
 
@@ -49,9 +50,8 @@ test("patient sign-out clears the booking 'user' key [needs P1-T1d bundle]", asy
 
   // P2-T0c review: the sign-out is a full page load, so Back does not bring the patient
   // portal back from this tab's memory (the token was still held by the auth provider)
-  // location.replace leaves two entries (/login, /login); the old router push left three,
-  // with the portal page in between
-  expect(await page.evaluate(() => history.length)).toBe(2);
+  // location.replace adds no history entry (a router push added one, with the portal page)
+  expect(await page.evaluate(() => history.length)).toBe(entriesBefore);
   await page.goBack();
   await page.waitForURL((url) => url.pathname === "/login");
   await expect(

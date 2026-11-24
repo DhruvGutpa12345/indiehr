@@ -35,8 +35,6 @@ import { toast } from "sonner";
 
 import useAuthUser from "@/hooks/useAuthUser";
 
-import { navigate } from "@/lib/router/navigate";
-
 import { ihrRecordsApi } from "@/Utils/ihr/ihrApi";
 import {
   type GrantSummary,
@@ -254,11 +252,13 @@ export function IhrGrantWatcher({ children, scope, facilityId }: WatcherProps) {
       );
       const facility = facilityRef.current;
       // replace: Back must not return to the record the grant opened; outside a facility
-      // (CARE's facility-less patient routes, review F6) the home page
-      navigate({
-        href: facility ? `/facility/${facility}/ihr/records` : "/",
-        replace: true,
-      });
+      // (CARE's facility-less patient routes, review F6) the home page. A full page load
+      // (P2-T0c): after clear() the router does not remount a page it already shows, so the
+      // cleared session and access queries would never refetch (CI: stuck on Loading); a
+      // reload also leaves nothing of the grant in this tab's memory
+      window.location.replace(
+        facility ? `/facility/${facility}/ihr/records` : "/",
+      );
     };
 
     const armExpiry = () => {

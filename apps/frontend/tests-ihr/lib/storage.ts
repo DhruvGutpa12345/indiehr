@@ -227,6 +227,28 @@ const SESSION_CONTENT_CHECKED: Record<
       ? null
       : "care-auth-user still holds a user";
   },
+  // P2-T0c: TanStack Router writes its scroll positions on pagehide, after the sign-out sweep.
+  // Kept only while it holds nothing but random history keys, element selectors and numbers.
+  "tsr-scroll-restoration-v1_3": (value) => {
+    const parsed = safeJson(value);
+    if (!parsed || typeof parsed !== "object")
+      return "scroll positions unreadable";
+    for (const [key, entries] of Object.entries(parsed)) {
+      if (key.includes("/")) return `scroll positions keyed by a path: ${key}`;
+      if (!entries || typeof entries !== "object")
+        return "scroll positions hold a non-object entry";
+      for (const [selector, offsets] of Object.entries(entries)) {
+        if (selector.includes("/"))
+          return `scroll positions name a path: ${selector}`;
+        const numbers =
+          offsets !== null &&
+          typeof offsets === "object" &&
+          Object.values(offsets).every((n) => typeof n === "number");
+        if (!numbers) return "scroll positions hold more than numbers";
+      }
+    }
+    return null;
+  },
 };
 
 // The content checks above must be exactly the keys storage-keys.json names

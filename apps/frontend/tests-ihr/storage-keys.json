@@ -20,8 +20,7 @@
       "care:developer_mode": "a developer-mode switch (true or false)",
       "ihr_last_activity": "a time stamp (idle time-out)",
       "ihr_grants_changed": "a time stamp that tells the other tabs to re-read their live records grants (P1-T11c3, the fallback where BroadcastChannel is missing)",
-      "ihr_sign_out_pending": "\"1\" until the backend confirms a sign-out (staffSession.ts)",
-      "tsr-scroll-restoration-v1_3": "sessionStorage: the router's scroll positions, written on pagehide, so it can reappear after the sign-out sweep; its keys are the random per-navigation history keys only, never a URL (router.tsx getScrollRestorationKey; read in node_modules/@tanstack/router-core scroll-restoration.js 1.171.39, P2-T0c)"
+      "ihr_sign_out_pending": "\"1\" until the backend confirms a sign-out (staffSession.ts)"
     },
     "prefixes": {
       "nav-expansion-state--": "which menu groups are open"
@@ -29,7 +28,10 @@
   },
   "content_checked": {
     "local": ["REACT_QUERY_OFFLINE_CACHE"],
-    "session": ["care-auth-user"]
+    "session": ["care-auth-user", "tsr-scroll-restoration-v1_3"],
+    "_why": {
+      "tsr-scroll-restoration-v1_3": "the router's scroll positions, written on pagehide, so it can reappear after the sign-out sweep; its keys are the random per-navigation history keys only, never a URL (router.tsx getScrollRestorationKey; read in node_modules/@tanstack/router-core scroll-restoration.js 1.171.39, P2-T0c); kept only when every entry key and element selector is free of '/' and holds only numeric scroll offsets (lib/storage.ts)"
+    }
   },
   "cleared_by_helpers": {
     "filters--": "FiltersCache.invalidateAll",

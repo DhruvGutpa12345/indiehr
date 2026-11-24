@@ -729,3 +729,19 @@ describe("patient sign-out ends the session in this tab too (P2-T0c review sessi
     assert.doesNotMatch(src, /\bnavigate\(/);
   });
 });
+
+describe("a grant that ends reloads the page (P2-T0c CI)", () => {
+  it("IhrGrantWatcher clears the cache and replaces the page, never a router navigate", () => {
+    const src = readFileSync(
+      join(process.cwd(), "src", "components", "ihr", "IhrGrantWatcher.tsx"),
+      "utf-8",
+    );
+    const act = src.slice(
+      src.indexOf("const act = "),
+      src.indexOf("const armExpiry"),
+    );
+    assert.match(act, /queryClient\.clear\(\)/);
+    assert.match(act, /window\.location\.replace\(/);
+    assert.doesNotMatch(act, /\bnavigate\(/);
+  });
+});
