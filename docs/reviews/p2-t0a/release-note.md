@@ -40,7 +40,7 @@ guard's new fingerprint). Restoring a single-hospital dump taken before this rel
 
 **Reference pack `care-valuesets` 2 (36 sets) replaces 1.** On the next start each hospital's
 unedited rows move to 2; a row the hospital edited waits for its admin on the pack updates page.
-Clinical change for owner review: CARE narrowed `system-condition-code` to diseases (`<< 64572001`)
+Clinical change, accepted by the owner on 2026-11-24: CARE narrowed `system-condition-code` to diseases (`<< 64572001`)
 and moved symptoms to the new `system-symptom-code` (`< 404684003 MINUS << 64572001`, Q-K167), and
 added four procedure sets.
 

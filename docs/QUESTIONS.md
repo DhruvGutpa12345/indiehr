@@ -11,7 +11,7 @@
 | Q-A6 | **Proprietary** | Keep CARE MIT notices; our code closed |
 | Q-B1 | **10–100 bed private hospitals, Tier 2/3** | MVP = Phase 2 as planned |
 | Q-B3 | **English + Hindi** | P1-T7 |
-| Q-B6/B7 | Ask later; per-bed pricing as working assumption | — |
+| Q-B6/B7 | **Per bed per month** (owner, 2026-11-24); **no pilot date yet**: set after the P1-T14 interviews (owner, 2026-11-24) | Phase 9 metering counts beds |
 | Q-C1 | **Both Tally export and ERPNext v16 connector from the start** | P2-T17 grows into two tasks; ERPNext needs MariaDB 11.8, so it runs as a separate stack |
 | Q-C4 | **Full PM-JAY / NHCX integration early** | NHCX and PM-JAY are now P3-T9/P3-T10, right after ABDM M1–M3 |
 | Q-D1 | **Registered Pvt Ltd/LLP with GSTIN exists** | ABDM sandbox paperwork (P3-T1) can start during Phase 2 |
@@ -27,7 +27,7 @@
 | Q-F1b | **Curated SNOMED/ICD-10 service now; full Snowstorm later** (2026-11-03) | P1-T10 builds the curated service |
 | Q-F1 | **Yes:** prepare the SNOMED CT India affiliate licence application in the company's name; ICD-10 for diagnosis coding | Checklist added to P1-T10 |
 | Q-A5 | **Keep "IndieHR"** as the working name | Final brand later |
-| Q-B5 | **Top specialties after MVP: OT + WHO checklist, ICU, Maternity** | Phase 6 order |
+| Q-B5 | **Top specialties after MVP: OT + WHO checklist, ICU, Dialysis, Maternity** (owner, 2026-11-24; was OT, ICU, Maternity on 2026-11-03) | Phase 6 order |
 | Q-C2 | **Payroll/HR later via ERPNext** (HRMS + India Payroll) | Phase 6 ERPNext back office |
 | Q-C3 | **e-Invoice later** (via ERPNext India Compliance) | Not in MVP |
 | Q-C5 | **SaaS billing gateway: decide later** | Before P9-T1 |
@@ -1457,7 +1457,7 @@ PG 18's `log_connections` cannot be set per role.
 
 - **Owner's answer:** "Start Phase 2. Keep the pending tasks for later." Phase 2 starts now, before P1-T14. This changes Q-S2.
 - The open Phase 1 rows stay on the board for later: P1-T14 (interviews and pilot LOI, also the DHIS re-check), P1-T26 (VM dress rehearsal), P1-T10b (terminology licences), P1-T22c2b (lost tails and package expiry) and the "(you)" go-live row. None of them is dropped. P1-T26 and the "(you)" row stay go-live gates (ADR-007, ADR-020).
-- *Risk taken:* Phase 2 modules are built before pilot hospitals confirm the MVP list (Q-B4 is still open). Interview answers may reorder or trim Phase 2 later.
+- *Risk taken:* Phase 2 modules are built before pilot hospitals confirm the MVP list (Q-B4 is still open). Interview answers may reorder or trim Phase 2 later. (Q-B4 confirmed as listed by the owner, 2026-11-24.)
 
 ### Q-K161 — Upstream merge before P2-T1? (Phase 2 start; **owner, 2026-11-23**)
 
@@ -1507,8 +1507,9 @@ PG 18's `log_connections` cannot be set per role.
 - **A ⭐ (taken, owner).** The owner posts them on CARE's GitHub; Claude drafts the text in `docs/reviews/p2-t0a/upstream-bugs.md`: the test "logging" action instruction shipped and always authorised; `data/questionnaire_fixtures.json` lacks `auth_context`, so every demo form is dropped; value-set `recent_views` does not look up the value set.
 - **Note (Claude, 2026-11-24):** the second P2-T0a review found a fourth upstream bug (review D5: `InterpretationEvaluator` looks a value set up by slug with `.get()`, which fails once a facility copy of it exists). It is drafted as item 4 of `upstream-bugs.md`; post it only if you agree. Item 3 now also covers `clear_recent_views` and `favourites`.
 - **Note (Claude, 2026-11-24, CI triage):** item 5 is a fifth upstream bug (a PUT on a past form revision answers 400 instead of 403; CARE's own CI fails on it). It is patched here and drafted; post it only if you agree.
+- **Owner (2026-11-24):** post items 4 and 5 as well; the owner posts all five.
 
-### Q-K169 — An upstream migration that drops or retypes a column our triggers watch (P2-T0f; open, found by the P2-T0a CI triage, 2026-11-24)
+### Q-K169 — An upstream migration that drops or retypes a column our triggers watch (P2-T0f; found by the P2-T0a CI triage, 2026-11-24; **owner, 2026-11-24: A with C's early check**)
 
 Our column-scoped triggers (`ihr_refdata/forms_guard.py` on the form and answer tables, `ihr_access/placement.py` on the three membership tables, `ihr_identity/directory.py` on `users_user`) make PostgreSQL refuse `DROP COLUMN` or `ALTER COLUMN TYPE` on a column they name. CARE's migration test hit this backwards (excluded: we never migrate a hospital backwards). Forwards, a future CARE migration that drops or retypes such a column would fail `ihr_fleet_run migrate` on every existing hospital. Fail-closed (the hospital is held), but a release would stop. CI cannot see it before the release.
 - **A ⭐** A `pre_migrate` step that, for the hospital being migrated, drops only our triggers naming a column that a `RemoveField`/`AlterField` in the plan touches. `post_migrate` re-creates them through the existing `ensure()` functions. In between, the forms guard and placement are already a per-hospital serving gate (`db_roles.gated_schemas`), so a failure stays closed. It needs a red-first test per trigger family (an `AlterField` on a guarded column migrates and the guard is whole afterwards).
@@ -1516,9 +1517,10 @@ Our column-scoped triggers (`ihr_refdata/forms_guard.py` on the form and answer 
 - **C** The minimum: the after-sync checklist (`docs/UPSTREAM.md`) and a script check refuse an upstream sync whose migrations drop or alter a guarded column until it is handled by hand.
 
 Recommendation: A, with C's check as an early warning in `scripts/sync-upstream.sh`. Tracker row P2-T0f.
+- **Owner's answer (2026-11-24):** "Auto-handle + early check": A, plus C's warning in the sync script.
 - **Note:** the same triage found that django-tenants sends `SET search_path` before every statement (`TENANT_LIMIT_SET_CALLS` is off). Turning it on would save a round trip per query, but a stale cached path could send a query to the wrong hospital, so it needs its own tenancy review first. It is recorded in P2-T0f, not decided here.
 
-**Still open:** Q-B4 (final MVP module list: assumed as in PLAN.md Phase 2) and Q-B6/B7 (pricing, timeline). Q-F2 is moot while AI is deferred.
+**Answered 2026-11-24 (owner):** Q-B4 confirmed as listed (PLAN.md Phase 2; P1-T14 may still reorder it), Q-B5 now OT, ICU, Dialysis, Maternity, Q-B6 per bed per month, Q-B7 no pilot date yet (after P1-T14). Q-F2 is moot while AI is deferred.
 
 ---
 
@@ -1593,7 +1595,11 @@ Some big customers may later demand their own database or on-prem. Should we pla
 
 Anything to add or drop?
 
+- **Owner (2026-11-24):** confirmed as listed.
+
 **Q-B5 Specialty modules you most care about** (blueprint lists OT, ICU, cath lab, dialysis, maternity, IVF/ART, blood bank, CSSD, biomedical). Rank your top 3.
+
+- **Owner (2026-11-24):** OT (with the WHO checklist), ICU, Dialysis, Maternity (was OT, ICU, Maternity on 2026-11-03).
 
 **Q-B6 Pricing model idea?**
 - per bed/month ⭐
@@ -1604,7 +1610,11 @@ Anything to add or drop?
 
 This affects metering design (Phase 9).
 
+- **Owner (2026-11-24):** per bed per month.
+
 **Q-B7 Timeline / target date** for the first pilot go-live?
+
+- **Owner (2026-11-24):** no date yet; set it after the P1-T14 interviews and a pilot letter of intent.
 
 ## C. Finance, billing and insurance
 

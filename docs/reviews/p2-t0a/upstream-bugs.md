@@ -62,8 +62,8 @@ detail actions.
 
 ## 4. `InterpretationEvaluator` looks up a value set by slug with `.get()`, which fails once a facility copy exists
 
-Found by the second P2-T0a review (D5), after Q-K168 approved items 1–3; post it only if the
-owner agrees.
+Found by the second P2-T0a review (D5), after Q-K168 approved items 1–3. Approved for posting by
+the owner, 2026-11-24.
 
 **Where:** `care/utils/evaluators/interpretation_evaluator.py`, `check_valueset`
 (`ValueSet.objects.get(slug=valueset)`).
@@ -83,7 +83,7 @@ least filter `auth_context="instance"`.
 
 Found by our CI after the P2-T0a merge (24-11-2026). CARE's own `Test` job fails on the same test at
 `ddfd840dbe31` (`care.emr.tests.test_questionnaire_scopes.TestQuestionnaireScopes.test_question_changes_create_a_revision_preserving_scope`:
-`AssertionError: 400 != 403`). Post it only if the owner agrees.
+`AssertionError: 400 != 403`). Approved for posting by the owner, 2026-11-24.
 
 **Where:** `care/emr/api/viewsets/questionnaire/questionnaire.py`, `QuestionnaireViewSet.validate_data`,
 added by 84c3f05 ("add slug uniqueness validation to Questionnaire model", #3851).

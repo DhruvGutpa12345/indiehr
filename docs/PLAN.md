@@ -364,7 +364,7 @@ Task IDs are `P<phase>-T<n>`. Each task is sized for **one sitting (≈1–3 hou
 
 ### Phase 6 — Specialty and enterprise modules
 
-**Priority order (Q-B5):** 1. OT + WHO checklist · 2. ICU · 3. Maternity · then the rest by customer demand.
+**Priority order (Q-B5, owner, 2026-11-24):** 1. OT + WHO checklist · 2. ICU · 3. Dialysis · 4. Maternity · then the rest by customer demand.
 
 Each module listed below is roughly 2–4 tasks:
 
