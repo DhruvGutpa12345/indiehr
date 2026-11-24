@@ -126,6 +126,17 @@ class CheckStorageKeysTests(unittest.TestCase):
         )
         self.assertTrue(any("recent--" in problem for problem in problems))
 
+    def test_template_that_starts_with_a_constant_is_resolved(self):
+        files = {
+            "context/Appearance.tsx": (
+                'const CACHE_PREFIX = "care.appearance.v1:";\n'
+                "localStorage.getItem(`${CACHE_PREFIX}${userId}`);\n"
+            )
+        }
+        problems = csk.check(make_tree(files))
+        self.assertEqual(len(problems), 1)
+        self.assertIn("care.appearance.v1:", problems[0])
+
     def test_session_key_passes_only_while_session_storage_is_cleared(self):
         extra = {"pages/Enc.tsx": 'sessionStorage.setItem("enc_filters", f);\n'}
         self.assertEqual(csk.check(make_tree(extra)), [])

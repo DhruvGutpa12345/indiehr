@@ -78,6 +78,7 @@ export const DATE_FNS_FORMAT_MAP: Readonly<Record<string, string>> = {
   // Time only
   "h:mm a": "hh:mm a",
   "hh:mma": "hh:mm a",
+  "h:mma": "hh:mm a",
   "h:mm:ss a": "hh:mm:ss a",
   "p": "hh:mm a",
   "pp": "hh:mm:ss a",
@@ -107,6 +108,7 @@ export const DAYJS_FORMAT_MAP: Readonly<Record<string, string>> = {
   "DD MMM YYYY, hh:mm A": "DD-MM-YYYY, hh:mm A",
   "DD MMM YYYY, hh:mm a": "DD-MM-YYYY, hh:mm A",
   "DD MMM YYYY h:mm A": "DD-MM-YYYY, hh:mm A",
+  "DD MMM YYYY, h:mm A": "DD-MM-YYYY, hh:mm A",
   "hh:mm A - MMM DD, YYYY": "DD-MM-YYYY, hh:mm A",
   "hh:mm a - DD MMM, YYYY": "DD-MM-YYYY, hh:mm A",
   "MMMM D, YYYY [at] h:mm A": "DD-MM-YYYY, hh:mm A",

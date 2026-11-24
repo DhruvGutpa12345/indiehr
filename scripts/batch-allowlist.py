@@ -39,15 +39,97 @@ METHODS = ("GET", "POST", "PUT", "PATCH", "DELETE")
 DYNAMIC = {
     # handleAddOrganizations batches getMutationParams(entityType, ..., true): only the "add"
     # routes. The removes go through mutate(), one call each, never in a batch.
+    # CARE 3.1 questionnaire manager: one batch of the update plus either the facility or the
+    # hospital-wide organisation route (api: facility ? A : B).
+    ("components/QuestionnaireV2/manage/useUpdateQuestionnaire.ts", "facility"): {
+        "routes": (
+            "questionnaireApi.setFacilityOrganizations",
+            "questionnaireApi.setOrganizations",
+        ),
+        "sha256": "1dadd21d2a45548e43a0d2d294a466f243a76681d5271f7a03ddf7dc16478ea1",
+    },
     ("components/Patient/LinkDepartmentsSheet.tsx", "route"): {
         "routes": (
             "encounterApi.addOrganization",
             "locationApi.addOrganization",
             "deviceApi.addOrganization",
         ),
-        "sha256": "0dd0c8b41a9660463de61a082cddfb0fc04c447cd7c78bd5c5f5311b7c89666e",
+        "sha256": "ee8dde0e46790866a3a2224fe8cee681e266855a5d9049ecf9bafb23ecbdd3a7",
     },
 }
+
+# Raw-URL batch entries (CARE 3.1 questionnaire fill, P2-T0b). The fill page sends its batch from
+# useSubmitFillSession.ts as ``api: { path: request.url, ... }``; each request's url and method
+# come from URL templates in the files below (structured/definitions/*.ts, submitTarget.ts,
+# composeBatch.ts), never from an Api symbol. Reviewed table: (METHOD, route, file, template as
+# written in that file). The check fails if a template is gone or changed, and if any other
+# `/api/v1/...` template literal appears in RAW_DIRS (a new structured type or a new request
+# must be reviewed into this table; a new line is a route a staff batch may run).
+RAW_SENDER = "components/QuestionnaireV2/fill/submit/useSubmitFillSession.ts"
+RAW_DIRS = (
+    "components/QuestionnaireV2/structured",
+    "components/QuestionnaireV2/fill/submit",
+)
+_D = "components/QuestionnaireV2/structured/definitions/"
+_S = "components/QuestionnaireV2/fill/submit/"
+RAW_ROUTES = (
+    ("POST", "/api/v1/patient/{patientId}/allergy_intolerance/upsert/", _D + "allergyIntolerance.ts",
+     "`/api/v1/patient/${patientId}/allergy_intolerance/upsert/`"),
+    ("POST", "/api/v1/facility/{facilityId}/slots/{slotId}/create_appointment/", _D + "appointment.ts",
+     "`/api/v1/facility/${facilityId}/slots/${slot_id}/create_appointment/`"),
+    ("POST", "/api/v1/facility/{facilityId}/charge_item/apply_charge_item_defs/", _D + "chargeItem.ts",
+     "`/api/v1/facility/${facilityId}/charge_item/apply_charge_item_defs/`"),
+    ("POST", "/api/v1/patient/{patientId}/diagnosis/upsert/", _D + "diagnosis.ts",
+     "`/api/v1/patient/${patientId}/diagnosis/upsert/`"),
+    ("PUT", "/api/v1/encounter/{id}/", _D + "encounter.ts",
+     "`/api/v1/encounter/${encounterId}/`"),
+    ("POST", "/api/v1/files/upload-file/", _D + "files.ts",
+     "`/api/v1/files/upload-file/`"),
+    ("POST", "/api/v1/patient/{patientId}/medication/request/upsert/", _D + "medicationRequest.ts",
+     "`/api/v1/patient/${patientId}/medication/request/upsert/`"),
+    ("POST", "/api/v1/patient/{patientId}/medication/statement/upsert/", _D + "medicationStatement.ts",
+     "`/api/v1/patient/${patientId}/medication/statement/upsert/`"),
+    ("POST", "/api/v1/patient/{patientId}/procedure/upsert/", _D + "procedure.ts",
+     "`/api/v1/patient/${patientId}/procedure/upsert/`"),
+    ("POST", "/api/v1/facility/{facilityId}/service_request/apply_activity_definition/", _D + "serviceRequest.ts",
+     "`/api/v1/facility/${facilityId}/service_request/apply_activity_definition/`"),
+    ("POST", "/api/v1/patient/{patientId}/symptom/upsert/", _D + "symptom.ts",
+     "`/api/v1/patient/${patientId}/symptom/upsert/`"),
+    ("PUT", "/api/v1/patient/{id}/", _D + "timeOfDeath.ts",
+     "`/api/v1/patient/${patientId}/`"),
+    ("POST", "/api/v1/questionnaire/{id}/submit/", _S + "submitTarget.ts",
+     "`/api/v1/questionnaire/${questionnaireId}/submit/`"),
+    ("POST", "/api/v1/questionnaire/{id}/submit_resource/", _S + "submitTarget.ts",
+     "`/api/v1/questionnaire/${questionnaireId}/submit_resource/`"),
+    ("PUT", "/api/v1/form_submission/{id}/", _S + "composeBatch.ts",
+     "`/api/v1/form_submission/${continueDraftId}/`"),
+)
+RAW_TEMPLATE = re.compile(r"`/api/v1/[^`]*`")
+
+
+def raw_entries():
+    """({(METHOD, route): {site}}, problems) for the reviewed raw-URL table."""
+    entries, problems, listed = {}, [], {}
+    for method, route, rel, template in RAW_ROUTES:
+        listed.setdefault(rel, set()).add(template)
+        file = SRC / rel
+        if not file.is_file():
+            problems.append(f"{rel}: raw batch url file is gone (RAW_ROUTES lists {route})")
+        elif template not in strip_comments(file.read_text()):
+            problems.append(f"{rel}: raw batch url {template} is gone or changed (RAW_ROUTES)")
+        else:
+            entries.setdefault((method, route), set()).add(f"{rel}: raw url")
+    for directory in RAW_DIRS:
+        for path in sorted((SRC / directory).rglob("*.ts*")):
+            rel = path.relative_to(SRC).as_posix()
+            for template in RAW_TEMPLATE.findall(strip_comments(path.read_text())):
+                if template not in listed.get(rel, ()):
+                    problems.append(
+                        f"{rel}: url {template} is not in RAW_ROUTES in scripts/batch-allowlist.py; "
+                        "review whether a batch may send it and add it"
+                    )
+    return entries, problems
+
 
 HEADER = """\
 # Batch allow-list (P1-T20a): every method and route the web app sends inside a batch request
@@ -225,7 +307,7 @@ def call_sites():
             continue
         raw = path.read_text()
         if not IMPORTS_HELPERS.search(raw):
-            if "batch_requests" in raw:
+            if "batch_requests" in strip_comments(raw):
                 problems.append(f"{rel}: posts to the batch endpoint without the helpers")
             continue
         text = strip_comments(raw)
@@ -234,6 +316,8 @@ def call_sites():
             symbols = SYMBOL.findall(value)
             if not symbols:
                 key = (rel, value)
+                if rel == RAW_SENDER and value == "{":
+                    continue  # its routes come from RAW_ROUTES, below
                 if BARE.fullmatch(value) and key in DYNAMIC:
                     reviewed = DYNAMIC[key]
                     symbols = list(reviewed["routes"])
@@ -278,6 +362,15 @@ def call_sites():
                     entries.setdefault((method, route), set()).add(f"{rel}: {symbol}")
     for key in DYNAMIC.keys() - dynamic_seen:
         problems.append(f"{key[0]}: DYNAMIC entry for api: {key[1]} is no longer used")
+    raw, raw_problems = raw_entries()
+    problems += raw_problems
+    for route, sites in raw.items():
+        entries.setdefault(route, set()).update(sites)
+    sender = SRC / RAW_SENDER
+    if RAW_ROUTES and (
+        not sender.is_file() or "path: request.url" not in strip_comments(sender.read_text())
+    ):
+        problems.append(f"{RAW_SENDER}: no longer sends `api: {{ path: request.url }}`; re-review RAW_ROUTES")
     return entries, problems
 
 

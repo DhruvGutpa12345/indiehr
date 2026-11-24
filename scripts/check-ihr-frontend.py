@@ -10,7 +10,8 @@ route that no longer exists. This check reads the sources and fails with the fil
 It checks:
 1. every URL suffix named in apps/frontend/src/Utils/ihr/menu.ts exists in the nav file its
    section belongs to (facility section: facility-nav.tsx; location section: location-nav.tsx),
-   and facility-nav.tsx still has the Settings parent and 15 `${baseUrl}/settings/…` items plus `/template`;
+   and facility-nav.tsx still has the one childless Settings item (`${baseUrl}/settings/general`; CARE 3.1
+   moved the 15 pages and Templates to the settings sidebar, P2-T0b);
    in the other direction, every `${baseUrl}/…` url of the two nav files is classified in its
    menu.ts section (named exactly, or under a prefix literal ending in "/"), so a NEW upstream
    item fails here until menu.ts decides it; facility-nav.tsx's baseUrl is still
@@ -223,9 +224,9 @@ ACCOUNT_TAB_SLUGS_OURS = re.compile(r"ACCOUNT_TAB_SLUGS[^=]*=\s*\{([^}]*)\}")
 
 FACILITY_SECTION = "// Facility menu (facility-nav.tsx)"
 LOCATION_SECTION = "// Location menu (location-nav.tsx)"
-SETTINGS_ITEMS = 15
-# the Settings parent links to /settings/general too, so its url appears one more time
-SETTINGS_URLS = SETTINGS_ITEMS + 1
+# CARE 3.1 (P2-T0b): the facility menu has one childless Settings item; the pages are in the
+# settings sidebar (facility-settings-nav.tsx)
+SETTINGS_URLS = 1
 LITERAL = re.compile(r'"(/[A-Za-z0-9_/.-]*)"')
 ROUTE_KEY = re.compile(r'export const (\w+_KEY)\s*=\s*"([^"]+)"')
 ENCOUNTER_KEY_NAME = "ENCOUNTER_KEY"
@@ -311,17 +312,15 @@ def check(root: Path = ROOT) -> list:
     if nav:
         if len(re.findall(r"\$\{baseUrl\}/settings/", nav)) != SETTINGS_URLS:
             problems.append(
-                f"{FACILITY_NAV}: expected the Settings parent and {SETTINGS_ITEMS} settings items (${{baseUrl}}/settings/…): classify the change in {MENU}"
+                f"{FACILITY_NAV}: expected exactly {SETTINGS_URLS} settings item (${{baseUrl}}/settings/…, childless): classify the change in {MENU}"
             )
-        if not re.search(r"\$\{baseUrl\}/template[`\"]", nav):
-            problems.append(f"{FACILITY_NAV}: the Templates item (${{baseUrl}}/template) not found")
         if FACILITY_BASE_UPSTREAM not in nav:
             problems.append(
                 f"{FACILITY_NAV}: `{FACILITY_BASE_UPSTREAM}` not found ({IHR_MENU} rebuilds this base for the menu rules)"
             )
-        if not re.search(r"\$\{baseUrl\}/encounters/patients/\$\{encounterClass\}", nav):
+        if "<EncounterNavItem" not in nav:
             problems.append(
-                f"{FACILITY_NAV}: the encounter class items (${{baseUrl}}/encounters/patients/${{encounterClass}}) not found"
+                f"{FACILITY_NAV}: the Encounters item's element (<EncounterNavItem, the class lists) not found"
             )
 
     if texts[IHR_MENU] and FACILITY_BASE_OURS not in texts[IHR_MENU]:

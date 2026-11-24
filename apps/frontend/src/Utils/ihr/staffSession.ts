@@ -10,6 +10,7 @@ import {
   isOwnApi,
   safeNext,
 } from "@/Utils/ihr/idleRules";
+import { sealStaffStorage } from "@/Utils/ihr/storageSeal";
 import { invalidateAllPaymentReconcilationLocationCaches } from "@/atoms/paymentReconcilationLocationAtom";
 import { clearQueuePractitionerCache } from "@/atoms/queuePractitionerAtom";
 import { LocalStorageKeys } from "@/common/constants";
@@ -38,8 +39,15 @@ const PATIENT_PORTAL_KEYS = [
   "user",
   "selectedPatient",
 ];
-// Cached per-person data kept outside react-query
-const CACHED_PREFIXES = ["pharmacy-dispense-service--"];
+// Cached per-person data kept outside react-query: pharmacy dispense service choices, local
+// questionnaire fill drafts (answers about a patient; P2-T0b, CARE 3.1) and the per-account
+// appearance cache (`care.appearance.v1:<user id>`: theme, font size, contrast; the backend
+// stays the source of truth).
+const CACHED_PREFIXES = [
+  "pharmacy-dispense-service--",
+  "care_qn_fill_draft--",
+  "care.appearance.v1:",
+];
 
 export type EndReason =
   "idle" | "signed_out" | "signed_out_here_only" | "session_ended";
@@ -126,6 +134,8 @@ export function forgetLegacyTokens() {
  * token and booking choice (PATIENT_PORTAL_KEYS). Every staff session end calls this:
  * endLocally (sign-out here or in another tab, idle) and endExpiredSession (server-ended). */
 export function clearStaffStorage() {
+  // Writers that run after this sweep (fill drafts on pagehide/unmount) must write nothing
+  sealStaffStorage();
   try {
     const store = storage();
     if (store) {

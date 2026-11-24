@@ -32,5 +32,6 @@ that look wrong. The app keeps CARE's wording until you approve a row; approved 
 | 6 (P1-T24a audit trail page, P1-T24b staff sign-in card, P1-T24c pack updates page and audit downloads) | `hi-batch-6.csv` | 239 | 0 | waiting for you |
 | 7 (P1-T31 hospital switcher) | `hi-batch-7.csv` | 4 | 0 | waiting for you |
 | 8 (P1-T32 E5 synthetic-data bar) | `hi-batch-8.csv` | 1 | 0 | waiting for you |
+| 9 (P2-T0b CARE web app sync to 60736fa3d2cf) | `hi-batch-9.csv` | 1,696 | 276 | waiting for you |
 | Release gate notice (P1-T18a) | `hi-release-gate.csv` | 3 | 0 | waiting for you |
-| Upstream corrections (P1-T7c) | `hi-upstream-corrections.csv` | 211 (13 unsafe, 72 wrong meaning) | 70 | 13 unsafe approved and applied 08-11-2026; 198 waiting for you |
+| Upstream corrections (P1-T7c) | `hi-upstream-corrections.csv` | 211 (13 unsafe, 72 wrong meaning) | 70 | 13 unsafe approved 08-11-2026. 12 of them retired 24-11-2026: upstream CARE dropped those strings (medication frequency and route labels are now hard-coded English in `src/types/emr/medicationRequest/medicationRequest.ts`, so no unsafe Hindi is shown). Only `discharge` remains applied. 198 waiting for you |

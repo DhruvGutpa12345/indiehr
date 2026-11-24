@@ -85,18 +85,17 @@ class CheckIhrFrontend(unittest.TestCase):
         self.assertProblem(cif.FACILITY_NAV, "/beds")
 
     def test_settings_count_changes_fail(self):
+        # CARE 3.1: one childless Settings item; a second /settings/ url (children back) fails
         self.edit(
             cif.FACILITY_NAV,
-            "url: `${baseUrl}/settings/tag_config`,",
-            "url: `${baseUrl}/settings/tag_config`,\n},{name:'x',url: `${baseUrl}/settings/extra`,",
+            "url: `${baseUrl}/settings/general`,",
+            "url: `${baseUrl}/settings/general`,\n},{name:'x',url: `${baseUrl}/settings/extra`,",
         )
-        self.assertProblem(cif.FACILITY_NAV, "settings items")
+        self.assertProblem(cif.FACILITY_NAV, "settings item")
 
-    def test_template_and_encounter_class_items_are_anchored(self):
-        self.edit(cif.FACILITY_NAV, "url: `${baseUrl}/template`", "url: `${baseUrl}/templates`")
-        self.assertProblem(cif.FACILITY_NAV, "Templates")
-        self.edit(cif.FACILITY_NAV, "/encounters/patients/${encounterClass}", "/encounters/class/${encounterClass}")
-        self.assertProblem(cif.FACILITY_NAV, "encounter class")
+    def test_encounters_item_is_anchored(self):
+        self.edit(cif.FACILITY_NAV, "<EncounterNavItem", "<EncounterLink")
+        self.assertProblem(cif.FACILITY_NAV, "Encounters item")
 
     def test_new_upstream_nav_item_must_be_classified(self):
         # F4: a new facility item, Patients child or location item is not "as CARE has it"

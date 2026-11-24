@@ -9,6 +9,7 @@ import {
   type OurItem,
   ihrFacilityLinks,
   ihrLocationLinks,
+  ihrLocationOverview,
   ihrOurItems,
   ihrPlacePage,
   ihrShowsServices,
@@ -24,15 +25,19 @@ const SLUGS = JSON.parse(
 
 const BASE = "/facility/f1";
 const LOC = "/facility/f1/locations/l1";
-const CLASSES = ["imp", "amb", "obsenc", "emer", "vr", "hh"];
 
 interface Link extends LinkLike {
   children?: Link[];
 }
 
-// The same list facility-nav.tsx builds (names are the keys; icons are not needed here)
+// The same list facility-nav.tsx builds (CARE 3.1, P2-T0b: flat; names are the keys; icons and
+// the Encounters element are not needed here)
 function careFacilityLinks(perms: ReadonlySet<string>): Link[] {
   const has = (s: string) => perms.has(s);
+  const canAccessEncounters =
+    has("can_write_booking") ||
+    has("can_list_encounter") ||
+    has("can_create_encounter");
   return [
     { name: "overview", url: `${BASE}/overview` },
     {
@@ -46,27 +51,26 @@ function careFacilityLinks(perms: ReadonlySet<string>): Link[] {
       visibility: has("can_list_booking"),
     },
     {
-      name: "patients",
+      name: "search_patients",
       url: `${BASE}/patients`,
-      visibility:
-        has("can_write_booking") ||
-        has("can_list_encounter") ||
-        has("can_create_encounter"),
-      children: [
-        { name: "search_patients", url: `${BASE}/patients` },
-        {
-          name: "all_encounters",
-          url: `${BASE}/encounters/patients/all`,
-          visibility: CLASSES.length > 1,
-        },
-        ...CLASSES.map((c) => ({
-          name: `class_${c}`,
-          url: `${BASE}/encounters/patients/${c}`,
-        })),
-        { name: "locations", url: `${BASE}/encounters/locations` },
-      ],
+      visibility: canAccessEncounters,
+    },
+    {
+      name: "encounters",
+      url: `${BASE}/encounters/patients`,
+      visibility: canAccessEncounters,
+    },
+    {
+      name: "search_by_location",
+      url: `${BASE}/encounters/locations`,
+      visibility: canAccessEncounters,
     },
     { name: "services", url: `${BASE}/services` },
+    {
+      name: "referrals",
+      url: `${BASE}/referrals`,
+      visibility: has("can_read_referral"),
+    },
     { name: "resource", url: `${BASE}/resource` },
     { name: "users", url: `${BASE}/users` },
     {
@@ -78,53 +82,15 @@ function careFacilityLinks(perms: ReadonlySet<string>): Link[] {
         { name: "payments", url: `${BASE}/billing/payments` },
       ],
     },
-    {
-      name: "settings",
-      url: `${BASE}/settings/general`,
-      children: [
-        ...[
-          "general",
-          "departments",
-          "locations",
-          "devices",
-          "specimen_definitions",
-          "observation_definitions",
-          "activity_definitions",
-          "billing",
-          "charge_item_definitions",
-          "healthcare_services",
-          "product_knowledge",
-          "product",
-        ].map((n) => ({ name: n, url: `${BASE}/settings/${n}` })),
-        {
-          name: "token_category",
-          url: `${BASE}/settings/token_category`,
-          visibility: has("can_list_token_category"),
-        },
-        {
-          name: "patient_identifier_config",
-          url: `${BASE}/settings/patient_identifier_config`,
-          visibility: has("can_read_patient_identifier_config"),
-        },
-        { name: "tag_config", url: `${BASE}/settings/tag_config` },
-        {
-          name: "templates",
-          url: `${BASE}/template`,
-          visibility: has("can_read_template"),
-        },
-      ],
-    },
+    { name: "settings", url: `${BASE}/settings/general` },
   ];
 }
 
 function careLocationLinks(): Link[] {
   return [
+    { name: "overview", url: `${LOC}/overview` },
     { name: "beds", url: `${LOC}/beds` },
-    {
-      name: "laboratory",
-      url: `${LOC}/laboratory`,
-      children: [{ name: "service_requests", url: `${LOC}/service_requests` }],
-    },
+    { name: "service_requests", url: `${LOC}/service_requests` },
     {
       name: "pharmacy",
       url: `${LOC}/pharmacy`,
@@ -154,6 +120,7 @@ function careLocationLinks(): Link[] {
     { name: "schedule", url: `${LOC}/schedule` },
     { name: "appointments", url: `${LOC}/appointments` },
     { name: "queues", url: `${LOC}/queues` },
+    { name: "responses", url: `${LOC}/responses` },
   ];
 }
 
@@ -203,10 +170,6 @@ function facilityFor(role: string, extra: string[] = []): Link[] {
   return ihrFacilityLinks(careFacilityLinks(perms), access, BASE, makeOurs);
 }
 
-const ENCOUNTERS = ["all_encounters", ...CLASSES.map((c) => `class_${c}`)].map(
-  (n) => `patients > ${n}`,
-);
-
 describe("facility menu: pending and care", () => {
   const pendingAccess = ihrAccess(
     { facilityPerms: undefined, myAccess: undefined, isSuperuser: false },
@@ -255,9 +218,7 @@ describe("facility menu: pending and care", () => {
       "can_write_booking",
       "can_list_encounter",
       "can_create_encounter",
-      "can_list_token_category",
-      "can_read_patient_identifier_config",
-      "can_read_template",
+      "can_read_referral",
     ]);
     for (const perms of [careRole, new Set<string>()]) {
       const access = ihrAccess(
@@ -337,7 +298,8 @@ describe("facility menu: restricted roles (design §3.1)", () => {
       "overview",
       "appointments",
       "queues",
-      "patients",
+      "search_patients",
+      "encounters",
       "users",
       "billing",
     ]);
@@ -345,8 +307,8 @@ describe("facility menu: restricted roles (design §3.1)", () => {
       "overview",
       "appointments",
       "queues",
-      "patients > search_patients",
-      ...ENCOUNTERS,
+      "search_patients",
+      "encounters",
       "users",
       "billing > accounts",
     ]);
@@ -358,8 +320,8 @@ describe("facility menu: restricted roles (design §3.1)", () => {
         shown(facilityFor(role)),
         [
           "overview",
-          "patients > search_patients",
-          ...ENCOUNTERS,
+          "search_patients",
+          "encounters",
           "users",
           "billing > accounts",
           "billing > invoices",
@@ -373,8 +335,8 @@ describe("facility menu: restricted roles (design §3.1)", () => {
   it("MRD", () => {
     assert.deepEqual(shown(facilityFor("MRD")), [
       "overview",
-      "patients > search_patients",
-      ...ENCOUNTERS,
+      "search_patients",
+      "encounters",
       "users",
       "ours_records",
     ]);
@@ -395,25 +357,30 @@ describe("facility menu: restricted roles (design §3.1)", () => {
     }
   });
 
-  it("never offers the bed board, services, resource, settings or templates", () => {
+  it("never offers the bed board, services, referrals, resource or settings", () => {
+    // referrals are on even when CARE would show them (the backend closes them, P2-T0a)
+    const withReferral = ["can_read_referral"];
     for (const role of SLUGS.restricted) {
-      const flat = shown(facilityFor(role));
+      const flat = shown(facilityFor(role, withReferral));
       for (const name of [
-        "patients > locations",
+        "search_by_location",
         "services",
+        "referrals",
         "resource",
-        "templates",
+        "settings",
       ]) {
         assert.ok(!flat.includes(name), `${role} ${name}`);
       }
-      assert.ok(!flat.some((n) => n.startsWith("settings")), role);
     }
   });
 
-  it("points a parent at its first visible child and hides empty parents", () => {
+  it("points a parent at its first visible child and hides what the role may not open", () => {
     const owner = facilityFor("Owner");
-    const patients = owner.find((l) => l.name === "patients");
-    assert.equal(patients?.visibility, false);
+    assert.equal(
+      owner.find((l) => l.name === "search_patients")?.visibility,
+      false,
+    );
+    assert.equal(owner.find((l) => l.name === "encounters")?.visibility, false);
     const cashier = facilityFor("Cashier");
     assert.equal(
       cashier.find((l) => l.name === "billing")?.url,
@@ -421,19 +388,31 @@ describe("facility menu: restricted roles (design §3.1)", () => {
     );
   });
 
-  it("keeps CARE's own hiding of an item (single encounter class)", () => {
-    const perms = new Set(SLUGS.grants["Receptionist"]);
-    const links = careFacilityLinks(perms);
-    const patients = links.find((l) => l.name === "patients");
-    const all = patients?.children?.find((c) => c.name === "all_encounters");
-    if (all) all.visibility = false;
-    const out = ihrFacilityLinks(
-      links,
-      roleAccess("Receptionist"),
-      BASE,
-      makeOurs,
+  it("shows Search patients and Encounters by our rule, not CARE's booking and encounter rights", () => {
+    // CARE hides both for a role without those rights (the Cashier, the MRD): we show them
+    for (const role of ["Cashier", "TPA Desk", "MRD"]) {
+      const links = careFacilityLinks(new Set());
+      assert.equal(
+        links.find((l) => l.name === "search_patients")?.visibility,
+        false,
+      );
+      const out = shown(
+        ihrFacilityLinks(links, roleAccess(role), BASE, makeOurs),
+      );
+      assert.ok(out.includes("search_patients"), role);
+      assert.ok(out.includes("encounters"), role);
+    }
+    // and never for a role whose slugs give no demographics or status view
+    const owner = shown(
+      ihrFacilityLinks(
+        careFacilityLinks(new Set(["can_list_encounter"])),
+        roleAccess("Owner"),
+        BASE,
+        makeOurs,
+      ),
     );
-    assert.ok(!shown(out).includes("patients > all_encounters"));
+    assert.ok(!owner.includes("search_patients"));
+    assert.ok(!owner.includes("encounters"));
   });
 
   it("leaves a link it does not know as CARE has it (fails toward CARE)", () => {
@@ -443,17 +422,12 @@ describe("facility menu: restricted roles (design §3.1)", () => {
     assert.ok(shown(out).includes("plugin"));
   });
 
-  it("the settings menu has 15 /settings/ items and Templates at /template", () => {
+  it("the settings item has no children (CARE 3.1 moved its pages to the settings sidebar)", () => {
     const settings = careFacilityLinks(new Set()).find(
       (l) => l.name === "settings",
     );
-    const urls = settings?.children?.map((c) => c.url) ?? [];
-    assert.equal(
-      urls.filter((u) => u.startsWith(`${BASE}/settings/`)).length,
-      15,
-    );
-    assert.equal(urls.filter((u) => u === `${BASE}/template`).length, 1);
-    assert.equal(urls.length, 16);
+    assert.equal(settings?.children, undefined);
+    assert.equal(settings?.url, `${BASE}/settings/general`);
   });
 
   it("does not change the list it was given", () => {
@@ -555,15 +529,17 @@ describe("location menu: Lab Technician and Store Keeper (design §13.5)", () =>
       ihrLocationLinks(careLocationLinks(), roleAccess(role), LOC) as Link[],
     );
 
-  it("Lab Technician sees laboratory requests and inventory items", () => {
+  it("Lab Technician sees the overview, service requests and inventory items", () => {
     assert.deepEqual(locLinks("Lab Technician"), [
-      "laboratory > service_requests",
+      "overview",
+      "service_requests",
       "inventory > items",
     ]);
   });
 
   it("Store Keeper sees every inventory page", () => {
     assert.deepEqual(locLinks("Store Keeper"), [
+      "overview",
       "inventory > items",
       "inventory > to_receive",
       "inventory > to_dispatch",
@@ -579,11 +555,22 @@ describe("location menu: Lab Technician and Store Keeper (design §13.5)", () =>
       assert.ok(!names.some((n) => n.startsWith("pharmacy")), role);
     }
     assert.deepEqual(locLinks("Receptionist"), [
+      "overview",
       "schedule",
       "appointments",
       "queues",
     ]);
-    assert.deepEqual(locLinks("Owner"), []);
+    assert.deepEqual(locLinks("Owner"), ["overview"]);
+  });
+
+  it("never offers the form responses of a place to a restricted role", () => {
+    for (const role of SLUGS.restricted) {
+      assert.ok(!locLinks(role).includes("responses"), role);
+    }
+  });
+
+  it("hides service requests from a restricted role without the slug", () => {
+    assert.ok(!locLinks("Receptionist").includes("service_requests"));
   });
 
   it("links a place to the first page the role may open", () => {
@@ -601,5 +588,115 @@ describe("location menu: Lab Technician and Store Keeper (design §13.5)", () =>
   it("returns CARE's list in care mode", () => {
     const loc = careLocationLinks();
     assert.equal(ihrLocationLinks(loc, roleAccess("Radiologist"), LOC), loc);
+  });
+});
+
+// The quick links CARE 3.1's location Overview page builds (LocationOverview.tsx linkGroups)
+const OVERVIEW_PATHS = [
+  "/beds",
+  "/service_requests",
+  "/medication_requests",
+  "/medication_dispense",
+  "/medication_return",
+  "/inventory/summary",
+  "/inventory/internal/receive/",
+  "/inventory/internal/dispatch/",
+  "/inventory/external/orders/outgoing",
+  "/inventory/external/deliveries/incoming",
+  "/schedule",
+  "/appointments",
+  "/queues",
+];
+
+describe("the location Overview page (P2-T0b review F1, access lens)", () => {
+  it("offers a restricted role only the links its location menu shows", () => {
+    for (const role of SLUGS.restricted) {
+      const access = roleAccess(role);
+      const overview = ihrLocationOverview(access);
+      for (const path of OVERVIEW_PATHS) {
+        if (!overview.allows(path)) continue;
+        // never a page the menu hides: beds, pharmacy, responses
+        assert.ok(
+          ![
+            "/beds",
+            "/medication_requests",
+            "/medication_dispense",
+            "/medication_return",
+          ].includes(path),
+          `${role} must not get ${path}`,
+        );
+      }
+      assert.equal(
+        overview.forms,
+        false,
+        `${role}: no form picker or responses`,
+      );
+    }
+  });
+
+  it("follows the leaf rules for a Lab Technician and a Store Keeper", () => {
+    const lab = ihrLocationOverview(roleAccess("Lab Technician"));
+    assert.equal(lab.allows("/service_requests"), true);
+    assert.equal(lab.allows("/beds"), false);
+    assert.equal(lab.allows("/medication_dispense"), false);
+    const store = ihrLocationOverview(roleAccess("Store Keeper"));
+    assert.equal(store.allows("/inventory/summary"), true);
+    assert.equal(store.allows("/service_requests"), false);
+  });
+
+  it("fails closed for an unknown link and while access is pending", () => {
+    const lab = ihrLocationOverview(roleAccess("Lab Technician"));
+    assert.equal(lab.allows("/something_new"), false);
+    const pending = ihrLocationOverview(
+      ihrAccess(
+        { facilityPerms: [], myAccess: null, isSuperuser: false },
+        SLUGS,
+      ),
+    );
+    assert.deepEqual(
+      OVERVIEW_PATHS.filter((p) => pending.allows(p)),
+      [],
+    );
+    assert.equal(pending.forms, false);
+  });
+
+  it("leaves CARE's page as it is in care mode", () => {
+    const care = ihrLocationOverview(
+      ihrAccess(
+        {
+          facilityPerms: [],
+          myAccess: {
+            restricted: false,
+            bills_here: false,
+            hospital_admin: false,
+          },
+          isSuperuser: false,
+        },
+        SLUGS,
+      ),
+    );
+    assert.deepEqual(
+      OVERVIEW_PATHS.filter((p) => care.allows(p)),
+      OVERVIEW_PATHS,
+    );
+    assert.equal(care.allows("/something_new"), true);
+    assert.equal(care.forms, true);
+  });
+
+  it("is applied by LocationOverview.tsx to its links and its Forms section", () => {
+    const src = readFileSync(
+      join(
+        process.cwd(),
+        "src",
+        "pages",
+        "Facility",
+        "locations",
+        "LocationOverview.tsx",
+      ),
+      "utf-8",
+    );
+    assert.match(src, /ihrLocationOverview\(/);
+    assert.match(src, /\.allows\(link\.path\)/);
+    assert.match(src, /ihrOverview\.forms &&/);
   });
 });

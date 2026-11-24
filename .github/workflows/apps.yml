@@ -427,9 +427,6 @@ jobs:
         working-directory: .
         run: python3 scripts/merge-locale.py
 
-      - name: Generate supported browsers
-        run: npm run supported-browsers
-
       - name: Type check
         run: npm run typecheck
       - name: Type check (browser specs, tests-ihr, P1-T1d)

@@ -13,6 +13,8 @@
 //
 // Names are CARE's English strings (public/locale/en.json) and ours (deploy/locale/en.json).
 // Lines read "Top", or "Parent > Child" for the children of an expandable item.
+// Restricted roles' lists follow src/Utils/ihr/menu.ts (facilityTopRule, locationTopRule): Settings,
+// Services, Referrals, Resource and Search by Location are never offered to them.
 import type { BrowserContext, Page } from "@playwright/test";
 
 import {
@@ -35,73 +37,54 @@ const AUDIT = "Audit trail";
 const PACKS = "Reference list updates";
 const SOME_ID = "00000000-0000-4000-8000-000000000001";
 
-// careConfig.encounterClasses: the build sets no REACT_ALLOWED_ENCOUNTER_CLASSES, so all six
-const ENCOUNTER_LISTS = [
-  "All Encounters",
-  "Inpatient Encounters",
-  "Ambulatory Encounters",
-  "Observation Encounters",
-  "Emergency Encounters",
-  "Virtual Encounters",
-  "Home Health Encounters",
-].map((name) => `Patients > ${name}`);
+// CARE 3.1 (P2-T0b) flattened the facility sidebar: "Search patients", "Encounters" and "Search by
+// Location" are top-level items, Referrals is new, and Settings has no children (its pages moved to
+// the settings sidebar, shown only under /facility/:id/settings). The "Encounters" item is an
+// element that links to the user's default encounter list and names it: with no saved default
+// and no REACT_DEFAULT_ENCOUNTER_TYPE in the build it reads "All Encounters" (the class lists sit
+// in a menu beside it, not in the sidebar).
+const ENCOUNTERS = "All Encounters";
 
-const SETTINGS_ALWAYS = [
-  "General",
-  "Departments",
-  "Locations",
-  "Devices",
-  "Specimen Definitions",
-  "Observation Definitions",
-  "Activity Definitions",
-  "Billing",
-  "Charge Item Definitions",
-  "Healthcare Services",
-  "Product Knowledge",
-  "Product",
-];
-
-/** CARE's menu for a user holding every slug it gates on (Doctor, Nurse, Facility Admin) */
+/**
+ * CARE's menu for a user holding every slug it gates on (Doctor, Nurse, Facility Admin), Referrals
+ * included (can_read_referral is held by all three, care_permissions.txt).
+ */
 const CARE_FULL = [
   "Overview",
   "Appointments",
   "Queues",
-  "Patients > Search patients",
-  ...ENCOUNTER_LISTS,
-  "Patients > Locations",
+  "Search patients",
+  ENCOUNTERS,
+  "Search by Location",
   "Services",
+  "Referrals",
   "Resource",
   "Users",
   "Billing > Accounts",
   "Billing > Invoices",
   "Billing > Payments",
-  ...SETTINGS_ALWAYS.map((name) => `Settings > ${name}`),
-  "Settings > Token Category",
-  "Settings > Patient Identifier Config",
-  "Settings > Tag config",
-  "Settings > Templates",
+  "Settings",
 ];
 
 /**
- * The Radiologist is in CARE mode (it holds clinical slugs) but has no booking, token category,
- * patient identifier or template slug: CARE hides exactly those items.
+ * The Radiologist is in CARE mode (it holds clinical slugs) but has no booking or referral slug:
+ * CARE hides exactly Appointments, Queues and Referrals. Settings is a plain item for everyone.
  */
 const CARE_RADIOLOGIST = [
   "Overview",
-  "Patients > Search patients",
-  ...ENCOUNTER_LISTS,
-  "Patients > Locations",
+  "Search patients",
+  ENCOUNTERS,
+  "Search by Location",
   "Services",
   "Resource",
   "Users",
   "Billing > Accounts",
   "Billing > Invoices",
   "Billing > Payments",
-  ...SETTINGS_ALWAYS.map((name) => `Settings > ${name}`),
-  "Settings > Tag config",
+  "Settings",
 ];
 
-const PATIENTS = ["Patients > Search patients", ...ENCOUNTER_LISTS];
+const PATIENTS = ["Search patients", ENCOUNTERS];
 
 interface Login {
   username: string;
@@ -191,15 +174,19 @@ const LOGINS: Login[] = [
 
 const HOSPITAL_ADMINS = new Set(["admin.priya"]);
 
-/** Location menus after "My places" (design §13.5) */
+/**
+ * Location menus after "My places" (design §13.5). CARE 3.1: Overview is kept for restricted roles,
+ * Responses is hidden, and Laboratory > Service Requests is the flat item Service Requests.
+ */
 const PLACES: Record<string, { place: string; menu: string[] }> = {
   "lab.imran": {
     place: "Sample Collection Room",
-    menu: ["Laboratory > Service Requests", "Inventory > Items"],
+    menu: ["Overview", "Service Requests", "Inventory > Items"],
   },
   "store.gopal": {
     place: "Main Store",
     menu: [
+      "Overview",
       "Inventory > Items",
       "Inventory > To Receive",
       "Inventory > To Dispatch",
@@ -240,7 +227,8 @@ async function expandSidebar(page: Page) {
   await page.evaluate(() => {
     document
       .querySelectorAll<HTMLButtonElement>(
-        '[data-sidebar="content"] li[data-sidebar="menu-item"] > button[aria-expanded="false"]',
+        // not a dropdown trigger (the Encounters item's "Encounter types" menu button)
+        '[data-sidebar="content"] li[data-sidebar="menu-item"] > button[aria-expanded="false"]:not([aria-haspopup])',
       )
       .forEach((button) => button.click());
   });

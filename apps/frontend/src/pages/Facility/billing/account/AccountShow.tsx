@@ -1,9 +1,9 @@
-import { DialogDescription } from "@radix-ui/react-dialog";
+import { DialogDescription } from "@/components/ui/dialog";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { formatDistanceToNow } from "date-fns";
 import { Hash, Info, MoreVertical } from "lucide-react";
 import { Link, navigate } from "raviger";
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import { useTranslation } from "react-i18next";
 import { toast } from "sonner";
 
@@ -73,7 +73,7 @@ import accountApi from "@/types/billing/account/accountApi";
 import { ChargeItemStatus } from "@/types/billing/chargeItem/chargeItem";
 import chargeItemApi from "@/types/billing/chargeItem/chargeItemApi";
 
-import { isPositive, roundWhole } from "@/Utils/decimal";
+import { isPositive, isZero, roundWhole } from "@/Utils/decimal";
 import { ShortcutBadge } from "@/Utils/keyboardShortcutComponents";
 import BackButton from "@/components/Common/BackButton";
 import { ReportSubTab } from "@/components/Files/ReportSubTab";
@@ -194,16 +194,16 @@ function AccountShow({
 
   const isBillingClosed = !!account && isAccountBillingClosed(account);
 
-  useEffect(() => {
-    if (account) {
-      setCloseAccountStatus({
-        sheetOpen: false,
-        reason: isBillingClosed
-          ? account?.billing_status
-          : AccountBillingStatus.closed_baddebt,
-      });
-    }
-  }, [account, isBillingClosed]);
+  const defaultCloseReason = (): AccountBillingStatus => {
+    if (!account) return AccountBillingStatus.closed_baddebt;
+    if (isBillingClosed) return account.billing_status;
+    return isZero(account.total_balance)
+      ? AccountBillingStatus.closed_completed
+      : AccountBillingStatus.closed_baddebt;
+  };
+
+  const openCloseDialog = () =>
+    setCloseAccountStatus({ sheetOpen: true, reason: defaultCloseReason() });
 
   const rebalanceMutation = useMutation({
     mutationFn: mutate(accountApi.rebalanceAccount, {
@@ -400,12 +400,7 @@ function AccountShow({
                 <Button
                   variant="ghost"
                   className="text-gray-950 gap-1 flex flex-row items-center justify-between"
-                  onClick={() =>
-                    setCloseAccountStatus({
-                      ...closeAccountStatus,
-                      sheetOpen: true,
-                    })
-                  }
+                  onClick={openCloseDialog}
                 >
                   <CareIcon icon="l-check" className="size-5" />
                   <span className="underline">{t("settle_close")}</span>
@@ -486,12 +481,7 @@ function AccountShow({
                       {ihrActions.account && (
                         <DropdownMenuItem
                           className="lg:hidden"
-                          onClick={() =>
-                            setCloseAccountStatus({
-                              ...closeAccountStatus,
-                              sheetOpen: true,
-                            })
-                          }
+                          onClick={openCloseDialog}
                         >
                           {t("settle_close")}
                           <ShortcutBadge actionId="settle-close-account" />
@@ -766,12 +756,7 @@ function AccountShow({
               isAccountBillingClosed={isBillingClosed}
               canUpdateAccount={canUpdateAccount}
               onAdvance={advanceBillingStatus}
-              onSettleClose={() =>
-                setCloseAccountStatus((prev) => ({
-                  ...prev,
-                  sheetOpen: true,
-                }))
-              }
+              onSettleClose={openCloseDialog}
             />
           </div>
         </div>
@@ -948,17 +933,21 @@ function BillingLifecycleStepper({
                 )}
               />
             )}
-            <button
+            <Button
+              variant="ghost"
               type="button"
               disabled={!isClickable}
               onClick={() => handleStepClick(index)}
               title={stepLabels[step]}
               className={cn(
-                "flex items-center gap-1 group transition-all rounded-full px-1.5 py-0.5 text-xs",
-                isClickable
-                  ? "cursor-pointer hover:bg-gray-100"
-                  : "cursor-default",
-                isNext && "hover:ring-1 hover:ring-primary-300",
+                "h-auto",
+                cn(
+                  "flex items-center gap-1 group transition-all rounded-full px-1.5 py-0.5 text-xs",
+                  isClickable
+                    ? "cursor-pointer hover:bg-gray-100"
+                    : "cursor-default",
+                  isNext && "hover:ring-1 hover:ring-primary-300",
+                ),
               )}
             >
               <div
@@ -993,7 +982,7 @@ function BillingLifecycleStepper({
                   {stepLabels[step]}
                 </span>
               )}
-            </button>
+            </Button>
           </div>
         );
       })}

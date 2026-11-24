@@ -41,11 +41,11 @@ class Generator(unittest.TestCase):
         self.src = Path(self.tmp.name)
         (self.src / "types").mkdir()
         (self.src / "types" / "thingApi.ts").write_text(API)
-        self.saved = ba.SRC, ba.DYNAMIC
-        ba.SRC, ba.DYNAMIC = self.src, {}
+        self.saved = ba.SRC, ba.DYNAMIC, ba.RAW_ROUTES, ba.RAW_DIRS, ba.RAW_SENDER
+        ba.SRC, ba.DYNAMIC, ba.RAW_ROUTES, ba.RAW_DIRS = self.src, {}, (), ()
 
     def tearDown(self):
-        ba.SRC, ba.DYNAMIC = self.saved
+        ba.SRC, ba.DYNAMIC, ba.RAW_ROUTES, ba.RAW_DIRS, ba.RAW_SENDER = self.saved
         self.tmp.cleanup()
 
     def site(self, body, name="page.tsx", helpers=True):
@@ -79,6 +79,42 @@ class Generator(unittest.TestCase):
         )
         text = ba.render(entries)
         self.assertIn("PUT /api/v1/thing/{id}/  # page.tsx: thingApi.update\n", text)
+
+    # CARE 3.1's fill page: the batch is sent as `api: { path: request.url }`, the urls are
+    # templates in other files (RAW_ROUTES)
+    RAW_FILE = "defs/thing.ts"
+    RAW_TEMPLATE = "`/api/v1/patient/${patientId}/thing/upsert/`"
+
+    def raw(self, extra=""):
+        (self.src / "defs").mkdir(exist_ok=True)
+        (self.src / self.RAW_FILE).write_text(f"const url = {self.RAW_TEMPLATE};\n{extra}")
+        self.site("send({\n  api: {\n    path: request.url,\n    method: request.method,\n  },\n});\n")
+        ba.RAW_SENDER = "page.tsx"
+        ba.RAW_DIRS = ("defs",)
+        ba.RAW_ROUTES = (
+            ("POST", "/api/v1/patient/{patientId}/thing/upsert/", self.RAW_FILE, self.RAW_TEMPLATE),
+        )
+
+    def test_raw_urls_are_listed_from_the_reviewed_table(self):
+        self.raw()
+        entries, problems = ba.call_sites()
+        self.assertEqual(problems, [])
+        self.assertEqual(
+            entries,
+            {("POST", "/api/v1/patient/{patientId}/thing/upsert/"): {f"{self.RAW_FILE}: raw url"}},
+        )
+
+    def test_a_new_raw_url_template_fails_until_reviewed(self):
+        self.raw("const other = `/api/v1/patient/${patientId}/other/`;\n")
+        _, problems = ba.call_sites()
+        self.assertEqual(len(problems), 1)
+        self.assertIn("not in RAW_ROUTES", problems[0])
+
+    def test_a_changed_raw_url_template_fails(self):
+        self.raw()
+        (self.src / self.RAW_FILE).write_text("const url = `/api/v1/patient/${id}/moved/`;\n")
+        _, problems = ba.call_sites()
+        self.assertTrue(any("gone or changed" in p for p in problems), problems)
 
     def test_files_without_the_helpers_are_not_batch_sites(self):
         self.site("const x = { api: thingApi.update };\n", helpers=False)

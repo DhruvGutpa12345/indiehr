@@ -44,6 +44,14 @@
     "Utils/useView.ts": [],
     "Utils/ihr/staffSession.ts": [],
     "atoms/paymentReconcilationLocationAtom.ts": [],
-    "atoms/queuePractitionerAtom.ts": []
+    "atoms/queuePractitionerAtom.ts": [],
+    "atoms/encounterFilterAtom.ts": [],
+    "pages/Encounters/EncounterList.tsx": [],
+    "pages/Encounters/EncounterHistorySelector.tsx": [],
+    "components/QuestionnaireV2/fill/draft/fillDraftCache.ts": [
+      "care_qn_fill_draft--"
+    ],
+    "components/QuestionnaireV2/fill/draft/fillDraftList.ts": [],
+    "components/QuestionnaireV2/fill/draft/fillDraftStore.ts": []
   }
 }

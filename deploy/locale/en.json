@@ -214,6 +214,7 @@
   "ihr_page_not_ready": "This page is not ready yet.",
   "ihr_pincode_districts": "Districts for this PIN code",
   "ihr_pincode_state_filled": "State filled from the PIN code. Choose the district.",
+  "ihr_powered_by": "Powered by {{platform}}",
   "ihr_records_ask": "Ask for records access",
   "ihr_records_ask_heading": "Ask for records access",
   "ihr_records_ask_hint": "Open the patient first (Search patients), then choose \"Ask for records access\" on the patient's page.",

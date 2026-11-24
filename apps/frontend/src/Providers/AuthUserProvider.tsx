@@ -1,9 +1,15 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useSetAtom } from "jotai";
 import { navigate } from "raviger";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 
 import Loading from "@/components/Common/Loading";
+import {
+  clearOtherUsersFillDrafts,
+  clearQuestionnaireFillDrafts,
+  sweepExpiredFillDrafts,
+} from "@/components/QuestionnaireV2/fill/draft/fillDraftCache";
+import { AppearanceUserSync } from "@/context/AppearanceContext";
 
 import { AuthUserContext } from "@/hooks/useAuthUser";
 
@@ -73,6 +79,22 @@ export default function AuthUserProvider({
     setUser(user);
   }, [user, setUser]);
 
+  // Boot-time housekeeping — drop any fill drafts that outlived their TTL,
+  // regardless of which user (or logged-out session) wrote them. Fresh
+  // drafts (e.g. one saved from the login form) are left alone.
+  useEffect(() => {
+    sweepExpiredFillDrafts();
+  }, []);
+
+  // IndieHR: sign-in happens at the backend (Keycloak), so the first point the account is
+  // known here is the current-user answer. A draft left by a DIFFERENT account on this
+  // computer must not survive into this session; this person's own draft (left by an
+  // expiry) is the recovery case and stays.
+  const userId = user?.id;
+  useEffect(() => {
+    if (userId) clearOtherUsersFillDrafts(userId);
+  }, [userId]);
+
   const signIn = useCallback(async (): Promise<LoginResponse> => {
     startSignIn(
       getRedirectOr(window.location.pathname + window.location.search),
@@ -86,14 +108,17 @@ export default function AuthUserProvider({
     return new Promise<LoginResponse>(() => undefined);
   }, []);
 
-  const patientLogin = (tokenData: TokenData, redirectUrl: string) => {
-    setPatientToken(tokenData);
-    localStorage.setItem(
-      LocalStorageKeys.patientTokenKey,
-      JSON.stringify(tokenData),
-    );
-    navigate(redirectUrl);
-  };
+  const patientLogin = useCallback(
+    (tokenData: TokenData, redirectUrl: string) => {
+      setPatientToken(tokenData);
+      localStorage.setItem(
+        LocalStorageKeys.patientTokenKey,
+        JSON.stringify(tokenData),
+      );
+      navigate(redirectUrl);
+    },
+    [],
+  );
 
   const endLocally = useCallback(
     (reason: EndReason) => {
@@ -106,9 +131,13 @@ export default function AuthUserProvider({
     [queryClient],
   );
 
-  const signOut = useCallback(
-    async (why?: unknown) => {
-      const idle = why === "idle";
+  // `clearDrafts` keeps upstream's split between a deliberate sign-out and the involuntary
+  // ends (idle time-out, the session-expired page), but on our staff hosts every end also runs
+  // clearStaffStorage(), which removes the questionnaire fill drafts (`care_qn_fill_draft--`,
+  // answers about a patient) whatever the reason: cached data goes at sign-out (Q-T9, P1-T1d;
+  // P2-T0b). Upstream's recovery of a draft after an idle end is therefore not offered here.
+  const endSession = useCallback(
+    async (idle: boolean, clearDrafts: boolean) => {
       const everywhere = await requestSignOut(idle ? "idle" : "user");
       // Not confirmed by Keycloak (or the backend unreachable): say so, this may be a
       // shared computer. The app stays signed out here either way.
@@ -117,10 +146,17 @@ export default function AuthUserProvider({
           ? "idle"
           : "signed_out"
         : "signed_out_here_only";
+      if (clearDrafts) clearQuestionnaireFillDrafts();
       announceSignOut(reason);
       endLocally(reason);
     },
     [endLocally],
+  );
+
+  const signOut = useCallback(() => endSession(false, true), [endSession]);
+  const endSessionKeepingDrafts = useCallback(
+    () => endSession(false, false),
+    [endSession],
   );
 
   // A sign-out in another tab of this hospital ends this one at once.
@@ -137,27 +173,44 @@ export default function AuthUserProvider({
     return () => removeEventListener("storage", listener);
   }, []);
 
-  const signOutIdle = useCallback(() => signOut("idle"), [signOut]);
+  const signOutIdle = useCallback(() => endSession(true, false), [endSession]);
   useIdleSignOut(!!user, signOutIdle);
 
-  if (isLoading) {
-    return <Loading />;
-  }
+  const contextValue = useMemo(
+    () => ({
+      signIn,
+      signOut,
+      endSessionKeepingDrafts,
+      verifyMFA,
+      isAuthenticating: false,
+      isVerifyingMFA: false,
+      user,
+      patientLogin,
+      patientToken,
+    }),
+    [
+      signIn,
+      signOut,
+      endSessionKeepingDrafts,
+      verifyMFA,
+      user,
+      patientLogin,
+      patientToken,
+    ],
+  );
 
   return (
-    <AuthUserContext.Provider
-      value={{
-        signIn,
-        signOut,
-        verifyMFA,
-        isAuthenticating: false,
-        isVerifyingMFA: false,
-        user,
-        patientLogin,
-        patientToken,
-      }}
-    >
-      {user ? children : patientToken?.token ? otpAuthorized : unauthorized}
+    <AuthUserContext.Provider value={contextValue}>
+      <AppearanceUserSync user={user} />
+      {isLoading ? (
+        <Loading />
+      ) : user ? (
+        children
+      ) : patientToken?.token ? (
+        otpAuthorized
+      ) : (
+        unauthorized
+      )}
     </AuthUserContext.Provider>
   );
 }

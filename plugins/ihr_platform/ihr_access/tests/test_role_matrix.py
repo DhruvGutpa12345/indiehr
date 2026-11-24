@@ -1452,6 +1452,9 @@ class SpecWalk(SimpleTestCase):
 # batch (§10 item 20's meta-test: a newly listed GET fails until it has one)
 BATCH_GET_CASES = {
     "/api/v1/medication/dispense/{id}/": "test_cashier_dispense_get_inside_a_batch",
+    "/api/v1/referral/{referralId}/resources/{resourceId}/resolve/": (
+        "test_cashier_referral_resolve_get_inside_a_batch"
+    ),
 }
 
 
@@ -1540,6 +1543,26 @@ class BatchCases(MatrixCase):
         self.assertIn(result["status_code"], (403, 404), result)
         self.assertNotIn(testing.CANARY, text)
         self.assertNotIn(self.world.patient.name, text)
+
+    def test_cashier_referral_resolve_get_inside_a_batch(self):
+        """CARE 3.1 (P2-T0b): the referral's attached record, read through a batch, stays closed
+        to a restricted role (ihr_access/referrals.py), and names nothing of the patient."""
+        w = self.world
+        referral = w.objects["referral"]
+        resource = w.objects["referral_resource"]
+        url = (
+            f"/api/v1/referral/{referral.external_id}"
+            f"/resources/{resource.external_id}/resolve/"
+        )
+        response, emitted = self.batch("Cashier", ("GET", url, {}))
+        self.assert_ran(response, emitted)
+        [result] = response.json()["results"]
+        text = json_text(result)
+        self.assertIn(result["status_code"], (403, 404), result)
+        self.assertNotIn(testing.CANARY, text)
+        self.assertNotIn(w.patient.name, text)
+        self.assertNotIn(testing.marker("referral-title"), text)
+        self.assertNotIn(testing.marker("referral-note"), text)
 
     def test_a_get_off_the_list_is_refused_labelled(self):
         """The labelled case: a GET not on batch_allowlist.txt refuses the whole batch."""

@@ -13,6 +13,7 @@ import { cn } from "@/lib/utils";
 
 import { Button } from "@/components/ui/button";
 import { DatePicker } from "@/components/ui/date-picker";
+import { FieldDescription, FieldLegend, FieldSet } from "@/components/ui/field";
 import {
   Form,
   FormControl,
@@ -23,6 +24,13 @@ import {
 } from "@/components/ui/form";
 import { Input } from "@/components/ui/input";
 import {
+  Item,
+  ItemContent,
+  ItemDescription,
+  ItemGroup,
+  ItemTitle,
+} from "@/components/ui/item";
+import {
   Select,
   SelectContent,
   SelectItem,
@@ -31,8 +39,10 @@ import {
 } from "@/components/ui/select";
 import {
   Sheet,
+  SheetBody,
   SheetContent,
   SheetDescription,
+  SheetFooter,
   SheetHeader,
   SheetTitle,
   SheetTrigger,
@@ -42,6 +52,8 @@ import { TagSelectorPopover } from "@/components/Tags/TagAssignmentSheet";
 
 import { useShortcutSubContext } from "@/context/ShortcutContext";
 import FacilityOrganizationSelector from "@/pages/Facility/settings/organizations/components/FacilityOrganizationSelector";
+import { toCareTeamMembers } from "@/types/careTeam/careTeam";
+import careTeamApi from "@/types/careTeam/careTeamApi";
 import {
   ENCOUNTER_CLASS_ICONS,
   ENCOUNTER_PRIORITY,
@@ -52,19 +64,25 @@ import {
 import encounterApi from "@/types/emr/encounter/encounterApi";
 import { TagConfig, TagResource } from "@/types/emr/tagConfig/tagConfig";
 import useTagConfigs from "@/types/emr/tagConfig/useTagConfig";
+import { ScheduleEncounterDefaults } from "@/types/scheduling/schedule";
 import { ihrShowsEncounterTags } from "@/Utils/ihr/frontDesk"; // IndieHR P1-T11c
 import { useIhrAccess } from "@/Utils/ihr/useIhrAccess"; // IndieHR P1-T11c
 import { ShortcutBadge } from "@/Utils/keyboardShortcutComponents";
 import mutate from "@/Utils/request/mutate";
+import { formatName } from "@/Utils/utils";
 
 interface Props {
   patientId: string;
   facilityId: string;
   patientName: string;
   appointment?: string;
+  /** The appointment's schedule defaults: departments are prefilled and the
+   * care team is assigned once the encounter is created. */
+  scheduleDefaults?: ScheduleEncounterDefaults;
   trigger?: React.ReactNode;
   onSuccess?: (encounter: EncounterRead) => void;
   disableRedirectOnSuccess?: boolean;
+  redirectQueryParams?: Record<string, string | undefined>;
   defaultOpen?: boolean;
   defaultStatus?:
     | EncounterStatus.PLANNED
@@ -77,9 +95,11 @@ export default function CreateEncounterForm({
   facilityId,
   patientName,
   appointment,
+  scheduleDefaults,
   trigger,
   onSuccess,
   disableRedirectOnSuccess = false,
+  redirectQueryParams,
   defaultOpen = false,
   defaultStatus = EncounterStatus.PLANNED,
 }: Props) {
@@ -88,6 +108,8 @@ export default function CreateEncounterForm({
   const { t } = useTranslation();
   const ihrShowsTags = ihrShowsEncounterTags(useIhrAccess()); // IndieHR P1-T11c
   useShortcutSubContext();
+  const defaultOrganizations = scheduleDefaults?.organizations ?? [];
+  const defaultCareTeam = scheduleDefaults?.care_team ?? [];
 
   const encounterFormSchema = z
     .object({
@@ -126,11 +148,19 @@ export default function CreateEncounterForm({
       status: defaultStatus,
       encounter_class: careConfig.defaultEncounterType,
       priority: "routine",
-      organizations: [],
+      organizations: defaultOrganizations.map(({ id }) => id),
       start_date: new Date().toISOString(),
       tags: [],
     },
   });
+
+  // Re-read the schedule's departments on every reset: the appointment may
+  // have been refetched with different defaults since the form mounted.
+  const resetForm = () =>
+    form.reset({
+      ...form.formState.defaultValues,
+      organizations: defaultOrganizations.map(({ id }) => id),
+    });
 
   const selectedStatus = form.watch("status");
 
@@ -141,16 +171,33 @@ export default function CreateEncounterForm({
     .filter(Boolean) as TagConfig[];
 
   const { mutate: createEncounter, isPending } = useMutation({
-    mutationFn: mutate(encounterApi.create),
+    mutationFn: async (request: EncounterCreate) => {
+      const encounter = await mutate(encounterApi.create)(request);
+      if (defaultCareTeam.length) {
+        // The encounter already exists, so a failure here must not block the
+        // redirect; tell the user the care team still needs to be added.
+        await mutate(careTeamApi.setCareTeam, {
+          pathParams: { encounterId: encounter.id },
+        })({ members: toCareTeamMembers(defaultCareTeam) }).catch(() =>
+          toast.error(t("encounter_schedule_care_team_failed")),
+        );
+      }
+      return encounter;
+    },
     onSuccess: (data: EncounterRead) => {
       toast.success(t("encounter_created"));
       setIsOpen(false);
-      form.reset();
+      resetForm();
       queryClient.invalidateQueries({ queryKey: ["encounters", patientId] });
       onSuccess?.(data);
       if (!disableRedirectOnSuccess) {
+        const params = new URLSearchParams(
+          Object.entries(redirectQueryParams ?? {}).filter(
+            (entry): entry is [string, string] => entry[1] !== undefined,
+          ),
+        );
         navigate(
-          `/facility/${facilityId}/patient/${patientId}/encounter/${data.id}/updates`,
+          `/facility/${facilityId}/patient/${patientId}/encounter/${data.id}/updates${params.size ? `?${params}` : ""}`,
         );
       }
     },
@@ -164,7 +211,7 @@ export default function CreateEncounterForm({
       period: {
         start: data.start_date,
       },
-      tags: data.tags,
+      tags: data.tags.map((tag) => ({ tag })),
       appointment: appointment,
     };
 
@@ -176,21 +223,21 @@ export default function CreateEncounterForm({
       open={isOpen}
       onOpenChange={() => {
         setIsOpen(!isOpen);
-        form.reset();
+        resetForm();
       }}
     >
       <SheetTrigger asChild>
         {trigger || (
           <Button
             variant="secondary"
-            className="h-14 w-full justify-start text-lg"
+            className="justify-start w-full text-lg h-14"
           >
             <Stethoscope className="mr-4 size-6" />
             {t("create_encounter")}
           </Button>
         )}
       </SheetTrigger>
-      <SheetContent className="overflow-y-auto">
+      <SheetContent size="md" className="overflow-hidden">
         <SheetHeader>
           <SheetTitle>{t("initiate_encounter")}</SheetTitle>
           <SheetDescription>
@@ -206,207 +253,244 @@ export default function CreateEncounterForm({
         <Form {...form}>
           <form
             onSubmit={form.handleSubmit(onSubmit)}
-            className="mt-4 space-y-2"
+            className="flex min-h-0 flex-1 flex-col"
           >
-            <div className="space-y-5">
-              <FormField
-                control={form.control}
-                name="start_date"
-                render={({ field }) => {
-                  const date = field.value ? new Date(field.value) : new Date();
-                  return (
-                    <FormItem>
-                      <FormLabel>{t("date_and_time")}</FormLabel>
-                      <div className="flex gap-2">
-                        <DatePicker
-                          date={date}
-                          disabled={(date) =>
-                            selectedStatus !== EncounterStatus.PLANNED &&
-                            date > new Date()
-                          }
-                          onChange={(newDate) => {
-                            if (!newDate) return;
-                            const updatedDate = new Date(newDate);
-                            updatedDate.setHours(date.getHours());
-                            updatedDate.setMinutes(date.getMinutes());
-                            field.onChange(updatedDate.toISOString());
-                          }}
-                          className="h-9"
-                        />
-                        <Input
-                          type="time"
-                          className="border-gray-400 text-sm sm:py-px shadow-sm"
-                          value={date.toLocaleTimeString([], {
-                            hour: "2-digit",
-                            minute: "2-digit",
-                            hour12: false,
-                          })}
-                          onChange={(e) => {
-                            const [hours, minutes] = e.target.value
-                              .split(":")
-                              .map(Number);
-                            if (isNaN(hours) || isNaN(minutes)) return;
-                            const updatedDate = new Date(date);
-                            updatedDate.setHours(hours);
-                            updatedDate.setMinutes(minutes);
-                            field.onChange(updatedDate.toISOString());
-                          }}
-                        />
-                      </div>
-                      <FormMessage />
-                    </FormItem>
-                  );
-                }}
-              />
-              <FormField
-                control={form.control}
-                name="encounter_class"
-                render={({ field }) => (
-                  <FormItem>
-                    <FormLabel>{t("type_of_encounter")}</FormLabel>
-                    <div className="grid grid-cols-2 gap-3">
-                      {careConfig.encounterClasses.map((value) => {
-                        const Icon = ENCOUNTER_CLASS_ICONS[value];
-                        return (
-                          <Button
-                            key={value}
-                            type="button"
-                            className={cn(
-                              "h-auto min-h-24 w-full justify-center text-lg",
-                              field.value === value &&
-                                "ring-2 ring-primary text-primary",
-                            )}
-                            variant="outline"
-                            onClick={() => field.onChange(value)}
-                          >
-                            <div className="flex flex-col items-center text-center">
-                              <Icon className="size-6" />
-                              <div className="text-sm font-bold">
-                                {t(`encounter_class__${value}`)}
-                              </div>
-                              <div className="whitespace-normal wrap-break-word text-center text-xs text-gray-500">
-                                {t(`encounter_class_description__${value}`)}
-                              </div>
-                            </div>
-                          </Button>
-                        );
-                      })}
-                    </div>
-                    <FormMessage />
-                  </FormItem>
-                )}
-              />
-              <FormField
-                control={form.control}
-                name="status"
-                render={({ field }) => (
-                  <FormItem>
-                    <FormLabel>{t("status")}</FormLabel>
-                    <Select
-                      onValueChange={field.onChange}
-                      defaultValue={field.value}
-                    >
-                      <FormControl>
-                        <SelectTrigger ref={field.ref}>
-                          <SelectValue placeholder={t("select_status")} />
-                        </SelectTrigger>
-                      </FormControl>
-                      <SelectContent>
-                        <SelectItem value={EncounterStatus.IN_PROGRESS}>
-                          {t("in_progress")}
-                        </SelectItem>
-                        <SelectItem value={EncounterStatus.PLANNED}>
-                          {t("planned")}
-                        </SelectItem>
-                        <SelectItem value={EncounterStatus.ON_HOLD}>
-                          {t("on_hold")}
-                        </SelectItem>
-                      </SelectContent>
-                    </Select>
-                    <FormMessage />
-                  </FormItem>
-                )}
-              />
-
-              <FormField
-                control={form.control}
-                name="priority"
-                render={({ field }) => (
-                  <FormItem>
-                    <FormLabel>Priority</FormLabel>
-                    <Select
-                      onValueChange={field.onChange}
-                      defaultValue={field.value}
-                    >
-                      <FormControl>
-                        <SelectTrigger ref={field.ref}>
-                          <SelectValue placeholder={t("select_priority")} />
-                        </SelectTrigger>
-                      </FormControl>
-                      <SelectContent>
-                        {ENCOUNTER_PRIORITY.map((priority) => (
-                          <SelectItem key={priority} value={priority}>
-                            {t(`encounter_priority__${priority}`)}
-                          </SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
-                    <FormMessage />
-                  </FormItem>
-                )}
-              />
-              {ihrShowsTags && (
+            <SheetBody>
+              <div className="space-y-5">
                 <FormField
                   control={form.control}
-                  name="tags"
+                  name="start_date"
+                  render={({ field }) => {
+                    const date = field.value
+                      ? new Date(field.value)
+                      : new Date();
+                    return (
+                      <FormItem>
+                        <FormLabel>{t("date_and_time")}</FormLabel>
+                        <div className="flex flex-col gap-2 md:flex-row ">
+                          <DatePicker
+                            date={date}
+                            disabled={(date) =>
+                              selectedStatus !== EncounterStatus.PLANNED &&
+                              date > new Date()
+                            }
+                            onChange={(newDate) => {
+                              if (!newDate) return;
+                              const updatedDate = new Date(newDate);
+                              updatedDate.setHours(date.getHours());
+                              updatedDate.setMinutes(date.getMinutes());
+                              field.onChange(updatedDate.toISOString());
+                            }}
+                            className="text-sm border-gray-400 shadow-sm"
+                          />
+                          <Input
+                            type="time"
+                            className="text-sm border-gray-400 shadow-sm sm:py-px"
+                            value={date.toLocaleTimeString([], {
+                              hour: "2-digit",
+                              minute: "2-digit",
+                              hour12: false,
+                            })}
+                            onChange={(e) => {
+                              const [hours, minutes] = e.target.value
+                                .split(":")
+                                .map(Number);
+                              if (isNaN(hours) || isNaN(minutes)) return;
+                              const updatedDate = new Date(date);
+                              updatedDate.setHours(hours);
+                              updatedDate.setMinutes(minutes);
+                              field.onChange(updatedDate.toISOString());
+                            }}
+                          />
+                        </div>
+                        <FormMessage />
+                      </FormItem>
+                    );
+                  }}
+                />
+                <FormField
+                  control={form.control}
+                  name="encounter_class"
                   render={({ field }) => (
                     <FormItem>
-                      <FormLabel>{t("tags", { count: 2 })}</FormLabel>
-                      <FormControl className="mt-0">
-                        <TagSelectorPopover
-                          selected={selectedTags}
-                          onChange={(tags) => {
-                            field.onChange(tags.map((tag) => tag.id));
-                          }}
-                          resource={TagResource.ENCOUNTER}
-                          facilityId={facilityId}
-                        />
-                      </FormControl>
+                      <FormLabel>{t("type_of_encounter")}</FormLabel>
+                      <div className="grid grid-cols-2 gap-3">
+                        {careConfig.encounterClasses.map((value) => {
+                          const Icon = ENCOUNTER_CLASS_ICONS[value];
+                          return (
+                            <Button
+                              key={value}
+                              type="button"
+                              className={cn(
+                                "h-auto min-h-24 w-full justify-center text-lg",
+                                field.value === value &&
+                                  "ring-2 ring-primary text-primary",
+                              )}
+                              variant="outline"
+                              onClick={() => field.onChange(value)}
+                            >
+                              <div className="flex flex-col items-center text-center">
+                                <Icon className="size-6" />
+                                <div className="text-sm font-bold">
+                                  {t(`encounter_class__${value}`)}
+                                </div>
+                                <div className="text-xs text-center text-gray-500 whitespace-normal wrap-break-word">
+                                  {t(`encounter_class_description__${value}`)}
+                                </div>
+                              </div>
+                            </Button>
+                          );
+                        })}
+                      </div>
                       <FormMessage />
                     </FormItem>
                   )}
                 />
-              )}
-              <FormField
-                control={form.control}
-                name="organizations"
-                render={({ field }) => (
-                  <FormItem>
-                    <FacilityOrganizationSelector
-                      facilityId={facilityId}
-                      value={field.value}
-                      onChange={(value) => {
-                        if (value === null) {
-                          form.setValue("organizations", []);
-                        } else {
-                          form.setValue("organizations", value);
-                        }
-                      }}
-                      favoriteList="encounter_departments"
-                    />
-                    <FormMessage />
-                  </FormItem>
+                <FormField
+                  control={form.control}
+                  name="status"
+                  render={({ field }) => (
+                    <FormItem>
+                      <FormLabel>{t("status")}</FormLabel>
+                      <Select
+                        onValueChange={field.onChange}
+                        defaultValue={field.value}
+                      >
+                        <FormControl>
+                          <SelectTrigger ref={field.ref}>
+                            <SelectValue placeholder={t("select_status")} />
+                          </SelectTrigger>
+                        </FormControl>
+                        <SelectContent>
+                          <SelectItem value={EncounterStatus.IN_PROGRESS}>
+                            {t("in_progress")}
+                          </SelectItem>
+                          <SelectItem value={EncounterStatus.PLANNED}>
+                            {t("planned")}
+                          </SelectItem>
+                          <SelectItem value={EncounterStatus.ON_HOLD}>
+                            {t("on_hold")}
+                          </SelectItem>
+                        </SelectContent>
+                      </Select>
+                      <FormMessage />
+                    </FormItem>
+                  )}
+                />
+
+                <FormField
+                  control={form.control}
+                  name="priority"
+                  render={({ field }) => (
+                    <FormItem>
+                      <FormLabel>Priority</FormLabel>
+                      <Select
+                        onValueChange={field.onChange}
+                        defaultValue={field.value}
+                      >
+                        <FormControl>
+                          <SelectTrigger ref={field.ref}>
+                            <SelectValue placeholder={t("select_priority")} />
+                          </SelectTrigger>
+                        </FormControl>
+                        <SelectContent>
+                          {ENCOUNTER_PRIORITY.map((priority) => (
+                            <SelectItem key={priority} value={priority}>
+                              {t(`encounter_priority__${priority}`)}
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                      <FormMessage />
+                    </FormItem>
+                  )}
+                />
+                {ihrShowsTags && (
+                  <FormField
+                    control={form.control}
+                    name="tags"
+                    render={({ field }) => (
+                      <FormItem>
+                        <FormLabel>{t("tags", { count: 2 })}</FormLabel>
+                        <FormControl className="mt-0">
+                          <TagSelectorPopover
+                            selected={selectedTags}
+                            onChange={(tags) => {
+                              field.onChange(tags.map((tag) => tag.id));
+                            }}
+                            resource={TagResource.ENCOUNTER}
+                            facilityId={facilityId}
+                          />
+                        </FormControl>
+                        <FormMessage />
+                      </FormItem>
+                    )}
+                  />
                 )}
-              />
-            </div>
-            <div className="flex justify-end mt-6 space-x-2">
+                <FormField
+                  control={form.control}
+                  name="organizations"
+                  render={({ field }) => (
+                    <FormItem>
+                      <FacilityOrganizationSelector
+                        facilityId={facilityId}
+                        value={field.value}
+                        // The selector treats these as already chosen, so pass
+                        // only the ones still selected to allow re-adding.
+                        currentOrganizations={defaultOrganizations.filter(
+                          ({ id }) => field.value.includes(id),
+                        )}
+                        onChange={(value) => {
+                          if (value === null) {
+                            form.setValue("organizations", []);
+                          } else {
+                            form.setValue("organizations", value);
+                          }
+                        }}
+                        favoriteList="encounter_departments"
+                      />
+                      <FormMessage />
+                    </FormItem>
+                  )}
+                />
+                {defaultCareTeam.length > 0 && (
+                  <FieldSet className="gap-2">
+                    <FieldLegend variant="label">{t("care_team")}</FieldLegend>
+                    <FieldDescription>
+                      {t("encounter_schedule_care_team_help")}
+                    </FieldDescription>
+                    <ItemGroup>
+                      {defaultCareTeam.map(({ member, role }) => (
+                        <Item
+                          key={member.id}
+                          role="listitem"
+                          size="sm"
+                          variant="outline"
+                        >
+                          <ItemContent className="min-w-0">
+                            <ItemTitle className="line-clamp-none break-words">
+                              {formatName(member)}
+                            </ItemTitle>
+                            <ItemDescription>
+                              {role.display || role.code}
+                            </ItemDescription>
+                          </ItemContent>
+                        </Item>
+                      ))}
+                    </ItemGroup>
+                  </FieldSet>
+                )}
+              </div>
+            </SheetBody>
+
+            <SheetFooter>
               <Button
                 type="button"
+                variant="outline"
                 onClick={() => {
                   setIsOpen(false);
-                  form.reset();
+                  resetForm();
                 }}
-                className="bg-white text-gray-800 border border-gray-300 hover:bg-gray-100"
               >
                 {t("cancel")}
                 <ShortcutBadge actionId="cancel-action" />
@@ -416,9 +500,9 @@ export default function CreateEncounterForm({
                 disabled={isPending || !form.watch("organizations").length}
               >
                 {isPending ? t("creating") : t("create_encounter")}
-                <ShortcutBadge actionId="submit-action" className="bg-white" />
+                <ShortcutBadge actionId="submit-action" variant="primary" />
               </Button>
-            </div>
+            </SheetFooter>
           </form>
         </Form>
       </SheetContent>

@@ -1,5 +1,5 @@
 import { useQuery } from "@tanstack/react-query";
-import { Link } from "raviger";
+import { Link, useQueryParams } from "raviger";
 import { useTranslation } from "react-i18next";
 
 import { Button } from "@/components/ui/button";
@@ -31,18 +31,30 @@ import {
   PatientDeceasedInfo,
   PatientHeader,
 } from "@/components/Patient/PatientHeader";
-import { useSidebar } from "@/components/ui/sidebar";
 import { useShortcutSubContext } from "@/context/ShortcutContext";
-import { cn } from "@/lib/utils";
 import BookAppointmentSheet from "@/pages/Appointments/BookAppointment/BookAppointmentSheet";
+import { ReferralPatientAppointments } from "@/pages/Appointments/ReferralPatientAppointments";
 import { PatientNotesTab } from "./PatientDetailsTab/PatientNotes";
-export const PatientProfile = (props: {
+interface PatientProfileProps {
   facilityId?: string;
   id: string;
   page: (typeof tabs)[0]["route"];
-}) => {
+}
+
+export const PatientProfile = (props: PatientProfileProps) => {
+  const [params] = useQueryParams<{ referralId?: string }>();
+  if (
+    props.facilityId &&
+    props.page === "appointments" &&
+    params.referralId !== undefined
+  ) {
+    return <ReferralPatientAppointments patientId={props.id} />;
+  }
+  return <PatientProfileContent {...props} />;
+};
+
+const PatientProfileContent = (props: PatientProfileProps) => {
   const { facilityId, id, page } = props;
-  const { open: isSidebarOpen } = useSidebar();
 
   const { t } = useTranslation();
   const { hasPermission } = usePermissions();
@@ -101,14 +113,7 @@ export const PatientProfile = (props: {
         </>
       }
     >
-      <div
-        className={cn(
-          "w-full mt-3 overflow-y-auto",
-          isSidebarOpen
-            ? "md:max-w-[calc(100vw-25rem)]"
-            : "md:max-w-[calc(100vw-8rem)]",
-        )}
-      >
+      <div className="w-full mt-3">
         <div className="flex flex-col gap-2">
           <PatientHeader
             patient={patientData}
@@ -124,7 +129,7 @@ export const PatientProfile = (props: {
           className="sticky top-0 z-9 mt-4 w-full border-b border-gray-200 bg-gray-50"
           role="navigation"
         >
-          <div className="overflow-x-auto pb-3">
+          <div className="overflow-x-auto">
             <div className="flex flex-row" role="tablist">
               {tabs.map((tab) => (
                 <Link

@@ -181,7 +181,8 @@ describe("the grant watcher's scope (review F6)", () => {
     for (const key of [
       "/patient/:id",
       "/patient/:patientId/history/:tab",
-      "/organization/organizationId/patient/:patientId/diagnostic_reports/:diagnosticReportId/print",
+      // CARE fixed its missing ':' here in the P2-T0b merge (was organizationId)
+      "/organization/:organizationId/patient/:patientId/diagnostic_reports/:diagnosticReportId/print",
     ]) {
       assert.ok(keys.includes(key), `${key} is one of CARE's keys`);
       assert.equal(watcherScope(key), "facilityLess", key);

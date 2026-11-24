@@ -105,29 +105,39 @@ function mapChildren<T extends LinkLike>(
 /** The items every mode keeps as CARE has them: the only ones shown while pending. */
 const PENDING_KEEP: ReadonlySet<string> = new Set(["/overview", "/users"]);
 
+type FacilityTopRule = "keep" | "never" | "patients" | "encounters" | "billing";
+
+// CARE 3.1 (P2-T0b) made the Patients parent flat: Search patients, Encounters (one item whose
+// element opens the class lists, url ending without a class) and Search by location are now
+// top-level items, Referrals is new, and Settings has no children here (its 15 pages and the
+// templates moved to the settings sidebar, facility-settings-nav.tsx, which has no menu rule:
+// the settings routes are reached by address only and the backend refuses a restricted role).
 function facilityTopRule(
   suffix: string,
   hasChildren: boolean,
-): "keep" | "never" | "patients" | "billing" {
+): FacilityTopRule {
   if (suffix === "/overview") return "keep";
   if (suffix === "/appointments" || suffix === "/queues") return "keep"; // CARE's own rule
-  if (suffix === "/patients" && hasChildren) return "patients";
+  if (suffix === "/patients") return "patients";
+  if (suffix === "/encounters/patients") return "encounters";
+  if (suffix === "/encounters/locations") return "never"; // the bed board shows occupants (Q-K37)
+  // services, resource and referrals: clinical or operational lists (referral routes are closed
+  // to restricted users in the backend, P2-T0a, Q-K163); never offered to restricted roles
   if (suffix === "/services" || suffix === "/resource") return "never";
+  if (suffix === "/referrals") return "never";
   if (suffix === "/users") return "keep";
   if (suffix === "/billing" && hasChildren) return "billing";
-  // All 15 /settings/* items and /template (Templates) are configuration
-  if (suffix.startsWith("/settings/") || suffix === "/template") return "never";
+  // The Settings item (/settings/general, plus any /settings/ item upstream adds back) is
+  // configuration
+  if (suffix.startsWith("/settings/")) return "never";
   return "keep"; // plugin links and anything new: as CARE has it
 }
 
-function patientsChildRule(
-  suffix: string,
-  access: IhrAccess,
-): boolean | undefined {
-  if (suffix === "/patients") return access.demographics;
-  if (suffix.startsWith("/encounters/patients/")) return access.encounterStatus;
-  if (suffix === "/encounters/locations") return false; // the bed board shows occupants (Q-K37)
-  return undefined;
+/** One leaf item set to this rule's answer, whatever CARE's own permission check said. */
+function forceVisible<T extends LinkLike>(link: T, allowed: boolean): T {
+  // CARE's own rule (booking or encounter rights) would hide the Cashier's and MRD's entry:
+  // it shows when our rule allows it (the same override the old Patients parent had)
+  return { ...link, visibility: allowed } as Visible<T>;
 }
 
 function billingChildRule(
@@ -167,14 +177,10 @@ export function ihrFacilityLinks<T extends LinkLike>(
     switch (facilityTopRule(suffix, !!link.children)) {
       case "never":
         return setVisible(link, false);
-      case "patients": {
-        const children = mapChildren(link, (child) =>
-          patientsChildRule(suffixOf(child.url, baseUrl), access),
-        );
-        // CARE's own parent rule (booking or encounter rights) would hide the Cashier's and
-        // MRD's Patients entry: the parent shows when a child does
-        return withChildren({ ...link, visibility: true }, children);
-      }
+      case "patients":
+        return forceVisible(link, access.demographics);
+      case "encounters":
+        return forceVisible(link, access.encounterStatus);
       case "billing": {
         const children = mapChildren(link, (child) =>
           billingChildRule(suffixOf(child.url, baseUrl), access),
@@ -247,11 +253,15 @@ export function ihrPlacePage(access: IhrAccess): string | undefined {
 function locationTopRule(
   suffix: string,
   access: IhrAccess,
-): "keep" | "hide" | "show" | "group" {
+): "keep" | "hide" | "show" | "group" | "leaf" {
+  // CARE 3.1 (P2-T0b): Laboratory is now a flat item (Service requests), no parent. The
+  // location overview is a landing page of the location's own details and links; Responses
+  // lists the location's form responses (clinical forms): hidden, fails closed.
+  if (suffix === "/overview") return "keep";
+  if (suffix === "/responses") return "hide";
   if (suffix === "/beds" || suffix === "/pharmacy") return "hide";
-  if (suffix === "/laboratory" || suffix === "/inventory/summary") {
-    return "group";
-  }
+  if (suffix === "/service_requests") return "leaf";
+  if (suffix === "/inventory/summary") return "group";
   if (suffix === "/schedule") {
     return access.has("can_list_schedule") ? "show" : "hide";
   }
@@ -259,6 +269,24 @@ function locationTopRule(
     return access.has("can_list_booking") ? "show" : "hide";
   }
   return "keep";
+}
+
+/** CARE 3.1's location Overview page (P2-T0b review): its quick links and its Forms section
+ * (submit forms, responses) as this user may use them. A restricted role gets a link only
+ * where its location menu shows that page; an unknown link fails closed, as does pending. */
+export function ihrLocationOverview(access: IhrAccess): {
+  allows: (path: string) => boolean;
+  forms: boolean;
+} {
+  if (access.mode === "pending") return { allows: () => false, forms: false };
+  if (access.mode !== "restricted") return { allows: () => true, forms: true };
+  const allows = (path: string) => {
+    const leaf = locationLeafRule(path, access);
+    if (leaf !== undefined) return leaf === true;
+    const top = locationTopRule(path, access);
+    return top === "show";
+  };
+  return { allows, forms: false };
 }
 
 /** CARE's location links, as this user may use them (none while pending; as CARE has them in care mode). */
@@ -278,6 +306,8 @@ export function ihrLocationLinks<T extends LinkLike>(
         return setVisible(link, false);
       case "show":
         return setVisible(link, true);
+      case "leaf":
+        return setVisible(link, locationLeafRule(suffix, access) === true);
       case "group": {
         const children = mapChildren(link, (child) =>
           locationLeafRule(suffixOf(child.url, baseUrl), access),

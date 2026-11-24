@@ -122,6 +122,12 @@ def find_keys(src: Path, classified: dict) -> tuple[list[Key], list[str]]:
         local_consts = dict(CONST.findall(text))
 
         def resolve(arg: str, store: str, where: str):
+            # a template that starts with a known constant, `${CACHE_PREFIX}${id}`: use its value
+            lead = re.match(r"`\$\{([A-Za-z_$][\w$]*)\}", arg)
+            if lead:
+                value = local_consts.get(lead.group(1)) or globals_.get(lead.group(1))
+                if value is not None:
+                    arg = "`" + value + arg[lead.end():]
             literal = _literal(arg)
             if literal:
                 keys.append(Key(store, literal[0], literal[1], where))

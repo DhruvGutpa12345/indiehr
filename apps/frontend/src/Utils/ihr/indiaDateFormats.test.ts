@@ -92,6 +92,7 @@ describe("date-fns display patterns (through our shim)", () => {
   it("uses a two-digit 12-hour clock with AM/PM", () => {
     assert.equal(format(EVENING, "h:mm a"), "09:30 PM");
     assert.equal(format(EVENING, "hh:mma"), "09:30 PM");
+    assert.equal(format(EVENING, "h:mma"), "09:30 PM");
     assert.equal(format(EVENING, "p"), "09:30 PM");
     assert.equal(format(MORNING, "h:mm a"), "09:05 AM");
     assert.equal(format(MIDNIGHT, "h:mm a"), "12:15 AM");
@@ -195,6 +196,7 @@ describe("dayjs display patterns (through our plugin)", () => {
     assert.equal(d.format("ddd, DD MMM YYYY"), "Sun, 08-11-2026");
     assert.equal(d.format("DD MMM YYYY, hh:mm A"), "08-11-2026, 09:30 PM");
     assert.equal(d.format("DD MMM YYYY, hh:mm a"), "08-11-2026, 09:30 PM");
+    assert.equal(d.format("DD MMM YYYY, h:mm A"), "08-11-2026, 09:30 PM");
     assert.equal(d.format("MMMM D, YYYY [at] h:mm A"), "08-11-2026, 09:30 PM");
     assert.equal(
       d.format("ddd, DD MMM YYYY, HH:mm"),

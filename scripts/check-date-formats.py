@@ -43,6 +43,11 @@ ALLOWED: dict[str, str] = {
     "yyyy-MM-dd'T'HH:mm": "value of datetime-local inputs and their min/max",
     "yyyy": "year only",
     "dd MMM": "no year (owner decision 1)",
+    "DD MMM": "no year (owner decision 1): dayjs, a column heading of the vitals chart (P2-T0b)",
+    "DD MMM, hh:mm A": (
+        "no year (owner decision 1): dayjs, the short time stamp of a form draft row, whose "
+        "title and label carry the full India date and time (P2-T0b)"
+    ),
     "d MMM": "no year: date-range label within one year",
     "EEE, dd MMM": "no year (owner decision 1)",
     "do MMMM": "no year (owner decision 1)",
@@ -80,9 +85,9 @@ LOCALE_CALLS_ALLOWED: dict[str, str] = {
     ),
     "components/ui/calendar.tsx": "month dropdown of the date picker: month name only, no date",
     "CAREUI/interactive/Calendar.tsx": "calendar heading: month and year only (owner decision 1)",
-    "components/Notes/NoteManager.tsx": (
+    "components/Notes/NoteMessage.tsx": (
         "formatRelative from date-fns goes through our shim Utils/ihr/indiaDateFns.ts "
-        "(DD-MM-YYYY, 12-hour), no locale passed"
+        "(DD-MM-YYYY, 12-hour), no locale passed (moved here from NoteManager.tsx, P2-T0b)"
     ),
 }
 LOCALE_CALL = re.compile(

@@ -18,6 +18,7 @@ import {
 } from "@/components/ui/popover";
 
 import Loading from "@/components/Common/Loading";
+import PatientPrintPageHeader from "@/components/Common/PatientPrintPageHeader";
 import PrintFooter from "@/components/Common/PrintFooter";
 import { formatDosage, formatFrequency } from "@/components/Medicine/utils";
 
@@ -264,6 +265,9 @@ export const PrintMedicationAdministration = (props: {
       disabled={!hasData}
       facility={facility}
       templateSlug={PrintTemplateType.medication_administration}
+      pageHeader={
+        encounter && <PatientPrintPageHeader patient={encounter.patient} />
+      }
     >
       {/* Force landscape with tight margins so the wide drug chart fits on
           a single A4 sheet per week. The parent print container also adds
@@ -623,12 +627,13 @@ const DrugChartTable = ({
                             {/* Screen version - with popover for details */}
                             <Popover>
                               <PopoverTrigger asChild>
-                                <button
+                                <Button
+                                  variant="ghost"
                                   type="button"
-                                  className="w-full h-full min-h-[28px] cursor-pointer hover:bg-green-200 transition-colors flex items-center justify-center print:hidden"
+                                  className="p-0 w-full h-full min-h-[28px] cursor-pointer hover:bg-green-200 transition-colors flex items-center justify-center print:hidden"
                                 >
                                   {cellContent}
-                                </button>
+                                </Button>
                               </PopoverTrigger>
                               <PopoverContent
                                 className="w-64 p-0 print:hidden"

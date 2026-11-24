@@ -23,7 +23,7 @@ export const ENCOUNTER_QUESTIONNAIRE_KEY =
 export const BED_BOARD_TAB_KEY = "/facility/:facilityId/encounters/:tab";
 export const BED_BOARD_LOCATION_KEY =
   "/facility/:facilityId/encounters/locations/:locationId";
-/** The facility's encounter lists (the menu's Patients > … Encounters) */
+/** The facility's encounter lists (the menu's Encounters item opens them, CARE 3.1) */
 export const ENCOUNTER_LIST_ALL_KEY =
   "/facility/:facilityId/encounters/patients/all";
 export const ENCOUNTER_LIST_CLASS_KEY =
