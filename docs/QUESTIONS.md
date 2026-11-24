@@ -1520,6 +1520,13 @@ Recommendation: A, with C's check as an early warning in `scripts/sync-upstream.
 - **Owner's answer (2026-11-24):** "Auto-handle + early check": A, plus C's warning in the sync script.
 - **Note:** the same triage found that django-tenants sends `SET search_path` before every statement (`TENANT_LIMIT_SET_CALLS` is off). Turning it on would save a round trip per query, but a stale cached path could send a query to the wrong hospital, so it needs its own tenancy review first. It is recorded in P2-T0f, not decided here.
 
+### Q-K170 — How far the router port tightens the web page gate (P2-T0c; **owner, 2026-11-24**)
+
+The web gate (defence in depth; the backend refuses or trims the data) blocks restricted roles from facility patient and visit pages, but not from the same patient and visit pages under an `/organization/...` address, nor from some other pages that show patient data (location pharmacy patient pages, request detail pages, referrals). Found by the P2-T0c design attack (security and design lenses).
+- **B ⭐ (taken, owner).** The `/organization/.../patient/...` and visit pages get the same gates as the facility ones (same pages, other address). The other patient-showing pages stay open as today but are listed by id in a reviewed list; any new CARE route with patient or visit data outside the gated prefixes fails CI until classified.
+- A. Parity plus the reviewed list. C. Gate every patient-showing page now (may block lab or store flows not yet walked through on CARE 3.1).
+- *Why:* the organization pages are the same chart on another URL; the rest needs its own role-by-role walk-through.
+
 **Answered 2026-11-24 (owner):** Q-B4 confirmed as listed (PLAN.md Phase 2; P1-T14 may still reorder it), Q-B5 now OT, ICU, Dialysis, Maternity, Q-B6 per bed per month, Q-B7 no pilot date yet (after P1-T14). Q-F2 is moot while AI is deferred.
 
 ---
