@@ -286,14 +286,14 @@ is downloaded in CI only, by the job "Browser isolation (Playwright)" in `apps.y
 fetches the two archives itself, checks them with `sha256sum -c`, serves them on 127.0.0.1 and
 points `PLAYWRIGHT_DOWNLOAD_HOST` at that copy, so `playwright install` installs exactly the
 checked files (its own installer checks no hash). The same hashes were obtained from a second
-source on 13-11-2026: Google's Chrome for Testing bucket
-(`storage.googleapis.com/chrome-for-testing-public/149.0.7827.55/linux64/chrome-headless-shell-linux64.zip`)
-and Microsoft's mirror (`playwright.download.prss.microsoft.com/dbazure/download/playwright/builds/ffmpeg/1011/ffmpeg-linux.zip`).
+source on 24-11-2026 (P2-T0c; first pinned 13-11-2026): Google's Chrome for Testing bucket
+(`storage.googleapis.com/chrome-for-testing-public/159.0.8154.6/linux64/chrome-headless-shell-linux64.zip`)
+and Microsoft's mirror (`playwright.download.prss.microsoft.com/dbazure/download/playwright/builds/ffmpeg/1013/ffmpeg-linux.zip`).
 `--with-deps` takes Chromium's system libraries from the runner's own Ubuntu archive. On a
 Playwright bump the job fails until the paths and hashes below are updated.
 
 | Item | Version | Pinned how | Checked |
 |---|---|---|---|
-| @playwright/test / playwright-core | 1.61.1 (lock file; `package.json` range `^1.60.0` is upstream's) | lock file | 2026-11-13 |
-| Chrome Headless Shell (Playwright `chromium-headless-shell` v1228) | Chrome for Testing 149.0.7827.55 — `https://cdn.playwright.dev/builds/cft/149.0.7827.55/linux64/chrome-headless-shell-linux64.zip`, 119,778,157 bytes, sha256 `410c9407d5de3fea80d9398666be06f2aa09154a3fa7b327dc254e336bb4c4b7` | sha256 | 2026-11-13 |
-| FFmpeg (Playwright `ffmpeg` v1011; installed with every Chromium, unused: no video) | `https://cdn.playwright.dev/dbazure/download/playwright/builds/ffmpeg/1011/ffmpeg-linux.zip`, 2,376,500 bytes, sha256 `ebc74fc5b94830176a3c2914ae96bd8bc7f6a91f4f33890230f84a172ee61ccc` | sha256 | 2026-11-13 |
+| @playwright/test / playwright-core | 1.65.1 (lock file, CARE care_fe 91b028f3aa33; `package.json` range `^1.60.0` is upstream's) | lock file | 2026-11-24 |
+| Chrome Headless Shell (Playwright `chromium-headless-shell` v1255) | Chrome for Testing 159.0.8154.6 — `https://cdn.playwright.dev/builds/cft/159.0.8154.6/linux64/chrome-headless-shell-linux64.zip`, 131,851,262 bytes, sha256 `77a6442fd3c8acd3bef9e1067fc26f5ef464277d22f0e8cb58dc3e4077a3e458` | sha256 | 2026-11-24 |
+| FFmpeg (Playwright `ffmpeg` v1013; installed with every Chromium, unused: no video) | `https://cdn.playwright.dev/dbazure/download/playwright/builds/ffmpeg/1013/ffmpeg-linux.zip`, 2,302,701 bytes, sha256 `ee986434d158f74fb5d9c5ff1092026ceedb63f324fe90b5be89460926b7b679` | sha256 | 2026-11-24 |

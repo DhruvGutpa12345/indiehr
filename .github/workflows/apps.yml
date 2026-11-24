@@ -503,13 +503,13 @@ jobs:
     # a margin after the first real runs, one with the gha cache hit and one without.
     timeout-minutes: 60
     env:
-      # Playwright 1.61.1's Chromium (headless shell) and its FFmpeg, pinned by SHA-256
+      # Playwright 1.65.1's Chromium (headless shell) and its FFmpeg, pinned by SHA-256
       # (docs/VERSIONS.md). Fetched and checked here, then served to `playwright install`
       # from 127.0.0.1, so it installs exactly the checked archives and nothing else.
-      PW_CHROMIUM_PATH: builds/cft/149.0.7827.55/linux64/chrome-headless-shell-linux64.zip
-      PW_CHROMIUM_SHA256: 410c9407d5de3fea80d9398666be06f2aa09154a3fa7b327dc254e336bb4c4b7
-      PW_FFMPEG_PATH: builds/ffmpeg/1011/ffmpeg-linux.zip
-      PW_FFMPEG_SHA256: ebc74fc5b94830176a3c2914ae96bd8bc7f6a91f4f33890230f84a172ee61ccc
+      PW_CHROMIUM_PATH: builds/cft/159.0.8154.6/linux64/chrome-headless-shell-linux64.zip
+      PW_CHROMIUM_SHA256: 77a6442fd3c8acd3bef9e1067fc26f5ef464277d22f0e8cb58dc3e4077a3e458
+      PW_FFMPEG_PATH: builds/ffmpeg/1013/ffmpeg-linux.zip
+      PW_FFMPEG_SHA256: ee986434d158f74fb5d9c5ff1092026ceedb63f324fe90b5be89460926b7b679
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -584,11 +584,11 @@ jobs:
               "http://$slug.localhost:8080/api/ihr/bootstrap.js" | grep -q '__IHR_AUTH__'
           done
 
-      - name: Chromium for Playwright 1.61.1 (archives checked by SHA-256, installed from them)
+      - name: Chromium for Playwright 1.65.1 (archives checked by SHA-256, installed from them)
         working-directory: apps/frontend
         run: |
           set -euo pipefail
-          test "$(npx playwright --version)" = "Version 1.61.1"
+          test "$(npx playwright --version)" = "Version 1.65.1"
           # Playwright must want exactly the pinned archives (a version bump fails here)
           plan="$(npx playwright install --dry-run --only-shell chromium)"
           grep -qF "/$PW_CHROMIUM_PATH" <<<"$plan"
