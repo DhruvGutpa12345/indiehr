@@ -1,4 +1,4 @@
-"""Tests for scripts/check-ihr-frontend.py (P1-T11c1). Run: python3 -m unittest scripts/test_check_ihr_frontend.py
+"""Tests for scripts/check-ihr-frontend.py (P1-T11c1; router anchors P2-T0c). Run: python3 -m unittest scripts/test_check_ihr_frontend.py
 
 Each case copies the real files the check reads into a temporary tree, breaks one anchor, and
 expects a problem naming that file; the untouched copy must pass.
@@ -26,6 +26,8 @@ class CheckIhrFrontend(unittest.TestCase):
             dest = self.root / rel
             dest.parent.mkdir(parents=True, exist_ok=True)
             shutil.copy(cif.ROOT / rel, dest)
+        for rel in cif.DIRS:
+            shutil.copytree(cif.ROOT / rel, self.root / rel, dirs_exist_ok=True)
 
     def edit(self, rel, old, new, count=1):
         path = self.root / rel
@@ -136,69 +138,167 @@ class CheckIhrFrontend(unittest.TestCase):
         self.edit(cif.MENU, cif.LOCATION_SECTION, "// Location menu")
         self.assertProblem(cif.MENU, "section markers")
 
-    # --- route keys -------------------------------------------------------------------------
+    # --- route ids and the router hook points (P2-T0c) -----------------------------------
 
-    def test_encounter_route_template_change_fails(self):
+    def test_a_renamed_upstream_route_id_fails(self):
+        # the gates name route ids; an upstream rename must fail before the gate goes quiet
         self.edit(
-            cif.CONSULTATION_ROUTES,
-            "/:id/patient/:patientId/encounter/:encounterId/:tab`",
-            "/:id/patient/:patientId/encounter/:encounterId/:section`",
+            cif.ROUTE_TREE,
+            '"/_app/facility/$facilityId/encounters/locations/$locationId": typeof',
+            '"/_app/facility/$facilityId/encounters/beds/$locationId": typeof',
         )
-        self.assertProblem(cif.CONSULTATION_ROUTES, "encounter route")
+        self.assertProblem(cif.ROUTE_TREE, "encounters/locations/$locationId")
 
-    def test_patient_route_key_change_fails(self):
-        self.edit(
-            cif.PATIENT_ROUTES,
-            '"/facility/:facilityId/encounters/:tab"',
-            '"/facility/:facilityId/encounters/:view"',
-        )
-        self.assertProblem(cif.PATIENT_ROUTES, "/facility/:facilityId/encounters/:tab")
+    def test_each_named_route_id_is_anchored(self):
+        names = {name for name, _ in cif.ROUTE_ID_CONST.findall((cif.ROOT / cif.ROUTE_GATES).read_text())}
+        self.assertGreaterEqual(len(names), 10)
+        for name in ("ENCOUNTER_ID", "PATIENT_TAB_ID", "APPOINTMENT_ID", "PATIENT_SEARCH_ID", "ORG_ENCOUNTER_ID"):
+            self.assertIn(name, names)
 
-    def test_each_wrapped_key_is_anchored(self):
-        for key in (
-            "/facility/:facilityId/encounters/locations/:locationId",
-            "/facility/:facilityId/patient/:id",
-            "/facility/:facilityId/patients",
-        ):
-            with self.subTest(key=key):
-                self.setUp()
-                self.edit(cif.PATIENT_ROUTES, f'"{key}"', f'"{key}x"', count=1)
-                self.assertProblem(cif.PATIENT_ROUTES, key)
+    def test_encounter_id_constant_must_exist(self):
+        self.edit(cif.ROUTE_GATES, "export const ENCOUNTER_ID =", "const ENCOUNTER_ID_OLD =")
+        self.assertProblem(cif.ROUTE_GATES, "ENCOUNTER_ID")
 
-    def test_encounter_key_constant_must_exist(self):
-        self.edit(cif.ROUTE_KEYS, "export const ENCOUNTER_KEY =", "const ENCOUNTER_KEY_OLD =")
-        self.assertProblem(cif.ROUTE_KEYS, "ENCOUNTER_KEY")
+    def test_the_tree_block_must_exist(self):
+        self.edit(cif.ROUTE_TREE, cif.TREE_BLOCK_START, "export interface RoutesById {")
+        self.assertProblem(cif.ROUTE_TREE, "FileRoutesById")
 
-    def test_gated_keys_are_anchored_in_their_own_table(self):
-        # C1-1/F1: the encounter sub-pages' anchor; C1-2: the demographics allow-list; C1-5: lists
-        for rel, key in (
-            (cif.CONSULTATION_ROUTES, "/facility/:facilityId/patient/:patientId/encounter/:encounterId/questionnaire"),
-            (cif.SCHEDULE_ROUTES, "/facility/:facilityId/patient/:patientId/appointments/:appointmentId"),
-            (cif.PATIENT_ROUTES, "/facility/:facilityId/patient/:id/update"),
-            (cif.PATIENT_ROUTES, "/facility/:facilityId/patient/create"),
-            (cif.PATIENT_ROUTES, "/facility/:facilityId/patients/home"),
-            (cif.PATIENT_ROUTES, "/facility/:facilityId/encounters/patients/all"),
-            (cif.PATIENT_ROUTES, "/facility/:facilityId/encounters/patients/:encounterClass"),
-        ):
-            with self.subTest(key=key):
-                self.setUp()
-                self.edit(rel, f'"{key}"', f'"{key}x"', count=1)
-                self.assertProblem(rel, key)
-
-    def test_routed_constants_must_stay_defined(self):
-        self.edit(cif.ROUTE_KEYS, "export const APPOINTMENT_KEY =", "const APPOINTMENT_KEY =")
-        self.assertProblem(cif.ROUTE_KEYS, "APPOINTMENT_KEY")
-
-    def test_patient_tab_keys_and_demographics_tabs_are_anchored(self):
-        self.edit(
-            cif.PATIENT_ROUTES,
-            '"/facility/:facilityId/patient/:id/" + tab.route',
-            '"/facility/:facilityId/patients/:id/" + tab.route',
-        )
-        self.assertProblem(cif.PATIENT_ROUTES, "patient tab keys")
-        self.setUp()
+    def test_demographics_tabs_are_anchored(self):
         self.edit(cif.PATIENT_TABS, 'route: "accounts"', 'route: "billing"')
         self.assertProblem(cif.PATIENT_TABS, '"accounts"')
+
+    def test_lost_router_hook_marker_or_call_fails(self):
+        for rel, call in cif.ROUTER_HOOKS.items():
+            with self.subTest(rel=str(rel)):
+                self.setUp()
+                self.edit(rel, call, "x(", count=1)
+                self.assertProblem(rel, "hook call")
+                self.setUp()
+                path = self.root / rel
+                path.write_text(path.read_text().replace(cif.MARKER_ROUTER, "marker"), encoding="utf-8")
+                self.assertProblem(rel, "marker")
+
+    def test_the_staff_page_must_stay_inside_the_gate(self):
+        # the page outside our gate (the sync kept the import but dropped the wrapper)
+        self.edit(cif.APP_SHELL, "<IhrStaffPage>{children}</IhrStaffPage>", "{children}")
+        self.assertProblem(cif.APP_SHELL, "inside our gate")
+        # the page rendered a second time, outside the gate
+        self.setUp()
+        self.edit(cif.APP_SHELL, "</ErrorBoundary>", "</ErrorBoundary>\n{children}")
+        self.assertProblem(cif.APP_SHELL, "rendered once only")
+        # the gate moved outside CARE's ErrorBoundary
+        self.setUp()
+        self.edit(
+            cif.APP_SHELL,
+            "<IhrStaffPage>{children}</IhrStaffPage>\n            </ErrorBoundary>",
+            "{children}\n            </ErrorBoundary>\n<IhrStaffPage>{children}</IhrStaffPage>",
+        )
+        self.assertProblem(cif.APP_SHELL, "ErrorBoundary")
+        self.setUp()
+        self.edit(cif.APP_SHELL, 'import { IhrStaffPage } from "@/components/ihr/IhrStaffPage";', "")
+        self.assertProblem(cif.APP_SHELL, "marked import")
+
+    def test_the_route_tree_call_and_import_are_anchored(self):
+        self.edit(cif.ROUTER, 'import { withIhrRouteTree } from "@/components/ihr/ihrRouteTree";', "")
+        self.assertProblem(cif.ROUTER, "import of our route tree")
+
+    def test_the_watcher_encloses_the_gate_with_the_leaf_facility(self):
+        self.edit(cif.IHR_STAFF_PAGE, "<IhrRouteGate", "<Fragment", count=1)
+        self.assertProblem(cif.IHR_STAFF_PAGE, "grant watcher around the gate")
+        self.setUp()
+        self.edit(cif.IHR_STAFF_PAGE, "<IhrGrantWatcher", "<Fragment")
+        self.assertProblem(cif.IHR_STAFF_PAGE, "grant watcher around the gate")
+        self.setUp()
+        self.edit(cif.IHR_STAFF_PAGE, "facilityId={leaf.facilityId}", "facilityId={undefined}")
+        self.assertProblem(cif.IHR_STAFF_PAGE, "leaf's facility")
+        self.setUp()
+        self.edit(cif.IHR_STAFF_PAGE, "select: leafSignature", "select: (m) => m")
+        self.assertProblem(cif.IHR_STAFF_PAGE, "committed matches")
+
+    def test_the_auth_page_redirects_are_anchored(self):
+        for old, fragment in (
+            ('throw redirect({ to: "/login"', "redirect to /login"),
+            ('from "@/routes/_public/2fa"', "2FA"),
+            ('from "@/routes/_public/forgot-password"', "forgot-password"),
+            ('from "@/routes/_public/password_reset.$token"', "password-reset"),
+            ("getParentRoute: () => AppRoute", "under /_app"),
+        ):
+            with self.subTest(old=old):
+                self.setUp()
+                self.edit(cif.IHR_ROUTE_TREE, old, "SOMETHING_ELSE")
+                self.assertProblem(cif.IHR_ROUTE_TREE, fragment)
+
+    def test_the_login_page_keeps_our_sign_in_and_not_the_password_form(self):
+        self.edit(cif.LOGIN, "<IhrStaffSignIn />", "<StaffLoginForm />")
+        self.assertProblem(cif.LOGIN, "Keycloak sign-in")
+        self.assertProblem(cif.LOGIN, "password form")
+        self.setUp()
+        self.edit(cif.LOGIN, "<IhrStaffSignIn />", "<IhrStaffSignIn /><ForgotPassword />")
+        self.assertProblem(cif.LOGIN, "forgot-password form")
+
+    def test_the_upstream_text_the_gates_rely_on_is_anchored(self):
+        for rel, old, fragment in (
+            (cif.APP_AREA, "beforeLoad: requireStaff", "staff area guard"),
+            (cif.PUBLIC_AREA, "beforeLoad: publicOnly", "public area guard"),
+            (cif.PATIENT_AREA, "beforeLoad: requirePatient", "patient area guard"),
+            (cif.ROOT_ROUTE, "<AreaChrome", "chrome"),
+            (cif.AREA_CHROME, "chrome = <AppShell>", "AppShell"),
+            (cif.AREA_CHROME, "isAreaAllowed(", "area's session"),
+            (cif.ROUTER_AUTH, 'if (area === "app") return status === "user";', "signed-in staff user"),
+            (cif.CURRENT_FACILITY, "usePathname()", "address-bar facility the gate compares"),
+            (cif.CURRENT_FACILITY, 'segments[1] === "facility"', "facilityFromPath"),
+        ):
+            with self.subTest(rel=str(rel), old=old):
+                self.setUp()
+                self.edit(rel, old, "SOMETHING_ELSE", count=100)
+                self.assertProblem(rel, fragment)
+
+    # --- no data fetch before the gate (design §6.3, attack S3) ----------------------------
+
+    FETCHES = (
+        ("loader: ", "  loader: () => fetchThing(),\n"),
+        ("loader()", "  async loader() { return 1; },\n"),
+        ("loaderDeps", "  loaderDeps: ({ search }) => search,\n"),
+        ("context.queryClient", "  beforeLoad: ({ context }) => context.queryClient.clear(),\n"),
+        ("ensureQueryData", "  beforeLoad: () => qc.ensureQueryData(opts),\n"),
+        ("prefetchQuery", "  beforeLoad: () => qc.prefetchQuery(opts),\n"),
+        ("prefetchInfiniteQuery", "  beforeLoad: () => qc.prefetchInfiniteQuery(opts),\n"),
+        ("fetchQuery", "  beforeLoad: () => qc.fetchQuery(opts),\n"),
+        # P2-T0c review F2: this codebase's own fetch helpers and any awaited beforeLoad
+        ("callApi", "  beforeLoad: ({ params }) => { callApi(patientApi.get, {}); },\n"),
+        ("query()", "  beforeLoad: () => { query(patientApi.get)(); },\n"),
+        ("query.debounced", "  beforeLoad: () => { query.debounced(patientApi.get)(); },\n"),
+        ("fetch", "  beforeLoad: () => { fetch('/api/v1/patient/x/'); },\n"),
+        ("request", "  beforeLoad: () => { request('/api/v1/patient/x/'); },\n"),
+        ("async beforeLoad", "  beforeLoad: async () => { guard(); },\n"),
+        ("await", "  beforeLoad: () => wait(async () => { await thing(); }),\n"),
+    )
+
+    def _route_file(self):
+        return cif.ROUTES_DIR / "_app" / "facility.$facilityId.overview.tsx"
+
+    def test_a_route_file_that_fetches_fails(self):
+        for name, line in self.FETCHES:
+            with self.subTest(name=name):
+                self.setUp()
+                rel = self._route_file()
+                self.edit(rel, "  component: RouteComponent,", line + "  component: RouteComponent,")
+                found = [p for p in self.problems() if str(rel) in p and "before the IndieHR route gate" in p]
+                self.assertTrue(found, f"{name}: {self.problems()}")
+
+    def test_plugin_routes_that_fetch_fail(self):
+        for name, line in self.FETCHES:
+            with self.subTest(name=name):
+                self.setUp()
+                path = self.root / cif.PLUGIN_ROUTES
+                path.write_text(path.read_text() + "\nconst x = {\n" + line + "};\n", encoding="utf-8")
+                self.assertProblem(cif.PLUGIN_ROUTES, "before the IndieHR route gate")
+
+    def test_a_new_nested_route_file_is_read_too(self):
+        new = self.root / cif.ROUTES_DIR / "_app" / "x" / "deep.tsx"
+        new.parent.mkdir(parents=True, exist_ok=True)
+        new.write_text("export const Route = { loader: () => 1 };\n", encoding="utf-8")
+        self.assertProblem(cif.ROUTES_DIR / "_app" / "x" / "deep.tsx", "route loader")
 
     # --- hooks ------------------------------------------------------------------------------
 
@@ -353,19 +453,6 @@ class CheckIhrFrontend(unittest.TestCase):
         self.edit(cif.PATIENT_TABS, 'route: "clinical_history"', 'route: "history"')
         self.assertProblem(cif.PATIENT_TABS, "clinical_history")
 
-    def test_every_facility_route_stays_inside_the_grant_watcher(self):
-        self.edit(cif.IHR_ROUTES, "withWatcher(key, wrap(key, route))", "wrap(key, route)")
-        self.assertProblem(cif.IHR_ROUTES, "grant watcher")
-        self.setUp()
-        self.edit(cif.IHR_ROUTES, "withWatcher(key, route)", "route")
-        self.assertProblem(cif.IHR_ROUTES, "our own facility routes")
-        self.setUp()
-        self.edit(cif.IHR_ROUTES, "<IhrGrantWatcher facilityLess", "<Fragment facilityLess")
-        self.assertProblem(cif.IHR_ROUTES, "the watcher itself")
-        self.setUp()
-        self.edit(cif.IHR_ROUTES, "watcherScope(key)", "null")
-        self.assertProblem(cif.IHR_ROUTES, "facility-less")
-
     def test_the_hospital_switcher_mount_is_anchored(self):
         # P1-T31: a sync that drops the tag or its import from the staff user menu is caught
         self.edit(cif.NAV_USER, "<IhrHospitalsMenu />", "")
@@ -388,8 +475,8 @@ class CheckIhrFrontend(unittest.TestCase):
         self.assertProblem(cif.SLUGS_COPY, "differs")
 
     def test_missing_file_is_reported(self):
-        (self.root / cif.PATIENT_ROUTES).unlink()
-        self.assertProblem(cif.PATIENT_ROUTES, "missing")
+        (self.root / cif.ROUTE_TREE).unlink()
+        self.assertProblem(cif.ROUTE_TREE, "missing")
 
 
 if __name__ == "__main__":

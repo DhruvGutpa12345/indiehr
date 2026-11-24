@@ -1,7 +1,6 @@
-import { navigate } from "raviger";
 import { useCallback } from "react";
 
-import { LocalStorageKeys } from "@/common/constants";
+import { clearStaffStorage } from "@/Utils/ihr/staffSession";
 
 const getRedirectURL = () => {
   return new URLSearchParams(window.location.search).get("redirect");
@@ -9,13 +8,17 @@ const getRedirectURL = () => {
 
 export const usePatientSignOut = () => {
   const signOut = useCallback(async () => {
-    localStorage.removeItem(LocalStorageKeys.patientTokenKey);
-    localStorage.removeItem("selectedPatient");
-    // IndieHR (P1-T1d): the practitioner picked while booking (name, username) goes too
-    localStorage.removeItem("user");
-
+    // IndieHR (P1-T1d, P2-T0c): clearStaffStorage() removes the patient's token,
+    // selectedPatient and the booking "user" (PATIENT_PORTAL_KEYS) with every other cached
+    // item, and seals the storage; then a full page load, so no patient session stays in this
+    // tab's memory (the auth provider's token, the query cache) for Back to reopen.
+    clearStaffStorage();
     const redirectURL = getRedirectURL();
-    navigate(redirectURL ? `/login?redirect=${redirectURL}` : "/login");
+    window.location.replace(
+      redirectURL
+        ? `/login?${new URLSearchParams({ redirect: redirectURL })}`
+        : "/login",
+    );
   }, []);
 
   return signOut;

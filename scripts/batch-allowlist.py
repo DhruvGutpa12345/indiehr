@@ -54,7 +54,7 @@ DYNAMIC = {
             "locationApi.addOrganization",
             "deviceApi.addOrganization",
         ),
-        "sha256": "ee8dde0e46790866a3a2224fe8cee681e266855a5d9049ecf9bafb23ecbdd3a7",
+        "sha256": "57a782f776bc2d98eaf4aff5a88fa7c804dd1f394d740aebcb8e0b8e63171727",
     },
 }
 

@@ -32,6 +32,10 @@ pypi.org                  # licence page links
 lexical.dev               # editor library error-doc links
 base-ui.com               # Base UI error-message text (`visit https://base-ui.com/production-error?code=…`), never fetched (P2-T0b)
 reactflow.dev             # library error-doc links
+tanstack.com              # TanStack Router warning text (`console.warn(... See https://tanstack.com/router/...)`, router-core router.js), never fetched (P2-T0c)
+motion.dev                # Motion error-message text (`visit https://motion.dev/troubleshooting/<code>`, motion-utils format-error-message), never fetched (P2-T0c)
+react.i18next.com         # react-i18next warning text (`useTranslation: suspended while loading ...`), never fetched (P2-T0c)
+packages.typst.org        # typst.ts package-registry URL builder (fs/package.mjs): used only when a template imports `@preview/...`; none of src/print's .typ files does, and the worker calls disableDefaultFontAssets() and loads our own fonts; CSP blocks it anyway (P2-T0c)
 react.dev                 # library error-doc links
 reactjs.org               # library error-doc links
 redux.js.org              # library error-doc links
@@ -43,7 +47,7 @@ purecatamphetamine.github.io # phone-number library docs link
 bit.ly                    # library docs link
 www.robotstxt.org         # robots.txt comment
 # Dormant library defaults: present in code, never called by our config; blocked by CSP if ever used
-cdn.jsdelivr.net          # browser-image-compression worker default (disabled: useWebWorker:false)
+cdn.jsdelivr.net          # browser-image-compression worker default (disabled: useWebWorker:false); typst.ts default font assets (disabled: typstWorker.ts disableDefaultFontAssets(), P2-T0c)
 fastly.jsdelivr.net       # zxing-wasm default (overridden: engine served from our bundle)
 cdnjs.cloudflare.com      # jsPDF 'pdfobjectnewwindow' output mode (not used)
 www.google.com            # react-google-recaptcha script (only with a site key; ours is empty)

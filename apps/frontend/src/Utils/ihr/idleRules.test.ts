@@ -61,4 +61,21 @@ describe("idle time-out rules", () => {
     assert.equal(safeNext("/.//evil.test/x", ORIGIN), "/evil.test/x");
     assert.equal(safeNext("/a/..//evil.test", ORIGIN), "/evil.test");
   });
+
+  it("takes the router's absolute redirect URL back to a path (P2-T0c design §5.2)", () => {
+    // lib/router/auth.ts redirectToLogin puts window.location.origin + href in `redirect`
+    assert.equal(
+      safeNext(`${ORIGIN}/facility/x/patients?page=2#top`, ORIGIN),
+      "/facility/x/patients?page=2",
+    );
+    assert.equal(safeNext("https://evil.test/x", ORIGIN), "/");
+    assert.equal(safeNext("//evil.test", ORIGIN), "/");
+    assert.equal(safeNext("/\\evil.test", ORIGIN), "/");
+    assert.equal(safeNext("javascript:alert(1)", ORIGIN), "/");
+    // another hospital's address is another origin
+    assert.equal(
+      safeNext("http://beta.localhost:8080/facility/y", ORIGIN),
+      "/",
+    );
+  });
 });

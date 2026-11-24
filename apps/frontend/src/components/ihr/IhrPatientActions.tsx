@@ -2,10 +2,11 @@
 // (anyone holding ihr_request_records_access) without a live grant on this patient gets "Ask for
 // records access"; with one, a banner "Records access · mm:ss left · End now". Other roles see
 // nothing. The count-down is the watcher's (IhrGrantWatcher): no timer here.
-import { Link } from "raviger";
 import { useTranslation } from "react-i18next";
 
 import { Button } from "@/components/ui/button";
+
+import { HrefLink } from "@/lib/router/HrefLink";
 
 import {
   countdownText,
@@ -58,9 +59,11 @@ export function IhrPatientActions({
   return (
     <div className="my-2" data-ihr="ask-records">
       <Button asChild variant="outline" size="sm">
-        <Link href={`/facility/${facilityId}/ihr/records?patient=${patientId}`}>
+        <HrefLink
+          href={`/facility/${facilityId}/ihr/records?patient=${patientId}`}
+        >
           {t("ihr_records_ask")}
-        </Link>
+        </HrefLink>
       </Button>
     </div>
   );

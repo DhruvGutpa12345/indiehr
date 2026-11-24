@@ -46,4 +46,16 @@ test("patient sign-out clears the booking 'user' key [needs P1-T1d bundle]", asy
     selectedPatient: localStorage.getItem("selectedPatient"),
   }));
   expect(left).toEqual({ token: null, user: null, selectedPatient: null });
+
+  // P2-T0c review: the sign-out is a full page load, so Back does not bring the patient
+  // portal back from this tab's memory (the token was still held by the auth provider)
+  // location.replace leaves two entries (/login, /login); the old router push left three,
+  // with the portal page in between
+  expect(await page.evaluate(() => history.length)).toBe(2);
+  await page.goBack();
+  await page.waitForURL((url) => url.pathname === "/login");
+  await expect(
+    page.getByRole("button", { name: "Sign in with your hospital account" }),
+  ).toBeVisible();
+  await expect(header.getByRole("button", { name: "Home" })).toHaveCount(0);
 });

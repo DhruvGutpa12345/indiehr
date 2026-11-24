@@ -39,7 +39,7 @@ import {
   ihrShowsViewAccounts,
   ihrStatusBlocks,
 } from "./frontDesk";
-import { APPOINTMENT_KEY, DEMOGRAPHICS_TABS, routeGate } from "./routeKeys";
+import { APPOINTMENT_ID, DEMOGRAPHICS_TABS, routeGateOf } from "./routeGates";
 
 // CI runs this file from apps/frontend (see .github/workflows/apps.yml).
 const SLUGS = JSON.parse(
@@ -636,8 +636,11 @@ describe("the appointment print page stays refused (proposed Q-K55)", () => {
     // AppointmentPrint.tsx asks GET …/charge_item/ (and invoices) with no role check; the
     // Receptionist holds no can_read_charge_item (role_matrix.txt: charge_item list is
     // billing and CARE only), so the page would meet a 403 on every print
-    assert.equal(routeGate(`${APPOINTMENT_KEY}/print`), "patientClinical");
-    assert.equal(routeGate(APPOINTMENT_KEY), "patient");
+    assert.equal(
+      routeGateOf(APPOINTMENT_ID.replace(/\/$/, "/print")),
+      "patientClinical",
+    );
+    assert.equal(routeGateOf(APPOINTMENT_ID), "patient");
     assert.equal(
       SLUGS.grants["Receptionist"].includes("can_read_charge_item"),
       false,

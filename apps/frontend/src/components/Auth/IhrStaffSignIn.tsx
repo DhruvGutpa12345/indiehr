@@ -1,9 +1,12 @@
 // IndieHR (P1-T4b, ADR-009): staff sign in through Keycloak, run by the backend. This replaces
-// CARE's username/password form; the patient OTP sign-in is unchanged.
-import { useQueryParams } from "raviger";
+// CARE's username/password form; the patient OTP sign-in is unchanged. `redirect` is the
+// absolute URL the router's staff guard adds (lib/router/auth.ts redirectToLogin); startSignIn
+// reduces it to a same-origin path (idleRules.ts safeNext).
 import { useTranslation } from "react-i18next";
 
 import { Button } from "@/components/ui/button";
+
+import { useQueryParams } from "@/lib/router/queryParams";
 
 import { startSignIn } from "@/Utils/ihr/staffSession";
 

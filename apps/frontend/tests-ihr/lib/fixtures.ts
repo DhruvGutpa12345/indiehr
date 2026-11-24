@@ -42,34 +42,16 @@ interface Fixtures {
   newContext: (options?: BrowserContextOptions) => Promise<BrowserContext>;
 }
 
-/**
- * Lines of `withIhrRoutes` (src/components/ihr/IhrRoutes.tsx) reporting a route key CARE no
- * longer defines: "ihr-routes: missing key …" (design-c.md §13.2 FF6). Every context of every
- * spec is watched, from before sign-in, and the test fails on any such line.
- */
-export function watchRouteErrors(context: BrowserContext, seen: string[]) {
-  context.on("console", (message) => {
-    const text = message.text();
-    if (text.includes("ihr-routes")) seen.push(text);
-  });
-  context.on("weberror", (error) => {
-    const text = String(error.error());
-    if (text.includes("ihr-routes")) seen.push(text);
-  });
-}
-
 export const test = base.extend<Fixtures>({
   newContext: async ({ browser }: { browser: Browser }, use, testInfo) => {
     const evidence = new Evidence();
     const contexts: BrowserContext[] = [];
-    const routeErrors: string[] = [];
     await use(async (options?: BrowserContextOptions) => {
       const context = await browser.newContext({
         ...CONTEXT_OPTIONS,
         ...options,
       });
       evidence.watch(context);
-      watchRouteErrors(context, routeErrors);
       contexts.push(context);
       return context;
     });
@@ -77,8 +59,6 @@ export const test = base.extend<Fixtures>({
       await evidence.save(testInfo);
     }
     for (const context of contexts) await context.close();
-    // every spec fails on a missing route key (asserted after clean-up, so contexts close)
-    expect(routeErrors, "ihr-routes console lines").toEqual([]);
   },
 });
 
@@ -120,15 +100,30 @@ export async function sessionCookieForComparison(
   return cookie;
 }
 
+export interface SignInOptions {
+  /** Open this address first instead of /login (a signed-out staff URL: the app redirects). */
+  from?: string;
+  /** Runs once the sign-in page is up, before its button is pressed (checks of that page). */
+  onSignInPage?: (page: Page) => Promise<void>;
+}
+
 /**
  * Sign in at a hospital through Keycloak: password, then a fresh one-time code. Returns once
  * the hospital's session API answers for this user. A refused code stops the whole run's
  * sign-ins (never retried, so no account is locked).
  */
-export async function signIn(page: Page, hospital: Hospital, user: TestUser) {
+export async function signIn(
+  page: Page,
+  hospital: Hospital,
+  user: TestUser,
+  options: SignInOptions = {},
+) {
   if (!user.rawSecret) throw new Error(`${user.username} has no pre-set code`);
   const origin = HOSPITALS[hospital];
-  await page.goto(`${origin}/login`);
+  // `from`: start at a staff address the web app sends to /login (P2-T0c): the sign-in must
+  // bring the person back to it
+  await page.goto(options.from ?? `${origin}/login`);
+  await options.onSignInPage?.(page);
   await page.getByRole("button", { name: SIGN_IN_BUTTON }).click();
   await page.waitForURL((url) => url.origin === KEYCLOAK);
   await page.locator("#username").fill(user.username);

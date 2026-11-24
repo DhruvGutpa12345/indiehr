@@ -7,8 +7,6 @@
 POST /api/v1/encounter/{encounterId}/organizations_add/  # components/Patient/LinkDepartmentsSheet.tsx: encounterApi.addOrganization
 PUT /api/v1/encounter/{id}/  # components/QuestionnaireV2/structured/definitions/encounter.ts: raw url; pages/Encounters/utils/useEncounterProgressController.ts: encounterApi.update
 PUT /api/v1/facility/{facilityId}/appointments/{id}/  # pages/Encounters/utils/useEncounterProgressController.ts: scheduleApi.appointments.update
-POST /api/v1/facility/{facilityId}/appointments/{id}/cancel/  # pages/Appointments/AppointmentDetail.tsx: scheduleApis.appointments.cancel
-POST /api/v1/facility/{facilityId}/appointments/{id}/reschedule/  # pages/Appointments/AppointmentDetail.tsx: scheduleApis.appointments.reschedule
 POST /api/v1/facility/{facilityId}/charge_item/apply_charge_item_defs/  # components/QuestionnaireV2/structured/definitions/chargeItem.ts: raw url
 POST /api/v1/facility/{facilityId}/device/{id}/add_managing_organization/  # components/Patient/LinkDepartmentsSheet.tsx: deviceApi.addOrganization
 POST /api/v1/facility/{facilityId}/location/{id}/organizations_add/  # components/Patient/LinkDepartmentsSheet.tsx: locationApi.addOrganization
@@ -20,9 +18,9 @@ POST /api/v1/facility/{facilityId}/slots/{slotId}/create_appointment/  # compone
 POST /api/v1/facility/{facility_external_id}/location/{location_external_id}/association/  # components/Location/utils/locationHelpers.ts: locationApi.createAssociation
 DELETE /api/v1/facility/{facility_external_id}/location/{location_external_id}/association/{external_id}/  # components/Location/utils/locationHelpers.ts: locationApi.deleteAssociation
 PUT /api/v1/facility/{facility_external_id}/location/{location_external_id}/association/{external_id}/  # components/Location/utils/locationHelpers.ts: locationApi.updateAssociation
-POST /api/v1/facility/{facility_id}/location/  # pages/Facility/settings/locations/LocationForm.tsx: locationApi.create; pages/Facility/settings/locations/LocationImport.tsx: locationApi.create
-PUT /api/v1/facility/{facility_id}/location/{id}/  # components/Location/utils/locationHelpers.ts: locationApi.update; hooks/useLocationManagement.ts: locationApi.update
-PUT /api/v1/facility/{facility_id}/token/queue/{queue_id}/token/{id}/  # pages/Appointments/AppointmentDetail.tsx: tokenApi.update; pages/Encounters/utils/useEncounterProgressController.ts: tokenApi.update
+POST /api/v1/facility/{facility_id}/location/  # pages/Facility/settings/locations/LocationForm.tsx: locationApi.create
+PUT /api/v1/facility/{facility_id}/location/{id}/  # components/Location/utils/locationHelpers.ts: locationApi.update; pages/Facility/settings/locations/useLocationActions.ts: locationApi.update
+PUT /api/v1/facility/{facility_id}/token/queue/{queue_id}/token/{id}/  # pages/Encounters/utils/useEncounterProgressController.ts: tokenApi.update
 POST /api/v1/files/upload-file/  # components/QuestionnaireV2/structured/definitions/files.ts: raw url
 PUT /api/v1/form_submission/{id}/  # components/QuestionnaireV2/fill/submit/composeBatch.ts: raw url
 POST /api/v1/medication/dispense/  # components/Consumable/DispenseDrawer.tsx: medicationDispenseApi.create; pages/Facility/services/pharmacy/billMedications/utils/useBillMedications.ts: medicationDispenseApi.create; pages/Facility/services/pharmacy/components/AddDispenseMedicationRow.tsx: medicationDispenseApi.create; pages/Facility/services/pharmacy/components/EditDispenseSheet.tsx: medicationDispenseApi.create

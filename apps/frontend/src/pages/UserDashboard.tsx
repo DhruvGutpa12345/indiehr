@@ -1,3 +1,4 @@
+import { Link } from "@tanstack/react-router";
 import {
   ChevronRight,
   LogOut,
@@ -5,7 +6,6 @@ import {
   SquarePen,
   User2Icon,
 } from "lucide-react";
-import { Link } from "raviger";
 import { useMemo, useState } from "react";
 import { Trans, useTranslation } from "react-i18next";
 
@@ -155,7 +155,7 @@ export default function UserDashboard() {
                   asChild
                 >
                   <Link
-                    href="/admin/questionnaires"
+                    to="/admin/questionnaires"
                     className="gap-2 text-inherit flex items-center"
                   >
                     <User2Icon className="size-4" />
@@ -172,7 +172,10 @@ export default function UserDashboard() {
                     className="flex items-center gap-2 flex-1"
                     asChild
                   >
-                    <Link href={`/users/${user.username}`}>
+                    <Link
+                      to="/users/$username"
+                      params={{ username: user.username }}
+                    >
                       <SquarePen className="size-4" />
                       {t("edit_profile")}
                     </Link>
@@ -200,7 +203,8 @@ export default function UserDashboard() {
                       className="cursor-pointer flex items-center gap-2 text-xs w-full"
                     >
                       <Link
-                        href={`/users/${user.username}`}
+                        to="/users/$username"
+                        params={{ username: user.username }}
                         className="flex items-center gap-2 w-full text-inherit"
                       >
                         <SquarePen className="size-4" />
@@ -232,12 +236,8 @@ export default function UserDashboard() {
             }}
             className="w-full"
           >
-            <div className="max-w-full overflow-x-auto pb-1">
-              <TabsList
-                variant="line"
-                className="w-full justify-start border-b border-border"
-                aria-label={t("dashboard_sections")}
-              >
+            <div className="max-w-full overflow-x-auto">
+              <TabsList variant="line" aria-label={t("dashboard_sections")}>
                 {availableTabs.map((tab) => (
                   <TabsTrigger
                     key={tab}
@@ -275,7 +275,8 @@ export default function UserDashboard() {
                     return (
                       <Link
                         key={association.id}
-                        href={`/responsibilities/${association.id}`}
+                        to="/responsibilities/$id"
+                        params={{ id: association.id }}
                         className="h-full"
                       >
                         <Card className="h-full group/dashboard-card rounded-2xl border-border bg-card shadow-sm ring-1 ring-foreground/5 transition-all hover:border-primary/40 hover:shadow-lg">
@@ -311,7 +312,8 @@ export default function UserDashboard() {
                   renderChild={(governanceOrg) => (
                     <Link
                       key={governanceOrg.id}
-                      href={`/organization/${governanceOrg.id}`}
+                      to="/organization/$id"
+                      params={{ id: governanceOrg.id }}
                     >
                       <Card className="group/dashboard-card rounded-2xl border-border bg-card shadow-sm ring-1 ring-foreground/5 transition-all hover:border-primary/40 hover:shadow-lg">
                         <CardContent className="flex items-center gap-3 p-3 md:p-4">
@@ -349,7 +351,10 @@ export default function UserDashboard() {
 function FacilityCard({ facility }: { facility: FacilityBareMinimum }) {
   const { t } = useTranslation();
   return (
-    <Link href={`/facility/${facility.id}/overview`}>
+    <Link
+      to="/facility/$facilityId/overview"
+      params={{ facilityId: facility.id }}
+    >
       <Card className="group/dashboard-card rounded-2xl border-border bg-card shadow-sm ring-1 ring-foreground/5 transition-all hover:border-primary/40 hover:shadow-lg">
         <CardContent className="flex items-center gap-3 p-3 md:p-4">
           <Avatar name={facility.name} className="size-12 md:size-14" />

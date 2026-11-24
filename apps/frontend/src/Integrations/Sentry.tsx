@@ -15,8 +15,9 @@ export default function Sentry({ disabled }: Props) {
       return;
     }
 
-    import("@sentry/browser").then((Sentry) => {
-      Sentry.init(careConfig.sentry);
+    // IndieHR (P2-T0c): load only `init` (src/Utils/ihr/sentryInit.ts), not the whole package
+    import("@/Utils/ihr/sentryInit").then(({ init }) => {
+      init(careConfig.sentry);
     });
   }, [disabled]);
 

@@ -13,7 +13,6 @@
 // - The sheet is read afresh each time it opens (no cache): the POST sends the version and the
 //   hashes it was shown, so a stale sheet is refused (409) and reloaded, never applied.
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { useQueryParams } from "raviger";
 import { useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
 
@@ -79,6 +78,7 @@ import { useIhrAccess } from "@/Utils/ihr/useIhrAccess";
 import mutate from "@/Utils/request/mutate";
 import query from "@/Utils/request/query";
 import { HTTPError } from "@/Utils/request/types";
+import { useQueryParams } from "@/lib/router/queryParams";
 
 import { IhrNotForRole } from "./IhrNotForRole";
 

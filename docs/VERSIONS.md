@@ -37,7 +37,7 @@ Setup script: [deploy/dev/setup-workstation-root.sh](../deploy/dev/setup-worksta
 | App | Upstream | Commit | Date | Checked |
 |---|---|---|---|---|
 | Backend | ohcnetwork/care `develop` | ddfd840dbe31 (was 67a46185eb98 of 2026-11-01; P2-T0a) | 2026-11-23 | 2026-11-23 |
-| Frontend | ohcnetwork/care_fe `develop` | 57205b897804 | 2026-11-02 | 2026-11-03 |
+| Frontend | ohcnetwork/care_fe `develop` | 91b028f3aa33 (was 57205b897804, then 60736fa3d2cf; P2-T0c) | 2026-11-23 | 2026-11-24 |
 
 Last GitHub Releases are v3.0.0 (backend, 2025-02-12) and v3.0.32 (frontend, 2025-12-23), so we pin `develop` commits. Source of truth: `upstream.lock`.
 
@@ -48,6 +48,15 @@ New runtime dependencies upstream added between 67a46185eb98 and ddfd840dbe31 (P
 |---|---|---|---|
 | prometheus-client | 0.26.0 (Apache-2.0) | CARE's `/metrics/` collectors; the endpoint is off on every IndieHR instance (`settings/tenancy.py`, refused by `secure.py`, blocked by `ihr_identity/blocked.py`); the collectors still register at start-up | 2026-11-23 |
 | pycountry | 26.2.16 (LGPL-2.1, imported unmodified as a library; accepted by the owner, Q-K166) | CARE's check of ISO 639-3 language codes in a user's `communication` list (`care/emr/resources/user/spec.py`) | 2026-11-23 |
+
+Web app routing (P2-T0c): CARE 3.1 moved from raviger to TanStack Router. Exact pins from
+`apps/frontend/package-lock.json` (upstream's lock, unchanged by us); raviger is removed from the web app.
+
+| Package | Version | Used for | Checked |
+|---|---|---|---|
+| @tanstack/react-router | 1.170.46 | Route tree, typed links, navigation | 2026-11-24 |
+| @tanstack/router-plugin | 1.169.0 | Generates `src/routeTree.gen.ts` at build | 2026-11-24 |
+| @tanstack/react-router-devtools | 1.167.4 | Development only | 2026-11-24 |
 
 ## CI actions — P0-T8
 

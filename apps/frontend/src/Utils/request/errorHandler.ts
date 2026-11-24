@@ -1,10 +1,10 @@
 import { t } from "i18next";
-import { navigate } from "raviger";
 import { toast } from "sonner";
 
 import * as Notifications from "@/Utils/Notifications";
 import { endExpiredSession } from "@/Utils/ihr/staffSession";
 import { HTTPError, StructuredError } from "@/Utils/request/types";
+import { navigate } from "@/lib/router/navigate";
 
 export function handleHttpError(error: Error) {
   // Skip handling silent errors and AbortError
@@ -85,7 +85,7 @@ function handleSessionExpired() {
   );
   if (ended) return;
   if (!location.pathname.startsWith("/session-expired")) {
-    navigate(`/session-expired?redirect=${window.location.href}`);
+    navigate({ href: `/session-expired?redirect=${window.location.href}` });
   }
 }
 
@@ -116,19 +116,21 @@ function isStructuredError(err: HTTPError["cause"]): err is StructuredError {
 function handleStructuredErrors(cause: StructuredError) {
   for (const value of Object.values(cause)) {
     if (Array.isArray(value)) {
-      value.forEach((err: any) => {
+      value.forEach((err: unknown) => {
         if (typeof err === "string") {
           toast.error(err);
         } else if (err && typeof err === "object") {
           // Handle object errors - extract meaningful error messages
+          const errorObj = err as Record<string, unknown>;
           const errorFields = ["detail", "msg", "error", "message"] as const;
-          const errorMessage = errorFields.find(
-            (field) => err[field] && typeof err[field] === "string",
-          );
+          const errorMessage = errorFields
+            .map((field) => errorObj[field])
+            .find(
+              (message): message is string =>
+                typeof message === "string" && message.length > 0,
+            );
 
-          toast.error(
-            errorMessage ? err[errorMessage] : t("something_went_wrong"),
-          );
+          toast.error(errorMessage || t("something_went_wrong"));
         }
       });
       return;

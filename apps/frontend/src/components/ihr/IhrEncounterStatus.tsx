@@ -1,6 +1,6 @@
 // IndieHR P1-T11c2 (design-c.md §3.3, §3.1, Q-K50 A, Q-K37a B): the visit status page the front
 // desk, the billing desks and MRD (without a grant) see instead of CARE's encounter page, for
-// every "View encounter" link and after "create encounter" (IhrEncounterGate).
+// every "View encounter" link and after "create encounter" (IhrRouteGate, P2-T0c).
 //
 // It shows what the backend's projection keeps (ihr_access/fields/encounter.txt): status, class,
 // dates, priority, visit number, status history and the booking time. The Cashier and the TPA
@@ -8,13 +8,14 @@
 // (fields/encounter_billing.txt, Q-K37a B). A field the backend removes is never drawn as empty:
 // there is no department, care team, location or tag row at all.
 import { useQuery } from "@tanstack/react-query";
-import { Link } from "raviger";
 import { useTranslation } from "react-i18next";
 
 import { Button } from "@/components/ui/button";
 
 import Loading from "@/components/Common/Loading";
 import Page from "@/components/Common/Page";
+
+import { HrefLink } from "@/lib/router/HrefLink";
 
 import {
   ihrAccountOfVisitQuery,
@@ -58,7 +59,8 @@ export function IhrEncounterStatus({
   encounterId,
 }: IhrEncounterStatusProps) {
   const { t } = useTranslation();
-  const access = useIhrAccess();
+  // the gate's facility (the route match's), not the address bar's (P2-T0c design §3.4)
+  const access = useIhrAccess({ facilityId });
   const blocks = ihrStatusBlocks(access);
 
   const {
@@ -108,12 +110,12 @@ export function IhrEncounterStatus({
         <div className="rounded-md bg-white p-5 shadow-sm">
           <dl className="grid grid-cols-1 gap-x-4 gap-y-4 sm:grid-cols-2">
             <Row label={t("ihr_visit_patient")}>
-              <Link
+              <HrefLink
                 href={`/facility/${facilityId}/patient/${patientId}/demography`}
                 className="text-primary-700 underline"
               >
                 {patient?.name}
-              </Link>
+              </HrefLink>
             </Row>
             <Row label={t("ihr_visit_type")}>
               {t(`encounter_class__${encounter.encounter_class}`)}
@@ -243,12 +245,12 @@ export function IhrEncounterStatus({
             </h2>
             {account ? (
               <Button asChild variant="outline">
-                <Link
+                <HrefLink
                   href={`/facility/${facilityId}/billing/account/${account.id}`}
                   data-ihr="visit-account-link"
                 >
                   {t("ihr_visit_open_account")}
-                </Link>
+                </HrefLink>
               </Button>
             ) : (
               <p className="text-sm text-gray-600">

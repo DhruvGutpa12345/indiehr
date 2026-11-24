@@ -5,7 +5,7 @@ How CARE is brought in and kept current: [ADR-006](adr/006-upstream-fork-via-sub
 | App | Folder | Upstream | Pinned commit | Commit date |
 |---|---|---|---|---|
 | Backend (Django API) | `apps/backend` | ohcnetwork/care `develop` | `ddfd840dbe31` | 2026-11-23 |
-| Frontend (React) | `apps/frontend` | ohcnetwork/care_fe `develop` | `60736fa3d2cf` | 2026-11-19 |
+| Frontend (React) | `apps/frontend` | ohcnetwork/care_fe `develop` | `91b028f3aa33` | 2026-11-23 |
 
 ## Check for upstream changes (changes nothing)
 
@@ -64,14 +64,18 @@ After each sync, before pushing:
      without the hospital prefix);
    - new settings → `ihr_platform/settings/secure.py` if deployment must pin them;
    - INSTALLED_APPS changes → `ihr_platform/settings/tenancy.py`;
-   - new or renamed sidebar items, wrapped route keys or patient routes (P1-T11c) → classify them
-     in `apps/frontend/src/Utils/ihr/menu.ts` (sidebar) and `src/Utils/ihr/routeKeys.ts` (routes).
-     `scripts/check-ihr-frontend.py` (pre-commit) fails on a renamed or removed anchor, on any new
-     `${baseUrl}/…` url in facility-nav.tsx or location-nav.tsx that menu.ts does not classify, and
-     on a changed facility `baseUrl`. It does **not** list new patient or encounter routes: those are
-     gated by prefix and fail closed (IhrNotForRole for the demographics view and for roles without
-     patient screens) until a person adds one to `DEMOGRAPHICS_KEYS`; `tests-ihr/roles-menus.spec.ts`
-     (Browser job) also pins each role's exact sidebar;
+   - new or renamed sidebar items (P1-T11c) → classify them in
+     `apps/frontend/src/Utils/ihr/menu.ts`. `scripts/check-ihr-frontend.py` (pre-commit) fails on
+     a renamed or removed anchor, on any new `${baseUrl}/…` url in facility-nav.tsx or
+     location-nav.tsx that menu.ts does not classify, and on a changed facility `baseUrl`;
+     `tests-ihr/roles-menus.spec.ts` (Browser job) also pins each role's exact sidebar;
+   - new routes (P2-T0c, design §3): a new route id under the gated prefixes is gated by prefix.
+     A new id elsewhere that shows patient or visit data fails
+     `src/Utils/ihr/routeGates.test.ts` until it is added to `OPEN_CLINICAL_IDS` or a gate;
+   - a route `loader` or `beforeLoad` that fetches data fails `scripts/check-ihr-frontend.py`
+     (it would fetch before our gate runs);
+   - CARE's `/runtime-env.js` (`public/runtime-env.js`) overrides `REACT_*` settings at run
+     time: it must stay empty in our image (the image serves it read-only);
    - permission or role changes → the guarded role sync and `ihr_roles`.
      `ihr_roles.tests.test_grants.CarePermissionsReviewed` fails on any new, removed or changed
      CARE permission (slug, context or CARE's role names) until its line in
@@ -155,6 +159,20 @@ After each sync, before pushing:
    - new browser storage keys (localStorage, sessionStorage, `atomWithStorage`) → classify them
      in `apps/frontend/tests-ihr/storage-keys.json` or clear them in `clearStaffStorage`
      (`scripts/check-storage-keys.py` fails until you do, P1-T1d).
+     The router's own scroll-restoration key (`tsr-scroll-restoration-v1_3`, written by
+     `@tanstack/router-core` to sessionStorage on `pagehide`) lives in `node_modules`, so the
+     script cannot see it: after a router bump re-read
+     `node_modules/@tanstack/router-core/dist/esm/scroll-restoration.js` (key name, and that
+     `getScrollRestorationKey` in `src/router.tsx` still keeps URLs out of its keys) (P2-T0c).
+   - **new `_public` route: auth flow?** (P2-T0c, design `docs/reviews/p2-t0c/design.md` §4.4) →
+     a new file under `src/routes/_public/` (any new `/_public/...` id in `src/routeTree.gen.ts`)
+     is a page a signed-out person can open. If it is an auth flow (password, two-factor, invite,
+     set-password, reset), CARE's form must not render: add its id to `IHR_AUTH_REDIRECT_IDS`
+     in `src/Utils/ihr/routeGates.ts` so `ihrRouteTree.tsx` redirects it to `/login`. If not,
+     review it into `PUBLIC_ROUTES` (same file) with a reason. `routeGates.test.ts` fails until
+     you do one of the two (`cd apps/frontend && node --import tsx --test src/Utils/ihr/routeGates.test.ts`).
+     The same test fails on a new route id that shows patient or visit data and is neither gated
+     nor listed in `OPEN_CLINICAL_IDS` (Q-K170 B), and on an id our gates name that CARE removed.
    - new or changed batch call sites in the web app (`useBatchRequest`, `batchQuery`) → run
      `scripts/batch-allowlist.py`, review the diff of
      `plugins/ihr_platform/ihr_platform/batch_allowlist.txt` (every new line is a route a staff

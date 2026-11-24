@@ -1,5 +1,4 @@
 import careConfig from "@careConfig";
-import { useQueryParams } from "raviger";
 import { useEffect } from "react";
 import { useTranslation } from "react-i18next";
 
@@ -12,14 +11,22 @@ import { PatientLoginForm } from "@/components/Auth/PatientLoginForm";
 
 import { LocalStorageKeys } from "@/common/constants";
 
+import { useQueryParams } from "@/lib/router/queryParams";
+import { loginPageSearch } from "@/lib/router/search/auth";
+
 type LoginMode = "staff" | "patient";
 
-const Login = () => {
-  // IndieHR (P1-T4b, ADR-009): staff sign in through Keycloak (IhrStaffSignIn); CARE's
+interface LoginProps {
+  /** Upstream's password-reset entry. IndieHR: ignored (the route redirects to /login). */
+  forgot?: boolean;
+}
+
+const Login = (_props: LoginProps) => {
+  // IndieHR (P1-T4b, ADR-009; P2-T0c): staff sign in through Keycloak (IhrStaffSignIn); CARE's
   // username/password form (StaffLoginForm), its reCAPTCHA and "forgot password"
-  // (ForgotPassword) are not rendered. The patient OTP tab is unchanged.
+  // (ForgotPassword, the `forgot` prop) are not rendered. The patient OTP tab is unchanged.
   const { t } = useTranslation();
-  const [{ mode }, setQueryParams] = useQueryParams<{ mode?: string }>();
+  const [{ mode }, setQueryParams] = useQueryParams(loginPageSearch);
 
   const activeMode: LoginMode =
     !careConfig.disablePatientLogin && mode === "patient" ? "patient" : "staff";

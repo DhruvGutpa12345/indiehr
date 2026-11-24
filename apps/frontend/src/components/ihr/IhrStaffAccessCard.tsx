@@ -185,7 +185,7 @@ function StaffAccessCardBody({
       </CardHeader>
       <CardContent className="space-y-4 px-4 sm:px-6">
         <p className="text-sm" data-ihr="staff-state">
-          {t(line.key, line.params)}
+          {t(line.key, line.params ?? {})}
         </p>
         {invitationProblem && (
           <p className="text-sm text-amber-700" data-ihr="staff-problem">

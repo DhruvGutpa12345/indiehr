@@ -646,6 +646,8 @@ expects the named problem, and **one fixture case per fetch pattern** (`loader:`
 `loaderDeps`, `context.queryClient`, `ensureQueryData`, `prefetchQuery`,
 `prefetchInfiniteQuery`, `fetchQuery`, in a route file and in `pluginRoutes.tsx`).
 
+**Known gap (P2-T0c verifier, 2026-11-24):** the check reads route files only. A `beforeLoad` that calls a helper imported from outside `src/routes/**` (for example `beforeLoad: loadX` with `loadX` in `src/Utils` using `.then()`) is not caught. Today every `beforeLoad` is one of upstream's guard or redirect forms; review a new named `beforeLoad` at sync time (docs/UPSTREAM.md checklist).
+
 ### 6.4 Storage keys
 - The router keeps scroll positions in **sessionStorage** (`scrollRestoration: true`,
   router.tsx:23); the key lives in `node_modules`, so `check-storage-keys.py`, which scans `src`,

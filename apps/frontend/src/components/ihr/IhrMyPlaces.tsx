@@ -2,7 +2,6 @@
 // Technician and Store Keeper belong to, as CARE lists them with `?mine=true`. Each opens the
 // first page of the place the role may use (the same rule as the location menu).
 import { useQuery } from "@tanstack/react-query";
-import { Link } from "raviger";
 import { useTranslation } from "react-i18next";
 
 import {
@@ -15,10 +14,11 @@ import {
 import Loading from "@/components/Common/Loading";
 import Page from "@/components/Common/Page";
 
+import { HrefLink } from "@/lib/router/HrefLink";
+import locationApi from "@/types/location/locationApi";
 import { ihrPlacePage } from "@/Utils/ihr/menu";
 import { useIhrAccess } from "@/Utils/ihr/useIhrAccess";
 import query from "@/Utils/request/query";
-import locationApi from "@/types/location/locationApi";
 
 import { IhrNotForRole } from "./IhrNotForRole";
 
@@ -52,7 +52,7 @@ export function IhrMyPlaces({ facilityId }: IhrMyPlacesProps) {
           <p className="text-gray-600">{t("ihr_my_places_empty")}</p>
         )}
         {data?.results.map((place) => (
-          <Link
+          <HrefLink
             key={place.id}
             href={`/facility/${facilityId}/locations/${place.id}${page}`}
             className="block"
@@ -65,7 +65,7 @@ export function IhrMyPlaces({ facilityId }: IhrMyPlacesProps) {
                 )}
               </CardContent>
             </Card>
-          </Link>
+          </HrefLink>
         ))}
       </div>
     </Page>

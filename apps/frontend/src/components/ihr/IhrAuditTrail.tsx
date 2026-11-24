@@ -13,7 +13,6 @@
 //   sign-in cookie goes with the click; the audit routes refuse a cross-site one). They carry the
 //   days and the patient filter held in the address, at most 31 days.
 import { useInfiniteQuery, useQuery } from "@tanstack/react-query";
-import { useQueryParams } from "raviger";
 import { useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 
@@ -68,6 +67,7 @@ import { fieldErrorsOf, humanize } from "@/Utils/ihr/totals";
 import { useIhrAccess } from "@/Utils/ihr/useIhrAccess";
 import query from "@/Utils/request/query";
 import { HTTPError } from "@/Utils/request/types";
+import { useQueryParams } from "@/lib/router/queryParams";
 
 import { IhrNotForRole } from "./IhrNotForRole";
 

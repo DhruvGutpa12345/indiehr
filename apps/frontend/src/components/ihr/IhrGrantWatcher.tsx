@@ -1,7 +1,7 @@
 // IndieHR P1-T11c3 (design-c.md §13.3, SS1): the ONE place that knows whether MRD's records
-// grants still stand. Mounted once, around the facility routes, for users who may ask for
-// records access, and around CARE's facility-less patient routes for restricted users
-// (IhrRoutes.tsx, review F6). The banner on the patient page and the records page's list read
+// grants still stand. Mounted once around every staff page (IhrStaffPage.tsx, P2-T0c); it acts
+// on the facility routes for users who may ask for records access, and on CARE's facility-less
+// patient routes for restricted users (review F6); elsewhere it is inert (scope null). The banner on the patient page and the records page's list read
 // its state (useIhrGrants) and run no timer of their own.
 //
 // It asks the backend (GET /api/ihr/records-access/, ids and times only: the poll shows no
@@ -22,9 +22,8 @@
 // be sure none stays on screen), says so in a toast, and replaces the page by the records page
 // (or the home page outside a facility), so Back does not return to the record. The rules
 // (what counts as ended) are records.ts watchStep, tested without React.
-import { type QueryKey, useQuery } from "@tanstack/react-query";
+import type { QueryKey } from "@tanstack/react-query";
 import { t } from "i18next";
-import { navigate } from "raviger";
 import {
   type ReactNode,
   useCallback,
@@ -36,8 +35,9 @@ import { toast } from "sonner";
 
 import useAuthUser from "@/hooks/useAuthUser";
 
-import type { MyAccess } from "@/Utils/ihr/access";
-import { ihrAccessApi, ihrRecordsApi } from "@/Utils/ihr/ihrApi";
+import { navigate } from "@/lib/router/navigate";
+
+import { ihrRecordsApi } from "@/Utils/ihr/ihrApi";
 import {
   type GrantSummary,
   LOOK_TIMEOUT_MS,
@@ -52,10 +52,9 @@ import {
   timedLook,
   watchStep,
 } from "@/Utils/ihr/records";
-import { useIhrAccess } from "@/Utils/ihr/useIhrAccess";
-import query, { callApi } from "@/Utils/request/query";
+import { useIhrAccess, useRestrictedAnywhere } from "@/Utils/ihr/useIhrAccess";
+import { callApi } from "@/Utils/request/query";
 import queryClient from "@/Utils/request/queryClient";
-import { useCurrentFacilitySilently } from "@/pages/Facility/utils/useCurrentFacility";
 
 const CHANNEL = "ihr-grants";
 const STORAGE_KEY = "ihr_grants_changed";
@@ -161,7 +160,7 @@ export function noteGrant(grant: GrantSummary) {
 
 /**
  * A page that shows a patient's chart in CARE's own view to a restricted records user (the
- * patient gates, IhrGates.tsx): for them that view exists only under a grant, so the watcher
+ * patient gates, IhrGates.tsx IhrRouteGate): for them that view exists only under a grant, so the watcher
  * treats it as held (records.ts watchStep openCharts) and takes a look when it opens.
  */
 export function useIhrOpenChart(patientId: string | undefined) {
@@ -207,28 +206,31 @@ function isOwnQuery(key: QueryKey): boolean {
 interface WatcherProps {
   children?: ReactNode;
   /**
-   * CARE's patient routes with no facility (/patient/..., /organization/.../patient/...,
-   * review F6): the records slug is a facility's, so there the watcher runs for any restricted
-   * user (GET /api/ihr/my-access/ without a facility); its poll shows no patient, and a
-   * non-MRD's list is empty.
+   * routeGates.ts watcherScope of the page's route id. "facility": a facility page, the
+   * watcher runs for users who may ask for records access there. "facilityLess": CARE's patient
+   * routes with no facility (/patient/..., /organization/.../patient/..., review F6): the
+   * records slug is a facility's, so there it runs for any restricted user (GET
+   * /api/ihr/my-access/ without a facility); its poll shows no patient, and a non-MRD's list is
+   * empty. null: inert.
    */
-  facilityLess?: boolean;
+  scope: "facility" | "facilityLess" | null;
+  /** the facility of the page's route match (IhrStaffPage), never the address bar's */
+  facilityId: string | undefined;
 }
 
-export function IhrGrantWatcher({ children, facilityLess }: WatcherProps) {
-  const access = useIhrAccess();
+export function IhrGrantWatcher({ children, scope, facilityId }: WatcherProps) {
+  const access = useIhrAccess({ facilityId });
   const user = useAuthUser();
-  const { facilityId } = useCurrentFacilitySilently();
-  const outside = !!facilityLess && !facilityId;
-  const restrictedAnywhere = useQuery<MyAccess>({
-    queryKey: ["ihr", "my-access", undefined],
-    queryFn: query(ihrAccessApi.myAccess, { silent: true }),
-    enabled: outside && !user.is_superuser,
-    staleTime: 1000 * 60,
-  });
-  const enabled = outside
-    ? !!restrictedAnywhere.data?.restricted
-    : access.mode !== "pending" && access.records;
+  const outside = scope === "facilityLess" && !facilityId;
+  const restrictedAnywhere = useRestrictedAnywhere(
+    outside && !user.is_superuser,
+  );
+  const enabled =
+    scope === null
+      ? false
+      : outside
+        ? restrictedAnywhere === true
+        : !!facilityId && access.mode !== "pending" && access.records;
   const facilityRef = useRef(facilityId);
   useEffect(() => {
     facilityRef.current = facilityId;
@@ -253,7 +255,8 @@ export function IhrGrantWatcher({ children, facilityLess }: WatcherProps) {
       const facility = facilityRef.current;
       // replace: Back must not return to the record the grant opened; outside a facility
       // (CARE's facility-less patient routes, review F6) the home page
-      navigate(facility ? `/facility/${facility}/ihr/records` : "/", {
+      navigate({
+        href: facility ? `/facility/${facility}/ihr/records` : "/",
         replace: true,
       });
     };

@@ -12,7 +12,7 @@ import {
   useQuery,
   useQueryClient,
 } from "@tanstack/react-query";
-import { Link, navigate, useQueryParams } from "raviger";
+import { Link } from "@tanstack/react-router";
 import { useState } from "react";
 import { useTranslation } from "react-i18next";
 
@@ -46,6 +46,8 @@ import { useIhrAccess } from "@/Utils/ihr/useIhrAccess";
 import mutate from "@/Utils/request/mutate";
 import query from "@/Utils/request/query";
 import { HTTPError } from "@/Utils/request/types";
+import { navigate } from "@/lib/router/navigate";
+import { useQueryParams } from "@/lib/router/queryParams";
 import patientApi from "@/types/emr/patient/patientApi";
 
 import { IhrEndGrantButton } from "./IhrEndGrantButton";
@@ -117,7 +119,10 @@ function AskForAccess({ facilityId }: { facilityId: string }) {
       noteGrant(grant);
       announceGrantsChanged();
       void refreshGrants();
-      navigate(`/facility/${facilityId}/patient/${grant.patient}`);
+      navigate({
+        to: "/facility/$facilityId/patient/$patientId/{-$tab}",
+        params: { facilityId, patientId: grant.patient },
+      });
     },
     onError: (error: Error) => {
       if (error instanceof HTTPError && error.status === 403) {
@@ -167,7 +172,7 @@ function AskForAccess({ facilityId }: { facilityId: string }) {
         <div className="mt-2 space-y-3">
           <p className="text-gray-600">{t("ihr_records_ask_hint")}</p>
           <Button asChild variant="outline">
-            <Link href={`/facility/${facilityId}/patients`}>
+            <Link to="/facility/$facilityId/patients" params={{ facilityId }}>
               {t("ihr_records_search_patients")}
             </Link>
           </Button>
@@ -354,7 +359,8 @@ function LiveGrants({ facilityId }: { facilityId: string }) {
               <div className="flex gap-2">
                 <Button asChild variant="outline" size="sm">
                   <Link
-                    href={`/facility/${facilityId}/patient/${grant.patient}`}
+                    to="/facility/$facilityId/patient/$patientId/{-$tab}"
+                    params={{ facilityId, patientId: grant.patient }}
                     data-ihr="grant-open"
                   >
                     {t("ihr_records_open")}

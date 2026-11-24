@@ -80,11 +80,12 @@ async function expectClean(
   ).toEqual([]);
 }
 
-/** Client-side navigation inside the web app (raviger listens to popstate). */
+/** Client-side navigation inside the web app. TanStack Router's history wraps
+ * window.history.pushState, so a plain pushState moves the router (P2-T0c; raviger needed a
+ * popstate event, which the new router would handle as a second, empty "GO"). */
 async function spaNavigate(page: Page, path: string) {
   await page.evaluate((target) => {
     window.history.pushState({}, "", target);
-    window.dispatchEvent(new PopStateEvent("popstate"));
   }, path);
 }
 

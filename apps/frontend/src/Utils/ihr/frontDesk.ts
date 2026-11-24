@@ -13,7 +13,7 @@
 // A field the backend's projection (ihr_access/fields/*.txt) removes is never shown as empty:
 // its row is removed (design-c.md §3.3).
 import type { IhrAccess, IhrPatientView } from "./access";
-import { DEMOGRAPHICS_TABS } from "./routeKeys";
+import { DEMOGRAPHICS_TABS } from "./routeGates";
 
 // ---------------------------------------------------------------------------------------------
 // Patient page tabs (PatientProfile.tsx)

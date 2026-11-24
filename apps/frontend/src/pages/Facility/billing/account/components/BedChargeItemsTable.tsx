@@ -29,6 +29,7 @@ import { TableSkeleton } from "@/components/Common/SkeletonLoading";
 import { EmptyState } from "@/components/ui/empty-state";
 
 import useFilters from "@/hooks/useFilters";
+import { chargeItemListSearch } from "@/lib/router/search/billing";
 
 import query from "@/Utils/request/query";
 import {
@@ -210,8 +211,8 @@ function BedChargeItemsTable({
     {},
   );
   const { qParams, updateQuery, Pagination, resultsPerPage } = useFilters({
+    schema: chargeItemListSearch,
     limit: 15,
-    disableCache: true,
   });
   const [addChargeItemState, setAddChargeItemState] = useState<{
     serviceRequestId: string;
@@ -317,7 +318,7 @@ function BedChargeItemsTable({
               status: value === "all" ? undefined : value,
             });
           }}
-          className="max-sm:hidden"
+          className="max-lg:hidden"
         >
           <TabsList>
             <TabsTrigger value="all">{t("all")}</TabsTrigger>
@@ -337,7 +338,7 @@ function BedChargeItemsTable({
             })
           }
         >
-          <SelectTrigger className="sm:hidden w-full">
+          <SelectTrigger className="lg:hidden w-full">
             <SelectValue placeholder={t("filter_by_status")} />
           </SelectTrigger>
           <SelectContent>

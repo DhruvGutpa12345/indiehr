@@ -700,3 +700,32 @@ describe("the location Overview page (P2-T0b review F1, access lens)", () => {
     assert.match(src, /ihrOverview\.forms &&/);
   });
 });
+
+describe("Sentry loads only init (P2-T0c egress)", () => {
+  it("Sentry.tsx imports our one-export module, never the whole package", () => {
+    const src = readFileSync(
+      join(process.cwd(), "src", "Integrations", "Sentry.tsx"),
+      "utf-8",
+    );
+    assert.doesNotMatch(src, /import\("@sentry\/browser"\)/);
+    assert.match(src, /import\("@\/Utils\/ihr\/sentryInit"\)/);
+    const mod = readFileSync(
+      join(process.cwd(), "src", "Utils", "ihr", "sentryInit.ts"),
+      "utf-8",
+    );
+    assert.match(mod, /^export \{ init \} from "@sentry\/browser";$/m);
+    assert.doesNotMatch(mod, /export \*/);
+  });
+});
+
+describe("patient sign-out ends the session in this tab too (P2-T0c review session F1)", () => {
+  it("usePatientSignOut clears through clearStaffStorage and reloads the page", () => {
+    const src = readFileSync(
+      join(process.cwd(), "src", "hooks", "usePatientSignOut.ts"),
+      "utf-8",
+    );
+    assert.match(src, /clearStaffStorage\(\)/);
+    assert.match(src, /window\.location\.replace\(/);
+    assert.doesNotMatch(src, /\bnavigate\(/);
+  });
+});

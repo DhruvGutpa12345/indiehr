@@ -1,9 +1,14 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useSetAtom } from "jotai";
-import { navigate } from "raviger";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import {
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 
-import Loading from "@/components/Common/Loading";
 import {
   clearOtherUsersFillDrafts,
   clearQuestionnaireFillDrafts,
@@ -15,6 +20,11 @@ import { AuthUserContext } from "@/hooks/useAuthUser";
 
 import { LocalStorageKeys } from "@/common/constants";
 
+import { type AuthStatus, setAuthStatusResolver } from "@/lib/router/auth";
+import { navigate } from "@/lib/router/navigate";
+import { getRouter } from "@/lib/router/routerRef";
+
+import { type IhrAuthInput, ihrAuthStatus } from "@/Utils/ihr/authStatus";
 import {
   EndReason,
   announceSignOut,
@@ -35,35 +45,78 @@ import userApi from "@/types/user/userApi";
 
 interface Props {
   children: React.ReactNode;
-  unauthorized: React.ReactNode;
-  otpAuthorized: React.ReactNode;
 }
 
-// IndieHR (P1-T4b, ADR-009): staff sign in through Keycloak, run by the backend. The browser
-// holds only an HttpOnly cookie: no staff token is stored or refreshed here, CARE's password
-// form and its two-factor step are gone, and sign-out clears everything cached in the browser.
-export default function AuthUserProvider({
-  children,
-  unauthorized,
-  otpAuthorized,
-}: Props) {
+const CURRENT_USER_KEY = ["currentUser"];
+
+/** The `["currentUser"]` query's state as ihrAuthStatus reads it. */
+function userState(state: {
+  status: "pending" | "error" | "success";
+  data: unknown;
+}): IhrAuthInput["user"] {
+  return { status: state.status, hasData: state.data !== undefined };
+}
+
+// IndieHR (P1-T4b, ADR-009; P2-T0c): staff sign in through Keycloak, run by the backend. The
+// browser holds only an HttpOnly cookie: no staff token is stored or refreshed here, CARE's
+// password form and its two-factor step are gone, and sign-out clears everything cached in the
+// browser (always a full page load). Upstream's router integration is kept: the router's guards
+// read the session status through `setAuthStatusResolver`, and a status change re-runs them.
+// Guards and the rendered chrome both use ihrAuthStatus (Utils/ihr/authStatus.ts), so they
+// agree (docs/reviews/p2-t0c/design.md §5.1).
+export default function AuthUserProvider({ children }: Props) {
   const queryClient = useQueryClient();
-  const [patientToken, setPatientToken] = useState<TokenData | null>(
+  const [patientToken, setPatientTokenState] = useState<TokenData | null>(
     JSON.parse(
       localStorage.getItem(LocalStorageKeys.patientTokenKey) || "null",
     ),
   );
+  // Mirror of the patient token, updated in the same call as the state, so the router's
+  // resolver is current before the next render.
+  const patientTokenRef = useRef(patientToken);
+  const setPatientToken = useCallback((token: TokenData | null) => {
+    patientTokenRef.current = token;
+    setPatientTokenState(token);
+  }, []);
 
   // Signed in or not is the backend's answer (a 403 here simply means "not signed in").
   // After a sign-out the backend has not confirmed yet, this browser stays signed out.
   const [pendingSignOut] = useState(signOutPending);
-  const { data: currentUser, isLoading } = useQuery({
-    queryKey: ["currentUser"],
+
+  useState(() =>
+    setAuthStatusResolver((): AuthStatus => {
+      const state = queryClient.getQueryState(CURRENT_USER_KEY);
+      return ihrAuthStatus({
+        pendingSignOut,
+        user: state ? userState(state) : undefined,
+        patientToken: patientTokenRef.current,
+      });
+    }),
+  );
+
+  const currentUserQuery = useQuery({
+    queryKey: CURRENT_USER_KEY,
     queryFn: query(userApi.currentUser, { silent: true }),
     retry: false,
     enabled: !pendingSignOut,
   });
-  const user = pendingSignOut ? undefined : currentUser;
+
+  const status: AuthStatus = ihrAuthStatus({
+    pendingSignOut,
+    user: userState(currentUserQuery),
+    patientToken,
+  });
+  const user = status === "user" ? currentUserQuery.data : undefined;
+  const isUserLoading = status === "loading";
+
+  // Run the route guards again when the session changes without a navigation (the current
+  // user loaded, a patient token removed in another tab).
+  const lastStatus = useRef(status);
+  useLayoutEffect(() => {
+    if (lastStatus.current === status) return;
+    lastStatus.current = status;
+    void getRouter().invalidate();
+  }, [status]);
 
   useEffect(() => {
     forgetLegacyTokens(); // CARE's old staff tokens are useless now
@@ -95,16 +148,19 @@ export default function AuthUserProvider({
     if (userId) clearOtherUsersFillDrafts(userId);
   }, [userId]);
 
+  // `redirect` (absolute, from the router's staff guard) or this page; startSignIn keeps
+  // same-origin paths only (idleRules.ts safeNext).
   const signIn = useCallback(async (): Promise<LoginResponse> => {
     startSignIn(
-      getRedirectOr(window.location.pathname + window.location.search),
+      new URLSearchParams(window.location.search).get("redirect") ??
+        window.location.pathname + window.location.search,
     );
     return new Promise<LoginResponse>(() => undefined); // the page is leaving
   }, []);
 
   // Keycloak runs the second factor; CARE's own step no longer exists.
   const verifyMFA = useCallback(async (): Promise<LoginResponse> => {
-    navigate("/login");
+    navigate({ href: "/login" });
     return new Promise<LoginResponse>(() => undefined);
   }, []);
 
@@ -115,9 +171,9 @@ export default function AuthUserProvider({
         LocalStorageKeys.patientTokenKey,
         JSON.stringify(tokenData),
       );
-      navigate(redirectUrl);
+      navigate({ href: redirectUrl });
     },
-    [],
+    [setPatientToken],
   );
 
   const endLocally = useCallback(
@@ -162,7 +218,8 @@ export default function AuthUserProvider({
   // A sign-out in another tab of this hospital ends this one at once.
   useEffect(() => onSignOutElsewhere(endLocally), [endLocally]);
 
-  // A patient sign-out in another tab (patient portal) reaches this one too.
+  // A patient sign-out in another tab (patient portal) reaches this one too; the status
+  // change re-runs the guards.
   useEffect(() => {
     const listener = (event: StorageEvent) => {
       if (event.key === LocalStorageKeys.patientTokenKey && !event.newValue) {
@@ -171,7 +228,7 @@ export default function AuthUserProvider({
     };
     addEventListener("storage", listener);
     return () => removeEventListener("storage", listener);
-  }, []);
+  }, [setPatientToken]);
 
   const signOutIdle = useCallback(() => endSession(true, false), [endSession]);
   useIdleSignOut(!!user, signOutIdle);
@@ -187,6 +244,7 @@ export default function AuthUserProvider({
       user,
       patientLogin,
       patientToken,
+      isUserLoading,
     }),
     [
       signIn,
@@ -196,43 +254,15 @@ export default function AuthUserProvider({
       user,
       patientLogin,
       patientToken,
+      isUserLoading,
     ],
   );
 
+  // The root route shows the loading screen and picks the chrome (staff, patient, public).
   return (
     <AuthUserContext.Provider value={contextValue}>
       <AppearanceUserSync user={user} />
-      {isLoading ? (
-        <Loading />
-      ) : user ? (
-        children
-      ) : patientToken?.token ? (
-        otpAuthorized
-      ) : (
-        unauthorized
-      )}
+      {children}
     </AuthUserContext.Provider>
   );
 }
-
-const getRedirectURL = () => {
-  return new URLSearchParams(window.location.search).get("redirect");
-};
-
-const getRedirectOr = (fallback: string) => {
-  const url = getRedirectURL();
-
-  if (url) {
-    try {
-      const redirect = new URL(url);
-      if (window.location.origin === redirect.origin) {
-        return redirect.pathname + redirect.search;
-      }
-      console.error("Redirect does not belong to same origin.");
-    } catch {
-      console.error(`Invalid redirect URL: ${url}`);
-    }
-  }
-
-  return fallback;
-};

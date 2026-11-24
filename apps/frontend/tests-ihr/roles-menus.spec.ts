@@ -8,8 +8,9 @@
 //   links unchanged).
 // - Typed addresses of pages that are not part of a role show "This page is not part of your
 //   role", and the page asks the API for no patient, encounter or location data.
-// - Any "ihr-routes" console line (withIhrRoutes found a route key missing) fails every test of
-//   every spec (the shared newContext fixture, lib/fixtures.ts).
+// - The organization addresses of the same patient and visit pages (Q-K170 B, P2-T0c) are refused
+//   the same way for the restricted roles. A route id our gates name that CARE no longer defines
+//   is caught by routeGates.test.ts (the old "ihr-routes" console line is gone with raviger).
 //
 // Names are CARE's English strings (public/locale/en.json) and ours (deploy/locale/en.json).
 // Lines read "Top", or "Parent > Child" for the children of an expandable item.
@@ -372,6 +373,16 @@ for (const login of LOGINS) {
         await page.goto(`${patient}/${sub}`);
         await expectNotForRole(page);
       }
+      // The same chart under an organization address is refused too (Q-K170 B, P2-T0c): the
+      // gate decides by the person's roles anywhere, before any patient or visit is asked for
+      const orgPatient = `${origin}/organization/${SOME_ID}/patient/${SOME_ID}`;
+      for (const sub of [
+        `encounter/${SOME_ID}/updates`,
+        `diagnostic_reports/${SOME_ID}`,
+      ]) {
+        await page.goto(`${orgPatient}/${sub}`);
+        await expectNotForRole(page);
+      }
       // Our pages of other roles
       await page.goto(`${origin}/facility/${facilityId}/ihr/totals`);
       await expectNotForRole(page);
@@ -398,6 +409,15 @@ for (const login of LOGINS) {
         "prescriptions/print",
       ]) {
         await page.goto(`${visit}/${sub}`);
+        await expectNotForRole(page);
+      }
+      // The organization addresses of the same pages (Q-K170 B, P2-T0c)
+      const orgPatient = `${origin}/organization/${SOME_ID}/patient/${SOME_ID}`;
+      for (const sub of [
+        `encounter/${SOME_ID}/updates`,
+        `diagnostic_reports/${SOME_ID}`,
+      ]) {
+        await page.goto(`${orgPatient}/${sub}`);
         await expectNotForRole(page);
       }
       // Encounter lists are not part of these roles (C1-5)

@@ -6,7 +6,6 @@
 // figures" table; a figure the answer lacks is "Not available", never ₹0.00. No patient, bill
 // or id is ever shown: the API returns none.
 import { useQuery } from "@tanstack/react-query";
-import { useQueryParams } from "raviger";
 import { useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 
@@ -49,6 +48,7 @@ import {
 import { useIhrAccess } from "@/Utils/ihr/useIhrAccess";
 import query from "@/Utils/request/query";
 import { HTTPError } from "@/Utils/request/types";
+import { useQueryParams } from "@/lib/router/queryParams";
 
 import { IhrNotForRole } from "./IhrNotForRole";
 

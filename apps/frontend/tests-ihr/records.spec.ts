@@ -261,10 +261,9 @@ test("MRD asks for records access and loses it when it ends (mrd.farah, alpha)",
     await expect(
       page.getByText(CHART_TEXT).filter({ visible: true }).first(),
     ).toBeVisible();
-    // the records page, still inside the app (raviger follows popstate)
+    // the records page, still inside the app (TanStack Router's history wraps pushState, P2-T0c)
     await page.evaluate((path) => {
       window.history.pushState(null, "", path);
-      window.dispatchEvent(new PopStateEvent("popstate"));
     }, `/facility/${facilityId}/ihr/records`);
     await expect(page).toHaveURL(/\/ihr\/records$/);
     const row = page.locator('[data-ihr="grant-row"]');

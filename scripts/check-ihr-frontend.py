@@ -2,8 +2,8 @@
 """Our web-app menus and gates still fit CARE's source (P1-T11c1, design-c.md §5.3, §13.2 FF6).
 
 Our code names text in upstream files: URL suffixes in the sidebar link lists
-(facility-nav.tsx, location-nav.tsx), route keys in the route tables (ConsultationRoutes.tsx,
-PatientRoutes.tsx), and hooks we placed inside upstream files. An upstream sync that renames or
+(facility-nav.tsx, location-nav.tsx), route ids of the generated TanStack route tree
+(routeTree.gen.ts), and hooks we placed inside upstream files. An upstream sync that renames or
 drops one would leave a menu silently open or closed (menu.ts fails toward CARE) or a gate on a
 route that no longer exists. This check reads the sources and fails with the file and the anchor.
 
@@ -16,12 +16,21 @@ It checks:
    menu.ts section (named exactly, or under a prefix literal ending in "/"), so a NEW upstream
    item fails here until menu.ts decides it; facility-nav.tsx's baseUrl is still
    `/facility/${selectedFacility.id}`, the base ihrMenu.tsx rebuilds;
-2. every route key named in src/Utils/ihr/routeKeys.ts exists upstream: the encounter key
-   as `/${identifier}/:id/patient/:patientId/encounter/:encounterId/:tab` in
-   ConsultationRoutes.tsx, the others as string keys in the file KEY_FILES names
-   (PatientRoutes.tsx by default); the patient tab keys as CARE builds them
-   (`"<PATIENT_TAB_PREFIX>" + tab.route`) and each DEMOGRAPHICS_TABS name as a tab route;
-3. each upstream file we hooked still has our marker and call (AppRouter.tsx, facility-nav.tsx,
+2. (P2-T0c, docs/reviews/p2-t0c/design.md §6.3) every `export const …_ID = "…"` of
+   src/Utils/ihr/routeGates.ts is a key of FileRoutesById in src/routeTree.gen.ts (fast local
+   feedback; routeGates.test.ts is the full check), and each DEMOGRAPHICS_TABS name is a patient
+   tab route; our two hook points on CARE's router are in place (router.tsx
+   `withIhrRouteTree(routeTree)`, AppShell.tsx `<IhrStaffPage>{children}</IhrStaffPage>` inside
+   its ErrorBoundary, the only `{children}` there); IhrStaffPage.tsx keeps the watcher around
+   the gate with the leaf's facility; ihrRouteTree.tsx still replaces CARE's auth pages by
+   redirects to /login and Login.tsx renders IhrStaffSignIn, not CARE's password form; the
+   upstream text our gates rely on is unchanged (the area guards of `_app`, `_public`,
+   `_patient`, the root route's AreaChrome, AreaChrome's staff shell and `isAreaAllowed`, the
+   "app" area rule in lib/router/auth.ts, and how useCurrentFacility.tsx finds the facility);
+   and no route file (src/routes/**, lib/router/pluginRoutes.tsx) fetches data before our
+   render-time gate (a `loader`, `loaderDeps`, `queryClient`, `ensureQueryData`,
+   `prefetchQuery`, `prefetchInfiniteQuery` or `fetchQuery` runs on hover preload too);
+3. each upstream file we hooked still has our marker and call (facility-nav.tsx,
    location-nav.tsx, overview.tsx, and the P1-T11c2 screens: PatientProfile.tsx, Demography.tsx,
    PatientRegistration.tsx, EncounterHistory.tsx, EncounterCard.tsx, EncounterActions.tsx,
    PatientHome.tsx, PatientInfoCard.tsx, CreateEncounterForm.tsx, EncounterList.tsx,
@@ -31,8 +40,7 @@ It checks:
    keys of frontDesk.ts's ACCOUNT_TAB_SLUGS), the encounter list's refused filter keys;
 3c. (P1-T11c3) IhrPatientActions (records button and live-grant banner) is still mounted and its
    marked import kept in PatientProfile.tsx and PatientHome.tsx, with the upstream blocks it sits
-   beside; the chart tab `clinical_history` exists; every facility route (CARE's and ours) is
-   still returned inside the one grant watcher by src/components/ihr/IhrRoutes.tsx;
+   beside; the chart tab `clinical_history` exists;
 4. plugins/ihr_platform/ihr_roles/frontend_slugs.json (written by the backend's
    `manage.py ihr_frontend_slugs --write`) equals src/Utils/ihr/ihrSlugs.json byte for byte.
 
@@ -49,13 +57,24 @@ ROOT = Path(__file__).resolve().parent.parent
 SRC = Path("apps") / "frontend" / "src"
 FACILITY_NAV = SRC / "components/ui/sidebar/facility/facility-nav.tsx"
 LOCATION_NAV = SRC / "components/ui/sidebar/facility/location/location-nav.tsx"
-CONSULTATION_ROUTES = SRC / "Routers/routes/ConsultationRoutes.tsx"
-PATIENT_ROUTES = SRC / "Routers/routes/PatientRoutes.tsx"
-SCHEDULE_ROUTES = SRC / "Routers/routes/ScheduleRoutes.tsx"
 PATIENT_TABS = SRC / "components/Patient/PatientDetailsTab/index.tsx"
 IHR_MENU = SRC / "components/ihr/ihrMenu.tsx"
-IHR_ROUTES = SRC / "components/ihr/IhrRoutes.tsx"
-APP_ROUTER = SRC / "Routers/AppRouter.tsx"
+# P2-T0c: our hook points on CARE's TanStack router and the upstream text they rely on
+ROUTER = SRC / "router.tsx"
+APP_SHELL = SRC / "Routers/AppShell.tsx"
+AREA_CHROME = SRC / "Routers/AreaChrome.tsx"
+ROUTES_DIR = SRC / "routes"
+ROOT_ROUTE = ROUTES_DIR / "__root.tsx"
+APP_AREA = ROUTES_DIR / "_app.tsx"
+PUBLIC_AREA = ROUTES_DIR / "_public.tsx"
+PATIENT_AREA = ROUTES_DIR / "_patient.tsx"
+ROUTER_AUTH = SRC / "lib/router/auth.ts"
+PLUGIN_ROUTES = SRC / "lib/router/pluginRoutes.tsx"
+CURRENT_FACILITY = SRC / "pages/Facility/utils/useCurrentFacility.tsx"
+ROUTE_TREE = SRC / "routeTree.gen.ts"
+IHR_STAFF_PAGE = SRC / "components/ihr/IhrStaffPage.tsx"
+IHR_ROUTE_TREE = SRC / "components/ihr/ihrRouteTree.tsx"
+LOGIN = SRC / "components/Auth/Login.tsx"
 OVERVIEW = SRC / "pages/Facility/overview.tsx"
 PATIENT_PROFILE = SRC / "components/Patient/PatientProfile.tsx"
 DEMOGRAPHY = SRC / "components/Patient/PatientDetailsTab/Demography.tsx"
@@ -77,20 +96,29 @@ BOOKINGS_LIST = SRC / "pages/Appointments/BookAppointment/BookingsList.tsx"
 UPCOMING_APPOINTMENT = SRC / "pages/Appointments/components/UpcomingAppointmentCard.tsx"
 FRONT_DESK = SRC / "Utils/ihr/frontDesk.ts"
 MENU = SRC / "Utils/ihr/menu.ts"
-ROUTE_KEYS = SRC / "Utils/ihr/routeKeys.ts"
+ROUTE_GATES = SRC / "Utils/ihr/routeGates.ts"
 SLUGS_COPY = SRC / "Utils/ihr/ihrSlugs.json"
 SLUGS_SOURCE = Path("plugins/ihr_platform/ihr_roles/frontend_slugs.json")
 
 FILES = [
     FACILITY_NAV,
     LOCATION_NAV,
-    CONSULTATION_ROUTES,
-    PATIENT_ROUTES,
-    SCHEDULE_ROUTES,
     PATIENT_TABS,
     IHR_MENU,
-    IHR_ROUTES,
-    APP_ROUTER,
+    ROUTER,
+    APP_SHELL,
+    AREA_CHROME,
+    ROOT_ROUTE,
+    APP_AREA,
+    PUBLIC_AREA,
+    PATIENT_AREA,
+    ROUTER_AUTH,
+    PLUGIN_ROUTES,
+    CURRENT_FACILITY,
+    ROUTE_TREE,
+    IHR_STAFF_PAGE,
+    IHR_ROUTE_TREE,
+    LOGIN,
     OVERVIEW,
     PATIENT_PROFILE,
     DEMOGRAPHY,
@@ -112,15 +140,17 @@ FILES = [
     UPCOMING_APPOINTMENT,
     FRONT_DESK,
     MENU,
-    ROUTE_KEYS,
+    ROUTE_GATES,
     SLUGS_COPY,
     SLUGS_SOURCE,
 ]
 
 MARKER = "IndieHR P1-T11c"
+# Directories read whole (besides FILES): every route file is checked for data fetches
+DIRS = [ROUTES_DIR]
+
 # file -> text our hook must still contain (besides the marker)
 HOOKS = {
-    APP_ROUTER: "withIhrRoutes(",
     FACILITY_NAV: "<IhrFacilityNavMain",
     LOCATION_NAV: "<IhrLocationNavMain",
     OVERVIEW: "ihrShowsServices(",
@@ -139,6 +169,64 @@ HOOKS = {
     CHARGE_ITEMS_TABLE: "canEditChargeItems = true",
     BED_CHARGE_ITEMS_TABLE: "canEditChargeItems = true",
 }
+
+# P2-T0c: our two hook points on CARE's router (marker MARKER_ROUTER), file -> call
+MARKER_ROUTER = "IndieHR P2-T0c"
+ROUTER_HOOKS = {
+    ROUTER: "routeTree: withIhrRouteTree(routeTree)",
+    APP_SHELL: "<IhrStaffPage>",
+}
+# (file, regex that must match (DOTALL), why[, how many times exactly; default: at least once])
+ROUTER_ANCHORS = [
+    (
+        APP_SHELL,
+        r"<ErrorBoundary\b(?:(?!</ErrorBoundary>).)*?<IhrStaffPage>\s*\{children\}\s*</IhrStaffPage>\s*</ErrorBoundary>",
+        "the staff page outlet inside our gate, inside CARE's ErrorBoundary",
+    ),
+    (APP_SHELL, r"\{children\}", "the page rendered once only (inside IhrStaffPage)", 1),
+    (APP_SHELL, r'import \{ IhrStaffPage \} from "@/components/ihr/IhrStaffPage";', "the marked import"),
+    (ROUTER, r'import \{ withIhrRouteTree \} from "@/components/ihr/ihrRouteTree";', "the import of our route tree"),
+    (
+        IHR_STAFF_PAGE,
+        r"<IhrGrantWatcher\b(?:(?!</IhrGrantWatcher>).)*<IhrRouteGate\b(?:(?!</IhrGrantWatcher>).)*</IhrGrantWatcher>",
+        "the one grant watcher around the gate",
+    ),
+    (IHR_STAFF_PAGE, r"facilityId=\{leaf\.facilityId\}", "the watcher watches the leaf's facility, never the address bar's"),
+    (IHR_STAFF_PAGE, r"useMatches\(\{\s*select:\s*leafSignature\s*\}\)", "the committed matches, deepest non-failed match"),
+    (IHR_ROUTE_TREE, r'throw redirect\(\{\s*to:\s*"/login"', "CARE's auth pages redirect to /login"),
+    (IHR_ROUTE_TREE, r'from "@/routes/_public/2fa"', "the 2FA page is replaced"),
+    (IHR_ROUTE_TREE, r'from "@/routes/_public/forgot-password"', "the forgot-password page is replaced"),
+    (IHR_ROUTE_TREE, r'from "@/routes/_public/password_reset\.\$token"', "the password-reset page is replaced"),
+    (IHR_ROUTE_TREE, r"getParentRoute:\s*\(\)\s*=>\s*AppRoute\b", "our pages are staff pages (under /_app)"),
+    (LOGIN, r"<IhrStaffSignIn\s*/>", "the staff panel is our Keycloak sign-in"),
+    # upstream text our gates rely on (unmarked)
+    (APP_AREA, r"beforeLoad:\s*requireStaff\b", "the staff area guard"),
+    (PUBLIC_AREA, r"beforeLoad:\s*publicOnly\b", "the public area guard"),
+    (PATIENT_AREA, r"beforeLoad:\s*requirePatient\b", "the patient area guard"),
+    (ROOT_ROUTE, r"<AreaChrome\b", "the root route renders each area's chrome"),
+    (AREA_CHROME, r'case "app":\s*chrome = <AppShell>', "the staff area renders AppShell (our hook point)"),
+    (AREA_CHROME, r"isAreaAllowed\(", "a page renders only for its area's session"),
+    (ROUTER_AUTH, r'if \(area === "app"\) return status === "user";', "staff pages only for a signed-in staff user"),
+    (CURRENT_FACILITY, r"usePathname\(\)", "the address-bar facility the gate compares (design §1.4, §3.4 row 1)"),
+    (CURRENT_FACILITY, r'segments\[1\] === "facility"', "the address-bar facility rule routeGates.ts facilityFromPath copies"),
+]
+# (file, regex that must NOT match, why)
+ROUTER_ABSENT = [
+    (LOGIN, r"<StaffLoginForm\b", "CARE's password form (staff sign in through Keycloak)"),
+    (LOGIN, r"<ForgotPassword\b", "CARE's forgot-password form"),
+]
+# No data fetch before our render-time gate (design §6.3, attack S3): a loader or a beforeLoad
+# fetch runs on hover preload and on navigation, before IhrRouteGate. (regex, what)
+FETCH_PATTERNS = [
+    (r"\bloader(?:Deps)?\b", "a route loader"),
+    (r"queryClient|ensureQueryData|prefetch(?:Infinite)?Query|fetchQuery", "a query-client fetch"),
+    # P2-T0c review F2: this codebase's own fetch helpers, and any awaited (async) step
+    (r"\bcallApi\(|\bquery(?:\.\w+)?\(|\bfetch\(|\brequest\(", "a fetch helper"),
+    (r"\basync\b|\bawait\b", "an awaited step (a guard that waits may fetch)"),
+]
+ROUTE_ID_CONST = re.compile(r'export const (\w+_ID)\s*=\s*\n?\s*"([^"]+)"')
+TREE_BLOCK_START = "export interface FileRoutesById {"
+TREE_ID = re.compile(r'^\s+(?:"([^"]+)"|(__root__)): typeof ', re.M)
 
 # P1-T11c2: upstream text the rules of frontDesk.ts read: (file, regex that must match, why[, how
 # many times at least; default 1]). Regexes, not literals: prettier may break a call over several
@@ -177,7 +265,8 @@ FRONT_DESK_ANCHORS = [
     (ACCOUNT_SHOW, r"\(ihrActions\.account\s*\|\|\s*ihrActions\.payment\)", "the header menu only when it has an item"),
     (ACCOUNT_SHOW, r"canEditChargeItems=\{ihrActions\.chargeItems\}", "the charge item row menus (both tables)", 2),
     (CHARGE_ITEMS_TABLE, r"\{canEditChargeItems\s*&&", "the row menu"),
-    (CHARGE_ITEMS_TABLE, r"disabled=\{!canEditChargeItems\}", "the bulk select (header and row)", 2),
+    # the header box also needs a movable item (CARE 3.1): `disabled={!movableChargeItems.length || !canEditChargeItems}`
+    (CHARGE_ITEMS_TABLE, r"disabled=\{\s*(?:!movableChargeItems\.length\s*\|\|\s*)?!canEditChargeItems\s*\}", "the bulk select (header and row)", 2),
     (BED_CHARGE_ITEMS_TABLE, r"\{canEditChargeItems\s*&&", "the row menu"),
     # a projected booking has no schedule (fields/booking.txt drops token_slot.availability,
     # Q-K37): the patient's Appointments tab and patient home must not read its name unguarded
@@ -185,7 +274,7 @@ FRONT_DESK_ANCHORS = [
     (UPCOMING_APPOINTMENT, r"token_slot\.availability\?\.name", "the schedule name"),
 ]
 # P1-T11c3: the records-access button and live-grant banner (IhrPatientActions) sit in two
-# upstream screens; every facility route is returned inside the one grant watcher (withIhrRoutes).
+# upstream screens (the grant watcher's hook point is in ROUTER_ANCHORS since P2-T0c).
 # (file, regex that must match, why[, how many times at least; default 1])
 RECORDS_ANCHORS = [
     (PATIENT_PROFILE, r"<IhrPatientActions\b", "the records button and live-grant banner (MRD)"),
@@ -195,10 +284,6 @@ RECORDS_ANCHORS = [
     (PATIENT_HOME, r"import \{ IhrPatientActions \}[^\n]*IndieHR P1-T11c", "the marked import of the banner"),
     (PATIENT_HOME, r"</PatientInfoCard>", "the card the banner sits below"),
     (PATIENT_TABS, r'route: "clinical_history"', "the chart tab MRD sees under a grant (tests-ihr/records.spec.ts)"),
-    (IHR_ROUTES, r"withWatcher\(key,\s*wrap\(key,\s*route\)\)", "every CARE facility route inside the one grant watcher"),
-    (IHR_ROUTES, r"withWatcher\(key,\s*route\)", "our own facility routes inside the one grant watcher"),
-    (IHR_ROUTES, r"<IhrGrantWatcher\b", "the watcher itself"),
-    (IHR_ROUTES, r"watcherScope\(key\)", "the facility-less patient charts inside the watcher too (review F6)"),
 ]
 # P1-T24b (review W6): the staff "Sign-in" card's mount on the user page and the add-user form's
 # one option. Both are small edits in upstream files that an upstream sync could silently undo.
@@ -228,16 +313,6 @@ LOCATION_SECTION = "// Location menu (location-nav.tsx)"
 # settings sidebar (facility-settings-nav.tsx)
 SETTINGS_URLS = 1
 LITERAL = re.compile(r'"(/[A-Za-z0-9_/.-]*)"')
-ROUTE_KEY = re.compile(r'export const (\w+_KEY)\s*=\s*"([^"]+)"')
-ENCOUNTER_KEY_NAME = "ENCOUNTER_KEY"
-# CARE builds the encounter route for "facility" and "organization" in one reduce
-ENCOUNTER_UPSTREAM = r"/\$\{identifier\}/:id/patient/:patientId/encounter/:encounterId/:tab"
-# route key constant -> the upstream table that defines it (default: PatientRoutes.tsx)
-KEY_FILES = {
-    "ENCOUNTER_QUESTIONNAIRE_KEY": CONSULTATION_ROUTES,
-    "APPOINTMENT_KEY": SCHEDULE_ROUTES,
-}
-TAB_PREFIX = re.compile(r'export const PATIENT_TAB_PREFIX\s*=\s*"([^"]+)"')
 DEMOGRAPHICS_TABS = re.compile(r"export const DEMOGRAPHICS_TABS\s*=\s*\[([^\]]*)\]")
 # a url of a nav file: `${baseUrl}/path` up to the closing quote or a `${…}`
 NAV_URL = re.compile(r"\$\{baseUrl\}(/[^`\"$]*)")
@@ -275,6 +350,29 @@ def _classified(path: str, literals: list) -> bool:
     return path in literals or any(
         lit.endswith("/") and path.startswith(lit) for lit in literals
     )
+
+
+def fetch_problems(root: Path) -> list:
+    """A data fetch in a route file runs before our render-time gate (design §6.3)."""
+    problems = []
+    paths = [root / PLUGIN_ROUTES]
+    routes = root / ROUTES_DIR
+    if routes.is_dir():
+        paths += sorted(p for p in routes.rglob("*") if p.suffix in (".ts", ".tsx") and p.is_file())
+    else:
+        problems.append(f"{ROUTES_DIR}: directory is missing")
+    for path in paths:
+        if not path.is_file():
+            continue
+        text = path.read_text(encoding="utf-8")
+        rel = path.relative_to(root)
+        for pattern, what in FETCH_PATTERNS:
+            for match in re.finditer(pattern, text):
+                line = text.count("\n", 0, match.start()) + 1
+                problems.append(
+                    f"{rel}:{line}: `{match.group(0)}` ({what}) runs before the IndieHR route gate, also on hover preload: review it (docs/reviews/p2-t0c/design.md §6.3)"
+                )
+    return problems
 
 
 def check(root: Path = ROOT) -> list:
@@ -326,37 +424,57 @@ def check(root: Path = ROOT) -> list:
     if texts[IHR_MENU] and FACILITY_BASE_OURS not in texts[IHR_MENU]:
         problems.append(f"{IHR_MENU}: the facility base {FACILITY_BASE_OURS} not found")
 
-    # 2. route keys
-    keys = ROUTE_KEY.findall(texts[ROUTE_KEYS])
-    if texts[ROUTE_KEYS] and not keys:
-        problems.append(f"{ROUTE_KEYS}: no `export const …_KEY = \"…\"` found")
-    for name, key in keys:
-        if name == ENCOUNTER_KEY_NAME:
-            if not re.search(ENCOUNTER_UPSTREAM, texts[CONSULTATION_ROUTES]):
+    # 2. route ids, our router hook points, the upstream text they rely on (P2-T0c)
+    tree_ids = set()
+    if texts[ROUTE_TREE]:
+        begin = texts[ROUTE_TREE].find(TREE_BLOCK_START)
+        if begin < 0:
+            problems.append(f"{ROUTE_TREE}: `{TREE_BLOCK_START}` not found")
+        else:
+            finish = texts[ROUTE_TREE].find("\n}", begin)
+            block = texts[ROUTE_TREE][begin:finish]
+            tree_ids = {a or b for a, b in TREE_ID.findall(block)}
+    ids = ROUTE_ID_CONST.findall(texts[ROUTE_GATES])
+    if texts[ROUTE_GATES] and not ids:
+        problems.append(f"{ROUTE_GATES}: no `export const …_ID = \"…\"` found")
+    if texts[ROUTE_GATES] and "ENCOUNTER_ID" not in {n for n, _ in ids}:
+        problems.append(f"{ROUTE_GATES}: ENCOUNTER_ID is not defined as a string constant")
+    if tree_ids:
+        for name, route_id in ids:
+            if route_id not in tree_ids:
                 problems.append(
-                    f"{CONSULTATION_ROUTES}: encounter route `/${{identifier}}/:id/patient/:patientId/encounter/:encounterId/:tab` not found (routeKeys {name} = {key})"
+                    f"{ROUTE_TREE}: route id \"{route_id}\" not found in FileRoutesById ({ROUTE_GATES} {name})"
                 )
-            continue
-        table = KEY_FILES.get(name, PATIENT_ROUTES)
-        if f'"{key}"' not in texts[table]:
-            problems.append(f"{table}: route key \"{key}\" not found (routeKeys {name})")
-    for name in (ENCOUNTER_KEY_NAME, *KEY_FILES):
-        if texts[ROUTE_KEYS] and name not in {n for n, _ in keys}:
-            problems.append(f"{ROUTE_KEYS}: {name} is not defined as a string constant")
-    prefix = TAB_PREFIX.search(texts[ROUTE_KEYS])
-    tabs = DEMOGRAPHICS_TABS.search(texts[ROUTE_KEYS])
-    if texts[ROUTE_KEYS] and (prefix is None or tabs is None):
-        problems.append(f"{ROUTE_KEYS}: PATIENT_TAB_PREFIX or DEMOGRAPHICS_TABS not found")
-    if prefix and f'"{prefix.group(1)}" + tab.route' not in texts[PATIENT_ROUTES]:
-        problems.append(
-            f"{PATIENT_ROUTES}: patient tab keys `\"{prefix.group(1)}\" + tab.route` not found (routeKeys PATIENT_TAB_PREFIX)"
-        )
+    tabs = DEMOGRAPHICS_TABS.search(texts[ROUTE_GATES])
+    if texts[ROUTE_GATES] and tabs is None:
+        problems.append(f"{ROUTE_GATES}: DEMOGRAPHICS_TABS not found")
     if tabs:
         for tab in re.findall(r'"([^"]+)"', tabs.group(1)):
             if f'route: "{tab}"' not in texts[PATIENT_TABS]:
                 problems.append(
-                    f"{PATIENT_TABS}: patient tab route \"{tab}\" not found (routeKeys DEMOGRAPHICS_TABS)"
+                    f"{PATIENT_TABS}: patient tab route \"{tab}\" not found (routeGates DEMOGRAPHICS_TABS)"
                 )
+    for rel, call in ROUTER_HOOKS.items():
+        text = texts[rel]
+        if not text:
+            continue
+        if MARKER_ROUTER not in text:
+            problems.append(f"{rel}: our hook marker `{MARKER_ROUTER}` is gone")
+        if call not in text:
+            problems.append(f"{rel}: our hook call `{call}` is gone")
+    for rel, pattern, why, *exactly in ROUTER_ANCHORS:
+        if not texts[rel]:
+            continue
+        found = len(re.findall(pattern, texts[rel], flags=re.S))
+        if (exactly and found != exactly[0]) or (not exactly and found < 1):
+            expected = exactly[0] if exactly else "at least 1"
+            problems.append(
+                f"{rel}: `{pattern}` found {found} time(s), expected {expected} ({why})"
+            )
+    for rel, pattern, why in ROUTER_ABSENT:
+        if texts[rel] and re.search(pattern, texts[rel]):
+            problems.append(f"{rel}: `{pattern}` is back ({why})")
+    problems.extend(fetch_problems(root))
 
     # 3. hooks
     for rel, call in HOOKS.items():

@@ -57,6 +57,15 @@ ALLOWED: dict[str, str] = {
     "MMM yyyy": "month and year only: expiry (owner decision 1)",
     "EEE": "weekday only",
     "EEEE": "weekday only",
+    # components/ui/date-range-picker.tsx parseDate(): the typed-in formats the box accepts (input
+    # parsing, never display; the label it shows is indiaDate, P2-T0c).
+    "d-M-yyyy": "typed-input parse pattern of the date-range box (not display)",
+    "d.M.yyyy": "typed-input parse pattern of the date-range box (not display)",
+    "ddMMyyyy": "typed-input parse pattern of the date-range box (not display)",
+    "d/M/yy": "typed-input parse pattern of the date-range box (not display)",
+    "d-M-yy": "typed-input parse pattern of the date-range box (not display)",
+    "d.M.yy": "typed-input parse pattern of the date-range box (not display)",
+    "ddMMyy": "typed-input parse pattern of the date-range box (not display)",
 }
 
 # 24-hour patterns: allowed only in these files (paths under the root), where they are API values
@@ -85,6 +94,11 @@ LOCALE_CALLS_ALLOWED: dict[str, str] = {
     ),
     "components/ui/calendar.tsx": "month dropdown of the date picker: month name only, no date",
     "CAREUI/interactive/Calendar.tsx": "calendar heading: month and year only (owner decision 1)",
+    "components/ui/date-range-picker.tsx": (
+        "date-range box (CARE 3.1): a full date goes through indiaDate (DD-MM-YYYY); Intl only "
+        "makes the year-less day-and-month label, the month-and-year heading, the month name "
+        "and the year number of its calendar (P2-T0c)"
+    ),
     "components/Notes/NoteMessage.tsx": (
         "formatRelative from date-fns goes through our shim Utils/ihr/indiaDateFns.ts "
         "(DD-MM-YYYY, 12-hour), no locale passed (moved here from NoteManager.tsx, P2-T0b)"
@@ -104,6 +118,9 @@ NOT_DATES: dict[str, str] = {
     "YYYY": "date-of-birth box placeholder",
     "hh:mm": "placeholder of our time box (components/ihr/IndiaDateTimeInput.tsx)",
     "add": "a verb",
+    "app": "router area name (lib/router/auth.ts, AreaChrome, routes/index.tsx; P2-T0c)",
+    "/apps": "route path of the apps page (routeTree.gen.ts; P2-T0c)",
+    "/apps/": "route path of the apps page (routeTree.gen.ts; P2-T0c)",
 }
 
 _TOKEN = (
