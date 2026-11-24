@@ -30,6 +30,7 @@ support.google.com        # help link
 www.npmjs.com             # licence page links
 pypi.org                  # licence page links
 lexical.dev               # editor library error-doc links
+base-ui.com               # Base UI error-message text (`visit https://base-ui.com/production-error?code=…`), never fetched (P2-T0b)
 reactflow.dev             # library error-doc links
 react.dev                 # library error-doc links
 reactjs.org               # library error-doc links
@@ -55,3 +56,4 @@ www.mozilla.org           # licence/docs links
 fb.me                     # React error-doc short links
 json-schema.org           # JSON Schema $schema identifiers (never fetched)
 jspdf.default.namespaceuri # placeholder namespace string in jsPDF (not a real host)
+care.invalid              # CARE's dummy origin for parsing relative paths (referralNativeNavigation.ts `new URL(path, LOCAL_ORIGIN)`); .invalid never resolves, never fetched (P2-T0b)
